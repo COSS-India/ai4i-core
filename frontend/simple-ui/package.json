@@ -1,0 +1,36 @@
+{
+  "name": "simple-ui",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Simple UI for testing ASR, TTS, and NMT microservices",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@chakra-ui/react": "^2.4.6",
+    "@chakra-ui/icons": "^2.0.17",
+    "@emotion/react": "^11.10.5",
+    "@emotion/styled": "^11.10.5",
+    "@tanstack/react-query": "^4.24.6",
+    "@tanstack/react-query-devtools": "^4.24.6",
+    "axios": "^1.2.2",
+    "framer-motion": "^8.1.4",
+    "next": "13.1.1",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "react-icons": "^4.7.1",
+    "socket.io-client": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "18.11.18",
+    "@types/react": "18.0.27",
+    "@types/react-dom": "18.0.10",
+    "typescript": "4.9.4",
+    "eslint": "8.32.0",
+    "eslint-config-next": "13.1.1"
+  }
+}

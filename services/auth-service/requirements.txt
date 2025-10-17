@@ -1,0 +1,37 @@
+# FastAPI and ASGI server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Database ORM and driver
+sqlalchemy>=2.0.0
+asyncpg>=0.29.0
+alembic>=1.12.0
+
+# Redis for session management
+redis>=5.0.0
+
+# Data validation and settings
+pydantic[email]>=2.4.0
+pydantic-settings>=2.0.0
+
+# JWT handling
+python-jose[cryptography]>=3.3.0
+
+# Password hashing
+passlib[argon2]>=1.7.4
+
+# Form data handling
+python-multipart>=0.0.6
+
+# HTTP client for OAuth2 providers
+httpx>=0.25.0
+
+# OAuth2 client
+authlib>=1.2.0
+
+# Development dependencies (commented out for production)
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+# black>=23.0.0
+# flake8>=6.0.0
+# mypy>=1.5.0

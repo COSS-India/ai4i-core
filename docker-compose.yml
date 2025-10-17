@@ -1,0 +1,464 @@
+version: '3.8'
+
+services:
+  # Infrastructure Services
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai4v-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infrastructure/postgres:/docker-entrypoint-initdb.d
+    networks:
+      - microservices-network
+    # healthcheck:
+    #   test: ["CMD-SHELL", "./infrastructure/health-checks/postgres-health.sh"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 40s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai4v-redis
+    command: redis-server /usr/local/etc/redis/redis.conf
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis-data:/data
+      - ./infrastructure/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    networks:
+      - microservices-network
+    # healthcheck:
+    #   test: ["CMD-SHELL", "./infrastructure/health-checks/redis-health.sh"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 20s
+    restart: unless-stopped
+
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: ai4v-influxdb
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_ADMIN_USER}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_ADMIN_TOKEN}
+    ports:
+      - "8089:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - ./infrastructure/influxdb:/docker-entrypoint-initdb.d
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD-SHELL", "./infrastructure/health-checks/influxdb-health.sh"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
+    restart: unless-stopped
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
+    container_name: ai4v-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - ELASTIC_USERNAME=${ELASTIC_USERNAME}
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9203:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+      - ./infrastructure/elasticsearch:/docker-entrypoint-initdb.d
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD-SHELL", "./infrastructure/health-checks/elasticsearch-health.sh"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 60s
+    restart: unless-stopped
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: ai4v-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "nc", "-z", "localhost", "2181"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 20s
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: ai4v-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    ports:
+      - "9093:9092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+      - ./infrastructure/kafka:/docker-entrypoint-initdb.d
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD-SHELL", "./infrastructure/health-checks/kafka-health.sh"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 40s
+    restart: unless-stopped
+
+  # Microservices
+  api-gateway-service:
+    build:
+      context: ./services/api-gateway-service
+      dockerfile: Dockerfile
+    container_name: ai4v-api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/api-gateway-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
+    restart: unless-stopped
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: ai4v-auth-service
+    ports:
+      - "8081:8081"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/auth-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
+    restart: unless-stopped
+
+  config-service:
+    build:
+      context: ./services/config-service
+      dockerfile: Dockerfile
+    container_name: ai4v-config-service
+    ports:
+      - "8082:8082"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/config-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
+    restart: unless-stopped
+
+  metrics-service:
+    build:
+      context: ./services/metrics-service
+      dockerfile: Dockerfile
+    container_name: ai4v-metrics-service
+    ports:
+      - "8083:8083"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/metrics-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
+    restart: unless-stopped
+
+  telemetry-service:
+    build:
+      context: ./services/telemetry-service
+      dockerfile: Dockerfile
+    container_name: ai4v-telemetry-service
+    ports:
+      - "8084:8084"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/telemetry-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8084/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
+    restart: unless-stopped
+
+  alerting-service:
+    build:
+      context: ./services/alerting-service
+      dockerfile: Dockerfile
+    container_name: ai4v-alerting-service
+    ports:
+      - "8085:8085"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/alerting-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8085/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
+    restart: unless-stopped
+
+  dashboard-service:
+    build:
+      context: ./services/dashboard-service
+      dockerfile: Dockerfile
+    container_name: ai4v-dashboard-service
+    ports:
+      - "8090:8086"
+      - "8501:8501"  # Streamlit port
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/dashboard-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
+    restart: unless-stopped
+
+  asr-service:
+    build:
+      context: ./services/asr-service
+      dockerfile: Dockerfile
+    container_name: ai4v-asr-service
+    ports:
+      - "8087:8087"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/asr-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8087/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
+    restart: unless-stopped
+
+  tts-service:
+    build:
+      context: ./services/tts-service
+      dockerfile: Dockerfile
+    container_name: ai4v-tts-service
+    ports:
+      - "8088:8088"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/tts-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
+    restart: unless-stopped
+
+  nmt-service:
+    build:
+      context: ./services/nmt-service
+      dockerfile: Dockerfile
+    container_name: ai4v-nmt-service
+    ports:
+      - "8089:8089"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/nmt-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8089/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
+    restart: unless-stopped
+
+  simple-ui-frontend:
+    build:
+      context: ./frontend/simple-ui
+      dockerfile: Dockerfile
+    container_name: ai4v-simple-ui
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://api-gateway-service:8080
+      - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
+      - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
+    depends_on:
+      api-gateway-service:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 40s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  influxdb-data:
+    driver: local
+  elasticsearch-data:
+    driver: local
+  kafka-data:
+    driver: local
+  zookeeper-data:
+    driver: local
+  zookeeper-logs:
+    driver: local
+
+networks:
+  microservices-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16
