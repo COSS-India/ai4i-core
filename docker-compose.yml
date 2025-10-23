@@ -376,6 +376,7 @@ services:
       - "8088:8088"
     environment:
       - ENV_FILE=.env
+      - TRITON_ENDPOINT=http://13.200.133.97:9000
     env_file:
       - ./services/tts-service/.env
     depends_on:

@@ -12,6 +12,7 @@ services:
     environment:
       - DEBUG=true
       - LOG_LEVEL=DEBUG
+      - TTS_SERVICE_URL=http://tts-service:8088
 
   # Auth Service - Development overrides
   auth-service:

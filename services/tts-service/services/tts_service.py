@@ -120,8 +120,8 @@ class TTSService:
                             # Send Triton request
                             triton_response = self.triton_client.send_triton_request(
                                 model_name="tts",
-                                inputs=inputs,
-                                outputs=outputs
+                                input_list=inputs,
+                                output_list=outputs
                             )
                             
                             # Extract audio
