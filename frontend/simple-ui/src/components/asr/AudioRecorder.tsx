@@ -24,6 +24,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
   onRecordingChange,
   sampleRate,
   disabled = false,
+  timer = 0,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
@@ -96,7 +97,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
         <Alert status="info" borderRadius="md">
           <AlertIcon />
           <AlertDescription>
-            Recording Time: {formatDuration(MAX_RECORDING_DURATION - 0)} / {formatDuration(MAX_RECORDING_DURATION)} seconds
+            Recording Time: {formatDuration(timer)} / {formatDuration(MAX_RECORDING_DURATION)} seconds
           </AlertDescription>
         </Alert>
       )}

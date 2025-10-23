@@ -9,7 +9,6 @@ services:
   api-gateway-service:
     volumes:
       - ./services/api-gateway-service:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8080 --reload
     environment:
       - DEBUG=true
       - LOG_LEVEL=DEBUG

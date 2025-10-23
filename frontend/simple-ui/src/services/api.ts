@@ -10,8 +10,11 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 export const apiEndpoints = {
   asr: {
     inference: '/api/v1/asr/inference',
+    transcribe: '/api/v1/asr/transcribe',
     models: '/api/v1/asr/models',
     health: '/api/v1/asr/health',
+    streamingInfo: '/api/v1/asr/streaming/info',
+    streaming: 'ws://localhost:8087/socket.io', // Direct WebSocket connection
   },
   tts: {
     inference: '/api/v1/tts/inference',

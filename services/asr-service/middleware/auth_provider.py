@@ -106,6 +106,33 @@ async def AuthProvider(
     db: AsyncSession = Depends(get_db_session)
 ) -> Dict[str, Any]:
     """Authentication provider dependency for FastAPI routes."""
+    import os
+    
+    # Check if authentication is disabled
+    auth_enabled = os.getenv("AUTH_ENABLED", "true").lower() == "true"
+    require_api_key = os.getenv("REQUIRE_API_KEY", "true").lower() == "true"
+    allow_anonymous = os.getenv("ALLOW_ANONYMOUS_ACCESS", "false").lower() == "true"
+    
+    # Debug logging
+    logger.info(f"Auth config - AUTH_ENABLED: {os.getenv('AUTH_ENABLED')}, REQUIRE_API_KEY: {os.getenv('REQUIRE_API_KEY')}, ALLOW_ANONYMOUS_ACCESS: {os.getenv('ALLOW_ANONYMOUS_ACCESS')}")
+    logger.info(f"Parsed values - auth_enabled: {auth_enabled}, require_api_key: {require_api_key}, allow_anonymous: {allow_anonymous}")
+    
+    # If authentication is disabled or anonymous access is allowed, skip auth
+    if not auth_enabled or (allow_anonymous and not require_api_key):
+        # Populate request state with anonymous context
+        request.state.user_id = None
+        request.state.api_key_id = None
+        request.state.api_key_name = None
+        request.state.user_email = None
+        request.state.is_authenticated = False
+        
+        return {
+            "user_id": None,
+            "api_key_id": None,
+            "user": None,
+            "api_key": None
+        }
+    
     try:
         # Extract API key from authorization header
         api_key = get_api_key_from_header(authorization)

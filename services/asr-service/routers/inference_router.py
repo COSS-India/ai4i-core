@@ -46,6 +46,9 @@ async def get_asr_service(db: AsyncSession = Depends(get_db_session)) -> ASRServ
         # Create Triton client
         import os
         triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
+        # Strip http:// or https:// scheme from URL
+        if triton_url.startswith(('http://', 'https://')):
+            triton_url = triton_url.split('://', 1)[1]
         triton_api_key = os.getenv("TRITON_API_KEY")
         triton_client = TritonClient(triton_url, triton_api_key)
         

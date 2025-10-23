@@ -3,10 +3,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useToast } from '@chakra-ui/react';
-import { performASRInference } from '../services/asrService';
+import { performASRInference, transcribeAudio, ASRStreamingService } from '../services/asrService';
 import { getWordCount } from '../utils/helpers';
 import { UseASRReturn, ASRInferenceRequest } from '../types/asr';
 import { DEFAULT_ASR_CONFIG } from '../config/constants';
+
+// Constants
+const MAX_RECORDING_DURATION = 120; // 2 minutes in seconds
 
 // Extend Window interface for Recorder.js
 declare global {
@@ -34,6 +37,7 @@ export const useASR = (): UseASRReturn => {
   // Refs
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const streamingServiceRef = useRef<ASRStreamingService | null>(null);
 
   // Toast hook
   const toast = useToast();
@@ -109,13 +113,14 @@ export const useASR = (): UseASRReturn => {
     mutationFn: async (audioContent: string) => {
       const config: ASRInferenceRequest['config'] = {
         language: { sourceLanguage: language },
-        serviceId: 'ai4bharat/asr-wav2vec2-indian-english',
+        serviceId: 'vakyansh-asr-en',
         audioFormat: 'wav',
-        encoding: 'base64',
         samplingRate: sampleRate,
+        transcriptionFormat: 'transcript',
+        bestTokenCount: 0,
       };
 
-      return performASRInference(audioContent, config);
+      return transcribeAudio(audioContent, config);
     },
     onSuccess: (response, variables, context) => {
       const transcript = response.output[0]?.source || '';
@@ -139,8 +144,8 @@ export const useASR = (): UseASRReturn => {
     },
   });
 
-  // Start recording
-  const startRecording = useCallback(() => {
+  // Start recording with WebSocket streaming
+  const startRecording = useCallback(async () => {
     if (!audioStream || !window.Recorder) {
       toast({
         title: 'Recording Error',
@@ -153,7 +158,47 @@ export const useASR = (): UseASRReturn => {
     }
 
     try {
-      // Create audio context
+      setError(null);
+      setRecording(true);
+      setTimer(0);
+
+      // Initialize streaming service
+      if (!streamingServiceRef.current) {
+        streamingServiceRef.current = new ASRStreamingService();
+      }
+
+      // Connect to streaming service
+      await streamingServiceRef.current.connect({
+        serviceId: 'vakyansh-asr-en',
+        language: language,
+        samplingRate: sampleRate,
+      });
+
+      // Start streaming session
+      streamingServiceRef.current.startSession({
+        serviceId: 'vakyansh-asr-en',
+        language: language,
+        samplingRate: sampleRate,
+        preProcessors: ['vad', 'denoise'],
+        postProcessors: ['lm', 'punctuation'],
+      });
+
+      // Set up response handlers
+      streamingServiceRef.current.onResponse((response) => {
+        console.log('Streaming response:', response);
+        if (response.source) {
+          setAudioText(response.source);
+          setResponseWordCount(getWordCount(response.source));
+          setFetched(true);
+        }
+      });
+
+      streamingServiceRef.current.onError((error) => {
+        console.error('Streaming error:', error);
+        setError('Streaming error occurred');
+      });
+
+      // Create audio context for recording
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioContextRef.current = audioContext;
 
@@ -166,13 +211,29 @@ export const useASR = (): UseASRReturn => {
 
       // Start recording
       newRecorder.record();
-      setRecording(true);
-      setFetching(true);
-      setTimer(0);
-      setError(null);
+
+      // Start timer
+      timerRef.current = setInterval(() => {
+        setTimer(prev => {
+          const newTime = prev + 1;
+          if (newTime >= MAX_RECORDING_DURATION) {
+            stopRecording();
+          }
+          return newTime;
+        });
+      }, 1000);
+
+      toast({
+        title: 'Recording started',
+        description: 'Speak into your microphone (streaming mode)',
+        status: 'info',
+        duration: 2000,
+        isClosable: true,
+      });
     } catch (err) {
       console.error('Error starting recording:', err);
       setError('Failed to start recording. Please try again.');
+      setRecording(false);
       toast({
         title: 'Recording Error',
         description: 'Failed to start recording. Please try again.',
@@ -181,33 +242,29 @@ export const useASR = (): UseASRReturn => {
         isClosable: true,
       });
     }
-  }, [audioStream, toast]);
+  }, [audioStream, language, sampleRate, toast]);
 
-  // Stop recording
-  const stopRecording = useCallback(() => {
-    if (!recorder) return;
-
+  // Perform inference
+  const performInference = useCallback(async (audioContent: string) => {
     try {
-      recorder.stop();
-      setRecording(false);
-      setFetching(false);
-
-      // Stop audio tracks
-      if (audioStream) {
-        audioStream.getAudioTracks()[0].stop();
-      }
-
-      // Export WAV
-      recorder.exportWAV(handleRecording, 'audio/wav', sampleRate);
+      console.log('performInference called with audio content length:', audioContent.length);
+      setFetching(true);
+      setError(null);
+      console.log('Calling asrMutation.mutateAsync...');
+      await asrMutation.mutateAsync(audioContent);
+      console.log('ASR mutation completed successfully');
     } catch (err) {
-      console.error('Error stopping recording:', err);
-      setError('Failed to stop recording.');
+      console.error('Inference error:', err);
+      setError('Failed to transcribe audio');
+      setFetching(false);
     }
-  }, [recorder, audioStream, sampleRate]);
+  }, [asrMutation]);
 
   // Handle recording completion
   const handleRecording = useCallback((blob: Blob) => {
     try {
+      console.log('Recording completed, blob size:', blob.size);
+      
       // Play audio
       const audioUrl = URL.createObjectURL(blob);
       const audio = new Audio(audioUrl);
@@ -218,6 +275,8 @@ export const useASR = (): UseASRReturn => {
       reader.onload = () => {
         const result = reader.result as string;
         const base64Data = result.split(',')[1];
+        console.log('Base64 data length:', base64Data.length);
+        console.log('Calling performInference...');
         performInference(base64Data);
       };
       reader.readAsDataURL(blob);
@@ -225,7 +284,43 @@ export const useASR = (): UseASRReturn => {
       console.error('Error processing recording:', err);
       setError('Failed to process recording.');
     }
-  }, []);
+  }, [performInference]);
+
+  // Stop recording
+  const stopRecording = useCallback(() => {
+    if (!recorder) return;
+
+    try {
+      recorder.stop();
+      setRecording(false);
+
+      // Clear timer
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+
+      // Disconnect from streaming service
+      if (streamingServiceRef.current) {
+        streamingServiceRef.current.disconnect();
+        streamingServiceRef.current = null;
+      }
+
+      // Export WAV for final processing
+      recorder.exportWAV(handleRecording, 'audio/wav', sampleRate);
+
+      toast({
+        title: 'Recording stopped',
+        description: 'Processing final audio...',
+        status: 'info',
+        duration: 2000,
+        isClosable: true,
+      });
+    } catch (err) {
+      console.error('Error stopping recording:', err);
+      setError('Failed to stop recording.');
+    }
+  }, [recorder, sampleRate, handleRecording, toast]);
 
   // Handle file upload
   const handleFileUpload = useCallback((file: File) => {
@@ -244,24 +339,11 @@ export const useASR = (): UseASRReturn => {
         performInference(base64Data);
       };
       reader.readAsDataURL(file);
-      setFetching(true);
-      setFetched(true);
     } catch (err) {
       console.error('Error processing file upload:', err);
       setError('Failed to process file upload.');
     }
-  }, []);
-
-  // Perform inference
-  const performInference = useCallback(async (audioContent: string) => {
-    try {
-      setFetching(true);
-      setError(null);
-      await asrMutation.mutateAsync(audioContent);
-    } catch (err) {
-      console.error('Inference error:', err);
-    }
-  }, [asrMutation]);
+  }, [performInference]);
 
   // Clear results
   const clearResults = useCallback(() => {
@@ -275,6 +357,15 @@ export const useASR = (): UseASRReturn => {
   // Reset timer
   const resetTimer = useCallback(() => {
     setTimer(0);
+  }, []);
+
+  // Cleanup streaming service on unmount
+  useEffect(() => {
+    return () => {
+      if (streamingServiceRef.current) {
+        streamingServiceRef.current.disconnect();
+      }
+    };
   }, []);
 
   return {

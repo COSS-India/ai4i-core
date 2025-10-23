@@ -1,0 +1,23 @@
+{
+  "audio": [
+    {
+      "audioContent": "UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="
+    }
+  ],
+  "config": {
+    "serviceId": "vakyansh-asr-en",
+    "language": {
+      "sourceLanguage": "en"
+    },
+    "audioFormat": "wav",
+    "samplingRate": 16000,
+    "transcriptionFormat": "transcript",
+    "bestTokenCount": 0
+  }
+}
+
+
+
+
+
+

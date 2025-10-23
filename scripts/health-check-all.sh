@@ -75,12 +75,12 @@ check_service_health() {
             fi
             ;;
         postgres)
-            if docker-compose exec postgres pg_isready -U "${POSTGRES_USER:-dhruva_user}" > /dev/null 2>&1; then
+            if docker compose exec postgres pg_isready -U "${POSTGRES_USER:-dhruva_user}" > /dev/null 2>&1; then
                 health_status="healthy"
             fi
             ;;
         redis)
-            if docker-compose exec redis redis-cli -a "${REDIS_PASSWORD:-redis_secure_password_2024}" ping > /dev/null 2>&1; then
+            if docker compose exec redis redis-cli -a "${REDIS_PASSWORD:-redis_secure_password_2024}" ping > /dev/null 2>&1; then
                 health_status="healthy"
             fi
             ;;
@@ -113,7 +113,7 @@ check_service_health() {
 }
 
 # Get all services from docker-compose
-SERVICES=($(docker-compose config --services))
+SERVICES=($(docker compose config --services))
 
 # Check if any services are running
 if [ ${#SERVICES[@]} -eq 0 ]; then
@@ -129,7 +129,7 @@ echo "--------------------------------------------------------"
 overall_healthy=true
 for service in "${SERVICES[@]}"; do
     # Check if container is running
-    if ! docker-compose ps -q $service | xargs docker ps -q --filter id= > /dev/null 2>&1; then
+    if ! docker compose ps -q $service | xargs docker ps -q --filter id= > /dev/null 2>&1; then
         printf "%-25s %-10s %-12s\n" "$service" "stopped" "N/A"
         overall_healthy=false
         continue

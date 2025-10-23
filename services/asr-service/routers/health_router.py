@@ -65,6 +65,9 @@ async def health_check() -> Dict[str, Any]:
         import os
         
         triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
+        # Strip scheme from URL if present (Triton client expects host:port format)
+        if triton_url.startswith(('http://', 'https://')):
+            triton_url = triton_url.split('://', 1)[1]
         client = http_client.InferenceServerClient(url=triton_url)
         
         if client.is_server_ready():
@@ -74,8 +77,8 @@ async def health_check() -> Dict[str, Any]:
     except ImportError:
         health_status["triton"] = "unavailable"
     except Exception as e:
-        logger.error(f"Triton health check failed: {e}")
-        health_status["triton"] = "unhealthy"
+        logger.warning(f"Triton health check failed: {e}")
+        health_status["triton"] = "unavailable"
     
     # Determine overall status
     if (health_status["redis"] == "healthy" and 
@@ -143,6 +146,9 @@ async def readiness_check() -> Dict[str, Any]:
             import os
             
             triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
+            # Strip scheme from URL if present (Triton client expects host:port format)
+            if triton_url.startswith(('http://', 'https://')):
+                triton_url = triton_url.split('://', 1)[1]
             client = http_client.InferenceServerClient(url=triton_url)
             
             if not client.is_server_ready():
