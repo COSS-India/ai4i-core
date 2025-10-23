@@ -4,6 +4,7 @@ Validation utility functions for request validation
 """
 
 import logging
+import re
 from typing import List
 
 logger = logging.getLogger(__name__)

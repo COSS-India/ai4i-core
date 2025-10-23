@@ -167,3 +167,19 @@ class NMTRepository:
         except Exception as e:
             logger.error(f"Failed to get NMT requests for user {user_id}: {e}")
             raise DatabaseError(f"Failed to get NMT requests: {e}")
+
+
+async def get_db_session() -> AsyncSession:
+    """Dependency function to get database session."""
+    # This will be injected by FastAPI dependency injection
+    # The actual session will be provided by the main app
+    from main import db_session_factory
+    
+    if not db_session_factory:
+        raise DatabaseError("Database session factory not initialized")
+    
+    async with db_session_factory() as session:
+        try:
+            yield session
+        finally:
+            await session.close()

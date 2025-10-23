@@ -676,10 +676,10 @@ async def get_tts_voices(
 
 # NMT Service Endpoints (Proxy to NMT Service)
 
-@app.post("/api/v1/nmt/translate")
-async def translate_text(request: Request):
-    """Translate text using NMT service"""
-    return await proxy_to_service(request, "/api/v1/nmt/translate", "nmt-service")
+@app.post("/api/v1/nmt/inference")
+async def nmt_inference(request: Request):
+    """Perform NMT inference"""
+    return await proxy_to_service(request, "/api/v1/nmt/inference", "nmt-service")
 
 @app.post("/api/v1/nmt/batch-translate")
 async def batch_translate(request: Request):
@@ -690,6 +690,11 @@ async def batch_translate(request: Request):
 async def get_nmt_languages(request: Request):
     """Get supported languages for NMT service"""
     return await proxy_to_service(request, "/api/v1/nmt/languages", "nmt-service")
+
+@app.get("/api/v1/nmt/models")
+async def get_nmt_models(request: Request):
+    """Get available NMT models"""
+    return await proxy_to_service(request, "/api/v1/nmt/models", "nmt-service")
 
 @app.get("/api/v1/nmt/health")
 async def nmt_health(request: Request):

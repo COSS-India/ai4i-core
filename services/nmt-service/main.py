@@ -31,11 +31,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global variables
-redis_client: Optional[redis.Redis] = None
-db_engine: Optional[AsyncEngine] = None
-db_session_factory: Optional[async_sessionmaker] = None
-
 # Environment variables
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
@@ -43,6 +38,30 @@ REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db")
 TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "http://triton-server:8000")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
+
+# Global variables
+redis_client: Optional[redis.Redis] = None
+db_engine: Optional[AsyncEngine] = None
+db_session_factory: Optional[async_sessionmaker] = None
+
+# Initialize Redis client early for middleware
+try:
+    redis_client = redis.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        password=REDIS_PASSWORD,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        retry_on_timeout=True
+    )
+    
+    # Test Redis connection
+    redis_client.ping()
+    logger.info("Redis connection established for middleware")
+except Exception as e:
+    logger.warning(f"Redis connection failed for middleware: {e}")
+    redis_client = None
 
 
 @asynccontextmanager
@@ -54,15 +73,19 @@ async def lifespan(app: FastAPI):
     logger.info("Starting NMT Service...")
     
     try:
-        # Initialize Redis
-        logger.info("Connecting to Redis...")
-        redis_client = redis.from_url(
-            f"redis://{REDIS_HOST}:{REDIS_PORT}",
-            password=REDIS_PASSWORD,
-            decode_responses=True
-        )
-        await redis_client.ping()
-        logger.info("Redis connection established")
+        # Use existing Redis client or initialize if needed
+        global redis_client
+        if redis_client is None:
+            logger.info("Connecting to Redis...")
+            redis_client = redis.from_url(
+                f"redis://{REDIS_HOST}:{REDIS_PORT}",
+                password=REDIS_PASSWORD,
+                decode_responses=True
+            )
+            await redis_client.ping()
+            logger.info("Redis connection established")
+        else:
+            logger.info("Using existing Redis connection")
         
         # Initialize PostgreSQL
         logger.info("Connecting to PostgreSQL...")
@@ -87,16 +110,8 @@ async def lifespan(app: FastAPI):
         app.state.redis_client = redis_client
         app.state.db_engine = db_engine
         app.state.db_session_factory = db_session_factory
-        
-        # Add rate limiting middleware after Redis is initialized
-        rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-        rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-        app.add_middleware(
-            RateLimitMiddleware,
-            redis_client=redis_client,
-            requests_per_minute=rate_limit_per_minute,
-            requests_per_hour=rate_limit_per_hour
-        )
+        app.state.triton_endpoint = TRITON_ENDPOINT
+        app.state.triton_api_key = TRITON_API_KEY
         
         logger.info("NMT Service started successfully")
         
@@ -170,12 +185,26 @@ app.add_middleware(
 # Add request logging middleware
 app.add_middleware(RequestLoggingMiddleware)
 
+# Add rate limiting middleware (if Redis is available)
+if redis_client:
+    rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+    rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+    app.add_middleware(
+        RateLimitMiddleware,
+        redis_client=redis_client,
+        requests_per_minute=rate_limit_per_minute,
+        requests_per_hour=rate_limit_per_hour
+    )
+    logger.info("Rate limiting middleware added")
+else:
+    logger.warning("Rate limiting middleware skipped - Redis not available")
+
 # Register error handlers
 add_error_handlers(app)
 
 # Include routers
-app.include_router(inference_router.router)
-app.include_router(health_router.router)
+app.include_router(inference_router)
+app.include_router(health_router)
 
 
 @app.get("/")
