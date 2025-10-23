@@ -7,6 +7,7 @@ import logging
 import uuid
 import time
 from typing import Dict, Any, List, Optional, Tuple
+from enum import Enum
 from fastapi import FastAPI, Request, HTTPException, Response
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,6 +53,79 @@ class ASRInferenceResponse(BaseModel):
     """ASR inference response model."""
     output: List[TranscriptOutput] = Field(..., description="Transcription results")
     config: Optional[Dict[str, Any]] = Field(None, description="Response metadata")
+
+# Pydantic models for TTS endpoints
+class Gender(str, Enum):
+    """Voice gender options for TTS."""
+    MALE = "male"
+    FEMALE = "female"
+
+class AudioFormat(str, Enum):
+    """Supported audio output formats."""
+    WAV = "wav"
+    MP3 = "mp3"
+    OGG = "ogg"
+    PCM = "pcm"
+
+class TTSLanguageConfig(BaseModel):
+    """Language configuration for TTS."""
+    sourceLanguage: str = Field(..., description="Language code (e.g., 'en', 'hi', 'ta')")
+    sourceScriptCode: Optional[str] = Field(None, description="Script code if applicable")
+
+class TTSTextInput(BaseModel):
+    """Individual text input for TTS synthesis."""
+    source: str = Field(..., description="Input text to synthesize")
+    audioDuration: Optional[float] = Field(None, description="Desired audio duration in seconds")
+
+class TTSInferenceConfig(BaseModel):
+    """Configuration for TTS inference."""
+    serviceId: str = Field(..., description="TTS service/model ID")
+    language: TTSLanguageConfig = Field(..., description="Language configuration")
+    gender: Gender = Field(default=Gender.FEMALE, description="Voice gender")
+    audioFormat: AudioFormat = Field(default=AudioFormat.WAV, description="Output audio format")
+    samplingRate: int = Field(default=22050, description="Audio sampling rate")
+    enableDurationAdjustment: bool = Field(default=True, description="Enable duration adjustment")
+    enableFormatConversion: bool = Field(default=True, description="Enable format conversion")
+
+class TTSInferenceRequest(BaseModel):
+    """TTS inference request model."""
+    input: List[TTSTextInput] = Field(..., description="List of text inputs", min_items=1)
+    config: TTSInferenceConfig = Field(..., description="Inference configuration")
+    controlConfig: Optional[Dict[str, Any]] = Field(None, description="Additional control parameters")
+
+class AudioOutput(BaseModel):
+    """Audio output containing synthesized speech."""
+    audioContent: str = Field(..., description="Base64-encoded audio data")
+    audioUri: Optional[str] = Field(None, description="URL to audio file")
+
+class AudioConfig(BaseModel):
+    """Audio configuration metadata for the response."""
+    language: TTSLanguageConfig = Field(..., description="Language configuration")
+    audioFormat: AudioFormat = Field(..., description="Format of output audio")
+    encoding: str = Field("base64", description="Encoding type")
+    samplingRate: int = Field(..., description="Sample rate in Hz")
+    audioDuration: Optional[float] = Field(None, description="Actual audio duration in seconds")
+
+class TTSInferenceResponse(BaseModel):
+    """TTS inference response model."""
+    audio: List[AudioOutput] = Field(..., description="List of generated audio outputs")
+    config: Optional[AudioConfig] = Field(None, description="Response configuration metadata")
+
+class VoiceMetadata(BaseModel):
+    """Voice metadata for voice listing."""
+    voiceId: str = Field(..., description="Unique voice identifier")
+    name: str = Field(..., description="Voice name")
+    language: str = Field(..., description="Language code")
+    gender: str = Field(..., description="Voice gender")
+    age: str = Field(..., description="Voice age group")
+    isActive: bool = Field(..., description="Whether voice is active")
+
+class VoiceListResponse(BaseModel):
+    """Response model for voice listing."""
+    voices: List[VoiceMetadata] = Field(..., description="List of available voices")
+    totalCount: int = Field(..., description="Total number of voices")
+    page: int = Field(default=1, description="Current page number")
+    pageSize: int = Field(default=50, description="Number of voices per page")
 
 class StreamingInfo(BaseModel):
     """Streaming service information."""
@@ -361,53 +435,14 @@ health_monitor_task = None
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections and components on startup"""
-    global redis_client, http_client, service_registry, load_balancer, route_manager, health_monitor_task
+    global http_client
     
     try:
-        # Initialize Redis connection
-        redis_password = os.getenv('REDIS_PASSWORD', 'redis_secure_password_2024')
-        if redis_password and redis_password != 'none':
-            redis_url = f"redis://:{redis_password}@{os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', '6379')}"
-        else:
-            redis_url = f"redis://{os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', '6379')}"
-        
-        redis_client = redis.from_url(redis_url)
-        await redis_client.ping()
-        logger.info("Connected to Redis")
-        
         # Initialize HTTP client
         http_client = httpx.AsyncClient(timeout=30.0)
         logger.info("HTTP client initialized")
         
-        # Initialize components
-        service_registry = ServiceRegistry(redis_client)
-        load_balancer = LoadBalancer(service_registry)
-        route_manager = RouteManager(redis_client)
-        
-        # Load routes from Redis
-        await route_manager.load_routes_from_redis()
-        
-        # Register all downstream services
-        services = {
-            'auth-service': os.getenv('AUTH_SERVICE_URL', 'http://auth-service:8081'),
-            'config-service': os.getenv('CONFIG_SERVICE_URL', 'http://config-service:8082'),
-            'metrics-service': os.getenv('METRICS_SERVICE_URL', 'http://metrics-service:8083'),
-            'telemetry-service': os.getenv('TELEMETRY_SERVICE_URL', 'http://telemetry-service:8084'),
-            'alerting-service': os.getenv('ALERTING_SERVICE_URL', 'http://alerting-service:8085'),
-            'dashboard-service': os.getenv('DASHBOARD_SERVICE_URL', 'http://dashboard-service:8086'),
-            'asr-service': os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087'),
-            'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
-            'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089')
-        }
-        
-        for service_name, service_url in services.items():
-            instance_id = f"{service_name}-1"
-            await service_registry.register_service(service_name, instance_id, service_url)
-        
-        # Start health monitoring background task
-        health_monitor_task = asyncio.create_task(health_monitor())
-        
-        logger.info("API Gateway initialized successfully")
+        logger.info("API Gateway initialized successfully (using direct service URLs)")
         
     except Exception as e:
         logger.error(f"Failed to initialize API Gateway: {e}")
@@ -416,22 +451,9 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up connections and tasks on shutdown"""
-    global redis_client, http_client, health_monitor_task
-    
-    # Cancel health monitoring task
-    if health_monitor_task:
-        health_monitor_task.cancel()
-        try:
-            await health_monitor_task
-        except asyncio.CancelledError:
-            pass
-        logger.info("Health monitor task cancelled")
+    global http_client
     
     # Close connections
-    if redis_client:
-        await redis_client.close()
-        logger.info("Redis connection closed")
-    
     if http_client:
         await http_client.aclose()
         logger.info("HTTP client closed")
@@ -598,25 +620,59 @@ async def asr_health(request: Request):
 
 # TTS Service Endpoints (Proxy to TTS Service)
 
-@app.post("/api/v1/tts/synthesize")
-async def synthesize_speech(request: Request):
-    """Synthesize text to speech using TTS service"""
-    return await proxy_to_service(request, "/api/v1/tts/synthesize", "tts-service")
-
-@app.post("/api/v1/tts/stream")
-async def stream_synthesize(request: Request):
-    """Stream text-to-speech synthesis using TTS service"""
-    return await proxy_to_service(request, "/api/v1/tts/stream", "tts-service")
-
-@app.get("/api/v1/tts/voices")
-async def get_tts_voices(request: Request):
-    """Get available TTS voices"""
-    return await proxy_to_service(request, "/api/v1/tts/voices", "tts-service")
-
 @app.get("/api/v1/tts/health")
 async def tts_health(request: Request):
     """TTS service health check"""
-    return await proxy_to_service(request, "/api/v1/tts/health", "tts-service")
+    return await proxy_to_service(request, "/health", "tts-service")
+
+@app.get("/api/v1/tts/")
+async def tts_root(request: Request):
+    """TTS service root endpoint"""
+    return await proxy_to_service(request, "/", "tts-service")
+
+@app.get("/api/v1/tts/streaming/info")
+async def tts_streaming_info(request: Request):
+    """TTS streaming endpoint information"""
+    return await proxy_to_service(request, "/streaming/info", "tts-service")
+
+@app.post("/api/v1/tts/inference", response_model=TTSInferenceResponse)
+async def tts_inference(request: TTSInferenceRequest):
+    """Perform batch TTS inference on text inputs"""
+    import json
+    # Convert Pydantic model to JSON for proxy
+    body = json.dumps(request.dict()).encode()
+    return await proxy_to_service(None, "/api/v1/tts/inference", "tts-service", method="POST", body=body)
+
+@app.get("/api/v1/tts/models")
+async def get_tts_models(request: Request):
+    """Get available TTS models"""
+    return await proxy_to_service(request, "/api/v1/tts/models", "tts-service")
+
+@app.get("/api/v1/tts/voices", response_model=VoiceListResponse)
+async def get_tts_voices(
+    request: Request,
+    language: Optional[str] = None,
+    gender: Optional[str] = None,
+    age: Optional[str] = None,
+    is_active: Optional[bool] = True
+):
+    """Get available TTS voices with optional filtering"""
+    # Build query parameters
+    params = {}
+    if language:
+        params["language"] = language
+    if gender:
+        params["gender"] = gender
+    if age:
+        params["age"] = age
+    if is_active is not None:
+        params["is_active"] = str(is_active).lower()
+    
+    # Build query string
+    query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+    path = f"/api/v1/tts/voices?{query_string}" if query_string else "/api/v1/tts/voices"
+    
+    return await proxy_to_service(request, path, "tts-service")
 
 # NMT Service Endpoints (Proxy to NMT Service)
 
@@ -698,16 +754,27 @@ async def proxy_to_auth_service(request: Request, path: str):
 
 # Helper function to proxy requests to any service
 async def proxy_to_service(request: Optional[Request], path: str, service_name: str, method: str = "GET", body: Optional[bytes] = None, headers: Optional[Dict[str, str]] = None):
-    """Proxy request to any service using the load balancer"""
-    global service_registry, load_balancer, http_client
+    """Proxy request to any service using direct URLs (bypassing service registry)"""
+    global http_client
+    
+    # Direct service URL mapping (bypassing service registry)
+    service_urls = {
+        'auth-service': os.getenv('AUTH_SERVICE_URL', 'http://localhost:8081'),
+        'config-service': os.getenv('CONFIG_SERVICE_URL', 'http://localhost:8082'),
+        'metrics-service': os.getenv('METRICS_SERVICE_URL', 'http://localhost:8083'),
+        'telemetry-service': os.getenv('TELEMETRY_SERVICE_URL', 'http://localhost:8084'),
+        'alerting-service': os.getenv('ALERTING_SERVICE_URL', 'http://localhost:8085'),
+        'dashboard-service': os.getenv('DASHBOARD_SERVICE_URL', 'http://localhost:8086'),
+        'asr-service': os.getenv('ASR_SERVICE_URL', 'http://localhost:8087'),
+        'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
+        'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://localhost:8089')
+    }
     
     try:
-        # Select healthy instance
-        instance_info = await load_balancer.select_instance(service_name)
-        if not instance_info:
-            raise HTTPException(status_code=503, detail=f"No healthy instances available for service: {service_name}")
-        
-        instance_id, instance_url = instance_info
+        # Get service URL directly
+        service_url = service_urls.get(service_name)
+        if not service_url:
+            raise HTTPException(status_code=503, detail=f"Service {service_name} not configured")
         
         # Prepare request body and headers
         if request is not None:
@@ -724,15 +791,12 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         # Forward request to service
         response = await http_client.request(
             method=method,
-            url=f"{instance_url}{path}",
+            url=f"{service_url}{path}",
             headers=headers,
             params=params,
             content=body,
             timeout=30.0
         )
-        
-        # Update health status
-        await service_registry.update_health(service_name, instance_id, True, 0.0)
         
         # Return response
         return Response(
@@ -840,4 +904,5 @@ async def proxy_request(request: Request, path: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    port = int(os.getenv("PORT", os.getenv("SERVICE_PORT", "8080")))
+    uvicorn.run(app, host="0.0.0.0", port=port)

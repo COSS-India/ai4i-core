@@ -22,9 +22,16 @@ from services.tts_service import TTSService
 from services.audio_service import AudioService
 from services.text_service import TextService
 from services.voice_service import VoiceService
-from services.streaming_service import StreamingTTSService
 from utils.triton_client import TritonClient
 from repositories.tts_repository import TTSRepository
+
+# Try to import streaming service, but make it optional
+try:
+    from services.streaming_service import StreamingTTSService
+    STREAMING_AVAILABLE = True
+except ImportError:
+    STREAMING_AVAILABLE = False
+    StreamingTTSService = None
 
 # Import middleware components
 from middleware.auth_provider import AuthProvider
@@ -101,22 +108,10 @@ async def lifespan(app: FastAPI):
         app.state.db_session_factory = db_session_factory
         app.state.db_engine = db_engine
         
-        # Add middleware after Redis client is initialized
-        # Add request logging middleware
-        app.add_middleware(RequestLoggingMiddleware)
-        
-        # Add rate limiting middleware
-        rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-        rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-        app.add_middleware(
-            RateLimitMiddleware,
-            redis_client=redis_client,
-            requests_per_minute=rate_limit_per_minute,
-            requests_per_hour=rate_limit_per_hour
-        )
-        
-        # Register error handlers
-        add_error_handlers(app)
+        # Update rate limiting middleware with Redis client
+        for middleware in app.user_middleware:
+            if hasattr(middleware, 'cls') and middleware.cls == RateLimitMiddleware:
+                middleware.kwargs['redis_client'] = redis_client
         
         # Initialize streaming service
         global streaming_service
@@ -126,6 +121,9 @@ async def lifespan(app: FastAPI):
             text_service = TextService()
             voice_service = VoiceService()
             triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
+            # Strip http:// or https:// scheme from URL (like ASR service)
+            if triton_url.startswith(('http://', 'https://')):
+                triton_url = triton_url.split('://', 1)[1]
             triton_api_key = os.getenv("TRITON_API_KEY")
             triton_client = TritonClient(triton_url, triton_api_key)
             
@@ -133,23 +131,26 @@ async def lifespan(app: FastAPI):
             async with db_session_factory() as session:
                 repository = TTSRepository(session)
                 
-                # Create streaming service
-                response_frequency_ms = int(os.getenv("STREAMING_RESPONSE_FREQUENCY_MS", "2000"))
-                streaming_service = StreamingTTSService(
-                    audio_service=audio_service,
-                    text_service=text_service,
-                    triton_client=triton_client,
-                    repository=repository,
-                    voice_service=voice_service,
-                    redis_client=redis_client,
-                    response_frequency_in_ms=response_frequency_ms
-                )
-                
-                logger.info("TTS streaming service initialized successfully")
-                
-                # Mount Socket.IO streaming endpoint
-                app.mount("/socket.io/tts", streaming_service.app)
-                logger.info("Socket.IO TTS streaming endpoint mounted at /socket.io/tts")
+                # Create streaming service (if available)
+                if STREAMING_AVAILABLE:
+                    response_frequency_ms = int(os.getenv("STREAMING_RESPONSE_FREQUENCY_MS", "2000"))
+                    streaming_service = StreamingTTSService(
+                        audio_service=audio_service,
+                        text_service=text_service,
+                        triton_client=triton_client,
+                        repository=repository,
+                        voice_service=voice_service,
+                        redis_client=redis_client,
+                        response_frequency_in_ms=response_frequency_ms
+                    )
+                    
+                    logger.info("TTS streaming service initialized successfully")
+                    
+                    # Mount Socket.IO streaming endpoint
+                    app.mount("/socket.io/tts", streaming_service.app)
+                    logger.info("Socket.IO TTS streaming endpoint mounted at /socket.io/tts")
+                else:
+                    logger.warning("Streaming service not available - socketio dependency missing")
         except Exception as e:
             logger.error(f"Failed to initialize streaming service: {e}")
             # Continue without streaming (optional feature)
@@ -224,6 +225,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add request logging middleware
+app.add_middleware(RequestLoggingMiddleware)
+
+# Add rate limiting middleware (will be configured with Redis in lifespan)
+rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+app.add_middleware(
+    RateLimitMiddleware,
+    requests_per_minute=rate_limit_per_minute,
+    requests_per_hour=rate_limit_per_hour,
+    redis_client=None  # Will be set in lifespan
+)
+
+# Register error handlers
+add_error_handlers(app)
 
 # Socket.IO streaming endpoint will be mounted after streaming service initialization
 
@@ -314,6 +331,9 @@ async def health_check() -> Dict[str, Any]:
         try:
             from utils.triton_client import TritonClient
             triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
+            # Strip http:// or https:// scheme from URL (like ASR service)
+            if triton_url.startswith(('http://', 'https://')):
+                triton_url = triton_url.split('://', 1)[1]
             triton_api_key = os.getenv("TRITON_API_KEY")
             triton_client = TritonClient(triton_url, triton_api_key)
             

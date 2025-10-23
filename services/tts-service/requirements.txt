@@ -25,12 +25,15 @@ numpy>=1.24.0
 tritonclient[http]>=2.40.0
 gevent>=23.9.0
 
-# PyTorch (for audio effects)
+# PyTorch (for audio effects) - commented out due to build issues
 torch>=2.0.0
 torchaudio>=2.0.0
 
 # HTTP client
 httpx>=0.25.0
+
+# WebSocket support
+python-socketio>=5.8.0
 
 # Utilities
 python-multipart>=0.0.6
