@@ -8,7 +8,8 @@ export COMPOSE_PROJECT_NAME=ai4v-microservices
 
 # Change to the project directory
 #cd /home/appala/Projects/AI4V-Core/Ai4V-C
-cd /home/supriya/AI4X/AI4v-Core/aiv4-core/
+# cd /home/supriya/AI4X/AI4v-Core/aiv4-core/
+cd /home/geojoseph/Desktop/coss/aiv4-core/
 
 # Stop any existing containers
 echo "Stopping existing containers..."
