@@ -536,7 +536,7 @@ async def api_status():
             "dashboard": os.getenv("DASHBOARD_SERVICE_URL", "http://dashboard-service:8086"),
             "asr": os.getenv("ASR_SERVICE_URL", "http://asr-service:8087"),
             "tts": os.getenv("TTS_SERVICE_URL", "http://tts-service:8088"),
-            "nmt": os.getenv("NMT_SERVICE_URL", "http://nmt-service:8089")
+            "nmt": os.getenv("NMT_SERVICE_URL", "http://ai4v-nmt-service:8089")
         }
     }
 
@@ -807,7 +807,7 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'dashboard-service': os.getenv('DASHBOARD_SERVICE_URL', 'http://localhost:8086'),
         'asr-service': os.getenv('ASR_SERVICE_URL', 'http://localhost:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
-        'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://localhost:8089')
+        'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://ai4v-nmt-service:8089')
     }
     
     try:
