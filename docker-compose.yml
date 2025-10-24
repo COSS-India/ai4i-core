@@ -351,7 +351,7 @@ services:
       - AUTH_ENABLED=false
       - REQUIRE_API_KEY=false
       - ALLOW_ANONYMOUS_ACCESS=true
-      - TRITON_ENDPOINT=http://13.200.133.97:5000
+      - TRITON_ENDPOINT=http://13.200.133.97:9000
     depends_on:
       postgres:
         condition: service_healthy

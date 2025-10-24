@@ -68,6 +68,11 @@ services:
       - DEBUG=true
       - LOG_LEVEL=DEBUG
 
+  # ASR Service - Development overrides
+  asr-service:
+    environment:
+      - TRITON_ENDPOINT=http://13.200.133.97:5000
+
   # PostgreSQL - Development overrides
   postgres:
     environment:
