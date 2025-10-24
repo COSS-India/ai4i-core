@@ -111,7 +111,7 @@ const Sidebar: React.FC = () => {
                   h="40px"
                   w="full"
                   justifyContent={isExpanded ? 'flex-start' : 'center'}
-                  leftIcon={isExpanded ? <Icon /> : undefined}
+                  leftIcon={<Icon />}
                   bg={isActive ? 'orange.500' : 'transparent'}
                   color={isActive ? 'white' : 'gray.700'}
                   boxShadow={isActive ? 'md' : 'none'}
