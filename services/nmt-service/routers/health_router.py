@@ -16,10 +16,10 @@ from utils.triton_client import TritonClient
 logger = logging.getLogger(__name__)
 
 # Create router
-router = APIRouter(prefix="/api/v1/nmt", tags=["Health"])
+health_router = APIRouter(prefix="/api/v1/nmt", tags=["Health"])
 
 
-@router.get(
+@health_router.get(
     "/health",
     response_model=Dict[str, Any],
     summary="Health check endpoint",
@@ -92,7 +92,7 @@ async def health_check(request: Request) -> Dict[str, Any]:
         )
 
 
-@router.get(
+@health_router.get(
     "/ready",
     response_model=Dict[str, Any],
     summary="Readiness check endpoint",
@@ -141,7 +141,7 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
         )
 
 
-@router.get(
+@health_router.get(
     "/live",
     response_model=Dict[str, Any],
     summary="Liveness check endpoint",

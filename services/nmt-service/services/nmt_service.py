@@ -39,10 +39,21 @@ class NMTService:
         "mr": "Deva", "pa": "Guru", "or": "Orya", "as": "Beng"
     }
     
+    # Service registry mapping serviceId to triton model name
+    SERVICE_REGISTRY = {
+        "ai4bharat/indictrans--gpu-t4": "nmt",
+        "indictrans-v2-all": "nmt",
+        "ai4bharat/indictrans-v2-all-gpu": "nmt"
+    }
+    
     def __init__(self, repository: NMTRepository, text_service: TextService, triton_client: TritonClient):
         self.repository = repository
         self.text_service = text_service
         self.triton_client = triton_client
+    
+    def get_model_name(self, service_id: str) -> str:
+        """Get Triton model name based on service ID"""
+        return self.SERVICE_REGISTRY.get(service_id, "nmt")  # Default to "nmt" if not found
     
     async def run_inference(
         self,
@@ -61,20 +72,21 @@ class NMTService:
             source_lang = request.config.language.sourceLanguage
             target_lang = request.config.language.targetLanguage
             
+            # Get model name dynamically based on service ID
+            model_name = self.get_model_name(service_id)
+            
             # Store original languages for response
             original_source_lang = source_lang
             original_target_lang = target_lang
             
-            # Handle script codes
+            # Handle script codes - only append if explicitly provided in request
             if request.config.language.sourceScriptCode:
                 source_lang += "_" + request.config.language.sourceScriptCode
-            elif source_lang in self.LANG_CODE_TO_SCRIPT_CODE:
-                source_lang += "_" + self.LANG_CODE_TO_SCRIPT_CODE[source_lang]
+            # Removed automatic script code appending to match Triton model expectations
             
             if request.config.language.targetScriptCode:
                 target_lang += "_" + request.config.language.targetScriptCode
-            elif target_lang in self.LANG_CODE_TO_SCRIPT_CODE:
-                target_lang += "_" + self.LANG_CODE_TO_SCRIPT_CODE[target_lang]
+            # Removed automatic script code appending to match Triton model expectations
             
             # Preprocess input texts
             input_texts = []
@@ -111,7 +123,7 @@ class NMTService:
                     
                     # Send Triton request
                     response = self.triton_client.send_triton_request(
-                        model_name="nmt",
+                        model_name=model_name,
                         inputs=inputs,
                         outputs=outputs
                     )

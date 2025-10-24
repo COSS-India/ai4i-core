@@ -5,12 +5,13 @@ import { useMutation } from '@tanstack/react-query';
 import { useToast } from '@chakra-ui/react';
 import { performNMTInference } from '../services/nmtService';
 import { getWordCount } from '../utils/helpers';
-import { UseNMTReturn, NMTInferenceRequest, LanguagePair } from '../types/nmt';
+import { UseNMTReturn, NMTInferenceRequest, NMTInferenceResponse, LanguagePair } from '../types/nmt';
 import { DEFAULT_NMT_CONFIG, MAX_TEXT_LENGTH } from '../config/constants';
 
 export const useNMT = (): UseNMTReturn => {
   // State
   const [languagePair, setLanguagePair] = useState<LanguagePair>(DEFAULT_NMT_CONFIG);
+  const [selectedModelId, setSelectedModelId] = useState<string>('ai4bharat/indictrans-v2-all-gpu--t4');
   const [inputText, setInputText] = useState<string>('');
   const [translatedText, setTranslatedText] = useState<string>('');
   const [fetching, setFetching] = useState<boolean>(false);
@@ -33,16 +34,20 @@ export const useNMT = (): UseNMTReturn => {
           sourceScriptCode: languagePair.sourceScriptCode,
           targetScriptCode: languagePair.targetScriptCode,
         },
-        serviceId: 'ai4bharat/indictrans-v2-all-gpu',
+        serviceId: selectedModelId,
       };
 
       return performNMTInference(text, config);
     },
-    onSuccess: (response) => {
+    onSuccess: (response: { data: NMTInferenceResponse; responseTime: number }) => {
       try {
-        const translation = response.output[0]?.target || '';
+        const translation = response.data.output[0]?.target || '';
         setTranslatedText(translation);
         setResponseWordCount(getWordCount(translation));
+        
+        // Update request time with actual API response time (in milliseconds)
+        setRequestTime(response.responseTime.toString());
+        
         setFetched(true);
         setFetching(false);
         setError(null);
@@ -166,6 +171,7 @@ export const useNMT = (): UseNMTReturn => {
   return {
     // State
     languagePair,
+    selectedModelId,
     inputText,
     translatedText,
     fetching,
@@ -179,6 +185,7 @@ export const useNMT = (): UseNMTReturn => {
     performInference,
     setInputText: setInputTextWithValidation,
     setLanguagePair: setLanguagePairWithValidation,
+    setSelectedModelId,
     clearResults,
     swapLanguages,
   };

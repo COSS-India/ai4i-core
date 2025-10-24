@@ -28,6 +28,7 @@ export const useTTS = (): UseTTSReturn => {
   const [gender, setGender] = useState<Gender>(DEFAULT_TTS_CONFIG.gender);
   const [audioFormat, setAudioFormat] = useState<AudioFormat>(DEFAULT_TTS_CONFIG.audioFormat);
   const [samplingRate, setSamplingRate] = useState<SampleRate>(DEFAULT_TTS_CONFIG.sampleRate);
+  const [modelId, setModelId] = useState<string>(getServiceIdForLanguage(DEFAULT_TTS_CONFIG.language));
   const [inputText, setInputText] = useState<string>('');
   const [audio, setAudio] = useState<string>('');
   const [fetching, setFetching] = useState<boolean>(false);
@@ -144,6 +145,16 @@ export const useTTS = (): UseTTSReturn => {
     }
   }, [toast]);
 
+  // Set language with validation
+  const setLanguageWithValidation = useCallback((newLanguage: string) => {
+    setLanguage(newLanguage);
+    setModelId(getServiceIdForLanguage(newLanguage));
+    setInputText('');
+    setAudio('');
+    setFetched(false);
+    setError(null);
+  }, []);
+
   // Clear results
   const clearResults = useCallback(() => {
     setAudio('');
@@ -208,6 +219,7 @@ export const useTTS = (): UseTTSReturn => {
     gender,
     audioFormat,
     samplingRate,
+    modelId,
     inputText,
     audio,
     fetching,
@@ -220,7 +232,7 @@ export const useTTS = (): UseTTSReturn => {
     // Methods
     performInference,
     setInputText: setInputTextWithValidation,
-    setLanguage,
+    setLanguage: setLanguageWithValidation,
     setGender,
     setAudioFormat,
     setSamplingRate,

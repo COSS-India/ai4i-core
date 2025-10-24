@@ -18,8 +18,6 @@ from models.database_models import (
 )
 from models.auth_models import (
     UserDB,
-    RoleDB,
-    PermissionDB,
     ApiKeyDB,
     SessionDB
 )
@@ -34,8 +32,6 @@ __all__ = [
     "NMTRequestDB",
     "NMTResultDB",
     "UserDB",
-    "RoleDB",
-    "PermissionDB",
     "ApiKeyDB",
     "SessionDB"
 ]

@@ -16,7 +16,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNMT } from '../hooks/useNMT';
 import { getSupportedLanguagePairs } from '../services/nmtService';
 import ContentLayout from '../components/common/ContentLayout';
-import LanguageSelector from '../components/nmt/LanguageSelector';
+import ModelLanguageSelector from '../components/nmt/ModelLanguageSelector';
 import TextTranslator from '../components/nmt/TextTranslator';
 import TranslationResults from '../components/nmt/TranslationResults';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -25,6 +25,7 @@ const NMTPage: React.FC = () => {
   const toast = useToast();
   const {
     languagePair,
+    selectedModelId,
     inputText,
     translatedText,
     fetching,
@@ -36,14 +37,16 @@ const NMTPage: React.FC = () => {
     performInference,
     setInputText,
     setLanguagePair,
+    setSelectedModelId,
     clearResults,
     swapLanguages,
   } = useNMT();
 
-  // Fetch available language pairs
+  // Fetch available language pairs for selected model
   const { data: languagePairs, isLoading: pairsLoading } = useQuery({
-    queryKey: ['nmt-language-pairs'],
-    queryFn: getSupportedLanguagePairs,
+    queryKey: ['nmt-language-pairs', selectedModelId],
+    queryFn: () => getSupportedLanguagePairs(selectedModelId),
+    enabled: !!selectedModelId,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
@@ -80,7 +83,7 @@ const NMTPage: React.FC = () => {
               Neural Machine Translation
             </Heading>
             <Text color="gray.600" fontSize="lg">
-              Translate text between 22+ Indian languages with high accuracy
+              Translate text between languages with high accuracy
             </Text>
           </Box>
 
@@ -94,16 +97,15 @@ const NMTPage: React.FC = () => {
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
-                {/* Language Pair Selector */}
+                {/* Model and Language Selector */}
                 <Box>
-                  <Text className="dview-service-try-option-title" mb={4}>
-                    Language Configuration
-                  </Text>
-                  <LanguageSelector
+                  <ModelLanguageSelector
                     languagePair={languagePair}
                     onLanguagePairChange={setLanguagePair}
                     availableLanguagePairs={languagePairs || []}
                     loading={pairsLoading}
+                    selectedModelId={selectedModelId}
+                    onModelChange={setSelectedModelId}
                   />
                 </Box>
 
@@ -182,7 +184,7 @@ const NMTPage: React.FC = () => {
                   <Box p={6} bg="gray.50" borderRadius="md" textAlign="center">
                     <Text color="gray.600" fontSize="sm">
                       Select a language pair and enter text to translate.
-                      The system supports translation between 22+ Indian languages.
+                      The system supports translation between multiple languages.
                     </Text>
                   </Box>
                 )}
