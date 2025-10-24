@@ -87,11 +87,16 @@ const Sidebar: React.FC = () => {
               </Box>
             }
           />
-          {isExpanded && (
-            <Text fontSize="sm" fontWeight="bold" color="gray.700">
-              Simple UI
-            </Text>
-          )}
+          <Text 
+            fontSize="sm" 
+            fontWeight="bold" 
+            color="gray.700"
+            opacity={isExpanded ? 1 : 0}
+            transition="opacity 0.2s"
+            h="16px"
+          >
+            Simple UI
+          </Text>
         </VStack>
 
         <Divider />
@@ -121,7 +126,7 @@ const Sidebar: React.FC = () => {
                   }}
                   transition="all 0.2s"
                 >
-                  {isExpanded && item.label}
+                  {isExpanded ? item.label : <Icon />}
                 </Button>
               </Link>
             );
