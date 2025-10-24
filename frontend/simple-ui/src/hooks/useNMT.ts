@@ -33,7 +33,7 @@ export const useNMT = (): UseNMTReturn => {
           sourceScriptCode: languagePair.sourceScriptCode,
           targetScriptCode: languagePair.targetScriptCode,
         },
-        serviceId: 'ai4bharat/indictrans-v2-all-gpu',
+        serviceId: 'indictrans-v2-all',
       };
 
       return performNMTInference(text, config);
