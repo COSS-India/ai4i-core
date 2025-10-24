@@ -111,6 +111,34 @@ main() {
             print_info "Updating NMT service..."
             "$DOCKER_MANAGER" update nmt-service
             ;;
+        tts)
+            print_info "Updating TTS service..."
+            "$DOCKER_MANAGER" update tts-service
+            ;;
+        asr)
+            print_info "Updating ASR service..."
+            "$DOCKER_MANAGER" update asr-service
+            ;;
+        config)
+            print_info "Updating Config service..."
+            "$DOCKER_MANAGER" update config-service
+            ;;
+        metrics)
+            print_info "Updating Metrics service..."
+            "$DOCKER_MANAGER" update metrics-service
+            ;;
+        telemetry)
+            print_info "Updating Telemetry service..."
+            "$DOCKER_MANAGER" update telemetry-service
+            ;;
+        alerting)
+            print_info "Updating Alerting service..."
+            "$DOCKER_MANAGER" update alerting-service
+            ;;
+        dashboard)
+            print_info "Updating Dashboard service..."
+            "$DOCKER_MANAGER" update dashboard-service
+            ;;
         gateway)
             print_info "Updating API Gateway service..."
             "$DOCKER_MANAGER" update api-gateway-service

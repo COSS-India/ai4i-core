@@ -39,7 +39,7 @@ class InvalidTextInputError(Exception):
 SUPPORTED_LANGUAGES = [
     "en", "hi", "ta", "te", "kn", "ml", "bn", "gu", "mr", "pa", 
     "or", "as", "ur", "sa", "ks", "ne", "sd", "kok", "doi", 
-    "mai", "brx", "mni"
+    "mai", "brx", "mni", "sat", "gom"
 ]
 
 
