@@ -7,6 +7,8 @@ import {
   NMTModel, 
   NMTHealthResponse,
   NMTModelsResponse,
+  NMTLanguagesResponse,
+  NMTModelDetailsResponse,
   LanguagePair
 } from '../types/nmt';
 
@@ -51,16 +53,36 @@ export const performNMTInference = async (
  * Get list of available NMT models
  * @returns Promise with NMT models response
  */
-export const listNMTModels = async (): Promise<NMTModelsResponse> => {
+export const listNMTModels = async (): Promise<NMTModelDetailsResponse[]> => {
   try {
-    const response = await apiClient.get<NMTModelsResponse>(
+    const response = await apiClient.get<{ models: NMTModelDetailsResponse[]; total_models: number }>(
       apiEndpoints.nmt.models
     );
 
-    return response.data;
+    return response.data.models;
   } catch (error) {
     console.error('Failed to fetch NMT models:', error);
     throw new Error('Failed to fetch NMT models');
+  }
+};
+
+/**
+ * Get supported languages for a specific NMT model
+ * @param modelId - Model ID to get languages for
+ * @returns Promise with NMT languages response
+ */
+export const getNMTLanguages = async (modelId?: string): Promise<NMTLanguagesResponse> => {
+  try {
+    const url = modelId 
+      ? `${apiEndpoints.nmt.languages}?model_id=${encodeURIComponent(modelId)}`
+      : apiEndpoints.nmt.languages;
+    
+    const response = await apiClient.get<NMTLanguagesResponse>(url);
+
+    return response.data;
+  } catch (error) {
+    console.error('Failed to fetch NMT languages:', error);
+    throw new Error('Failed to fetch NMT languages');
   }
 };
 
@@ -96,24 +118,30 @@ export const getNMTConfig = async () => {
 };
 
 /**
- * Get supported language pairs
+ * Get supported language pairs for a specific model
+ * @param modelId - Model ID to get language pairs for
  * @returns Promise with supported language pairs
  */
-export const getSupportedLanguagePairs = async (): Promise<LanguagePair[]> => {
+export const getSupportedLanguagePairs = async (modelId?: string): Promise<LanguagePair[]> => {
   try {
-    const models = await listNMTModels();
-    const languagePairs = new Set<string>();
+    const languagesResponse = await getNMTLanguages(modelId);
+    const languagePairs: LanguagePair[] = [];
     
-    models.models.forEach(model => {
-      model.language_pairs.forEach(pair => {
-        languagePairs.add(JSON.stringify({
-          sourceLanguage: pair.source,
-          targetLanguage: pair.target,
-        }));
-      });
-    });
+    // Generate all possible language pairs from supported languages
+    const supportedLanguages = languagesResponse.supported_languages;
     
-    return Array.from(languagePairs).map(pair => JSON.parse(pair));
+    for (let i = 0; i < supportedLanguages.length; i++) {
+      for (let j = 0; j < supportedLanguages.length; j++) {
+        if (i !== j) {
+          languagePairs.push({
+            sourceLanguage: supportedLanguages[i],
+            targetLanguage: supportedLanguages[j],
+          });
+        }
+      }
+    }
+    
+    return languagePairs;
   } catch (error) {
     console.error('Failed to fetch supported language pairs:', error);
     throw new Error('Failed to fetch supported language pairs');
@@ -164,15 +192,13 @@ export const validateNMTRequest = (
  */
 export const getModelByLanguagePair = async (
   languagePair: LanguagePair
-): Promise<NMTModel | null> => {
+): Promise<NMTModelDetailsResponse | null> => {
   try {
     const models = await listNMTModels();
     
-    const matchingModel = models.models.find(model =>
-      model.language_pairs.some(pair =>
-        pair.source === languagePair.sourceLanguage &&
-        pair.target === languagePair.targetLanguage
-      )
+    const matchingModel = models.find(model =>
+      model.supported_languages.includes(languagePair.sourceLanguage) &&
+      model.supported_languages.includes(languagePair.targetLanguage)
     );
     
     return matchingModel || null;

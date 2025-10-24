@@ -69,6 +69,7 @@ export interface NMTModelsResponse {
 // NMT Hook State
 export interface NMTHookState {
   languagePair: LanguagePair;
+  selectedModelId: string;
   inputText: string;
   translatedText: string;
   fetching: boolean;
@@ -84,6 +85,7 @@ export interface NMTHookMethods {
   performInference: (text: string) => Promise<void>;
   setInputText: (text: string) => void;
   setLanguagePair: (pair: LanguagePair) => void;
+  setSelectedModelId: (modelId: string) => void;
   clearResults: () => void;
   swapLanguages: () => void;
 }
@@ -187,4 +189,26 @@ export interface SupportedLanguagesResponse {
     sourceScriptCode?: string;
     targetScriptCode?: string;
   }>;
+}
+
+// NMT Languages Endpoint Response
+export interface NMTLanguagesResponse {
+  model_id: string;
+  provider: string;
+  supported_languages: string[];
+  language_details: Array<{
+    code: string;
+    name: string;
+  }>;
+  total_languages: number;
+}
+
+// NMT Model Details Response
+export interface NMTModelDetailsResponse {
+  model_id: string;
+  provider: string;
+  supported_languages: string[];
+  description: string;
+  max_batch_size: number;
+  supported_scripts: string[];
 }

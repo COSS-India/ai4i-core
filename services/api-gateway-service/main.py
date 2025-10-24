@@ -722,9 +722,9 @@ async def batch_translate(request: Request):
     return await proxy_to_service(request, "/api/v1/nmt/batch-translate", "nmt-service")
 
 @app.get("/api/v1/nmt/languages", response_model=Dict[str, Any])
-async def get_nmt_languages():
+async def get_nmt_languages(model_id: str = "ai4bharat/indictrans-v2-all-gpu--t4"):
     """Get supported languages for NMT service"""
-    return await proxy_to_service(None, "/api/v1/nmt/languages", "nmt-service")
+    return await proxy_to_service(None, f"/api/v1/nmt/languages?model_id={model_id}", "nmt-service")
 
 @app.get("/api/v1/nmt/models", response_model=Dict[str, Any])
 async def get_nmt_models():

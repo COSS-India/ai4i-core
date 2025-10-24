@@ -24,6 +24,7 @@ export const apiEndpoints = {
   nmt: {
     inference: '/api/v1/nmt/inference',
     models: '/api/v1/nmt/models',
+    languages: '/api/v1/nmt/languages',
     health: '/api/v1/nmt/health',
   },
 } as const;
