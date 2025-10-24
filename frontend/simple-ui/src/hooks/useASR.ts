@@ -111,9 +111,20 @@ export const useASR = (): UseASRReturn => {
   // ASR inference mutation
   const asrMutation = useMutation({
     mutationFn: async (audioContent: string) => {
+      // Get serviceId based on language
+      const getServiceIdForLanguage = (lang: string): string => {
+        if (['hi', 'bn', 'gu', 'mr', 'pa'].includes(lang)) {
+          return 'conformer-asr-multilingual';
+        }
+        if (['ta', 'te', 'kn', 'ml'].includes(lang)) {
+          return 'conformer-asr-multilingual';
+        }
+        return 'whisper-large-v3'; // Fallback for other languages
+      };
+
       const config: ASRInferenceRequest['config'] = {
         language: { sourceLanguage: language },
-        serviceId: 'vakyansh-asr-en',
+        serviceId: getServiceIdForLanguage(language),
         audioFormat: 'wav',
         samplingRate: sampleRate,
         transcriptionFormat: 'transcript',

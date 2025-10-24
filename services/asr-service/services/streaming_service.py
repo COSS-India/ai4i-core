@@ -415,7 +415,7 @@ class StreamingASRService:
             )
             
             # Send Triton request
-            model_name = "asr_am_ensemble"  # Default model name
+            model_name = service_id  # Use serviceId as model name
             response = self.triton_client.send_triton_request(
                 model_name, 
                 inputs, 
