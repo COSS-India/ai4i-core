@@ -5,7 +5,8 @@ import { Language, LanguagePair } from './common';
 // ASR Inference Request
 export interface ASRInferenceRequest {
   audio: Array<{
-    audioContent: string;
+    audioContent?: string;
+    audioUri?: string;
   }>;
   config: {
     language: {
@@ -13,8 +14,12 @@ export interface ASRInferenceRequest {
     };
     serviceId: string;
     audioFormat: string;
-    encoding: string;
     samplingRate: number;
+    transcriptionFormat?: string;
+    bestTokenCount?: number;
+    encoding?: string;
+    preProcessors?: string[];
+    postProcessors?: string[];
   };
   controlConfig?: {
     dataTracking?: boolean;
@@ -110,6 +115,7 @@ export interface AudioRecorderProps {
   onRecordingChange: (recording: boolean) => void;
   sampleRate: number;
   disabled?: boolean;
+  timer?: number;
 }
 
 export interface AudioPlayerProps {

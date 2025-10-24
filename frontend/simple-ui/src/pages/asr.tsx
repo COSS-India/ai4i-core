@@ -156,6 +156,7 @@ const ASRPage: React.FC = () => {
                     onRecordingChange={handleRecordingChange}
                     sampleRate={sampleRate}
                     disabled={fetching}
+                    timer={timer}
                   />
                 </Box>
 

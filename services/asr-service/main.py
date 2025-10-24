@@ -51,18 +51,22 @@ async def lifespan(app: FastAPI):
     logger.info("Starting ASR Service...")
     
     try:
-        # Initialize Redis connection
+        # Use the already initialized Redis client
         global redis_client
-        redis_host = os.getenv("REDIS_HOST", "redis")
-        redis_port = int(os.getenv("REDIS_PORT", "6379"))
-        redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
-        
-        redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
-        redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
-        
-        # Test Redis connection
-        await redis_client.ping()
-        logger.info("Redis connection established successfully")
+        if redis_client is None:
+            # Fallback Redis initialization if not done earlier
+            redis_host = os.getenv("REDIS_HOST", "redis")
+            redis_port = int(os.getenv("REDIS_PORT", "6379"))
+            redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+            
+            redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
+            redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
+            
+            # Test Redis connection
+            await redis_client.ping()
+            logger.info("Redis connection established successfully")
+        else:
+            logger.info("Using existing Redis connection")
         
         # Initialize PostgreSQL async engine
         global db_engine, db_session_factory
@@ -99,6 +103,9 @@ async def lifespan(app: FastAPI):
             # Create dependencies
             audio_service = AudioService()
             triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
+            # Strip http:// or https:// scheme from URL
+            if triton_url.startswith(('http://', 'https://')):
+                triton_url = triton_url.split('://', 1)[1]
             triton_api_key = os.getenv("TRITON_API_KEY")
             triton_client = TritonClient(triton_url, triton_api_key)
             
@@ -117,6 +124,10 @@ async def lifespan(app: FastAPI):
                 )
                 
                 logger.info("Streaming service initialized successfully")
+                
+                # Mount Socket.IO streaming endpoint
+                app.mount("/socket.io", streaming_service.app)
+                logger.info("Socket.IO streaming endpoint mounted at /socket.io")
         except Exception as e:
             logger.error(f"Failed to initialize streaming service: {e}")
             # Continue without streaming (optional feature)
@@ -124,20 +135,6 @@ async def lifespan(app: FastAPI):
         # Store connections in app state for middleware access
         app.state.redis_client = redis_client
         app.state.db_session_factory = db_session_factory
-        
-        # Add middleware after Redis client is initialized
-        # Add request logging middleware
-        app.add_middleware(RequestLoggingMiddleware)
-        
-        # Add rate limiting middleware
-        rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-        rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-        app.add_middleware(
-            RateLimitMiddleware,
-            redis_client=redis_client,
-            requests_per_minute=rate_limit_per_minute,
-            requests_per_hour=rate_limit_per_hour
-        )
         
         # Register error handlers
         add_error_handlers(app)
@@ -213,14 +210,49 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Note: Middleware will be added after Redis client is initialized in lifespan
+# Initialize Redis client early for middleware
+redis_client = None
+try:
+    redis_host = os.getenv("REDIS_HOST", "redis")
+    redis_port = int(os.getenv("REDIS_PORT", "6379"))
+    redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+    
+    redis_client = redis.Redis(
+        host=redis_host,
+        port=redis_port,
+        password=redis_password,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        retry_on_timeout=True
+    )
+    
+    # Test Redis connection
+    redis_client.ping()
+    logger.info("Redis connection established for middleware")
+except Exception as e:
+    logger.warning(f"Redis connection failed for middleware: {e}")
+    redis_client = None
 
-# Mount Socket.IO streaming endpoint
-if streaming_service:
-    app.mount("/socket.io/asr", streaming_service.app)
-    logger.info("Socket.IO streaming endpoint mounted at /socket.io/asr")
+# Add middleware after FastAPI app creation
+# Add request logging middleware
+app.add_middleware(RequestLoggingMiddleware)
+
+# Add rate limiting middleware (if Redis is available)
+if redis_client:
+    rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+    rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+    app.add_middleware(
+        RateLimitMiddleware,
+        redis_client=redis_client,
+        requests_per_minute=rate_limit_per_minute,
+        requests_per_hour=rate_limit_per_hour
+    )
+    logger.info("Rate limiting middleware added")
 else:
-    logger.warning("Streaming service not available")
+    logger.warning("Rate limiting middleware skipped - Redis not available")
+
+# Mount Socket.IO streaming endpoint will be done in lifespan function
 
 
 @app.get("/")

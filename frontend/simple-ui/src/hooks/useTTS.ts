@@ -8,6 +8,20 @@ import { getWordCount } from '../utils/helpers';
 import { UseTTSReturn, TTSInferenceRequest, Gender, AudioFormat, SampleRate } from '../types/tts';
 import { DEFAULT_TTS_CONFIG, MAX_TEXT_LENGTH } from '../config/constants';
 
+// Helper function to get the correct service ID based on language
+const getServiceIdForLanguage = (language: string): string => {
+  // Dravidian languages
+  if (['kn', 'ml', 'ta', 'te'].includes(language)) {
+    return 'indic-tts-coqui-dravidian';
+  }
+  // Indo-Aryan languages
+  if (['hi', 'bn', 'gu', 'mr', 'pa'].includes(language)) {
+    return 'indic-tts-coqui-indo_aryan';
+  }
+  // Miscellaneous languages (English, etc.)
+  return 'indic-tts-coqui-misc';
+};
+
 export const useTTS = (): UseTTSReturn => {
   // State
   const [language, setLanguage] = useState<string>(DEFAULT_TTS_CONFIG.language);
@@ -34,7 +48,7 @@ export const useTTS = (): UseTTSReturn => {
     mutationFn: async (text: string) => {
       const config: TTSInferenceRequest['config'] = {
         language: { sourceLanguage: language },
-        serviceId: 'ai4bharat/indic-tts',
+        serviceId: getServiceIdForLanguage(language),
         gender,
         samplingRate,
         audioFormat,

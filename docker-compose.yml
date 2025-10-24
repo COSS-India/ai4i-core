@@ -6,7 +6,7 @@ services:
     image: postgres:15-alpine
     container_name: ai4v-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_USER: ${POSTGRES_USER} 
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
@@ -16,12 +16,12 @@ services:
       - ./infrastructure/postgres:/docker-entrypoint-initdb.d
     networks:
       - microservices-network
-    # healthcheck:
-    #   test: ["CMD-SHELL", "./infrastructure/health-checks/postgres-health.sh"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 40s
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB -h localhost -p 5432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     restart: unless-stopped
 
   redis:
@@ -37,12 +37,12 @@ services:
       - ./infrastructure/redis/redis.conf:/usr/local/etc/redis/redis.conf
     networks:
       - microservices-network
-    # healthcheck:
-    #   test: ["CMD-SHELL", "./infrastructure/health-checks/redis-health.sh"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 20s
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "-p", "6379", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
     restart: unless-stopped
 
   influxdb:
@@ -62,12 +62,12 @@ services:
       - ./infrastructure/influxdb:/docker-entrypoint-initdb.d
     networks:
       - microservices-network
-    # healthcheck:
-      # test: ["CMD-SHELL", "./infrastructure/health-checks/influxdb-health.sh"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:8086/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   elasticsearch:
@@ -105,12 +105,12 @@ services:
       - zookeeper-logs:/var/lib/zookeeper/log
     networks:
       - microservices-network
-    # healthcheck:
-      # test: ["CMD", "nc", "-z", "localhost", "2181"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 20s
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
   kafka:
@@ -123,6 +123,7 @@ services:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: ${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP}
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -134,12 +135,12 @@ services:
       - ./infrastructure/kafka:/docker-entrypoint-initdb.d
     networks:
       - microservices-network
-    # healthcheck:
-      # test: ["CMD-SHELL", "./infrastructure/health-checks/kafka-health.sh"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 40s
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: unless-stopped
 
   # Microservices
@@ -347,8 +348,10 @@ services:
       - "8087:8087"
     environment:
       - ENV_FILE=.env
-    env_file:
-      - ./services/asr-service/.env
+      - AUTH_ENABLED=false
+      - REQUIRE_API_KEY=false
+      - ALLOW_ANONYMOUS_ACCESS=true
+      - TRITON_ENDPOINT=http://13.200.133.97:9000
     depends_on:
       postgres:
         condition: service_healthy
@@ -373,6 +376,7 @@ services:
       - "8088:8088"
     environment:
       - ENV_FILE=.env
+      - TRITON_ENDPOINT=http://13.200.133.97:9000
     env_file:
       - ./services/tts-service/.env
     depends_on:
@@ -396,7 +400,7 @@ services:
       dockerfile: Dockerfile
     container_name: ai4v-nmt-service
     ports:
-      - "8089:8089"
+      - "8091:8089"
     environment:
       - ENV_FILE=.env
     env_file:
@@ -461,4 +465,4 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.25.0.0/16
+        - subnet: 172.30.0.0/16

@@ -33,16 +33,10 @@ class TritonClient:
         """Get or create Triton client (lazy initialization)."""
         if self._client is None:
             try:
-                # Configure SSL context for gevent
-                ssl_context = gevent.ssl.create_default_context()
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = gevent.ssl.CERT_NONE
-                
-                # Create client
+                # Create client (simplified SSL configuration)
                 self._client = http_client.InferenceServerClient(
                     url=self.triton_url,
-                    ssl=True,
-                    ssl_context=ssl_context
+                    ssl=False  # Disable SSL for local development
                 )
                 
                 logger.info(f"Initialized Triton client for {self.triton_url}")
@@ -68,36 +62,45 @@ class TritonClient:
             # Create inputs
             inputs = []
             
-            # AUDIO_SIGNAL input (FP32)
+            # AUDIO_SIGNAL input (FP32) - shape [batch_size, 16000]
             audio_input = http_client.InferInput(
                 "AUDIO_SIGNAL",
-                padded_audio.shape,
-                np_to_triton_dtype(padded_audio.dtype)
+                [1, 16000],  # Fixed shape with batch dimension
+                np_to_triton_dtype(np.float32)
             )
-            audio_input.set_data_from_numpy(padded_audio)
+            # Ensure audio is exactly 16000 samples and add batch dimension
+            if padded_audio.shape[1] != 16000:
+                # Pad or truncate to 16000 samples
+                if padded_audio.shape[1] < 16000:
+                    padded_audio = np.pad(padded_audio, ((0, 0), (0, 16000 - padded_audio.shape[1])), mode='constant')
+                else:
+                    padded_audio = padded_audio[:, :16000]
+            audio_input.set_data_from_numpy(padded_audio.astype(np.float32))
             inputs.append(audio_input)
             
-            # NUM_SAMPLES input (INT32)
+            # NUM_SAMPLES input (INT32) - shape [batch_size, 1]
             num_samples_input = http_client.InferInput(
                 "NUM_SAMPLES",
-                num_samples.shape,
-                np_to_triton_dtype(num_samples.dtype)
+                [1, 1],  # Fixed shape with batch dimension
+                np_to_triton_dtype(np.int32)
             )
-            num_samples_input.set_data_from_numpy(num_samples)
+            # Reshape to [batch_size, 1]
+            num_samples_reshaped = num_samples.reshape(-1, 1)
+            num_samples_input.set_data_from_numpy(num_samples_reshaped.astype(np.int32))
             inputs.append(num_samples_input)
             
-            # LANG_ID input (BYTES)
+            # LANG_ID input (BYTES) - shape [batch_size, 1]
             lang_ids = [language.encode('utf-8') for _ in range(len(audio_chunks))]
             lang_input = self._get_string_tensor(lang_ids, "LANG_ID")
             inputs.append(lang_input)
             
-            # TOPK input (INT32) - only if n_best_tok > 0
+            # TOPK input (INT32) - shape [batch_size, 1] - only if n_best_tok > 0
             if n_best_tok > 0:
-                topk_values = np.array([n_best_tok] * len(audio_chunks), dtype=np.int32)
+                topk_values = np.array([[n_best_tok]] * len(audio_chunks), dtype=np.int32)  # [batch_size, 1]
                 topk_input = http_client.InferInput(
                     "TOPK",
-                    topk_values.shape,
-                    np_to_triton_dtype(topk_values.dtype)
+                    [1, 1],  # Fixed shape with batch dimension
+                    np_to_triton_dtype(np.int32)
                 )
                 topk_input.set_data_from_numpy(topk_values)
                 inputs.append(topk_input)
@@ -225,8 +228,8 @@ class TritonClient:
             # Send async inference request
             response = client.async_infer(
                 model_name=model_name,
-                model_version="1",
                 inputs=input_list,
+                model_version="1",
                 outputs=output_list,
                 headers=request_headers
             )
@@ -264,14 +267,14 @@ class TritonClient:
         return padded_array, lengths_array
     
     def _get_string_tensor(self, string_values: List, tensor_name: str) -> http_client.InferInput:
-        """Create string tensor input."""
-        # Create numpy array with dtype="object"
-        string_array = np.array(string_values, dtype=object)
+        """Create string tensor input with proper batch dimensions."""
+        # Create numpy array with dtype="object" and reshape to [batch_size, 1]
+        string_array = np.array(string_values, dtype=object).reshape(-1, 1)
         
-        # Create InferInput
+        # Create InferInput with fixed shape [batch_size, 1]
         string_input = http_client.InferInput(
             tensor_name,
-            string_array.shape,
+            [1, 1],  # Fixed shape with batch dimension
             np_to_triton_dtype(string_array.dtype)
         )
         string_input.set_data_from_numpy(string_array)

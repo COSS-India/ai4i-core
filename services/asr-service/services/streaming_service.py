@@ -70,7 +70,7 @@ class StreamingASRService:
             logger=True,
             engineio_logger=True
         )
-        self.app = socketio.ASGIApp(self.sio, socketio_path='')
+        self.app = socketio.ASGIApp(self.sio, socketio_path='/socket.io')
         
         # Client session states
         self.client_states: Dict[str, StreamingSessionState] = {}
@@ -124,10 +124,16 @@ class StreamingASRService:
                     except json.JSONDecodeError:
                         logger.warning(f"Invalid postProcessors JSON for session {sid}")
                 
-                # Validate API key if provided
+                # Check authentication settings
+                import os
+                auth_enabled = os.getenv("AUTH_ENABLED", "true").lower() == "true"
+                require_api_key = os.getenv("REQUIRE_API_KEY", "true").lower() == "true"
+                allow_anonymous = os.getenv("ALLOW_ANONYMOUS_ACCESS", "false").lower() == "true"
+                
+                # Validate API key if authentication is enabled and API key is provided
                 user_id = None
                 api_key_id = None
-                if api_key:
+                if auth_enabled and require_api_key and api_key:
                     try:
                         async with get_db_session() as session:
                             api_key_db, user_db = await validate_api_key(api_key, session, self.redis_client)
@@ -137,6 +143,10 @@ class StreamingASRService:
                         logger.error(f"Authentication failed for streaming connection: {e}")
                         await self.sio.emit('error', {'error': 'Authentication failed', 'code': 'AUTH_ERROR'}, room=sid)
                         return False
+                elif auth_enabled and require_api_key and not api_key and not allow_anonymous:
+                    logger.error("API key required but not provided for streaming connection")
+                    await self.sio.emit('error', {'error': 'API key required', 'code': 'AUTH_ERROR'}, room=sid)
+                    return False
                 
                 # Create streaming configuration
                 config = StreamingConfig(
@@ -405,7 +415,7 @@ class StreamingASRService:
             )
             
             # Send Triton request
-            model_name = "asr_am_ensemble"  # Default model name
+            model_name = service_id  # Use serviceId as model name
             response = self.triton_client.send_triton_request(
                 model_name, 
                 inputs, 

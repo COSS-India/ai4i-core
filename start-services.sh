@@ -7,15 +7,16 @@ echo "Starting AI4V Microservices..."
 export COMPOSE_PROJECT_NAME=ai4v-microservices
 
 # Change to the project directory
-cd /home/appala/Projects/AI4V-Core/Ai4V-C
+#cd /home/appala/Projects/AI4V-Core/Ai4V-C
+cd /home/supriya/AI4X/AI4v-Core/aiv4-core/
 
 # Stop any existing containers
 echo "Stopping existing containers..."
-docker-compose down --remove-orphans 2>/dev/null || true
+docker compose down --remove-orphans 2>/dev/null || true
 
 # Start infrastructure services first
 echo "Starting infrastructure services..."
-docker-compose up -d postgres redis influxdb elasticsearch zookeeper kafka
+docker compose up -d postgres redis influxdb elasticsearch zookeeper kafka
 
 # Wait for infrastructure to be ready
 echo "Waiting for infrastructure services to be ready..."
@@ -23,7 +24,7 @@ sleep 30
 
 # Start microservices
 echo "Starting microservices..."
-docker-compose up -d api-gateway-service auth-service config-service metrics-service telemetry-service alerting-service dashboard-service asr-service tts-service nmt-service
+docker compose up -d api-gateway-service auth-service config-service metrics-service telemetry-service alerting-service dashboard-service asr-service tts-service nmt-service
 
 # Wait for microservices to be ready
 echo "Waiting for microservices to be ready..."
@@ -31,7 +32,7 @@ sleep 30
 
 # Start frontend
 echo "Starting frontend..."
-docker-compose up -d simple-ui-frontend
+docker compose up -d simple-ui-frontend
 
 echo "All services started!"
 echo "Services are available at:"

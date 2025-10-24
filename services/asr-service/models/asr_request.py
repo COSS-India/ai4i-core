@@ -6,7 +6,7 @@ Adapted from Dhruva-Platform-2 ULCA schemas for ASR service.
 
 from enum import Enum
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, HttpUrl, validator, Field
+from pydantic import BaseModel, HttpUrl, validator, Field, model_validator
 
 
 class AudioFormat(str, Enum):
@@ -30,12 +30,13 @@ class AudioInput(BaseModel):
     audioContent: Optional[str] = Field(None, description="Base64 encoded audio content")
     audioUri: Optional[HttpUrl] = Field(None, description="URL to audio file")
     
-    @validator('audioContent', 'audioUri')
-    def validate_audio_input(cls, v, values):
+    @model_validator(mode='after')
+    def validate_audio_input(self):
         """Ensure at least one of audioContent or audioUri is provided."""
-        if not v and not values.get('audioContent') and not values.get('audioUri'):
+        if not self.audioContent and not self.audioUri:
             raise ValueError('At least one of audioContent or audioUri must be provided')
-        return v
+        
+        return self
 
 
 class LanguageConfig(BaseModel):

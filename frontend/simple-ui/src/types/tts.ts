@@ -97,6 +97,7 @@ export interface TTSHookState {
   gender: Gender;
   audioFormat: AudioFormat;
   samplingRate: SampleRate;
+  modelId: string;
   inputText: string;
   audio: string;
   fetching: boolean;

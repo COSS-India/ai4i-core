@@ -88,8 +88,8 @@ fi
 # Show logs
 if [ -n "$SERVICE_NAME" ]; then
     echo "Showing logs for $SERVICE_NAME..."
-    docker-compose logs $FOLLOW_FLAG $TIMESTAMPS_FLAG --tail=$TAIL_LINES $SERVICE_NAME
+    docker compose logs $FOLLOW_FLAG $TIMESTAMPS_FLAG --tail=$TAIL_LINES $SERVICE_NAME
 else
     echo "Showing logs for all services..."
-    docker-compose logs $FOLLOW_FLAG $TIMESTAMPS_FLAG --tail=$TAIL_LINES
+    docker compose logs $FOLLOW_FLAG $TIMESTAMPS_FLAG --tail=$TAIL_LINES
 fi

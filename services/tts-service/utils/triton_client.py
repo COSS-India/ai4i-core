@@ -33,16 +33,10 @@ class TritonClient:
         """Get or create Triton client (lazy initialization)."""
         if self._client is None:
             try:
-                # Configure SSL context for gevent
-                ssl_context = gevent.ssl.create_default_context()
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = gevent.ssl.CERT_NONE
-                
-                # Create client
+                # Create client (simplified SSL configuration like ASR service)
                 self._client = http_client.InferenceServerClient(
                     url=self.triton_url,
-                    ssl=True,
-                    ssl_context=ssl_context
+                    ssl=False  # Disable SSL for local development
                 )
                 
                 logger.info(f"Initialized Triton client for {self.triton_url}")
@@ -64,16 +58,16 @@ class TritonClient:
             # Create inputs
             inputs = []
             
-            # TEXT input (BYTES)
-            text_input = self._get_string_tensor([text], "TEXT")
+            # INPUT_TEXT input (BYTES)
+            text_input = self._get_string_tensor([text], "INPUT_TEXT")
             inputs.append(text_input)
             
-            # GENDER input (BYTES)
-            gender_input = self._get_string_tensor([gender], "GENDER")
-            inputs.append(gender_input)
+            # INPUT_SPEAKER_ID input (BYTES)
+            speaker_input = self._get_string_tensor([gender], "INPUT_SPEAKER_ID")
+            inputs.append(speaker_input)
             
-            # LANGUAGE input (BYTES)
-            language_input = self._get_string_tensor([language], "LANGUAGE")
+            # INPUT_LANGUAGE_ID input (BYTES)
+            language_input = self._get_string_tensor([language], "INPUT_LANGUAGE_ID")
             inputs.append(language_input)
             
             # Create outputs

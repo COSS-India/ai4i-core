@@ -21,8 +21,8 @@ COVERAGE="${2:-false}" # Default no coverage
 
 # Check if services are running
 echo "Checking if services are running..."
-if ! docker-compose ps | grep -q "Up"; then
-    echo -e "${RED}Error: Services are not running. Start services first with: docker-compose up -d${NC}"
+if ! docker compose ps | grep -q "Up"; then
+    echo -e "${RED}Error: Services are not running. Start services first with: docker compose up -d${NC}"
     exit 1
 fi
 
