@@ -409,8 +409,15 @@ async def health_monitor():
                             
                         # Perform health check
                         start_time = time.time()
+                        # Use different health endpoints for different services
+                        health_endpoint = "/health"
+                        if service_name == "nmt-service":
+                            health_endpoint = "/api/v1/nmt/health"
+                        elif service_name == "asr-service":
+                            health_endpoint = "/api/v1/asr/health"
+                        
                         response = await http_client.get(
-                            f"{instance_url}/health",
+                            f"{instance_url}{health_endpoint}",
                             timeout=health_check_timeout
                         )
                         response_time = time.time() - start_time
