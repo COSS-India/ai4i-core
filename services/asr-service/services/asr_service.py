@@ -61,13 +61,8 @@ class ASRService:
             transcription_format = request.config.transcriptionFormat
             best_token_count = request.config.bestTokenCount
             
-            # Determine model name based on configuration
-            if "lm" in post_processors:
-                model_name = "asr_am_lm_ensemble"
-            elif best_token_count > 0:
-                model_name = "asr_am_topk_ensemble"
-            else:
-                model_name = "asr_am_ensemble"
+            # Use serviceId as model name for Triton
+            model_name = service_id
             
             standard_rate = 16000  # Target sample rate
             
@@ -190,7 +185,7 @@ class ASRService:
                         confidence_score=None,  # TODO: Extract from Triton response
                         word_timestamps=[line for line in processed_transcript_lines if "start" in line],
                         language_detected=language,
-                        audio_format=audio_input.audioFormat.value if audio_input.audioFormat else None,
+                        audio_format=request.config.audioFormat.value if request.config.audioFormat else None,
                         sample_rate=standard_rate
                     )
                     
