@@ -17,6 +17,7 @@ if [ $# -eq 0 ]; then
     echo "  telemetry-service"
     echo "  alerting-service"
     echo "  dashboard-service"
+    echo "  nmt-service"
     echo "  postgres"
     echo "  redis"
     echo "  influxdb"
@@ -41,7 +42,7 @@ fi
 cd "$(dirname "$0")/.."
 
 # Validate service name
-VALID_SERVICES=("api-gateway-service" "auth-service" "config-service" "metrics-service" "telemetry-service" "alerting-service" "dashboard-service" "postgres" "redis" "influxdb" "elasticsearch" "kafka" "zookeeper")
+VALID_SERVICES=("api-gateway-service" "auth-service" "config-service" "metrics-service" "telemetry-service" "alerting-service" "dashboard-service" "nmt-service" "postgres" "redis" "influxdb" "elasticsearch" "kafka" "zookeeper")
 
 if [[ ! " ${VALID_SERVICES[@]} " =~ " ${SERVICE_NAME} " ]]; then
     echo "Error: Invalid service name '$SERVICE_NAME'"
@@ -85,6 +86,9 @@ case $SERVICE_NAME in
         ;;
     dashboard-service)
         HEALTH_URL="http://localhost:8086/health"
+        ;;
+    nmt-service)
+        HEALTH_URL="http://localhost:8091/api/v1/nmt/health"
         ;;
     postgres)
         # Use pg_isready for PostgreSQL

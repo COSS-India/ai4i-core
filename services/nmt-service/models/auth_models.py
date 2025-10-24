@@ -1,91 +1,59 @@
-from sqlalchemy import Column, Integer, String, Boolean, Text, DateTime, ForeignKey, func
-from sqlalchemy.dialects.postgresql import INET
+"""
+Auth Models
+SQLAlchemy ORM models for authentication-related database tables
+"""
+
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, func
 from sqlalchemy.orm import relationship
-from models.database_models import Base
+from .database_models import Base
 
 
 class UserDB(Base):
-    """User model for authentication database."""
+    """User database model"""
     __tablename__ = "users"
     
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String(255), unique=True, index=True, nullable=False)
-    username = Column(String(100), unique=True, index=True, nullable=False)
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), unique=True, nullable=False)
+    username = Column(String(100), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
-    is_verified = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    is_active = Column(Boolean, default=True)
+    is_verified = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
     api_keys = relationship("ApiKeyDB", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("SessionDB", back_populates="user", cascade="all, delete-orphan")
-    
-    def __repr__(self):
-        return f"<UserDB(id={self.id}, email='{self.email}', username='{self.username}', is_active={self.is_active})>"
-
-
-class RoleDB(Base):
-    """Role model for user roles."""
-    __tablename__ = "roles"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), unique=True, index=True, nullable=False)
-    description = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    
-    def __repr__(self):
-        return f"<RoleDB(id={self.id}, name='{self.name}')>"
-
-
-class PermissionDB(Base):
-    """Permission model for role-based access control."""
-    __tablename__ = "permissions"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), unique=True, index=True, nullable=False)
-    resource = Column(String(100), nullable=False)
-    action = Column(String(50), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    
-    def __repr__(self):
-        return f"<PermissionDB(id={self.id}, name='{self.name}', resource='{self.resource}', action='{self.action}')>"
 
 
 class ApiKeyDB(Base):
-    """API Key model for authentication."""
+    """API Key database model"""
     __tablename__ = "api_keys"
     
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    key_hash = Column(String(255), unique=True, index=True, nullable=False)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    key_hash = Column(String(255), unique=True, nullable=False)
     name = Column(String(100), nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_used_at = Column(DateTime(timezone=True), nullable=True)
     
     # Relationships
     user = relationship("UserDB", back_populates="api_keys")
-    
-    def __repr__(self):
-        return f"<ApiKeyDB(id={self.id}, user_id={self.user_id}, name='{self.name}', is_active={self.is_active})>"
 
 
 class SessionDB(Base):
-    """Session model for user sessions."""
+    """Session database model"""
     __tablename__ = "sessions"
     
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    session_token = Column(String(255), unique=True, index=True, nullable=False)
-    ip_address = Column(INET, nullable=True)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    session_token = Column(String(255), unique=True, nullable=False)
+    ip_address = Column(String(45), nullable=True)  # IPv6 can be up to 45 chars
     user_agent = Column(Text, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     # Relationships
     user = relationship("UserDB", back_populates="sessions")
-    
-    def __repr__(self):
-        return f"<SessionDB(id={self.id}, user_id={self.user_id}, expires_at={self.expires_at})>"

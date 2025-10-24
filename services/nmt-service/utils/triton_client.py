@@ -31,6 +31,7 @@ class TritonClient:
     def client(self):
         """Lazy initialization of Triton client"""
         if self._client is None:
+            logger.info(f"Initializing Triton client with URL: {self.triton_url}")
             self._client = http_client.InferenceServerClient(
                 url=self.triton_url,
                 verbose=False
@@ -119,8 +120,9 @@ class TritonClient:
     def _get_string_tensor(self, string_values: List[str], tensor_name: str) -> InferInput:
         """Create string tensor for Triton input"""
         try:
-            # Create numpy array with dtype="object"
-            np_array = np.array(string_values, dtype=object)
+            # Create nested arrays to match expected shape [-1, 1]
+            nested_values = [[value] for value in string_values]
+            np_array = np.array(nested_values, dtype=object)
             
             # Create InferInput
             input_tensor = InferInput(
