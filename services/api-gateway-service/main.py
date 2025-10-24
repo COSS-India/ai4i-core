@@ -54,6 +54,38 @@ class ASRInferenceResponse(BaseModel):
     output: List[TranscriptOutput] = Field(..., description="Transcription results")
     config: Optional[Dict[str, Any]] = Field(None, description="Response metadata")
 
+# Pydantic models for NMT endpoints
+class NMTLanguagePair(BaseModel):
+    """Language pair configuration for NMT."""
+    sourceLanguage: str = Field(..., description="Source language code (e.g., 'en', 'hi', 'ta')")
+    targetLanguage: str = Field(..., description="Target language code")
+    sourceScriptCode: Optional[str] = Field(None, description="Script code for source (e.g., 'Deva', 'Arab')")
+    targetScriptCode: Optional[str] = Field(None, description="Script code for target")
+
+class NMTTextInput(BaseModel):
+    """Text input for NMT translation."""
+    source: str = Field(..., description="Input text to translate")
+
+class NMTInferenceConfig(BaseModel):
+    """Configuration for NMT inference."""
+    serviceId: str = Field(..., description="Identifier for NMT service/model")
+    language: NMTLanguagePair = Field(..., description="Language pair configuration")
+
+class NMTInferenceRequest(BaseModel):
+    """NMT inference request model."""
+    input: List[NMTTextInput] = Field(..., description="List of text inputs to translate", min_items=1)
+    config: NMTInferenceConfig = Field(..., description="Configuration for inference")
+    controlConfig: Optional[Dict[str, Any]] = Field(None, description="Additional control parameters")
+
+class NMTTranslationOutput(BaseModel):
+    """Translation output."""
+    source: str = Field(..., description="Source text")
+    target: str = Field(..., description="Translated text")
+
+class NMTInferenceResponse(BaseModel):
+    """NMT inference response model."""
+    output: List[NMTTranslationOutput] = Field(..., description="Translation results")
+
 # Pydantic models for TTS endpoints
 class Gender(str, Enum):
     """Voice gender options for TTS."""
@@ -676,25 +708,28 @@ async def get_tts_voices(
 
 # NMT Service Endpoints (Proxy to NMT Service)
 
-@app.post("/api/v1/nmt/inference")
-async def nmt_inference(request: Request):
+@app.post("/api/v1/nmt/inference", response_model=NMTInferenceResponse)
+async def nmt_inference(request: NMTInferenceRequest):
     """Perform NMT inference"""
-    return await proxy_to_service(request, "/api/v1/nmt/inference", "nmt-service")
+    import json
+    # Convert Pydantic model to JSON for proxy
+    body = json.dumps(request.dict()).encode()
+    return await proxy_to_service(None, "/api/v1/nmt/inference", "nmt-service", method="POST", body=body)
 
 @app.post("/api/v1/nmt/batch-translate")
 async def batch_translate(request: Request):
     """Batch translate multiple texts using NMT service"""
     return await proxy_to_service(request, "/api/v1/nmt/batch-translate", "nmt-service")
 
-@app.get("/api/v1/nmt/languages")
-async def get_nmt_languages(request: Request):
+@app.get("/api/v1/nmt/languages", response_model=Dict[str, Any])
+async def get_nmt_languages():
     """Get supported languages for NMT service"""
-    return await proxy_to_service(request, "/api/v1/nmt/languages", "nmt-service")
+    return await proxy_to_service(None, "/api/v1/nmt/languages", "nmt-service")
 
-@app.get("/api/v1/nmt/models")
-async def get_nmt_models(request: Request):
+@app.get("/api/v1/nmt/models", response_model=Dict[str, Any])
+async def get_nmt_models():
     """Get available NMT models"""
-    return await proxy_to_service(request, "/api/v1/nmt/models", "nmt-service")
+    return await proxy_to_service(None, "/api/v1/nmt/models", "nmt-service")
 
 @app.get("/api/v1/nmt/health")
 async def nmt_health(request: Request):

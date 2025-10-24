@@ -5,9 +5,7 @@ SQLAlchemy ORM models for authentication-related database tables
 
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, func
 from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import declarative_base
-
-Base = declarative_base()
+from .database_models import Base
 
 
 class UserDB(Base):

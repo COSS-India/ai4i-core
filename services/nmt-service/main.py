@@ -24,6 +24,9 @@ from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 
+# Import models to ensure they are registered with SQLAlchemy
+from models import database_models, auth_models
+
 # Configure logging
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -36,8 +39,8 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db")
-TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "http://triton-server:8000")
-TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
+TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "13.200.133.97:8000")
+TRITON_API_KEY = os.getenv("TRITON_API_KEY", "1b69e9a1a24466c85e4bbca3c5295f50")
 
 # Global variables
 redis_client: Optional[redis.Redis] = None
@@ -57,7 +60,7 @@ try:
     )
     
     # Test Redis connection
-    redis_client.ping()
+    asyncio.run(redis_client.ping())
     logger.info("Redis connection established for middleware")
 except Exception as e:
     logger.warning(f"Redis connection failed for middleware: {e}")
