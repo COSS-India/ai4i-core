@@ -83,7 +83,7 @@ const NMTPage: React.FC = () => {
               Neural Machine Translation
             </Heading>
             <Text color="gray.600" fontSize="lg">
-              Translate text between 22+ Indian languages with high accuracy
+              Translate text between languages with high accuracy
             </Text>
           </Box>
 
@@ -184,7 +184,7 @@ const NMTPage: React.FC = () => {
                   <Box p={6} bg="gray.50" borderRadius="md" textAlign="center">
                     <Text color="gray.600" fontSize="sm">
                       Select a language pair and enter text to translate.
-                      The system supports translation between 22+ Indian languages.
+                      The system supports translation between multiple languages.
                     </Text>
                   </Box>
                 )}
