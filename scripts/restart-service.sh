@@ -54,10 +54,10 @@ echo "Restarting service: $SERVICE_NAME"
 # Restart the service
 if [ "$BUILD_FLAG" = "--build" ]; then
     echo "Rebuilding and restarting $SERVICE_NAME..."
-    docker-compose up -d $BUILD_FLAG $SERVICE_NAME
+    docker compose up -d $BUILD_FLAG $SERVICE_NAME
 else
     echo "Restarting $SERVICE_NAME..."
-    docker-compose restart $SERVICE_NAME
+    docker compose restart $SERVICE_NAME
 fi
 
 # Wait for service to be healthy
@@ -88,7 +88,7 @@ case $SERVICE_NAME in
         ;;
     postgres)
         # Use pg_isready for PostgreSQL
-        until docker-compose exec postgres pg_isready -U "${POSTGRES_USER:-dhruva_user}" > /dev/null 2>&1; do
+        until docker compose exec postgres pg_isready -U "${POSTGRES_USER:-dhruva_user}" > /dev/null 2>&1; do
             echo "PostgreSQL is not ready yet, waiting..."
             sleep 2
         done
@@ -97,7 +97,7 @@ case $SERVICE_NAME in
         ;;
     redis)
         # Use redis-cli ping for Redis
-        until docker-compose exec redis redis-cli -a "${REDIS_PASSWORD:-redis_secure_password_2024}" ping > /dev/null 2>&1; do
+        until docker compose exec redis redis-cli -a "${REDIS_PASSWORD:-redis_secure_password_2024}" ping > /dev/null 2>&1; do
             echo "Redis is not ready yet, waiting..."
             sleep 2
         done
@@ -152,4 +152,4 @@ echo "$SERVICE_NAME is healthy and running!"
 
 # Show service logs
 echo "Showing recent logs for $SERVICE_NAME:"
-docker-compose logs --tail=10 $SERVICE_NAME
+docker compose logs --tail=10 $SERVICE_NAME

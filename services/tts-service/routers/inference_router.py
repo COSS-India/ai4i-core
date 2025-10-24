@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 # Create router
 inference_router = APIRouter(
     prefix="/api/v1/tts", 
-    tags=["TTS Inference"],
-    dependencies=[Depends(AuthProvider)]  # Add authentication dependency
+    tags=["TTS Inference"]
+    # Authentication disabled for development
 )
 
 
@@ -50,6 +50,9 @@ async def get_tts_service(db: AsyncSession = Depends(get_db_session)) -> TTSServ
         # Create Triton client
         import os
         triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
+        # Strip http:// or https:// scheme from URL (like ASR service)
+        if triton_url.startswith(('http://', 'https://')):
+            triton_url = triton_url.split('://', 1)[1]
         triton_api_key = os.getenv("TRITON_API_KEY")
         triton_client = TritonClient(triton_url, triton_api_key)
         

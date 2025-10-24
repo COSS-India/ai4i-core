@@ -9,10 +9,10 @@ services:
   api-gateway-service:
     volumes:
       - ./services/api-gateway-service:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8080 --reload
     environment:
       - DEBUG=true
       - LOG_LEVEL=DEBUG
+      - TTS_SERVICE_URL=http://tts-service:8088
 
   # Auth Service - Development overrides
   auth-service:
@@ -67,6 +67,11 @@ services:
     environment:
       - DEBUG=true
       - LOG_LEVEL=DEBUG
+
+  # ASR Service - Development overrides
+  asr-service:
+    environment:
+      - TRITON_ENDPOINT=http://13.200.133.97:5000
 
   # PostgreSQL - Development overrides
   postgres:

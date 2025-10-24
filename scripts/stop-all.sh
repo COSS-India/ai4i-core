@@ -41,13 +41,13 @@ done
 # Stop all services
 echo "Stopping all services..."
 if [ "$REMOVE_VOLUMES" = true ] && [ "$REMOVE_ORPHANS" = true ]; then
-    docker-compose down --volumes --remove-orphans
+    sudo docker compose down --volumes --remove-orphans
 elif [ "$REMOVE_VOLUMES" = true ]; then
-    docker-compose down --volumes
+    sudo docker compose down --volumes
 elif [ "$REMOVE_ORPHANS" = true ]; then
-    docker-compose down --remove-orphans
+    sudo docker compose down --remove-orphans
 else
-    docker-compose down
+    sudo docker compose down
 fi
 
 echo "All services stopped successfully!"

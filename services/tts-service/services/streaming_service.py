@@ -2,10 +2,17 @@ import asyncio
 import base64
 import json
 import logging
-import socketio
 import time
 from typing import Dict, Optional, Any
 from uuid import uuid4
+
+# Try to import socketio, but make it optional
+try:
+    import socketio
+    SOCKETIO_AVAILABLE = True
+except ImportError:
+    SOCKETIO_AVAILABLE = False
+    socketio = None
 
 from models.streaming_models import (
     StreamingTTSConfig,
@@ -38,6 +45,8 @@ class StreamingTTSService:
         response_frequency_in_ms: int = 2000
     ):
         """Initialize TTS streaming service."""
+        if not SOCKETIO_AVAILABLE:
+            raise ImportError("socketio module is required for StreamingTTSService but not available")
         self.audio_service = audio_service
         self.text_service = text_service
         self.triton_client = triton_client
@@ -332,7 +341,7 @@ class StreamingTTSService:
                 )
                 
                 # Send Triton request
-                response = self.triton_client.send_triton_request("tts", inputs, outputs)
+                response = self.triton_client.send_triton_request("tts", input_list=inputs, output_list=outputs)
                 
                 # Extract audio
                 raw_audio = response.as_numpy("OUTPUT_GENERATED_AUDIO")[0]

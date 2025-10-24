@@ -8,6 +8,7 @@ import {
   ASRHealthResponse,
   ASRModelsResponse 
 } from '../types/asr';
+import { io, Socket } from 'socket.io-client';
 
 /**
  * Perform ASR inference on audio content
@@ -37,6 +38,48 @@ export const performASRInference = async (
   } catch (error) {
     console.error('ASR inference error:', error);
     throw new Error('Failed to perform ASR inference');
+  }
+};
+
+/**
+ * Transcribe audio using the transcribe endpoint (alias for inference)
+ * @param audioContent - Base64 encoded audio content
+ * @param config - ASR configuration
+ * @returns Promise with ASR inference response
+ */
+export const transcribeAudio = async (
+  audioContent: string,
+  config: ASRInferenceRequest['config']
+): Promise<ASRInferenceResponse> => {
+  try {
+    // Dhruva Platform ASR request schema
+    const payload: ASRInferenceRequest = {
+      audio: [{ audioContent }],
+      config: {
+        ...config,
+        encoding: 'base64', // Required for Dhruva Platform
+        preProcessors: ['vad', 'denoise'], // Voice Activity Detection and denoising
+        postProcessors: ['lm', 'punctuation'], // Language model and punctuation
+      },
+      controlConfig: {
+        dataTracking: false,
+      },
+    };
+
+    console.log('Sending ASR request:', {
+      audioLength: audioContent.length,
+      config: payload.config,
+    });
+
+    const response = await apiClient.post<ASRInferenceResponse>(
+      apiEndpoints.asr.transcribe,
+      payload
+    );
+
+    return response.data;
+  } catch (error) {
+    console.error('ASR transcription error:', error);
+    throw new Error('Failed to transcribe audio');
   }
 };
 
@@ -120,3 +163,133 @@ export const validateASRRequest = (
 
   return { isValid: true };
 };
+
+/**
+ * WebSocket streaming ASR service
+ */
+export class ASRStreamingService {
+  private socket: Socket | null = null;
+  private isConnected = false;
+
+  constructor() {
+    this.socket = null;
+    this.isConnected = false;
+  }
+
+  /**
+   * Connect to ASR streaming service
+   */
+  connect(config: {
+    serviceId: string;
+    language: string;
+    samplingRate: number;
+    apiKey?: string;
+  }): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (this.socket?.connected) {
+        resolve();
+        return;
+      }
+
+      console.log('Connecting to ASR streaming service...', config);
+
+      this.socket = io(apiEndpoints.asr.streaming, {
+        transports: ['websocket'],
+        query: {
+          serviceId: config.serviceId,
+          language: config.language,
+          samplingRate: config.samplingRate.toString(),
+          ...(config.apiKey && { apiKey: config.apiKey }),
+        },
+      });
+
+      this.socket.on('connect', () => {
+        console.log('Connected to ASR streaming service');
+        this.isConnected = true;
+        resolve();
+      });
+
+      this.socket.on('connect_error', (error) => {
+        console.error('ASR streaming connection error:', error);
+        this.isConnected = false;
+        reject(error);
+      });
+
+      this.socket.on('disconnect', (reason) => {
+        console.log('ASR streaming disconnected:', reason);
+        this.isConnected = false;
+      });
+    });
+  }
+
+  /**
+   * Start streaming session
+   */
+  startSession(config: {
+    serviceId: string;
+    language: string;
+    samplingRate: number;
+    preProcessors?: string[];
+    postProcessors?: string[];
+  }): void {
+    if (!this.socket?.connected) {
+      throw new Error('Not connected to streaming service');
+    }
+
+    console.log('Starting ASR streaming session...', config);
+    this.socket.emit('start', config);
+  }
+
+  /**
+   * Send audio data
+   */
+  sendAudioData(audioData: ArrayBuffer): void {
+    if (!this.socket?.connected) {
+      throw new Error('Not connected to streaming service');
+    }
+
+    this.socket.emit('data', audioData);
+  }
+
+  /**
+   * Listen for responses
+   */
+  onResponse(callback: (response: any) => void): void {
+    if (!this.socket) return;
+    this.socket.on('response', callback);
+  }
+
+  /**
+   * Listen for errors
+   */
+  onError(callback: (error: any) => void): void {
+    if (!this.socket) return;
+    this.socket.on('error', callback);
+  }
+
+  /**
+   * Listen for ready event
+   */
+  onReady(callback: (data: any) => void): void {
+    if (!this.socket) return;
+    this.socket.on('ready', callback);
+  }
+
+  /**
+   * Disconnect from streaming service
+   */
+  disconnect(): void {
+    if (this.socket) {
+      this.socket.disconnect();
+      this.socket = null;
+      this.isConnected = false;
+    }
+  }
+
+  /**
+   * Check if connected
+   */
+  get connected(): boolean {
+    return this.isConnected && this.socket?.connected === true;
+  }
+}
