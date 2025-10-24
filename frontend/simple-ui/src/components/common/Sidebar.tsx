@@ -116,7 +116,7 @@ const Sidebar: React.FC = () => {
                   h="40px"
                   w="full"
                   justifyContent={isExpanded ? 'flex-start' : 'center'}
-                  leftIcon={<Icon />}
+                  leftIcon={isExpanded ? <Icon /> : undefined}
                   bg={isActive ? 'orange.500' : 'transparent'}
                   color={isActive ? 'white' : 'gray.700'}
                   boxShadow={isActive ? 'md' : 'none'}
@@ -126,7 +126,7 @@ const Sidebar: React.FC = () => {
                   }}
                   transition="all 0.2s"
                 >
-                  {isExpanded && item.label}
+                  {isExpanded ? item.label : <Icon />}
                 </Button>
               </Link>
             );
