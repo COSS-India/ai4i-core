@@ -14,12 +14,12 @@ import {
  * Perform NMT inference on text
  * @param text - Text to translate
  * @param config - NMT configuration
- * @returns Promise with NMT inference response
+ * @returns Promise with NMT inference response and timing info
  */
 export const performNMTInference = async (
   text: string,
   config: NMTInferenceRequest['config']
-): Promise<NMTInferenceResponse> => {
+): Promise<{ data: NMTInferenceResponse; responseTime: number }> => {
   try {
     const payload: NMTInferenceRequest = {
       input: [{ source: text }],
@@ -34,7 +34,13 @@ export const performNMTInference = async (
       payload
     );
 
-    return response.data;
+    // Extract response time from headers
+    const responseTime = parseInt(response.headers['request-duration'] || '0');
+
+    return {
+      data: response.data,
+      responseTime
+    };
   } catch (error) {
     console.error('NMT inference error:', error);
     throw new Error('Failed to perform NMT inference');

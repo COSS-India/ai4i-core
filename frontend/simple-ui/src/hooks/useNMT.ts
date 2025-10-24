@@ -5,7 +5,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useToast } from '@chakra-ui/react';
 import { performNMTInference } from '../services/nmtService';
 import { getWordCount } from '../utils/helpers';
-import { UseNMTReturn, NMTInferenceRequest, LanguagePair } from '../types/nmt';
+import { UseNMTReturn, NMTInferenceRequest, NMTInferenceResponse, LanguagePair } from '../types/nmt';
 import { DEFAULT_NMT_CONFIG, MAX_TEXT_LENGTH } from '../config/constants';
 
 export const useNMT = (): UseNMTReturn => {
@@ -38,11 +38,15 @@ export const useNMT = (): UseNMTReturn => {
 
       return performNMTInference(text, config);
     },
-    onSuccess: (response) => {
+    onSuccess: (response: { data: NMTInferenceResponse; responseTime: number }) => {
       try {
-        const translation = response.output[0]?.target || '';
+        const translation = response.data.output[0]?.target || '';
         setTranslatedText(translation);
         setResponseWordCount(getWordCount(translation));
+        
+        // Update request time with actual API response time (in milliseconds)
+        setRequestTime(response.responseTime.toString());
+        
         setFetched(true);
         setFetching(false);
         setError(null);
