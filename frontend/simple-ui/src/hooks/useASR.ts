@@ -114,12 +114,12 @@ export const useASR = (): UseASRReturn => {
       // Get serviceId based on language
       const getServiceIdForLanguage = (lang: string): string => {
         if (['hi', 'bn', 'gu', 'mr', 'pa'].includes(lang)) {
-          return 'conformer-asr-multilingual';
+          return 'asr_am_ensemble';
         }
         if (['ta', 'te', 'kn', 'ml'].includes(lang)) {
-          return 'conformer-asr-multilingual';
+          return 'asr_am_ensemble';
         }
-        return 'whisper-large-v3'; // Fallback for other languages
+        return 'asr_am_ensemble'; // Use asr_am_ensemble for all languages
       };
 
       const config: ASRInferenceRequest['config'] = {
@@ -134,12 +134,16 @@ export const useASR = (): UseASRReturn => {
       return transcribeAudio(audioContent, config);
     },
     onSuccess: (response, variables, context) => {
+      console.log('ASR Success - Full response:', response);
       const transcript = response.output[0]?.source || '';
+      console.log('ASR Success - Extracted transcript:', transcript);
+      console.log('ASR Success - Transcript length:', transcript.length);
       setAudioText(transcript);
       setResponseWordCount(getWordCount(transcript));
       setFetched(true);
       setFetching(false);
       setError(null);
+      console.log('ASR Success - States updated');
     },
     onError: (error: any) => {
       console.error('ASR inference error:', error);
@@ -262,8 +266,8 @@ export const useASR = (): UseASRReturn => {
       setFetching(true);
       setError(null);
       console.log('Calling asrMutation.mutateAsync...');
-      await asrMutation.mutateAsync(audioContent);
-      console.log('ASR mutation completed successfully');
+      const result = await asrMutation.mutateAsync(audioContent);
+      console.log('ASR mutation completed successfully, result:', result);
     } catch (err) {
       console.error('Inference error:', err);
       setError('Failed to transcribe audio');
