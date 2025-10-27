@@ -69,6 +69,11 @@ check_service_health() {
                 health_status="healthy"
             fi
             ;;
+        pipeline-service)
+            if curl -f -s http://localhost:8092/health > /dev/null 2>&1; then
+                health_status="healthy"
+            fi
+            ;;
         simple-ui-frontend)
             if curl -f -s http://localhost:3000/api/health > /dev/null 2>&1; then
                 health_status="healthy"

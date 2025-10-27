@@ -41,9 +41,9 @@ const PipelinePage: React.FC = () => {
   const router = useRouter();
   const [sourceLanguage, setSourceLanguage] = useState('en');
   const [targetLanguage, setTargetLanguage] = useState('hi');
-  const [asrServiceId, setAsrServiceId] = useState('dhruva-asr');
-  const [nmtServiceId, setNmtServiceId] = useState('dhruva-nmt');
-  const [ttsServiceId, setTtsServiceId] = useState('dhruva-tts');
+  const [asrServiceId, setAsrServiceId] = useState('asr_am_ensemble');
+  const [nmtServiceId, setNmtServiceId] = useState('ai4bharat/indictrans-v2-all-gpu--t4');
+  const [ttsServiceId, setTtsServiceId] = useState('indic-tts-coqui-dravidian');
 
   const {
     isLoading,
@@ -215,7 +215,7 @@ const PipelinePage: React.FC = () => {
                     value={asrServiceId}
                     onChange={(e) => setAsrServiceId(e.target.value)}
                   >
-                    <option value="dhruva-asr">dhruva-asr (Default)</option>
+                    <option value="asr_am_ensemble">asr_am_ensemble (Default)</option>
                     {asrModels?.models?.map((model) => (
                       <option key={model.model_id} value={model.model_id}>
                         {model.model_id}
@@ -231,7 +231,7 @@ const PipelinePage: React.FC = () => {
                     value={nmtServiceId}
                     onChange={(e) => setNmtServiceId(e.target.value)}
                   >
-                    <option value="dhruva-nmt">dhruva-nmt (Default)</option>
+                    <option value="ai4bharat/indictrans-v2-all-gpu--t4">ai4bharat/indictrans-v2-all-gpu--t4 (Default)</option>
                     {nmtModels?.map((model) => (
                       <option key={model.model_id} value={model.model_id}>
                         {model.model_id}
@@ -247,7 +247,9 @@ const PipelinePage: React.FC = () => {
                     value={ttsServiceId}
                     onChange={(e) => setTtsServiceId(e.target.value)}
                   >
-                    <option value="dhruva-tts">dhruva-tts (Default)</option>
+                    <option value="indic-tts-coqui-dravidian">indic-tts-coqui-dravidian (Default)</option>
+                    <option value="indic-tts-coqui-indo_aryan">indic-tts-coqui-indo_aryan</option>
+                    <option value="indic-tts-coqui-misc">indic-tts-coqui-misc</option>
                     {ttsVoices?.voices?.slice(0, 10).map((voice) => (
                       <option key={voice.voice_id} value={voice.voice_id}>
                         {voice.voice_id}
