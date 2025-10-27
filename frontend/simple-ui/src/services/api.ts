@@ -10,7 +10,6 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 export const apiEndpoints = {
   asr: {
     inference: '/api/v1/asr/inference',
-    transcribe: '/api/v1/asr/transcribe',
     models: '/api/v1/asr/models',
     health: '/api/v1/asr/health',
     streamingInfo: '/api/v1/asr/streaming/info',
@@ -26,11 +25,6 @@ export const apiEndpoints = {
     models: '/api/v1/nmt/models',
     languages: '/api/v1/nmt/languages',
     health: '/api/v1/nmt/health',
-  },
-  pipeline: {
-    inference: '/api/v1/pipeline/inference',
-    info: '/api/v1/pipeline/info',
-    health: '/api/v1/pipeline/health',
   },
 } as const;
 

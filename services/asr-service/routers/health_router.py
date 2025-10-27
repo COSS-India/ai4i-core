@@ -75,15 +75,15 @@ async def health_check() -> Dict[str, Any]:
         else:
             health_status["triton"] = "unhealthy"
     except ImportError:
-        health_status["triton"] = "unavailable"
+        health_status["triton"] = "unhealthy"
     except Exception as e:
         logger.warning(f"Triton health check failed: {e}")
-        health_status["triton"] = "unavailable"
+        health_status["triton"] = "unhealthy"
     
     # Determine overall status
     if (health_status["redis"] == "healthy" and 
         health_status["postgres"] == "healthy" and 
-        health_status["triton"] in ["healthy", "unavailable"]):
+        health_status["triton"] == "healthy"):
         health_status["status"] = "healthy"
     else:
         health_status["status"] = "unhealthy"

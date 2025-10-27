@@ -6,7 +6,7 @@ Adapted from Dhruva-Platform-2 ULCA schemas for ASR service.
 
 from enum import Enum
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, HttpUrl, validator, Field, model_validator
+from pydantic import BaseModel, validator, Field, model_validator
 
 
 class AudioFormat(str, Enum):
