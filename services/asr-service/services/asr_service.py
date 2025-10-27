@@ -234,8 +234,25 @@ class ASRService:
     async def _process_audio_input(self, file_handle: BytesIO, target_rate: int) -> np.ndarray:
         """Process audio input through preprocessing pipeline."""
         try:
-            # Read audio file
-            audio_data, sample_rate = sf.read(file_handle)
+            # Read audio file with format detection
+            # Try reading with soundfile first, if it fails, try with pydub
+            try:
+                audio_data, sample_rate = sf.read(file_handle)
+            except Exception as sf_error:
+                logger.warning(f"soundfile failed to read audio: {sf_error}, trying pydub")
+                # Reset file handle position
+                file_handle.seek(0)
+                # Try with pydub
+                from pydub import AudioSegment
+                audio_segment = AudioSegment.from_file(file_handle)
+                sample_rate = audio_segment.frame_rate
+                # Convert to numpy array
+                audio_data = np.array(audio_segment.get_array_of_samples(), dtype=np.float32)
+                # Normalize to [-1, 1] range
+                audio_data = audio_data / (2**15)  # Assuming 16-bit audio
+                # Handle stereo
+                if audio_segment.channels == 2:
+                    audio_data = audio_data.reshape((-1, 2))
             
             # Convert to mono
             audio_mono = self.audio_service.stereo_to_mono(audio_data)

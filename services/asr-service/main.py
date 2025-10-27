@@ -336,19 +336,31 @@ async def health_check() -> Dict[str, Any]:
         health_status["postgres"] = "unhealthy"
     
     try:
-        # Check Triton server connectivity (placeholder - will be implemented in utils)
-        # For now, mark as healthy if we can import triton client
-        try:
-            import tritonclient.http as http_client
+        # Check Triton server connectivity
+        import tritonclient.http as http_client
+        import os
+        
+        triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
+        # Strip scheme from URL if present (Triton client expects host:port format)
+        if triton_url.startswith(('http://', 'https://')):
+            triton_url = triton_url.split('://', 1)[1]
+        
+        client = http_client.InferenceServerClient(url=triton_url)
+        
+        if client.is_server_ready():
             health_status["triton"] = "healthy"
-        except ImportError:
-            health_status["triton"] = "unavailable"
+        else:
+            health_status["triton"] = "unhealthy"
+    except ImportError:
+        health_status["triton"] = "unhealthy"
     except Exception as e:
-        logger.error(f"Triton health check failed: {e}")
+        logger.warning(f"Triton health check failed: {e}")
         health_status["triton"] = "unhealthy"
     
-    # Determine overall status
-    if health_status["redis"] == "healthy" and health_status["postgres"] == "healthy":
+    # Determine overall status - all dependencies must be healthy
+    if (health_status["redis"] == "healthy" and 
+        health_status["postgres"] == "healthy" and 
+        health_status["triton"] == "healthy"):
         health_status["status"] = "healthy"
     else:
         health_status["status"] = "unhealthy"

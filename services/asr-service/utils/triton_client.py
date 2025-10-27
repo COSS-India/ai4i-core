@@ -56,32 +56,29 @@ class TritonClient:
     ) -> Tuple[List[http_client.InferInput], List[http_client.InferRequestedOutput]]:
         """Prepare inputs and outputs for ASR Triton inference."""
         try:
-            # Pad batch
+            # Pad batch to the actual max length in this batch (not fixed 16000)
             padded_audio, num_samples = self._pad_batch(audio_chunks)
+            
+            # Log the actual shape we're sending
+            logger.debug(f"Sending audio to Triton with shape: {padded_audio.shape}")
             
             # Create inputs
             inputs = []
             
-            # AUDIO_SIGNAL input (FP32) - shape [batch_size, 16000]
+            # AUDIO_SIGNAL input (FP32) - use actual padded shape as list
+            batch_size, max_length = padded_audio.shape
             audio_input = http_client.InferInput(
                 "AUDIO_SIGNAL",
-                [1, 16000],  # Fixed shape with batch dimension
+                [batch_size, max_length],  # Use actual shape as list
                 np_to_triton_dtype(np.float32)
             )
-            # Ensure audio is exactly 16000 samples and add batch dimension
-            if padded_audio.shape[1] != 16000:
-                # Pad or truncate to 16000 samples
-                if padded_audio.shape[1] < 16000:
-                    padded_audio = np.pad(padded_audio, ((0, 0), (0, 16000 - padded_audio.shape[1])), mode='constant')
-                else:
-                    padded_audio = padded_audio[:, :16000]
             audio_input.set_data_from_numpy(padded_audio.astype(np.float32))
             inputs.append(audio_input)
             
             # NUM_SAMPLES input (INT32) - shape [batch_size, 1]
             num_samples_input = http_client.InferInput(
                 "NUM_SAMPLES",
-                [1, 1],  # Fixed shape with batch dimension
+                [batch_size, 1],  # Shape as list
                 np_to_triton_dtype(np.int32)
             )
             # Reshape to [batch_size, 1]
@@ -99,7 +96,7 @@ class TritonClient:
                 topk_values = np.array([[n_best_tok]] * len(audio_chunks), dtype=np.int32)  # [batch_size, 1]
                 topk_input = http_client.InferInput(
                     "TOPK",
-                    [1, 1],  # Fixed shape with batch dimension
+                    [batch_size, 1],  # Shape as list
                     np_to_triton_dtype(np.int32)
                 )
                 topk_input.set_data_from_numpy(topk_values)
@@ -270,11 +267,12 @@ class TritonClient:
         """Create string tensor input with proper batch dimensions."""
         # Create numpy array with dtype="object" and reshape to [batch_size, 1]
         string_array = np.array(string_values, dtype=object).reshape(-1, 1)
+        batch_size = string_array.shape[0]
         
-        # Create InferInput with fixed shape [batch_size, 1]
+        # Create InferInput with shape [batch_size, 1]
         string_input = http_client.InferInput(
             tensor_name,
-            [1, 1],  # Fixed shape with batch dimension
+            [batch_size, 1],  # Shape as list
             np_to_triton_dtype(string_array.dtype)
         )
         string_input.set_data_from_numpy(string_array)

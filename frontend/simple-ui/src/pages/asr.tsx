@@ -42,6 +42,7 @@ const ASRPage: React.FC = () => {
     startRecording,
     stopRecording,
     handleFileUpload,
+    performInference,
     setLanguage,
     setSampleRate,
     setInferenceMode,
@@ -64,8 +65,10 @@ const ASRPage: React.FC = () => {
   };
 
   const handleAudioReady = (audioBase64: string) => {
-    // This will be handled by the useASR hook
-    console.log('Audio ready for processing');
+    // Process the audio using the useASR hook
+    console.log('handleAudioReady called with audioBase64 length:', audioBase64.length);
+    console.log('Audio ready for processing, calling performInference...');
+    performInference(audioBase64);
   };
 
   return (
