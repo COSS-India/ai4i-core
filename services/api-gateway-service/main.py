@@ -293,7 +293,8 @@ class RouteManager:
             '/api/v1/dashboard': 'dashboard-service',
             '/api/v1/asr': 'asr-service',
             '/api/v1/tts': 'tts-service',
-            '/api/v1/nmt': 'nmt-service'
+            '/api/v1/nmt': 'nmt-service',
+            '/api/v1/pipeline': 'pipeline-service'
         }
     
     async def get_service_for_path(self, path: str) -> Optional[str]:
@@ -814,7 +815,8 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'dashboard-service': os.getenv('DASHBOARD_SERVICE_URL', 'http://localhost:8086'),
         'asr-service': os.getenv('ASR_SERVICE_URL', 'http://localhost:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
-        'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089')
+        'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
+        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://localhost:8090')
     }
     
     try:
