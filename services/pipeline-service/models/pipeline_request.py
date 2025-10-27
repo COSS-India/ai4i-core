@@ -66,7 +66,7 @@ class PipelineTaskConfig(BaseModel):
     additionalParams: Optional[Dict[str, Any]] = Field(None, description="Additional parameters")
 
 
-class PipelineTarget(BaseModel):
+class PipelineTask(BaseModel):
     """Configuration for a pipeline task."""
     taskType: TaskType = Field(..., description="Type of task to execute")
     config: PipelineTaskConfig = Field(..., description="Configuration for the task")
