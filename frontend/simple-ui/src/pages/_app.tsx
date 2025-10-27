@@ -12,7 +12,7 @@ import Layout from '../components/common/Layout';
 import '../styles/globals.css';
 
 // Define routes that need the full layout
-const layoutRoutes = ['/', '/asr', '/tts', '/nmt'];
+const layoutRoutes = ['/', '/asr', '/tts', '/nmt', '/pipeline', '/pipeline-builder'];
 
 export default function App({ Component, pageProps }: AppProps) {
   const router = useRouter();
