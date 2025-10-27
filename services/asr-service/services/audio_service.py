@@ -99,6 +99,8 @@ class AudioService:
             logger.warning("TritonClient not available, skipping VAD chunking")
             return [audio], [{"start": 0, "end": len(audio), "start_secs": 0, "end_secs": len(audio) / sample_rate}]
         
+        logger.info(f"Running VAD chunking on audio with {len(audio)} samples at {sample_rate} Hz")
+        
         try:
             # Prepare VAD inputs for Triton
             vad_inputs, vad_outputs = triton_client.get_vad_io_for_triton(
@@ -107,7 +109,7 @@ class AudioService:
                 threshold=0.3,
                 min_silence_duration_ms=400,
                 speech_pad_ms=200,
-                min_speech_duration_ms=min_speech_duration_ms
+                min_speech_duration_ms=100
             )
             
             # Send VAD request to Triton
@@ -132,8 +134,9 @@ class AudioService:
             return audio_chunks, adjusted_timestamps
             
         except Exception as e:
-            logger.error(f"VAD chunking failed: {e}")
+            logger.error(f"VAD chunking failed: {e}", exc_info=True)
             # Fallback to single chunk
+            logger.warning(f"Falling back to single chunk processing")
             return [audio], [{"start": 0, "end": len(audio), "start_secs": 0, "end_secs": len(audio) / sample_rate}]
     
     def adjust_timestamps(
@@ -220,8 +223,19 @@ class AudioService:
         return chunks
     
     async def download_audio(self, url: str) -> bytes:
-        """Download audio from URL."""
+        """Download audio from URL or read from local file path."""
         try:
+            # Check if it's a local file path (doesn't start with http:// or https://)
+            if not url.startswith(('http://', 'https://')):
+                # Try as local file path
+                import os
+                if os.path.exists(url):
+                    with open(url, 'rb') as f:
+                        return f.read()
+                else:
+                    raise FileNotFoundError(f"Audio file not found: {url}")
+            
+            # Download from URL
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url)
                 response.raise_for_status()

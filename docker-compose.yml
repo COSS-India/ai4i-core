@@ -79,7 +79,6 @@ services:
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
       - ELASTIC_USERNAME=${ELASTIC_USERNAME}
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-      - "cluster.routing.allocation.disk.threshold_enabled=false"
     ports:
       - "9203:9200"
     volumes:
@@ -87,12 +86,12 @@ services:
       - ./infrastructure/elasticsearch:/docker-entrypoint-initdb.d
     networks:
       - microservices-network
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f -u \"${ELASTIC_USERNAME}:${ELASTIC_PASSWORD}\" http://localhost:9200/_cluster/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
+    # healthcheck:
+      # test: ["CMD-SHELL", "./infrastructure/health-checks/elasticsearch-health.sh"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 60s
     restart: unless-stopped
 
   zookeeper:
@@ -353,6 +352,7 @@ services:
       - REQUIRE_API_KEY=false
       - ALLOW_ANONYMOUS_ACCESS=true
       - TRITON_ENDPOINT=http://13.200.133.97:9000
+      - TRITON_TIMEOUT=120
     depends_on:
       postgres:
         condition: service_healthy
@@ -419,38 +419,6 @@ services:
       # timeout: 10s
       # retries: 3
       # start_period: 30s
-    restart: unless-stopped
-
-  pipeline-service:
-    build:
-      context: ./services/pipeline-service
-      dockerfile: Dockerfile
-    container_name: ai4v-pipeline-service
-    ports:
-      - "8092:8090"
-    environment:
-      - ENV_FILE=.env
-      - SERVICE_PORT=8090
-      - ASR_SERVICE_URL=http://asr-service:8087
-      - NMT_SERVICE_URL=http://nmt-service:8089
-      - TTS_SERVICE_URL=http://tts-service:8088
-    env_file:
-      - ./services/pipeline-service/.env
-    depends_on:
-      asr-service:
-        condition: service_started
-      nmt-service:
-        condition: service_started
-      tts-service:
-        condition: service_started
-    networks:
-      - microservices-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
     restart: unless-stopped
 
   simple-ui-frontend:

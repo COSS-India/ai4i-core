@@ -72,7 +72,7 @@ export const transcribeAudio = async (
     });
 
     const response = await apiClient.post<ASRInferenceResponse>(
-      apiEndpoints.asr.transcribe,
+      apiEndpoints.asr.inference,
       payload
     );
 
