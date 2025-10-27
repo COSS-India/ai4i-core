@@ -17,6 +17,7 @@ import {
   IoHomeOutline,
   IoVolumeHighOutline,
   IoLanguageOutline,
+  IoGitNetworkOutline,
 } from 'react-icons/io5';
 import { FaMicrophone } from 'react-icons/fa';
 
@@ -32,6 +33,7 @@ const navItems: NavItem[] = [
   { id: 'asr', label: 'ASR', path: '/asr', icon: FaMicrophone },
   { id: 'tts', label: 'TTS', path: '/tts', icon: IoVolumeHighOutline },
   { id: 'nmt', label: 'NMT', path: '/nmt', icon: IoLanguageOutline },
+  { id: 'pipeline', label: 'Pipeline', path: '/pipeline', icon: IoGitNetworkOutline },
 ];
 
 const Sidebar: React.FC = () => {
