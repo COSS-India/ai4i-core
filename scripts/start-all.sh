@@ -63,7 +63,7 @@ echo "Running infrastructure initialization scripts..."
 
 # Start all microservices
 echo "Starting microservices..."
-docker-compose up -d api-gateway-service auth-service config-service metrics-service telemetry-service alerting-service dashboard-service
+docker-compose up -d api-gateway-service auth-service config-service metrics-service telemetry-service alerting-service dashboard-service asr-service tts-service nmt-service pipeline-service
 
 # Wait for microservices to be healthy
 echo "Waiting for microservices to be healthy..."
@@ -124,6 +124,38 @@ until curl -f http://localhost:8086/health > /dev/null 2>&1; do
 done
 echo "Dashboard Service is ready"
 
+# Wait for ASR Service
+echo "Waiting for ASR Service..."
+until curl -f http://localhost:8087/health > /dev/null 2>&1; do
+    echo "ASR Service is not ready yet, waiting..."
+    sleep 5
+done
+echo "ASR Service is ready"
+
+# Wait for TTS Service
+echo "Waiting for TTS Service..."
+until curl -f http://localhost:8088/health > /dev/null 2>&1; do
+    echo "TTS Service is not ready yet, waiting..."
+    sleep 5
+done
+echo "TTS Service is ready"
+
+# Wait for NMT Service
+echo "Waiting for NMT Service..."
+until curl -f http://localhost:8091/api/v1/nmt/health > /dev/null 2>&1; do
+    echo "NMT Service is not ready yet, waiting..."
+    sleep 5
+done
+echo "NMT Service is ready"
+
+# Wait for Pipeline Service
+echo "Waiting for Pipeline Service..."
+until curl -f http://localhost:8092/health > /dev/null 2>&1; do
+    echo "Pipeline Service is not ready yet, waiting..."
+    sleep 5
+done
+echo "Pipeline Service is ready"
+
 echo "All services are up and running!"
 echo ""
 echo "Service URLs:"
@@ -134,6 +166,10 @@ echo "  Metrics Service: http://localhost:8083"
 echo "  Telemetry Service: http://localhost:8084"
 echo "  Alerting Service: http://localhost:8085"
 echo "  Dashboard Service: http://localhost:8086"
+echo "  ASR Service: http://localhost:8087"
+echo "  TTS Service: http://localhost:8088"
+echo "  NMT Service: http://localhost:8091"
+echo "  Pipeline Service: http://localhost:8092"
 echo "  Streamlit Dashboard: http://localhost:8501"
 echo ""
 echo "Infrastructure:"

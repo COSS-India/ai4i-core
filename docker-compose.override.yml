@@ -73,6 +73,15 @@ services:
     environment:
       - TRITON_ENDPOINT=http://13.200.133.97:5000
 
+  # Pipeline Service - Development overrides
+  pipeline-service:
+    volumes:
+      - ./services/pipeline-service:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8090 --reload
+    environment:
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+
   # PostgreSQL - Development overrides
   postgres:
     environment:

@@ -203,6 +203,9 @@ export const usePipeline = () => {
             serviceId: asrServiceId,
             language: { sourceLanguage },
             audioFormat: 'wav',
+            preProcessors: ['vad', 'denoiser'],
+            postProcessors: ['lm', 'punctuation'],
+            transcriptionFormat: 'transcript',
           },
         },
         {
@@ -223,6 +226,9 @@ export const usePipeline = () => {
       ],
       inputData: {
         audio: [{ audioContent: base64Audio }],
+      },
+      controlConfig: {
+        dataTracking: false,
       },
     };
 
@@ -250,6 +256,9 @@ export const usePipeline = () => {
             serviceId: asrServiceId,
             language: { sourceLanguage },
             audioFormat: 'wav',
+            preProcessors: ['vad', 'denoiser'],
+            postProcessors: ['lm', 'punctuation'],
+            transcriptionFormat: 'transcript',
           },
         },
         {
@@ -270,6 +279,9 @@ export const usePipeline = () => {
       ],
       inputData: {
         audio: [{ audioContent: base64Audio }],
+      },
+      controlConfig: {
+        dataTracking: false,
       },
     };
 

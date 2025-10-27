@@ -25,7 +25,8 @@ help:
 	@echo "Available services:"
 	@echo "  api-gateway-service, auth-service, config-service"
 	@echo "  metrics-service, telemetry-service, alerting-service"
-	@echo "  dashboard-service, postgres, redis, influxdb"
+	@echo "  dashboard-service, asr-service, tts-service, nmt-service"
+	@echo "  pipeline-service, postgres, redis, influxdb"
 	@echo "  elasticsearch, kafka, zookeeper"
 
 # Start all services
@@ -96,6 +97,18 @@ shell-alerting:
 shell-dashboard:
 	@docker-compose exec dashboard-service /bin/bash
 
+shell-asr:
+	@docker-compose exec asr-service /bin/bash
+
+shell-tts:
+	@docker-compose exec tts-service /bin/bash
+
+shell-nmt:
+	@docker-compose exec nmt-service /bin/bash
+
+shell-pipeline:
+	@docker-compose exec pipeline-service /bin/bash
+
 shell-postgres:
 	@docker-compose exec postgres /bin/bash
 
@@ -136,6 +149,18 @@ logs-alerting:
 logs-dashboard:
 	@./scripts/logs.sh dashboard-service
 
+logs-asr:
+	@./scripts/logs.sh asr-service
+
+logs-tts:
+	@./scripts/logs.sh tts-service
+
+logs-nmt:
+	@./scripts/logs.sh nmt-service
+
+logs-pipeline:
+	@./scripts/logs.sh pipeline-service
+
 logs-postgres:
 	@./scripts/logs.sh postgres
 
@@ -175,6 +200,18 @@ restart-alerting:
 
 restart-dashboard:
 	@./scripts/restart-service.sh dashboard-service
+
+restart-asr:
+	@./scripts/restart-service.sh asr-service
+
+restart-tts:
+	@./scripts/restart-service.sh tts-service
+
+restart-nmt:
+	@./scripts/restart-service.sh nmt-service
+
+restart-pipeline:
+	@./scripts/restart-service.sh pipeline-service
 
 restart-postgres:
 	@./scripts/restart-service.sh postgres
@@ -243,6 +280,10 @@ urls:
 	@echo "  Telemetry Service: http://localhost:8084"
 	@echo "  Alerting Service: http://localhost:8085"
 	@echo "  Dashboard Service: http://localhost:8086"
+	@echo "  ASR Service: http://localhost:8087"
+	@echo "  TTS Service: http://localhost:8088"
+	@echo "  NMT Service: http://localhost:8091"
+	@echo "  Pipeline Service: http://localhost:8092"
 	@echo "  Streamlit Dashboard: http://localhost:8501"
 	@echo ""
 	@echo "Infrastructure:"

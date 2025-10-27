@@ -76,7 +76,7 @@ done
 
 # Validate service name if provided
 if [ -n "$SERVICE_NAME" ]; then
-    VALID_SERVICES=("api-gateway-service" "auth-service" "config-service" "metrics-service" "telemetry-service" "alerting-service" "dashboard-service" "postgres" "redis" "influxdb" "elasticsearch" "kafka" "zookeeper")
+    VALID_SERVICES=("api-gateway-service" "auth-service" "config-service" "metrics-service" "telemetry-service" "alerting-service" "dashboard-service" "asr-service" "tts-service" "nmt-service" "pipeline-service" "postgres" "redis" "influxdb" "elasticsearch" "kafka" "zookeeper")
     
     if [[ ! " ${VALID_SERVICES[@]} " =~ " ${SERVICE_NAME} " ]]; then
         echo "Error: Invalid service name '$SERVICE_NAME'"

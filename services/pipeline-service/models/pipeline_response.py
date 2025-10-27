@@ -40,7 +40,8 @@ class PipelineTaskOutput(BaseModel):
     serviceId: str = Field(..., description="Service ID used for this task")
     
     # Output data - structure depends on task type
-    output: Any = Field(..., description="Task output (structure varies by task type)")
+    output: Optional[Any] = Field(None, description="Task output (structure varies by task type)")
+    audio: Optional[List[AudioOutput]] = Field(None, description="Audio output (for TTS tasks)")
     config: Optional[Dict[str, Any]] = Field(None, description="Response configuration")
     
     def dict(self, **kwargs):

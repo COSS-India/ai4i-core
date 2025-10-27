@@ -25,7 +25,7 @@ sleep 30
 
 # Start microservices
 echo "Starting microservices..."
-docker compose up -d api-gateway-service auth-service config-service metrics-service telemetry-service alerting-service dashboard-service asr-service tts-service nmt-service
+docker compose up -d api-gateway-service auth-service config-service metrics-service telemetry-service alerting-service dashboard-service asr-service tts-service nmt-service pipeline-service
 
 # Wait for microservices to be ready
 echo "Waiting for microservices to be ready..."
