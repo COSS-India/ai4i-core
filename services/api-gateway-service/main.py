@@ -166,6 +166,63 @@ class StreamingInfo(BaseModel):
     max_connections: int = Field(..., description="Maximum concurrent connections")
     response_frequency_ms: int = Field(..., description="Response frequency in milliseconds")
 
+# Pydantic models for Pipeline endpoints
+class PipelineTaskType(str, Enum):
+    """Pipeline task types."""
+    ASR = "asr"
+    TRANSLATION = "translation"
+    TTS = "tts"
+    TRANSLITERATION = "transliteration"
+
+class PipelineLanguageConfig(BaseModel):
+    """Language configuration for pipeline tasks."""
+    sourceLanguage: str = Field(..., description="Source language code (e.g., 'en', 'hi', 'ta')")
+    targetLanguage: Optional[str] = Field(None, description="Target language code (for translation)")
+    sourceScriptCode: Optional[str] = Field(None, description="Script code if applicable")
+    targetScriptCode: Optional[str] = Field(None, description="Target script code")
+
+class PipelineTaskConfig(BaseModel):
+    """Configuration for a pipeline task."""
+    serviceId: str = Field(..., description="Identifier for the AI service/model")
+    language: PipelineLanguageConfig = Field(..., description="Language configuration")
+    audioFormat: Optional[str] = Field(None, description="Audio format")
+    preProcessors: Optional[List[str]] = Field(None, description="Preprocessors")
+    postProcessors: Optional[List[str]] = Field(None, description="Postprocessors")
+    transcriptionFormat: Optional[str] = Field("transcript", description="Transcription format")
+    gender: Optional[str] = Field(None, description="Voice gender (male/female)")
+    additionalParams: Optional[Dict[str, Any]] = Field(None, description="Additional parameters")
+
+class PipelineTask(BaseModel):
+    """Configuration for a pipeline task."""
+    taskType: PipelineTaskType = Field(..., description="Type of task to execute")
+    config: PipelineTaskConfig = Field(..., description="Configuration for the task")
+
+class PipelineInferenceRequest(BaseModel):
+    """Main pipeline inference request model."""
+    pipelineTasks: List[PipelineTask] = Field(..., description="List of tasks to execute in sequence", min_items=1)
+    inputData: Dict[str, Any] = Field(..., description="Initial input data (audio for ASR-first pipelines)")
+    controlConfig: Optional[Dict[str, Any]] = Field(None, description="Additional control parameters")
+
+class PipelineTaskOutput(BaseModel):
+    """Output from a pipeline task."""
+    taskType: str = Field(..., description="Type of task that produced this output")
+    serviceId: str = Field(..., description="Service ID used for this task")
+    output: Any = Field(..., description="Task output (structure varies by task type)")
+    config: Optional[Dict[str, Any]] = Field(None, description="Response configuration")
+
+class PipelineInferenceResponse(BaseModel):
+    """Main pipeline inference response model."""
+    pipelineResponse: List[PipelineTaskOutput] = Field(..., description="Outputs from each pipeline task")
+
+class PipelineInfo(BaseModel):
+    """Pipeline service information."""
+    service: str = Field(..., description="Service name")
+    version: str = Field(..., description="Service version")
+    description: str = Field(..., description="Service description")
+    supported_task_types: List[str] = Field(..., description="Supported task types")
+    example_pipelines: Dict[str, Any] = Field(..., description="Example pipeline configurations")
+    task_sequence_rules: Dict[str, List[str]] = Field(..., description="Task sequence rules")
+
 class ServiceRegistry:
     """Redis-based service instance management"""
     
@@ -293,7 +350,8 @@ class RouteManager:
             '/api/v1/dashboard': 'dashboard-service',
             '/api/v1/asr': 'asr-service',
             '/api/v1/tts': 'tts-service',
-            '/api/v1/nmt': 'nmt-service'
+            '/api/v1/nmt': 'nmt-service',
+            '/api/v1/pipeline': 'pipeline-service'
         }
     
     async def get_service_for_path(self, path: str) -> Optional[str]:
@@ -543,7 +601,8 @@ async def api_status():
             "dashboard": os.getenv("DASHBOARD_SERVICE_URL", "http://dashboard-service:8086"),
             "asr": os.getenv("ASR_SERVICE_URL", "http://asr-service:8087"),
             "tts": os.getenv("TTS_SERVICE_URL", "http://tts-service:8088"),
-            "nmt": os.getenv("NMT_SERVICE_URL", "http://nmt-service:8089")
+            "nmt": os.getenv("NMT_SERVICE_URL", "http://nmt-service:8089"),
+            "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8090")
         }
     }
 
@@ -743,6 +802,21 @@ async def nmt_health(request: Request):
     """NMT service health check"""
     return await proxy_to_service(request, "/api/v1/nmt/health", "nmt-service")
 
+# Pipeline Service Endpoints (Proxy to Pipeline Service)
+
+@app.post("/api/v1/pipeline/inference", response_model=PipelineInferenceResponse)
+async def pipeline_inference(request: PipelineInferenceRequest):
+    """Execute pipeline inference (e.g., Speech-to-Speech translation)"""
+    import json
+    # Convert Pydantic model to JSON for proxy
+    body = json.dumps(request.dict()).encode()
+    return await proxy_to_service(None, "/api/v1/pipeline/inference", "pipeline-service", method="POST", body=body)
+
+@app.get("/api/v1/pipeline/info", response_model=PipelineInfo)
+async def get_pipeline_info():
+    """Get pipeline service information"""
+    return await proxy_to_service(None, "/api/v1/pipeline/info", "pipeline-service")
+
 # Protected Endpoints (Require Authentication)
 
 @app.get("/api/v1/protected/status")
@@ -814,7 +888,8 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'dashboard-service': os.getenv('DASHBOARD_SERVICE_URL', 'http://localhost:8086'),
         'asr-service': os.getenv('ASR_SERVICE_URL', 'http://localhost:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
-        'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089')
+        'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
+        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://localhost:8090')
     }
     
     try:

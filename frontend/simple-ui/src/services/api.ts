@@ -27,6 +27,11 @@ export const apiEndpoints = {
     languages: '/api/v1/nmt/languages',
     health: '/api/v1/nmt/health',
   },
+  pipeline: {
+    inference: '/api/v1/pipeline/inference',
+    info: '/api/v1/pipeline/info',
+    health: '/api/v1/pipeline/health',
+  },
 } as const;
 
 // Create Axios instance

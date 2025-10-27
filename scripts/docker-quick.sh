@@ -44,6 +44,7 @@ QUICK COMMANDS:
     infra       Start infrastructure services only
     nmt         Update NMT service specifically
     gateway     Update API Gateway service specifically
+    pipeline    Update Pipeline service specifically
     frontend    Update frontend service specifically
     all         Update all microservices
 
@@ -56,6 +57,7 @@ EXAMPLES:
 
     # Update specific service
     $0 nmt
+    $0 pipeline
 
     # Check status
     $0 status
@@ -142,6 +144,10 @@ main() {
         gateway)
             print_info "Updating API Gateway service..."
             "$DOCKER_MANAGER" update api-gateway-service
+            ;;
+        pipeline)
+            print_info "Updating Pipeline service..."
+            "$DOCKER_MANAGER" update pipeline-service
             ;;
         frontend)
             print_info "Updating frontend service..."

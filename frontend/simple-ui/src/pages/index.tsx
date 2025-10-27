@@ -24,6 +24,7 @@ import {
 import {
   IoVolumeHighOutline,
   IoLanguageOutline,
+  IoGitMergeOutline,
 } from 'react-icons/io5';
 import { FaMicrophone } from 'react-icons/fa';
 import ContentLayout from '../components/common/ContentLayout';
@@ -58,10 +59,18 @@ const HomePage: React.FC = () => {
       path: '/nmt',
       color: 'green',
     },
+    {
+      id: 'pipeline',
+      title: 'Pipeline',
+      description: 'Chain multiple services together for end-to-end workflows',
+      icon: IoGitMergeOutline,
+      path: '/pipeline',
+      color: 'purple',
+    },
   ];
 
   const stats = [
-    { label: 'Total Services', value: '3' },
+    { label: 'Total Services', value: '4' },
     { label: 'Supported Languages', value: '22+' },
     { label: 'Uptime', value: '99.9%' },
   ];
@@ -70,7 +79,7 @@ const HomePage: React.FC = () => {
     <>
       <Head>
         <title>Simple UI - AI Services Testing Interface</title>
-        <meta name="description" content="Test ASR, TTS, and NMT microservices with a modern web interface" />
+        <meta name="description" content="Test ASR, TTS, NMT, and Pipeline microservices with a modern web interface" />
       </Head>
 
       <ContentLayout>
@@ -78,7 +87,7 @@ const HomePage: React.FC = () => {
           {/* Hero Section */}
           <Box textAlign="center" py="4rem">
             <Heading
-              size="2xl"
+              size="xl"
               fontWeight="bold"
               color="gray.800"
               mb={4}
@@ -91,17 +100,17 @@ const HomePage: React.FC = () => {
               maxW="600px"
               mx="auto"
             >
-              Test and interact with ASR, TTS, and NMT microservices through a modern, 
+              Test and interact with ASR, TTS, NMT, and Pipeline microservices through a modern, 
               user-friendly web interface. Experience the power of AI4Bharat&apos;s language technologies.
             </Text>
           </Box>
 
           {/* Service Cards Grid */}
           <SimpleGrid
-            columns={{ base: 1, md: 2, lg: 3 }}
-            spacing={8}
+            columns={{ base: 1, md: 2, lg: 4 }}
+            spacing={6}
             w="full"
-            maxW="1200px"
+            maxW="1400px"
             mx="auto"
           >
             {services.map((service) => (
@@ -121,31 +130,32 @@ const HomePage: React.FC = () => {
                 h="full"
               >
                 <CardHeader textAlign="center" pb={4}>
-                  <VStack spacing={4}>
+                  <VStack spacing={3}>
                     <Icon
                       as={service.icon}
-                      boxSize={12}
+                      boxSize={10}
                       color={`${service.color}.500`}
                     />
-                    <Heading size="lg" color="gray.800">
+                    <Heading size="md" color="gray.800">
                       {service.title}
                     </Heading>
                   </VStack>
                 </CardHeader>
                 <CardBody pt={0}>
-                  <VStack spacing={6} h="full">
+                  <VStack spacing={4} h="full">
                     <Text
                       color="gray.600"
                       textAlign="center"
-                      lineHeight="1.6"
+                      lineHeight="1.5"
                       flex={1}
+                      fontSize="sm"
                     >
                       {service.description}
                     </Text>
                     <Link href={service.path} passHref>
                       <Button
                         colorScheme={service.color}
-                        size="lg"
+                        size="md"
                         w="full"
                         _hover={{
                           transform: 'translateY(-1px)',
