@@ -170,25 +170,37 @@ class PipelineService:
         if task_type == TaskType.ASR:
             # ASR output goes to Translation input
             # Transform: output -> input, source -> source
+            logger.info(f"Transforming ASR output for next task. Output: {output_dict}")
             transformed = {
                 "input": []
             }
             for item in output_dict.get("output", []):
+                source_text = item.get("source", "")
+                if not source_text or not source_text.strip():
+                    logger.warning(f"Empty or missing source in ASR output: {item}")
+                    raise ValueError("ASR task produced empty transcription. Cannot proceed to translation.")
                 transformed["input"].append({
-                    "source": item.get("source", "")
+                    "source": source_text
                 })
+            logger.info(f"Transformed input for translation: {transformed}")
             return transformed
         
         elif task_type == TaskType.TRANSLATION:
             # Translation output goes to TTS input
             # Transform: output -> input, target -> source (use translated as source for TTS)
+            logger.info(f"Transforming Translation output for next task. Output: {output_dict}")
             transformed = {
                 "input": []
             }
             for item in output_dict.get("output", []):
+                translated_text = item.get("target", "")
+                if not translated_text or not translated_text.strip():
+                    logger.warning(f"Empty or missing target in Translation output: {item}")
+                    raise ValueError("Translation task produced empty result. Cannot proceed to TTS.")
                 transformed["input"].append({
-                    "source": item.get("target", "")
+                    "source": translated_text
                 })
+            logger.info(f"Transformed input for TTS: {transformed}")
             return transformed
         
         elif task_type == TaskType.TTS:
