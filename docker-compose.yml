@@ -86,12 +86,12 @@ services:
       - ./infrastructure/elasticsearch:/docker-entrypoint-initdb.d
     networks:
       - microservices-network
-    # healthcheck:
-      # test: ["CMD-SHELL", "./infrastructure/health-checks/elasticsearch-health.sh"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "curl -u ${ELASTIC_USERNAME}:${ELASTIC_PASSWORD} -f http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
 
   zookeeper:
@@ -415,6 +415,38 @@ services:
       - microservices-network
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8089/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
+    restart: unless-stopped
+
+  pipeline-service:
+    build:
+      context: ./services/pipeline-service
+      dockerfile: Dockerfile
+    container_name: ai4v-pipeline-service
+    ports:
+      - "8092:8090"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/pipeline-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      asr-service:
+        condition: service_started
+      nmt-service:
+        condition: service_started
+      tts-service:
+        condition: service_started
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       # interval: 30s
       # timeout: 10s
       # retries: 3

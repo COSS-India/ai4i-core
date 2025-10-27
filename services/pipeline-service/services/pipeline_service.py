@@ -51,7 +51,8 @@ class PipelineService:
                 task_output = await self._execute_task(
                     task=pipeline_task,
                     input_data=previous_output,
-                    api_key=api_key
+                    api_key=api_key,
+                    control_config=request.controlConfig
                 )
                 
                 # Store result
@@ -77,23 +78,38 @@ class PipelineService:
         self,
         task: PipelineTask,
         input_data: Dict[str, Any],
-        api_key: Optional[str] = None
+        api_key: Optional[str] = None,
+        control_config: Optional[Dict[str, Any]] = None
     ) -> PipelineTaskOutput:
         """Execute a single pipeline task."""
         
         if task.taskType == TaskType.ASR:
             # Construct ASR request
+            asr_config = {
+                "serviceId": task.config.serviceId,
+                "language": task.config.language.dict(),
+            }
+            
+            # Add optional ASR config fields
+            if task.config.audioFormat:
+                asr_config["audioFormat"] = task.config.audioFormat
+            if task.config.preProcessors:
+                asr_config["preProcessors"] = task.config.preProcessors
+            if task.config.postProcessors:
+                asr_config["postProcessors"] = task.config.postProcessors
+            if task.config.transcriptionFormat:
+                asr_config["transcriptionFormat"] = task.config.transcriptionFormat
+            
             asr_request = {
                 "audio": input_data.get("audio", []),
-                "config": {
-                    "serviceId": task.config.serviceId,
-                    "language": task.config.language.dict(),
-                    "audioFormat": task.config.audioFormat,
-                    "preProcessors": task.config.preProcessors,
-                    "postProcessors": task.config.postProcessors,
-                    "transcriptionFormat": task.config.transcriptionFormat or "transcript"
-                }
+                "config": asr_config
             }
+            
+            # Add controlConfig if present
+            if control_config:
+                asr_request["controlConfig"] = control_config
+            
+            logger.info(f"ASR request: {asr_request}")
             
             # Call ASR service
             response = await self.service_client.call_asr_service(asr_request, api_key)
@@ -134,17 +150,24 @@ class PipelineService:
                     "language": task.config.language.dict(),
                     "gender": task.config.gender or "male",
                     "audioFormat": task.config.audioFormat or "wav",
+                    "samplingRate": 22050,
                     "encoding": "base64"
                 }
             }
             
+            logger.info(f"TTS request: {tts_request}")
+            
             # Call TTS service
             response = await self.service_client.call_tts_service(tts_request, api_key)
             
+            logger.info(f"TTS response: {response}")
+            
+            # TTS service returns audio in "audio" field, map to output
             return PipelineTaskOutput(
                 taskType="tts",
                 serviceId=task.config.serviceId,
                 output=response.get("audio", []),
+                audio=response.get("audio", []),
                 config=response.get("config")
             )
         
