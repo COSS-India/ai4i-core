@@ -58,15 +58,6 @@ app = FastAPI(
             "description": "Service health and readiness checks"
         }
     ],
-    contact={
-        "name": "AI4V Core Team",
-        "url": "https://github.com/ai4bharat",
-        "email": "support@ai4v-core.com"
-    },
-    license_info={
-        "name": "MIT",
-        "url": "https://opensource.org/licenses/MIT"
-    },
     lifespan=lifespan
 )
 

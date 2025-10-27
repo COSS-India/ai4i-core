@@ -27,6 +27,7 @@ import {
 } from '@chakra-ui/react';
 import { useQuery } from '@tanstack/react-query';
 import { FaMicrophone, FaMicrophoneSlash } from 'react-icons/fa';
+import { useRouter } from 'next/router';
 import ContentLayout from '../components/common/ContentLayout';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { SUPPORTED_LANGUAGES, LANG_CODE_TO_LABEL } from '../config/constants';
@@ -37,6 +38,7 @@ import { listVoices } from '../services/ttsService';
 
 const PipelinePage: React.FC = () => {
   const toast = useToast();
+  const router = useRouter();
   const [sourceLanguage, setSourceLanguage] = useState('en');
   const [targetLanguage, setTargetLanguage] = useState('hi');
   const [asrServiceId, setAsrServiceId] = useState('dhruva-asr');
@@ -133,10 +135,20 @@ const PipelinePage: React.FC = () => {
       <ContentLayout>
         <VStack spacing={8} w="full">
           {/* Page Header */}
-          <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
-              Pipeline (Speech-to-Speech)
-            </Heading>
+          <Box w="full" maxW="1200px" mx="auto">
+            <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+              <Heading size="xl" color="gray.800">
+                Pipeline (Speech-to-Speech)
+              </Heading>
+              <Button
+                size="sm"
+                variant="outline"
+                colorScheme="gray"
+                onClick={() => router.push('/pipeline-builder')}
+              >
+                📝 Pipeline Builder
+              </Button>
+            </Box>
             <Text color="gray.600" fontSize="lg">
               Chain ASR → Translation → TTS for complete speech-to-speech translation
             </Text>
@@ -267,6 +279,7 @@ const PipelinePage: React.FC = () => {
                     style={{ display: 'none' }}
                   />
                 </Button>
+
 
                 {/* Progress Indicator */}
                 {isLoading && (
