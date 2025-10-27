@@ -37,6 +37,7 @@ ALL_SERVICES=(
     "nmt-service"
     "asr-service"
     "tts-service"
+    "pipeline-service"
     "simple-ui-frontend"
     "postgres"
     "redis"
@@ -50,7 +51,7 @@ ALL_SERVICES=(
 INFRASTRUCTURE_SERVICES=("postgres" "redis" "influxdb" "elasticsearch" "kafka" "zookeeper")
 
 # Microservices (need rebuilds)
-MICROSERVICES=("api-gateway-service" "auth-service" "config-service" "metrics-service" "telemetry-service" "alerting-service" "dashboard-service" "nmt-service" "asr-service" "tts-service" "simple-ui-frontend")
+MICROSERVICES=("api-gateway-service" "auth-service" "config-service" "metrics-service" "telemetry-service" "alerting-service" "dashboard-service" "nmt-service" "asr-service" "tts-service" "pipeline-service" "simple-ui-frontend")
 
 # Function to print colored output
 print_info() {

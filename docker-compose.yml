@@ -427,7 +427,7 @@ services:
       dockerfile: Dockerfile
     container_name: ai4v-pipeline-service
     ports:
-      - "8090:8090"
+      - "8092:8090"
     environment:
       - ENV_FILE=.env
       - SERVICE_PORT=8090
@@ -445,12 +445,12 @@ services:
         condition: service_started
     networks:
       - microservices-network
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   simple-ui-frontend:
