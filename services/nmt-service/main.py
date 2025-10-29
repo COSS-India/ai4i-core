@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "5"))
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db")
 TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "13.200.133.97:8000")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "1b69e9a1a24466c85e4bbca3c5295f50")
@@ -46,25 +47,6 @@ TRITON_API_KEY = os.getenv("TRITON_API_KEY", "1b69e9a1a24466c85e4bbca3c5295f50")
 redis_client: Optional[redis.Redis] = None
 db_engine: Optional[AsyncEngine] = None
 db_session_factory: Optional[async_sessionmaker] = None
-
-# Initialize Redis client early for middleware
-try:
-    redis_client = redis.Redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        password=REDIS_PASSWORD,
-        decode_responses=True,
-        socket_connect_timeout=5,
-        socket_timeout=5,
-        retry_on_timeout=True
-    )
-    
-    # Test Redis connection
-    asyncio.run(redis_client.ping())
-    logger.info("Redis connection established for middleware")
-except Exception as e:
-    logger.warning(f"Redis connection failed for middleware: {e}")
-    redis_client = None
 
 
 @asynccontextmanager
@@ -76,19 +58,19 @@ async def lifespan(app: FastAPI):
     logger.info("Starting NMT Service...")
     
     try:
-        # Use existing Redis client or initialize if needed
-        global redis_client
-        if redis_client is None:
-            logger.info("Connecting to Redis...")
-            redis_client = redis.from_url(
-                f"redis://{REDIS_HOST}:{REDIS_PORT}",
-                password=REDIS_PASSWORD,
-                decode_responses=True
-            )
-            await redis_client.ping()
-            logger.info("Redis connection established")
-        else:
-            logger.info("Using existing Redis connection")
+        # Initialize Redis client
+        logger.info("Connecting to Redis...")
+        redis_client = redis.Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            password=REDIS_PASSWORD,
+            decode_responses=True,
+            socket_connect_timeout=REDIS_TIMEOUT,
+            socket_timeout=REDIS_TIMEOUT,
+            retry_on_timeout=True
+        )
+        await redis_client.ping()
+        logger.info("Redis connection established")
         
         # Initialize PostgreSQL
         logger.info("Connecting to PostgreSQL...")
@@ -189,18 +171,21 @@ app.add_middleware(
 app.add_middleware(RequestLoggingMiddleware)
 
 # Add rate limiting middleware (if Redis is available)
-if redis_client:
-    rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-    rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-    app.add_middleware(
-        RateLimitMiddleware,
-        redis_client=redis_client,
-        requests_per_minute=rate_limit_per_minute,
-        requests_per_hour=rate_limit_per_hour
-    )
-    logger.info("Rate limiting middleware added")
-else:
-    logger.warning("Rate limiting middleware skipped - Redis not available")
+# Note: We'll add this after Redis is initialized in the lifespan function
+def add_rate_limiting_middleware():
+    """Add rate limiting middleware after Redis is available"""
+    if redis_client:
+        rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+        rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+        app.add_middleware(
+            RateLimitMiddleware,
+            redis_client=redis_client,
+            requests_per_minute=rate_limit_per_minute,
+            requests_per_hour=rate_limit_per_hour
+        )
+        logger.info("Rate limiting middleware added")
+    else:
+        logger.warning("Rate limiting middleware skipped - Redis not available")
 
 # Register error handlers
 add_error_handlers(app)
@@ -219,8 +204,6 @@ async def root():
         "status": "running",
         "description": "Neural Machine Translation microservice"
     }
-
-
 
 
 if __name__ == "__main__":
