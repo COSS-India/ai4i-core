@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
         if redis_client is None:
             # Fallback Redis initialization if not done earlier
             redis_host = os.getenv("REDIS_HOST", "redis")
-            redis_port = int(os.getenv("REDIS_PORT", "6379"))
+            redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
             redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
             
             redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
@@ -214,7 +214,7 @@ app.add_middleware(
 redis_client = None
 try:
     redis_host = os.getenv("REDIS_HOST", "redis")
-    redis_port = int(os.getenv("REDIS_PORT", "6379"))
+    redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
     redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
     
     redis_client = redis.Redis(
