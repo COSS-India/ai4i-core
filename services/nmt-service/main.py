@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Environment variables
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_PORT = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db")
 TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "13.200.133.97:8000")
