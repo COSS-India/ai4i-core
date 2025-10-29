@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
         # Initialize Redis connection
         global redis_client
         redis_host = os.getenv("REDIS_HOST", "redis")
-        redis_port = int(os.getenv("REDIS_PORT", "6379"))
+        redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
         redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
         
         redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
