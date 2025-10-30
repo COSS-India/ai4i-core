@@ -131,10 +131,11 @@ async def health_check() -> Dict[str, Any]:
         import time
         health_status["timestamp"] = time.time()
         
-        # Check service URLs
-        asr_url = os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087')
-        nmt_url = os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089')
-        tts_url = os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088')
+        # Resolve service URLs via registry (fallback to env/defaults)
+        registry = ServiceRegistryHttpClient()
+        asr_url = await registry.discover_url('asr-service') or os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087')
+        nmt_url = await registry.discover_url('nmt-service') or os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089')
+        tts_url = await registry.discover_url('tts-service') or os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088')
         
         health_status["dependencies"] = {
             "asr_service": asr_url,
