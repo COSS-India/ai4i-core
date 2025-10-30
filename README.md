@@ -1,6 +1,6 @@
-# Dhruva Microservices Platform
+# AI4I-Core Microservices Platform.
 
-A comprehensive microservices platform built with FastAPI, following the Dhruva Platform's Frontend-Backend Communication Flow pattern. This platform implements a 6-step communication process with enterprise-grade API services and capabilities.
+A comprehensive microservices platform built with FastAPI, following the AI4I-Core Platform's Frontend-Backend Communication Flow pattern. This platform implements a 6-step communication process with enterprise-grade API services and capabilities.
 
 ## 🏗️ Architecture Overview
 
@@ -42,7 +42,7 @@ The platform consists of 10 microservices, 1 frontend application, and 5 infrast
 1. **Clone the repository**
    ```bash
    git clone <repository-url>
-   cd dhruva-microservices
+   cd AI4I-Core-microservices
    ```
 
 2. **Set up environment variables**
@@ -217,13 +217,13 @@ The platform uses environment variables for configuration. Copy `env.template` t
 
 ```bash
 # Global Configuration
-COMPOSE_PROJECT_NAME=dhruva-microservices
+COMPOSE_PROJECT_NAME=AI4I-Core-microservices
 ENVIRONMENT=development
 
 # Database Configuration
-POSTGRES_USER=dhruva_user
+POSTGRES_USER=AI4I-Core_user
 POSTGRES_PASSWORD=your_secure_password
-POSTGRES_DB=dhruva_platform
+POSTGRES_DB=AI4I-Core_platform
 
 # Redis Configuration
 REDIS_PASSWORD=your_redis_password
@@ -415,7 +415,7 @@ npm test -- --coverage
 2. **Database connection issues**
    ```bash
    # Check PostgreSQL
-   docker-compose exec postgres pg_isready -U dhruva_user
+   docker-compose exec postgres pg_isready -U AI4I-Core_user
    
    # Check Redis
    docker-compose exec redis redis-cli ping
@@ -450,7 +450,7 @@ npm test -- --coverage
 
 ### Code Structure
 ```
-dhruva-microservices/
+AI4I-Core-microservices/
 ├── services/                 # Microservices
 │   ├── api-gateway-service/
 │   ├── auth-service/
