@@ -65,7 +65,10 @@ class ZooKeeperRegistryClient(ServiceRegistryClient):
         await loop.run_in_executor(None, self._ensure_path, service_path)
         instance_id = service_metadata.get("instance_id") or str(uuid.uuid4())
         node_path = f"{service_path}/{instance_id}"
-        data = json.dumps({"service_url": service_url, **service_metadata}).encode("utf-8")
+        # Always persist instance_id in node data so API consumers can retrieve it
+        # Ensure caller-provided metadata cannot overwrite the computed instance_id
+        payload = {**service_metadata, "instance_id": instance_id, "service_url": service_url}
+        data = json.dumps(payload).encode("utf-8")
         def _create():
             assert self._client is not None
             if not self._client.exists(node_path):
