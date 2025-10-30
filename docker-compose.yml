@@ -214,6 +214,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      zookeeper:
+        condition: service_healthy
     networks:
       - microservices-network
     # healthcheck:

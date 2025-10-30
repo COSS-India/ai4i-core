@@ -11,6 +11,7 @@ import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from aiokafka import AIOKafkaProducer
+from models.database_models import Base
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +38,7 @@ redis_client = None
 db_engine = None
 db_session = None
 kafka_producer = None
+registry_client = None
 
 @app.on_event("startup")
 async def startup_event():
@@ -69,18 +71,50 @@ async def startup_event():
             expire_on_commit=False
         )
         logger.info("Connected to PostgreSQL")
+
+        # Create tables if they do not exist
+        try:
+            async with db_engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+        except Exception as e:
+            logger.error(f"Failed to create database tables: {e}")
+            raise
         
-        # Initialize Kafka producer
-        kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
-        kafka_producer = AIOKafkaProducer(
-            bootstrap_servers=kafka_servers,
-            value_serializer=lambda v: str(v).encode('utf-8')
-        )
-        await kafka_producer.start()
-        logger.info("Connected to Kafka")
+        # Initialize Kafka producer (optional)
+        try:
+            kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
+            kafka_producer = AIOKafkaProducer(
+                bootstrap_servers=kafka_servers
+            )
+            await kafka_producer.start()
+            logger.info("Connected to Kafka")
+        except Exception as kafka_exc:
+            kafka_producer = None
+            logger.warning(f"Kafka unavailable: {kafka_exc}")
+        
+        # Initialize ZooKeeper registry client
+        from registry.zookeeper_client import ZooKeeperRegistryClient
+        global registry_client
+        registry_client = ZooKeeperRegistryClient()
+        try:
+            await registry_client.connect()
+            logger.info("Connected to ZooKeeper")
+            # Register this service
+            service_name = os.getenv('SERVICE_NAME', 'config-service')
+            service_port = os.getenv('SERVICE_PORT', '8082')
+            instance_id = os.getenv('SERVICE_INSTANCE_ID', f"{service_name}-1")
+            service_metadata = {"instance_id": instance_id}
+            service_url = f"http://{service_name}:{service_port}"
+            health_url = f"{service_url}/health"
+            try:
+                await registry_client.register_service(service_name, service_url, {"instance_id": instance_id, "health_check_url": health_url, "status": "healthy"})
+            except Exception as e:
+                logger.warning(f"Failed to register service in ZooKeeper: {e}")
+        except Exception as e:
+            logger.warning(f"ZooKeeper connection failed: {e}")
         
     except Exception as e:
-        logger.error(f"Failed to initialize connections: {e}")
+        logger.error(f"Failed to initialize essential connections: {e}")
         raise
 
 @app.on_event("shutdown")
@@ -100,6 +134,18 @@ async def shutdown_event():
         await kafka_producer.stop()
         logger.info("Kafka producer closed")
 
+    if registry_client:
+        try:
+            service_name = os.getenv('SERVICE_NAME', 'config-service')
+            instance_id = os.getenv('SERVICE_INSTANCE_ID', f"{service_name}-1")
+            await registry_client.deregister_service(service_name, instance_id)
+        except Exception:
+            pass
+        try:
+            await registry_client.disconnect()
+        except Exception:
+            pass
+
 @app.get("/")
 async def root():
     """Root endpoint with service information"""
@@ -110,48 +156,11 @@ async def root():
         "description": "Centralized configuration and feature flags for microservices"
     }
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint for Docker health checks"""
-    try:
-        # Check Redis connectivity
-        if redis_client:
-            await redis_client.ping()
-            redis_status = "healthy"
-        else:
-            redis_status = "unhealthy"
-        
-        # Check PostgreSQL connectivity
-        if db_engine:
-            async with db_engine.begin() as conn:
-                await conn.execute("SELECT 1")
-            postgres_status = "healthy"
-        else:
-            postgres_status = "unhealthy"
-        
-        # Check Kafka connectivity
-        if kafka_producer:
-            kafka_status = "healthy"
-        else:
-            kafka_status = "unhealthy"
-        
-        overall_status = "healthy" if all([
-            redis_status == "healthy", 
-            postgres_status == "healthy",
-            kafka_status == "healthy"
-        ]) else "unhealthy"
-        
-        return {
-            "status": overall_status,
-            "service": "config-service",
-            "redis": redis_status,
-            "postgres": postgres_status,
-            "kafka": kafka_status,
-            "timestamp": asyncio.get_event_loop().time()
-        }
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        raise HTTPException(status_code=503, detail="Service unhealthy")
+from routers import config_router, feature_flag_router, service_registry_router, health_router
+app.include_router(config_router)
+app.include_router(feature_flag_router)
+app.include_router(service_registry_router)
+app.include_router(health_router)
 
 @app.get("/api/v1/config/status")
 async def config_status():
@@ -169,25 +178,6 @@ async def config_status():
         ]
     }
 
-@app.get("/api/v1/config/{key}")
-async def get_config(key: str, environment: str = "development"):
-    """Get configuration value"""
-    return {"key": key, "environment": environment, "message": "Configuration retrieval - to be implemented"}
-
-@app.post("/api/v1/config")
-async def set_config():
-    """Set configuration value"""
-    return {"message": "Configuration setting - to be implemented"}
-
-@app.get("/api/v1/feature-flags")
-async def get_feature_flags():
-    """Get feature flags"""
-    return {"message": "Feature flags retrieval - to be implemented"}
-
-@app.post("/api/v1/feature-flags")
-async def set_feature_flag():
-    """Set feature flag"""
-    return {"message": "Feature flag setting - to be implemented"}
 
 if __name__ == "__main__":
     import uvicorn
