@@ -19,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from routers import health_router, inference_router
 from utils.triton_client import TritonClient
 from middleware.auth_provider import AuthProvider
-from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
@@ -115,20 +114,6 @@ async def lifespan(app: FastAPI):
         app.state.db_session_factory = db_session_factory
         app.state.triton_endpoint = TRITON_ENDPOINT
         app.state.triton_api_key = TRITON_API_KEY
-
-        # Add rate limiting middleware only if Redis is available
-        if redis_client:
-            rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-            rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-            app.add_middleware(
-                RateLimitMiddleware,
-                redis_client=redis_client,
-                requests_per_minute=rate_limit_per_minute,
-                requests_per_hour=rate_limit_per_hour,
-            )
-            logger.info("Rate limiting middleware added")
-        else:
-            logger.warning("Rate limiting middleware skipped - Redis not available")
 
         logger.info("NMT Service started successfully")
 
