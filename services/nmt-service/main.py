@@ -190,6 +190,11 @@ async def root():
         "description": "Neural Machine Translation microservice",
     }
 
+@app.get("/health")
+async def health():
+    # Lightweight readiness/liveness signal
+    return {"status": "healthy"}
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8089)
