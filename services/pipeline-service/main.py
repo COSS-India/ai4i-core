@@ -12,6 +12,7 @@ from typing import Dict, Any
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from utils.service_registry_client import ServiceRegistryHttpClient
 
 # Configure logging
 logging.basicConfig(
@@ -28,6 +29,29 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Pipeline Service...")
     
     try:
+        # Register service into the central registry via config-service
+        registry_client = ServiceRegistryHttpClient()
+        service_name = os.getenv("SERVICE_NAME", "pipeline-service")
+        service_port = int(os.getenv("SERVICE_PORT", "8090"))
+        public_base_url = os.getenv("SERVICE_PUBLIC_URL")
+        if public_base_url:
+            service_url = public_base_url.rstrip("/")
+        else:
+            service_host = os.getenv("SERVICE_HOST", service_name)
+            service_url = f"http://{service_host}:{service_port}"
+        health_url = service_url + "/health"
+        instance_id = os.getenv("SERVICE_INSTANCE_ID", f"{service_name}-{os.getpid()}")
+        registered_instance_id = await registry_client.register(
+            service_name=service_name,
+            service_url=service_url,
+            health_check_url=health_url,
+            service_metadata={"instance_id": instance_id, "status": "healthy"},
+        )
+        if registered_instance_id:
+            logger.info("Registered %s with service registry as instance %s", service_name, registered_instance_id)
+        else:
+            logger.warning("Service registry registration skipped/failed for %s", service_name)
+
         logger.info("Pipeline Service started successfully")
     except Exception as e:
         logger.error(f"Failed to start Pipeline Service: {e}")
@@ -37,7 +61,18 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down Pipeline Service...")
-    logger.info("Pipeline Service shutdown complete")
+    try:
+        # Deregister service (best-effort)
+        try:
+            registry_client = ServiceRegistryHttpClient()
+            service_name = os.getenv("SERVICE_NAME", "pipeline-service")
+            instance_id = os.getenv("SERVICE_INSTANCE_ID", f"{service_name}-{os.getpid()}")
+            if instance_id:
+                await registry_client.deregister(service_name, instance_id)
+        except Exception:
+            pass
+    finally:
+        logger.info("Pipeline Service shutdown complete")
 
 
 # Create FastAPI application
