@@ -27,7 +27,7 @@ services:
   config-service:
     volumes:
       - ./services/config-service:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8082 --reload
+    # command: uvicorn main:app --host 0.0.0.0 --port 8082 --reload
     environment:
       - DEBUG=true
       - LOG_LEVEL=DEBUG
