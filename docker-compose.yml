@@ -356,6 +356,8 @@ services:
       - TRITON_ENDPOINT=http://13.200.133.97:9000
       - TRITON_TIMEOUT=120
     depends_on:
+      config-service:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
@@ -383,6 +385,8 @@ services:
     env_file:
       - ./services/tts-service/.env
     depends_on:
+      config-service:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
@@ -409,6 +413,8 @@ services:
     env_file:
       - ./services/nmt-service/.env
     depends_on:
+      config-service:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
@@ -435,6 +441,8 @@ services:
     env_file:
       - ./services/pipeline-service/.env
     depends_on:
+      config-service:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
