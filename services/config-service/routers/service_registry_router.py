@@ -28,14 +28,18 @@ async def deregister_service(service_name: str, instance_id: str, service: Servi
     return {"status": "ok"}
 
 
-@router.get("/services", response_model=List[ServiceInstance])
+@router.get("/services", response_model=List[ServiceInstance], response_model_exclude_none=True)
 async def list_services(service: ServiceRegistryService = Depends(get_registry_service)):
-    return await service.list_all_services()
+    items = await service.list_all_services()
+    # Enterprise-friendly response: omit fields that are not available (e.g., instance_id when not tracked in DB)
+    return [i.model_dump(exclude_none=True) for i in items]
 
 
-@router.get("/services/{service_name}", response_model=List[ServiceInstance])
+@router.get("/services/{service_name}", response_model=List[ServiceInstance], response_model_exclude_none=True)
 async def service_instances(service_name: str, service: ServiceRegistryService = Depends(get_registry_service)):
-    return await service.get_service_instances(service_name)
+    items = await service.get_service_instances(service_name)
+    # Hide nulls if any instance fields are unavailable
+    return [i.model_dump(exclude_none=True) for i in items]
 
 
 @router.get("/services/{service_name}/url")
