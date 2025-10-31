@@ -351,6 +351,7 @@ class RouteManager:
             '/api/v1/asr': 'asr-service',
             '/api/v1/tts': 'tts-service',
             '/api/v1/nmt': 'nmt-service',
+            '/api/v1/llm': 'llm-service',
             '/api/v1/pipeline': 'pipeline-service'
         }
     
@@ -367,6 +368,8 @@ class RouteManager:
     
     async def load_routes_from_redis(self) -> None:
         """Load route mappings from Redis"""
+        if not self.redis:
+            return  # Skip if Redis not available
         try:
             route_data = await self.redis.hgetall("routes:mappings")
             if route_data:
@@ -532,12 +535,17 @@ health_monitor_task = None
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections and components on startup"""
-    global http_client
+    global http_client, route_manager
     
     try:
         # Initialize HTTP client
         http_client = httpx.AsyncClient(timeout=30.0)
         logger.info("HTTP client initialized")
+        
+        # Initialize route manager (can work without Redis)
+        route_manager = RouteManager(redis_client=None if not redis_client else redis_client)
+        await route_manager.load_routes_from_redis()  # Try to load from Redis if available
+        logger.info("Route manager initialized")
         
         logger.info("API Gateway initialized successfully (using direct service URLs)")
         
@@ -602,6 +610,7 @@ async def api_status():
             "asr": os.getenv("ASR_SERVICE_URL", "http://asr-service:8087"),
             "tts": os.getenv("TTS_SERVICE_URL", "http://tts-service:8088"),
             "nmt": os.getenv("NMT_SERVICE_URL", "http://nmt-service:8089"),
+            "llm": os.getenv("LLM_SERVICE_URL", "http://llm-service:8090"),
             "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8090")
         }
     }
@@ -889,6 +898,7 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'asr-service': os.getenv('ASR_SERVICE_URL', 'http://localhost:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
+        'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
         'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://localhost:8090')
     }
     
@@ -946,6 +956,11 @@ async def proxy_request(request: Request, path: str):
         service_name = await route_manager.get_service_for_path(f"/{path}")
         if not service_name:
             raise HTTPException(status_code=404, detail=f"No service found for path: /{path}")
+        
+        # Fallback to direct service URLs if load_balancer is not available
+        if load_balancer is None:
+            logger.debug(f"Using direct service URL fallback for {service_name}")
+            return await proxy_to_service(request, f"/{path}", service_name)
         
         # Select healthy instance
         instance_info = await load_balancer.select_instance(service_name)
