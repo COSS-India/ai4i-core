@@ -18,6 +18,7 @@ import {
   IoVolumeHighOutline,
   IoLanguageOutline,
   IoGitNetworkOutline,
+  IoSparklesOutline,
 } from 'react-icons/io5';
 import { FaMicrophone } from 'react-icons/fa';
 
@@ -33,6 +34,7 @@ const navItems: NavItem[] = [
   { id: 'asr', label: 'ASR', path: '/asr', icon: FaMicrophone },
   { id: 'tts', label: 'TTS', path: '/tts', icon: IoVolumeHighOutline },
   { id: 'nmt', label: 'NMT', path: '/nmt', icon: IoLanguageOutline },
+  { id: 'llm', label: 'LLM', path: '/llm', icon: IoSparklesOutline },
   { id: 'pipeline', label: 'Pipeline', path: '/pipeline', icon: IoGitNetworkOutline },
 ];
 
