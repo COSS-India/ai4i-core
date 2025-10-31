@@ -33,7 +33,7 @@ import LoadingSpinner from '../components/common/LoadingSpinner';
 import { SUPPORTED_LANGUAGES, LANG_CODE_TO_LABEL } from '../config/constants';
 import { usePipeline } from '../hooks/usePipeline';
 import { listASRModels } from '../services/asrService';
-import { listNMTModels } from '../services/nmtService';
+import { listNMTServices } from '../services/nmtService';
 import { listVoices } from '../services/ttsService';
 
 const PipelinePage: React.FC = () => {
@@ -42,7 +42,7 @@ const PipelinePage: React.FC = () => {
   const [sourceLanguage, setSourceLanguage] = useState('en');
   const [targetLanguage, setTargetLanguage] = useState('hi');
   const [asrServiceId, setAsrServiceId] = useState('asr_am_ensemble');
-  const [nmtServiceId, setNmtServiceId] = useState('ai4bharat/indictrans-v2-all-gpu--t4');
+  const [nmtServiceId, setNmtServiceId] = useState('ai4bharat/indictrans-v2-all-gpu');
   const [ttsServiceId, setTtsServiceId] = useState('indic-tts-coqui-dravidian');
 
   const {
@@ -62,9 +62,9 @@ const PipelinePage: React.FC = () => {
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data: nmtModels } = useQuery({
-    queryKey: ['nmt-models'],
-    queryFn: listNMTModels,
+  const { data: nmtServices } = useQuery({
+    queryKey: ['nmt-services'],
+    queryFn: listNMTServices,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -231,10 +231,10 @@ const PipelinePage: React.FC = () => {
                     value={nmtServiceId}
                     onChange={(e) => setNmtServiceId(e.target.value)}
                   >
-                    <option value="ai4bharat/indictrans-v2-all-gpu--t4">ai4bharat/indictrans-v2-all-gpu--t4 (Default)</option>
-                    {nmtModels?.map((model) => (
-                      <option key={model.model_id} value={model.model_id}>
-                        {model.model_id}
+                    <option value="ai4bharat/indictrans-v2-all-gpu">ai4bharat/indictrans-v2-all-gpu (Default)</option>
+                    {nmtServices?.map((service) => (
+                      <option key={service.service_id} value={service.service_id}>
+                        {service.service_id}
                       </option>
                     ))}
                   </Select>
