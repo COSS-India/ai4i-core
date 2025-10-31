@@ -37,24 +37,24 @@ const HomePage: React.FC = () => {
   const services = [
     {
       id: 'asr',
-      title: 'Speech Recognition',
-      description: 'Convert speech to text with support for 22+ Indian languages',
+      title: 'ASR – Automatic Speech Recognition',
+      description: 'Convert speech to text in 22+ Indian languages',
       icon: FaMicrophone,
       path: '/asr',
       color: 'orange',
     },
     {
       id: 'tts',
-      title: 'Text-to-Speech',
-      description: 'Convert text to natural-sounding speech with multiple voice options',
+      title: 'TTS – Text-to-Speech',
+      description: 'Convert text to natural, human-like speech in multiple Indian languages and voices',
       icon: IoVolumeHighOutline,
       path: '/tts',
       color: 'blue',
     },
     {
       id: 'nmt',
-      title: 'Translation',
-      description: 'Translate text between 22+ Indian languages with high accuracy',
+      title: 'Text Translation',
+      description: 'Translate text between 22+ Indian languages',
       icon: IoLanguageOutline,
       path: '/nmt',
       color: 'green',
@@ -62,7 +62,7 @@ const HomePage: React.FC = () => {
     {
       id: 'pipeline',
       title: 'Pipeline',
-      description: 'Chain multiple services together for end-to-end workflows',
+      description: 'Chain multiple Langauge AI services together for seamless end-to-end workflows',
       icon: IoGitMergeOutline,
       path: '/pipeline',
       color: 'purple',
@@ -78,21 +78,21 @@ const HomePage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Simple UI - AI Services Testing Interface</title>
+        <title>Simple UI - AI Accessibility Studio</title>
         <meta name="description" content="Test ASR, TTS, NMT, and Pipeline microservices with a modern web interface" />
       </Head>
 
       <ContentLayout>
         <VStack spacing={12} w="full">
           {/* Hero Section */}
-          <Box textAlign="center" py="4rem">
+          <Box textAlign="center" pt="2rem" pb="4rem">
             <Heading
               size="xl"
               fontWeight="bold"
               color="gray.800"
               mb={4}
             >
-              AI Services Testing Interface
+              AI Accessibility Studio
             </Heading>
             <Text
               fontSize="lg"
@@ -100,8 +100,7 @@ const HomePage: React.FC = () => {
               maxW="600px"
               mx="auto"
             >
-              Test and interact with ASR, TTS, NMT, and Pipeline microservices through a modern, 
-              user-friendly web interface. Experience the power of AI4Bharat&apos;s language technologies.
+              Test and explore Speech, Text, and Translation models in real time.
             </Text>
           </Box>
 
@@ -161,7 +160,7 @@ const HomePage: React.FC = () => {
                           transform: 'translateY(-1px)',
                         }}
                       >
-                        Try {service.title}
+                        Try it now
                       </Button>
                     </Link>
                   </VStack>
@@ -173,7 +172,7 @@ const HomePage: React.FC = () => {
           {/* Quick Stats Section */}
           <Box w="full" maxW="800px" mx="auto">
             <Heading size="lg" textAlign="center" mb={8} color="gray.800">
-              Platform Statistics
+              Platform Insights
             </Heading>
             <SimpleGrid columns={{ base: 1, md: 3 }} spacing={8}>
               {stats.map((stat, index) => (
