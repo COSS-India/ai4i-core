@@ -14,7 +14,7 @@ import {
 } from '@chakra-ui/react';
 import { useQuery } from '@tanstack/react-query';
 import { useNMT } from '../hooks/useNMT';
-import { getSupportedLanguagePairs } from '../services/nmtService';
+import { listNMTServices, getSupportedLanguagePairsForService } from '../services/nmtService';
 import ContentLayout from '../components/common/ContentLayout';
 import ModelLanguageSelector from '../components/nmt/ModelLanguageSelector';
 import TextTranslator from '../components/nmt/TextTranslator';
@@ -25,7 +25,7 @@ const NMTPage: React.FC = () => {
   const toast = useToast();
   const {
     languagePair,
-    selectedModelId,
+    selectedServiceId,
     inputText,
     translatedText,
     fetching,
@@ -37,16 +37,23 @@ const NMTPage: React.FC = () => {
     performInference,
     setInputText,
     setLanguagePair,
-    setSelectedModelId,
+    setSelectedServiceId,
     clearResults,
     swapLanguages,
   } = useNMT();
 
-  // Fetch available language pairs for selected model
+  // Fetch available services
+  const { data: services, isLoading: servicesLoading } = useQuery({
+    queryKey: ['nmt-services'],
+    queryFn: listNMTServices,
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
+
+  // Fetch available language pairs for selected service
   const { data: languagePairs, isLoading: pairsLoading } = useQuery({
-    queryKey: ['nmt-language-pairs', selectedModelId],
-    queryFn: () => getSupportedLanguagePairs(selectedModelId),
-    enabled: !!selectedModelId,
+    queryKey: ['nmt-language-pairs', selectedServiceId],
+    queryFn: () => getSupportedLanguagePairsForService(selectedServiceId, services || []),
+    enabled: !!selectedServiceId && !!services && services.length > 0,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
@@ -97,15 +104,15 @@ const NMTPage: React.FC = () => {
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
-                {/* Model and Language Selector */}
+                {/* Service and Language Selector */}
                 <Box>
                   <ModelLanguageSelector
                     languagePair={languagePair}
                     onLanguagePairChange={setLanguagePair}
                     availableLanguagePairs={languagePairs || []}
-                    loading={pairsLoading}
-                    selectedModelId={selectedModelId}
-                    onModelChange={setSelectedModelId}
+                    loading={pairsLoading || servicesLoading}
+                    selectedServiceId={selectedServiceId}
+                    onServiceChange={setSelectedServiceId}
                   />
                 </Box>
 
