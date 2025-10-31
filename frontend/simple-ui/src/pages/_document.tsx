@@ -29,14 +29,14 @@ export default function Document() {
         <meta name="theme-color" content="#ff8c00" />
         
         {/* Open Graph Meta Tags */}
-        <meta property="og:title" content="Simple UI - AI Services Testing Interface" />
+        <meta property="og:title" content="Simple UI - AI Accessibility Studio" />
         <meta property="og:description" content="Test ASR, TTS, and NMT microservices with a modern web interface" />
         <meta property="og:type" content="website" />
         <meta property="og:image" content="/og-image.png" />
         
         {/* Twitter Card Meta Tags */}
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="Simple UI - AI Services Testing Interface" />
+        <meta name="twitter:title" content="Simple UI - AI Accessibility Studio" />
         <meta name="twitter:description" content="Test ASR, TTS, and NMT microservices with a modern web interface" />
         <meta name="twitter:image" content="/twitter-image.png" />
       </Head>
