@@ -146,11 +146,11 @@ const PipelinePage: React.FC = () => {
                 colorScheme="gray"
                 onClick={() => router.push('/pipeline-builder')}
               >
-                📝 Pipeline Builder
+                📝 Customize Pipeline
               </Button>
             </Box>
             <Text color="gray.600" fontSize="lg">
-              Chain ASR → Translation → TTS for complete speech-to-speech translation
+              Chain Speech, Translation, and Voice models for end-to-end speech conversion.
             </Text>
           </Box>
 

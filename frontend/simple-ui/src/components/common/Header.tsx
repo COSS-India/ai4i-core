@@ -29,26 +29,29 @@ const Header: React.FC = () => {
   const { isAuthenticated: isUserAuthenticated, user } = useAuth();
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [title, setTitle] = useState('Dashboard');
+  const [title, setTitle] = useState('AI4Inclusion Console');
 
   // Update title based on route
   useEffect(() => {
     const pathname = router.pathname;
     switch (pathname) {
       case '/asr':
-        setTitle('Speech Recognition');
+        setTitle('ASR – Automatic Speech Recognition');
         break;
       case '/tts':
-        setTitle('Text-to-Speech');
+        setTitle('TTS – Text-to-Speech');
         break;
       case '/nmt':
-        setTitle('Translation');
+        setTitle('Text Translation');
+        break;
+      case '/pipeline':
+        setTitle('Speech-to-Speech Pipeline');
         break;
       case '/':
-        setTitle('Dashboard');
+        setTitle('AI4Inclusion Console');
         break;
       default:
-        setTitle('Simple UI');
+        setTitle('AI4Inclusion Console');
     }
   }, [router.pathname]);
 
@@ -119,8 +122,8 @@ const Header: React.FC = () => {
               </Button>
             )}
 
-            {/* API Key Badge */}
-            <Badge
+            {/* API Key Badge - Hidden for now */}
+            {/* <Badge
               colorScheme={getApiKeyColor()}
               px={3}
               py={1}
@@ -128,7 +131,7 @@ const Header: React.FC = () => {
               fontSize="sm"
             >
               {getApiKeyDisplay()}
-            </Badge>
+            </Badge> */}
 
             {/* Menu */}
             <Menu>
