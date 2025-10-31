@@ -1,8 +1,7 @@
 // Home page (landing page) with service overview and navigation cards
 
-import React from 'react';
+import React, { useState } from 'react';
 import Head from 'next/head';
-import Link from 'next/link';
 import {
   Box,
   Heading,
@@ -27,12 +26,80 @@ import {
   IoGitMergeOutline,
 } from 'react-icons/io5';
 import { FaMicrophone } from 'react-icons/fa';
+import { useRouter } from 'next/router';
 import ContentLayout from '../components/common/ContentLayout';
+import { useAuth } from '../hooks/useAuth';
+import AuthModal from '../components/auth/AuthModal';
 
 const HomePage: React.FC = () => {
+  const router = useRouter();
+  const { isAuthenticated, isLoading } = useAuth();
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
   const cardBg = useColorModeValue('white', 'gray.800');
   const cardBorder = useColorModeValue('gray.200', 'gray.700');
   const hoverBg = useColorModeValue('gray.50', 'gray.700');
+
+  // Navigate when authenticated and there's a pending navigation
+  React.useEffect(() => {
+    console.log('HomePage useEffect:', { isAuthenticated, isLoading, pendingNavigation, showAuthModal });
+    if (!isLoading && isAuthenticated && pendingNavigation) {
+      console.log('✅ Authentication detected, navigating to pending route:', pendingNavigation);
+      const navPath = pendingNavigation;
+      setPendingNavigation(null); // Clear before navigation
+      setShowAuthModal(false); // Close modal
+      // Navigate immediately - no delay needed
+      router.push(navPath);
+    }
+  }, [isAuthenticated, isLoading, pendingNavigation, router, showAuthModal]);
+
+  // Also handle case where user becomes authenticated but there's no pending navigation
+  // (e.g., modal closed after login, then user clicks service)
+  React.useEffect(() => {
+    if (!isLoading && isAuthenticated && showAuthModal) {
+      console.log('HomePage: User authenticated, closing modal');
+      setShowAuthModal(false);
+      // Ensure we're on home page after login if no pending navigation
+      if (!pendingNavigation && router.pathname !== '/') {
+        console.log('HomePage: Redirecting to home after login');
+        router.push('/');
+      }
+    }
+  }, [isAuthenticated, isLoading, showAuthModal, pendingNavigation, router]);
+
+  const handleServiceClick = async (path: string) => {
+    console.log('handleServiceClick called:', { path, isAuthenticated, isLoading });
+    
+    // Wait for auth to finish loading before checking
+    if (isLoading) {
+      console.log('HomePage: Auth still loading, waiting...');
+      return;
+    }
+
+    // Double-check authentication state before navigation
+    // Use a small delay to ensure state has propagated after login
+    if (isAuthenticated) {
+      console.log('HomePage: User authenticated, navigating to:', path);
+      // Clear any pending navigation since we're navigating now
+      setPendingNavigation(null);
+      setShowAuthModal(false);
+      // Small delay to ensure state updates have propagated
+      await new Promise(resolve => setTimeout(resolve, 50));
+      // Navigate directly
+      router.push(path);
+    } else {
+      console.log('HomePage: User not authenticated, showing modal and storing pending navigation:', path);
+      setPendingNavigation(path);
+      setShowAuthModal(true);
+    }
+  };
+
+  const handleAuthModalClose = () => {
+    setShowAuthModal(false);
+    // Don't clear pendingNavigation here - let it persist in case user authenticates later
+    // setPendingNavigation(null);
+  };
+
 
   const services = [
     {
@@ -152,18 +219,20 @@ const HomePage: React.FC = () => {
                     >
                       {service.description}
                     </Text>
-                    <Link href={service.path} passHref>
-                      <Button
-                        colorScheme={service.color}
-                        size="md"
-                        w="full"
-                        _hover={{
-                          transform: 'translateY(-1px)',
-                        }}
-                      >
-                        Try {service.title}
-                      </Button>
-                    </Link>
+                    <Button
+                      colorScheme={service.color}
+                      size="md"
+                      w="full"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        handleServiceClick(service.path);
+                      }}
+                      _hover={{
+                        transform: 'translateY(-1px)',
+                      }}
+                    >
+                      Try {service.title}
+                    </Button>
                   </VStack>
                 </CardBody>
               </Card>
@@ -224,6 +293,13 @@ const HomePage: React.FC = () => {
           </Box>
         </VStack>
       </ContentLayout>
+
+      {/* Auth Modal for service access */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={handleAuthModalClose}
+        initialMode="login"
+      />
     </>
   );
 };

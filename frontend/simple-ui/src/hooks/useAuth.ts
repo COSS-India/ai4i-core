@@ -20,22 +20,29 @@ export const useAuth = () => {
     const initializeAuth = async () => {
       try {
         const storedUser = authService.getStoredUser();
-        const isAuthenticated = authService.isAuthenticated();
+        const hasToken = authService.isAuthenticated();
 
-        if (isAuthenticated && storedUser) {
-          // Verify token is still valid
-          const isValid = await authService.ensureValidToken();
-          if (isValid) {
+        // Only restore auth state if we have BOTH a valid token AND user data
+        if (hasToken && storedUser) {
+          // Verify token is still valid by calling /me endpoint
+          try {
+            const currentUser = await authService.getCurrentUser();
+            // Token is valid and we got user data
             setAuthState({
-              user: storedUser,
+              user: currentUser, // Use fresh user data from API
               accessToken: authService.getAccessToken(),
               refreshToken: authService.getRefreshToken(),
               isAuthenticated: true,
               isLoading: false,
               error: null,
             });
-          } else {
-            // Token is invalid, clear state
+            // Update stored user with fresh data
+            authService.setStoredUser(currentUser);
+          } catch (error) {
+            // Token is invalid or expired, clear everything
+            console.log('Token validation failed during initialization, clearing auth state');
+            authService.clearAuthTokens();
+            authService.clearStoredUser();
             setAuthState({
               user: null,
               accessToken: null,
@@ -46,17 +53,31 @@ export const useAuth = () => {
             });
           }
         } else {
-          setAuthState(prev => ({ ...prev, isLoading: false }));
+          // No token or no user data - ensure everything is cleared
+          if (!hasToken) {
+            authService.clearStoredUser();
+          }
+          setAuthState({
+            user: null,
+            accessToken: null,
+            refreshToken: null,
+            isAuthenticated: false,
+            isLoading: false,
+            error: null,
+          });
         }
       } catch (error) {
         console.error('Auth initialization failed:', error);
+        // Clear everything on error
+        authService.clearAuthTokens();
+        authService.clearStoredUser();
         setAuthState({
           user: null,
           accessToken: null,
           refreshToken: null,
           isAuthenticated: false,
           isLoading: false,
-          error: 'Failed to initialize authentication',
+          error: null,
         });
       }
     };
@@ -66,24 +87,67 @@ export const useAuth = () => {
 
   const login = useCallback(async (credentials: LoginRequest) => {
     setAuthState(prev => ({ ...prev, isLoading: true, error: null }));
+    console.log('useAuth: Starting login...');
 
     try {
       const response = await authService.login(credentials);
+      console.log('useAuth: Login API successful, tokens received');
       
-      setAuthState({
-        user: response.user,
-        accessToken: response.access_token,
-        refreshToken: response.refresh_token,
-        isAuthenticated: true,
-        isLoading: false,
-        error: null,
-      });
+      // Use /me endpoint to validate token and get user data in one call
+      // This is more efficient than calling validate then me separately
+      console.log('useAuth: Fetching user data from /me endpoint (this also validates the token)...');
+      try {
+        const user = await authService.getCurrentUser();
+        console.log('useAuth: User data fetched successfully, token is valid:', user);
 
-      // Store user data
-      authService.setStoredUser(response.user);
+        // Store user data and tokens immediately before state update
+        // This ensures all data is in localStorage before React re-renders
+        authService.setStoredUser(user);
+        // Tokens are already stored by authService.login(), but ensure they're there
+        if (!authService.getAccessToken() || !authService.getRefreshToken()) {
+          // This shouldn't happen, but just in case
+          console.warn('useAuth: Tokens not found in storage after login');
+        }
 
-      return response;
+        // Token is valid and we have user data - authentication successful
+        // Use functional update to ensure we get the latest state
+        console.log('useAuth: Setting authentication state - isAuthenticated: true');
+        setAuthState(prev => {
+          const newState = {
+            user: user,
+            accessToken: response.access_token,
+            refreshToken: response.refresh_token,
+            isAuthenticated: true,
+            isLoading: false,
+            error: null,
+          };
+          console.log('useAuth: Auth state updated:', { 
+            isAuthenticated: newState.isAuthenticated, 
+            username: newState.user?.username 
+          });
+          return newState;
+        });
+
+        console.log('useAuth: ✅ Authentication complete - user logged in successfully');
+        
+        // Force a small delay to ensure state propagation, then return
+        // This helps React batch updates and ensures UI updates immediately
+        await new Promise(resolve => setTimeout(resolve, 0));
+        
+        return response;
+      } catch (meError) {
+        console.error('useAuth: Failed to fetch user data / token validation failed:', meError);
+        // Clear tokens if /me fails (token is invalid or expired)
+        authService.clearAuthTokens();
+        setAuthState(prev => ({
+          ...prev,
+          isLoading: false,
+          error: 'Token validation failed. Please try logging in again.',
+        }));
+        throw new Error('Token validation failed. Please try logging in again.');
+      }
     } catch (error) {
+      console.error('useAuth: Login failed:', error);
       const errorMessage = error instanceof Error ? error.message : 'Login failed';
       setAuthState(prev => ({
         ...prev,
@@ -135,6 +199,11 @@ export const useAuth = () => {
 
       // Clear stored user data
       authService.clearStoredUser();
+
+      // Navigate to home page and refresh to show sign-in button
+      if (typeof window !== 'undefined') {
+        window.location.href = '/';
+      }
     } catch (error) {
       console.error('Logout failed:', error);
       // Even if logout fails on server, clear local state
@@ -147,6 +216,11 @@ export const useAuth = () => {
         error: null,
       });
       authService.clearStoredUser();
+
+      // Navigate to home page even if logout API call failed
+      if (typeof window !== 'undefined') {
+        window.location.href = '/';
+      }
     }
   }, []);
 
