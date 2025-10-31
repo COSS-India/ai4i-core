@@ -14,13 +14,24 @@ export const useApiKey = (): UseApiKeyReturn => {
   const [apiKey, setApiKeyState] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
-  // Load API key from localStorage on mount
+  // Load API key from environment variable or localStorage on mount
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const storedApiKey = localStorage.getItem('api_key');
-      if (storedApiKey) {
-        setApiKeyState(storedApiKey);
+      // First check environment variable
+      const envApiKey = process.env.NEXT_PUBLIC_API_KEY;
+      if (envApiKey && envApiKey.trim() !== '' && envApiKey !== 'your_api_key_here') {
+        const apiKeyValue = envApiKey.trim();
+        // Store in localStorage for consistency
+        localStorage.setItem('api_key', apiKeyValue);
+        setApiKeyState(apiKeyValue);
         setIsAuthenticated(true);
+      } else {
+        // Fallback to localStorage
+        const storedApiKey = localStorage.getItem('api_key');
+        if (storedApiKey) {
+          setApiKeyState(storedApiKey);
+          setIsAuthenticated(true);
+        }
       }
     }
   }, []);

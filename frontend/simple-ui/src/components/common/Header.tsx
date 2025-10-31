@@ -26,10 +26,13 @@ import UserMenu from '../auth/UserMenu';
 const Header: React.FC = () => {
   const router = useRouter();
   const { apiKey, isAuthenticated: hasApiKey, clearApiKey } = useApiKey();
-  const { isAuthenticated: isUserAuthenticated, user } = useAuth();
+  const { isAuthenticated: isUserAuthenticated, user, isLoading: isAuthLoading } = useAuth();
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [title, setTitle] = useState('Dashboard');
+  
+  // Determine if we should show user menu or sign in button
+  const showUserMenu = !isAuthLoading && isUserAuthenticated && user && user.username;
 
   // Update title based on route
   useEffect(() => {
@@ -106,7 +109,7 @@ const Header: React.FC = () => {
           {/* Right side - Authentication, API key status and menu */}
           <HStack spacing={4}>
             {/* Authentication */}
-            {isUserAuthenticated && user ? (
+            {showUserMenu ? (
               <UserMenu user={user} />
             ) : (
               <Button
