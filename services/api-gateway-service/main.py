@@ -8,12 +8,10 @@ import uuid
 import time
 from typing import Dict, Any, List, Optional, Tuple
 from enum import Enum
-from fastapi import FastAPI, Request, HTTPException, Response, Security
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
+from fastapi import FastAPI, Request, HTTPException, Response
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.openapi.utils import get_openapi
 import redis.asyncio as redis
 import httpx
 from auth_middleware import auth_middleware
@@ -167,58 +165,6 @@ class StreamingInfo(BaseModel):
     supported_formats: List[str] = Field(..., description="Supported audio formats")
     max_connections: int = Field(..., description="Maximum concurrent connections")
     response_frequency_ms: int = Field(..., description="Response frequency in milliseconds")
-
-# Auth models (for API documentation)
-class RegisterUser(BaseModel):
-    email: str = Field(..., description="Email address")
-    username: str = Field(..., min_length=3, max_length=100)
-    password: str = Field(..., min_length=8, max_length=100)
-    confirm_password: str = Field(..., min_length=8, max_length=100)
-    full_name: Optional[str] = Field(None, description="Full name")
-    phone_number: Optional[str] = Field(None, description="Phone number")
-    timezone: Optional[str] = Field("UTC", description="Timezone")
-    language: Optional[str] = Field("en", description="Language code")
-
-class LoginRequestBody(BaseModel):
-    email: str = Field(..., description="Email address")
-    password: str = Field(..., description="User password")
-    remember_me: bool = Field(False, description="Issue long-lived refresh token")
-
-class TokenRefreshBody(BaseModel):
-    refresh_token: str = Field(..., description="Refresh token")
-
-class LogoutBody(BaseModel):
-    refresh_token: Optional[str] = Field(None, description="Refresh token to invalidate; if omitted, logs out all sessions")
-
-class UpdateUserBody(BaseModel):
-    full_name: Optional[str] = Field(None, description="Full name")
-    phone_number: Optional[str] = Field(None, description="Phone number")
-    timezone: Optional[str] = Field(None, description="Timezone (e.g., 'UTC')")
-    language: Optional[str] = Field(None, description="Language code (e.g., 'en')")
-    preferences: Optional[Dict[str, Any]] = Field(None, description="User preferences object")
-
-class PasswordChangeBody(BaseModel):
-    current_password: str = Field(..., description="Current password")
-    new_password: str = Field(..., min_length=8, max_length=100, description="New password (minimum 8 characters)")
-    confirm_password: str = Field(..., min_length=8, max_length=100, description="Confirm new password (must match new_password)")
-
-class PasswordResetRequestBody(BaseModel):
-    email: str = Field(..., description="Email address associated with the account")
-
-class PasswordResetConfirmBody(BaseModel):
-    token: str = Field(..., description="Password reset token received via email")
-    new_password: str = Field(..., min_length=8, max_length=100, description="New password (minimum 8 characters)")
-    confirm_password: str = Field(..., min_length=8, max_length=100, description="Confirm new password (must match new_password)")
-
-class OAuth2CallbackBody(BaseModel):
-    code: str = Field(..., description="Authorization code returned by OAuth2 provider")
-    state: str = Field(..., description="State parameter for CSRF protection (must match the state sent initially)")
-    provider: str = Field(..., description="OAuth2 provider name (e.g., 'google', 'github')")
-
-class APIKeyCreateBody(BaseModel):
-    key_name: str = Field(..., min_length=1, max_length=100, description="Name/label for the API key")
-    permissions: Optional[List[str]] = Field(default_factory=list, description="List of permissions for the API key (e.g., ['read:profile', 'update:profile'])")
-    expires_days: Optional[int] = Field(None, ge=1, le=365, description="Number of days until the API key expires (1-365 days, optional)")
 
 # Pydantic models for Pipeline endpoints
 class PipelineTaskType(str, Enum):
@@ -429,144 +375,12 @@ class RouteManager:
         except Exception as e:
             logger.warning(f"Failed to load routes from Redis: {e}")
 
-# --- OpenAPI Tags metadata ---
-OPENAPI_TAGS = [
-    {"name": "Authentication", "description": "User auth, tokens, API keys"},
-    {"name": "ASR", "description": "Automatic Speech Recognition endpoints"},
-    {"name": "TTS", "description": "Text-To-Speech endpoints"},
-    {"name": "NMT", "description": "Neural Machine Translation endpoints"},
-    {"name": "Pipeline", "description": "Multi-service pipeline endpoints"},
-    {"name": "Protected", "description": "Endpoints requiring authentication"},
-    {"name": "System", "description": "Service info and health"},
-]
-
 # Initialize FastAPI app
 app = FastAPI(
     title="API Gateway Service",
     version="1.0.0",
-    description="Central entry point for all microservice requests",
-    openapi_tags=OPENAPI_TAGS
+    description="Central entry point for all microservice requests"
 )
-
-# OpenAPI/Swagger security scheme (Bearer auth)
-bearer_scheme = HTTPBearer(auto_error=False)
-api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
-
-def build_auth_headers(request: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> Dict[str, str]:
-    headers: Dict[str, str] = {}
-    # Copy incoming headers except hop-by-hop and content-length/host
-    for k, v in request.headers.items():
-        if k.lower() not in ['content-length', 'host'] and not is_hop_by_hop_header(k):
-            headers[k] = v
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    return headers
-
-def ensure_authenticated_for_request(req: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> None:
-    """Enforce auth based on Swagger x-auth-source header.
-
-    - If x-auth-source=API_KEY, require X-API-Key
-    - If x-auth-source=AUTH_TOKEN, require Bearer token
-    - Otherwise, accept either Bearer or API key
-    """
-    choice = (req.headers.get('x-auth-source') or '').upper()
-    has_bearer = bool(credentials and credentials.credentials)
-    has_api_key = bool(api_key)
-
-    if choice == 'API_KEY':
-        if not has_api_key:
-            raise HTTPException(status_code=401, detail="Not authenticated: API key required (X-API-Key)")
-        return
-    if choice == 'AUTH_TOKEN':
-        if not has_bearer:
-            raise HTTPException(status_code=401, detail="Not authenticated: Bearer access token required (Authorization)")
-        return
-
-    if not (has_bearer or has_api_key):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-# --- OpenAPI customization: add x-auth-source dropdown param globally ---
-def custom_openapi():
-    if app.openapi_schema:
-        return app.openapi_schema
-    openapi_schema = get_openapi(
-        title=app.title,
-        version=app.version,
-        description=app.description,
-        routes=app.routes,
-    )
-
-    # Ensure top-level tags are set explicitly for Swagger UI grouping
-    openapi_schema["tags"] = [{"name": t["name"], "description": t.get("description", "")} for t in OPENAPI_TAGS]
-
-    # Ensure components exist
-    components = openapi_schema.setdefault("components", {})
-    parameters = components.setdefault("parameters", {})
-
-    # Define global header parameter with enum dropdown
-    parameters["XAuthSource"] = {
-        "name": "x-auth-source",
-        "in": "header",
-        "required": False,
-        "description": "Select auth source for testing in Swagger (API_KEY or AUTH_TOKEN)",
-        "schema": {
-            "type": "string",
-            "enum": ["API_KEY", "AUTH_TOKEN"],
-            "default": "API_KEY"
-        }
-    }
-
-    # Endpoints that should NOT get x-auth-source header
-    skip_x_auth_source_paths = set([
-        "/api/v1/auth/register",
-        "/api/v1/auth/login",
-        "/api/v1/auth/refresh",
-        "/api/v1/auth/reset-password",
-        "/api/v1/auth/request-password-reset",
-        "/api/v1/auth/oauth2/providers",
-        "/api/v1/auth/oauth2/callback",
-    ])
-
-    # Auto-tag operations by path prefix for better grouping in Swagger and inject header where applicable
-    path_to_tag = [
-        ("/api/v1/auth", "Authentication"),
-        ("/api/v1/asr", "ASR"),
-        ("/api/v1/tts", "TTS"),
-        ("/api/v1/nmt", "NMT"),
-        ("/api/v1/pipeline", "Pipeline"),
-        ("/api/v1/protected", "Protected"),
-        ("/api/v1/status", "System"),
-        ("/health", "System"),
-        ("/", "System"),
-    ]
-
-    for path, path_item in openapi_schema.get("paths", {}).items():
-        tag = None
-        for prefix, t in path_to_tag:
-            if path == prefix or path.startswith(prefix):
-                tag = t
-                break
-        if tag:
-            for operation in list(path_item.keys()):
-                if operation in ["get", "post", "put", "patch", "delete", "options", "head"]:
-                    op_obj = path_item[operation]
-                    existing_tags = op_obj.get("tags") or []
-                    if tag not in existing_tags:
-                        # Prepend to make group ordering clearer
-                        op_obj["tags"] = [tag] + existing_tags
-
-                    # Inject x-auth-source header except for skip list
-                    if path not in skip_x_auth_source_paths:
-                        op_params = op_obj.setdefault("parameters", [])
-                        if not any(p.get("$ref") == "#/components/parameters/XAuthSource" or p.get("name") == "x-auth-source" for p in op_params):
-                            op_params.append({"$ref": "#/components/parameters/XAuthSource"})
-
-    app.openapi_schema = openapi_schema
-    return app.openapi_schema
-
-app.openapi = custom_openapi
 
 # Global variables for connections and components
 redis_client = None
@@ -795,247 +609,67 @@ async def api_status():
 # Authentication Endpoints (Proxy to Auth Service)
 
 @app.post("/api/v1/auth/register")
-async def register_user(body: RegisterUser, request: Request):
+async def register_user(request: Request):
     """Register a new user"""
-    import json
-    # Prepare headers without Content-Length (httpx will set it)
-    headers = {k: v for k, v in request.headers.items() 
-               if k.lower() not in ['content-length', 'host']}
-    headers['Content-Type'] = 'application/json'
-    
-    payload = json.dumps(body.dict()).encode()
-    return await proxy_to_service(
-        None,
-        "/api/v1/auth/register",
-        "auth-service",
-        method="POST",
-        body=payload,
-        headers=headers
-    )
+    return await proxy_to_auth_service(request, "/api/v1/auth/register")
 
 @app.post("/api/v1/auth/login")
-async def login_user(body: LoginRequestBody, request: Request):
+async def login_user(request: Request):
     """Login user"""
-    import json
-    # Prepare headers without Content-Length (httpx will set it)
-    headers = {k: v for k, v in request.headers.items() 
-               if k.lower() not in ['content-length', 'host']}
-    headers['Content-Type'] = 'application/json'
-    
-    payload = json.dumps(body.dict()).encode()
-    return await proxy_to_service(
-        None,
-        "/api/v1/auth/login",
-        "auth-service",
-        method="POST",
-        body=payload,
-        headers=headers
-    )
+    return await proxy_to_auth_service(request, "/api/v1/auth/login")
 
 @app.post("/api/v1/auth/logout")
-async def logout_user(body: LogoutBody, request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)):
+async def logout_user(request: Request):
     """Logout user"""
-    import json
-    # Prepare headers without Content-Length (httpx will set it)
-    headers = {k: v for k, v in request.headers.items() 
-               if k.lower() not in ['content-length', 'host']}
-    headers['Content-Type'] = 'application/json'
-    
-    payload = json.dumps(body.dict()).encode()
-    return await proxy_to_service(
-        None,
-        "/api/v1/auth/logout",
-        "auth-service",
-        method="POST",
-        body=payload,
-        headers=headers
-    )
+    return await proxy_to_auth_service(request, "/api/v1/auth/logout")
 
 @app.post("/api/v1/auth/refresh")
-async def refresh_token(body: TokenRefreshBody, request: Request):
+async def refresh_token(request: Request):
     """Refresh access token"""
-    import json
-    # Prepare headers without Content-Length (httpx will set it)
-    headers = {k: v for k, v in request.headers.items() 
-               if k.lower() not in ['content-length', 'host']}
-    headers['Content-Type'] = 'application/json'
-    
-    payload = json.dumps(body.dict()).encode()
-    return await proxy_to_service(
-        None,
-        "/api/v1/auth/refresh",
-        "auth-service",
-        method="POST",
-        body=payload,
-        headers=headers
-    )
+    return await proxy_to_auth_service(request, "/api/v1/auth/refresh")
 
 @app.get("/api/v1/auth/validate")
-async def validate_token(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)):
+async def validate_token(request: Request):
     """Validate token"""
     return await proxy_to_auth_service(request, "/api/v1/auth/validate")
 
 @app.get("/api/v1/auth/me")
-async def get_current_user(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)):
+async def get_current_user(request: Request):
     """Get current user info"""
     return await proxy_to_auth_service(request, "/api/v1/auth/me")
 
 @app.put("/api/v1/auth/me")
-async def update_current_user(body: UpdateUserBody, request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)):
-    """Update current user info
-    
-    Update current user profile information. You can update:
-    - **full_name**: Your display name
-    - **phone_number**: Contact phone number
-    - **timezone**: Timezone preference (e.g., 'UTC', 'America/New_York')
-    - **language**: Language code (e.g., 'en', 'hi', 'ta')
-    - **preferences**: JSON object for user preferences
-    """
-    import json
-    # Filter out None values and encode as JSON
-    update_data = {k: v for k, v in body.dict().items() if v is not None}
-    payload = json.dumps(update_data).encode('utf-8')
-    
-    # Prepare headers - preserve Authorization, remove Content-Length
-    headers = build_auth_headers(request, credentials, None)
-    headers['Content-Type'] = 'application/json'
-    
-    return await proxy_to_service(
-        None,
-        "/api/v1/auth/me",
-        "auth-service",
-        method="PUT",
-        body=payload,
-        headers=headers
-    )
+async def update_current_user(request: Request):
+    """Update current user info"""
+    return await proxy_to_auth_service(request, "/api/v1/auth/me")
 
 @app.post("/api/v1/auth/change-password")
-async def change_password(body: PasswordChangeBody, request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)):
-    """Change password
-    
-    Change the current user's password. Requires:
-    - **current_password**: Your current password for verification
-    - **new_password**: Your new password (minimum 8 characters, must be strong)
-    - **confirm_password**: Confirmation of new password (must match new_password)
-    """
-    import json
-    # Encode request body as JSON
-    payload = json.dumps(body.dict()).encode('utf-8')
-    
-    # Prepare headers - preserve Authorization, remove Content-Length
-    headers = build_auth_headers(request, credentials, None)
-    headers['Content-Type'] = 'application/json'
-    
-    return await proxy_to_service(
-        None,
-        "/api/v1/auth/change-password",
-        "auth-service",
-        method="POST",
-        body=payload,
-        headers=headers
-    )
+async def change_password(request: Request):
+    """Change password"""
+    return await proxy_to_auth_service(request, "/api/v1/auth/change-password")
 
 @app.post("/api/v1/auth/request-password-reset")
-async def request_password_reset(body: PasswordResetRequestBody, request: Request):
-    """Request password reset
-    
-    Initiates a password reset process. The system will:
-    1. Check if the email exists in the system
-    2. Generate a secure reset token
-    3. Send an email with a password reset link containing the token
-    
-    **Security Note**: The response message is the same whether the email exists or not,
-    to prevent email enumeration attacks.
-    
-    **Parameters**:
-    - **email**: The email address associated with your account
-    """
-    import json
-    # Encode request body as JSON
-    payload = json.dumps(body.dict()).encode('utf-8')
-    
-    # Prepare headers
-    headers = {}
-    for k, v in request.headers.items():
-        if k.lower() not in ['content-length', 'host', 'content-type']:
-            headers[k] = v
-    headers['Content-Type'] = 'application/json'
-    
-    return await proxy_to_service(
-        None,
-        "/api/v1/auth/request-password-reset",
-        "auth-service",
-        method="POST",
-        body=payload,
-        headers=headers
-    )
+async def request_password_reset(request: Request):
+    """Request password reset"""
+    return await proxy_to_auth_service(request, "/api/v1/auth/request-password-reset")
 
 @app.post("/api/v1/auth/reset-password")
-async def reset_password(body: PasswordResetConfirmBody, request: Request):
-    """Reset password with token
-    
-    Completes the password reset process using the token received via email.
-    
-    **How it works**:
-    1. User clicks the reset link in their email
-    2. Link contains a token (in URL or entered manually)
-    3. User provides: token, new password, and confirmation
-    4. System validates the token and updates the password
-    
-    **Parameters**:
-    - **token**: The password reset token received via email
-    - **new_password**: Your new password (minimum 8 characters, must be strong)
-    - **confirm_password**: Confirmation of new password (must match new_password)
-    
-    **Note**: After successful reset, all existing sessions are invalidated for security.
-    """
-    import json
-    # Encode request body as JSON
-    payload = json.dumps(body.dict()).encode('utf-8')
-    
-    # Prepare headers
-    headers = {}
-    for k, v in request.headers.items():
-        if k.lower() not in ['content-length', 'host', 'content-type']:
-            headers[k] = v
-    headers['Content-Type'] = 'application/json'
-    
-    return await proxy_to_service(
-        None,
-        "/api/v1/auth/reset-password",
-        "auth-service",
-        method="POST",
-        body=payload,
-        headers=headers
-    )
+async def reset_password(request: Request):
+    """Reset password"""
+    return await proxy_to_auth_service(request, "/api/v1/auth/reset-password")
 
 @app.get("/api/v1/auth/api-keys")
-async def list_api_keys(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)):
+async def list_api_keys(request: Request):
     """List API keys"""
     return await proxy_to_auth_service(request, "/api/v1/auth/api-keys")
 
 @app.post("/api/v1/auth/api-keys")
-async def create_api_key(body: APIKeyCreateBody, request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)):
+async def create_api_key(request: Request):
     """Create API key"""
-    import json
-    # Encode request body as JSON
-    payload = json.dumps(body.dict()).encode('utf-8')
-    
-    # Prepare headers - preserve Authorization, remove Content-Length
-    headers = build_auth_headers(request, credentials, None)
-    headers['Content-Type'] = 'application/json'
-    
-    return await proxy_to_service(
-        None,
-        "/api/v1/auth/api-keys",
-        "auth-service",
-        method="POST",
-        body=payload,
-        headers=headers
-    )
+    return await proxy_to_auth_service(request, "/api/v1/auth/api-keys")
 
 @app.delete("/api/v1/auth/api-keys/{key_id}")
-async def revoke_api_key(request: Request, key_id: int, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)):
+async def revoke_api_key(request: Request, key_id: int):
     """Revoke API key"""
     return await proxy_to_auth_service(request, f"/api/v1/auth/api-keys/{key_id}")
 
@@ -1045,143 +679,82 @@ async def get_oauth2_providers(request: Request):
     return await proxy_to_auth_service(request, "/api/v1/auth/oauth2/providers")
 
 @app.post("/api/v1/auth/oauth2/callback")
-async def oauth2_callback(body: OAuth2CallbackBody, request: Request):
-    """OAuth2 callback handler"""
-    import json
-    # Encode request body as JSON
-    payload = json.dumps(body.dict()).encode('utf-8')
-    
-    # Prepare headers
-    headers = {}
-    for k, v in request.headers.items():
-        if k.lower() not in ['content-length', 'host', 'content-type']:
-            headers[k] = v
-    headers['Content-Type'] = 'application/json'
-    
-    return await proxy_to_service(
-        None,
-        "/api/v1/auth/oauth2/callback",
-        "auth-service",
-        method="POST",
-        body=payload,
-        headers=headers
-    )
+async def oauth2_callback(request: Request):
+    """OAuth2 callback"""
+    return await proxy_to_auth_service(request, "/api/v1/auth/oauth2/callback")
 
     # ASR Service Endpoints (Proxy to ASR Service)
 
 @app.post("/api/v1/asr/transcribe", response_model=ASRInferenceResponse)
-async def transcribe_audio(payload: ASRInferenceRequest, request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def transcribe_audio(request: ASRInferenceRequest):
     """Transcribe audio to text using ASR service (alias for /inference)"""
-    ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
-    body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    return await proxy_to_service(None, "/api/v1/asr/inference", "asr-service", method="POST", body=body, headers=headers)
+    body = json.dumps(request.dict()).encode()
+    return await proxy_to_service(None, "/api/v1/asr/inference", "asr-service", method="POST", body=body)
 
 @app.post("/api/v1/asr/inference", response_model=ASRInferenceResponse)
-async def asr_inference(payload: ASRInferenceRequest, request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def asr_inference(request: ASRInferenceRequest):
     """Perform batch ASR inference on audio inputs"""
-    ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
-    body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    return await proxy_to_service(None, "/api/v1/asr/inference", "asr-service", method="POST", body=body, headers=headers)
+    body = json.dumps(request.dict()).encode()
+    return await proxy_to_service(None, "/api/v1/asr/inference", "asr-service", method="POST", body=body)
 
 @app.get("/api/v1/asr/streaming/info", response_model=StreamingInfo)
-async def get_streaming_info(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def get_streaming_info():
     """Get WebSocket streaming endpoint information"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    return await proxy_to_service(None, "/streaming/info", "asr-service", headers=headers)
+    return await proxy_to_service(None, "/streaming/info", "asr-service")
 
 @app.get("/api/v1/asr/models")
-async def get_asr_models(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def get_asr_models():
     """Get available ASR models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    return await proxy_to_service(None, "/api/v1/asr/models", "asr-service", headers=headers)
+    return await proxy_to_service(None, "/api/v1/asr/models", "asr-service")
 
 @app.get("/api/v1/asr/health")
-async def asr_health(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def asr_health(request: Request):
     """ASR service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/health", "asr-service", headers=headers)
+    return await proxy_to_service(request, "/health", "asr-service")
 
 # TTS Service Endpoints (Proxy to TTS Service)
 
 @app.get("/api/v1/tts/health")
-async def tts_health(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def tts_health(request: Request):
     """TTS service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/health", "tts-service", headers=headers)
+    return await proxy_to_service(request, "/health", "tts-service")
 
 @app.get("/api/v1/tts/")
-async def tts_root(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def tts_root(request: Request):
     """TTS service root endpoint"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/", "tts-service", headers=headers)
+    return await proxy_to_service(request, "/", "tts-service")
 
 @app.get("/api/v1/tts/streaming/info")
-async def tts_streaming_info(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def tts_streaming_info(request: Request):
     """TTS streaming endpoint information"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/streaming/info", "tts-service", headers=headers)
+    return await proxy_to_service(request, "/streaming/info", "tts-service")
 
 @app.post("/api/v1/tts/inference", response_model=TTSInferenceResponse)
-async def tts_inference(payload: TTSInferenceRequest, request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def tts_inference(request: TTSInferenceRequest):
     """Perform batch TTS inference on text inputs"""
-    ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
-    body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    return await proxy_to_service(None, "/api/v1/tts/inference", "tts-service", method="POST", body=body, headers=headers)
+    body = json.dumps(request.dict()).encode()
+    return await proxy_to_service(None, "/api/v1/tts/inference", "tts-service", method="POST", body=body)
 
 @app.get("/api/v1/tts/models")
-async def get_tts_models(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def get_tts_models(request: Request):
     """Get available TTS models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/tts/models", "tts-service", headers=headers)
+    return await proxy_to_service(request, "/api/v1/tts/models", "tts-service")
 
 @app.get("/api/v1/tts/voices", response_model=VoiceListResponse)
 async def get_tts_voices(
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme),
     language: Optional[str] = None,
     gender: Optional[str] = None,
     age: Optional[str] = None,
     is_active: Optional[bool] = True
 ):
     """Get available TTS voices with optional filtering"""
-    ensure_authenticated_for_request(request, credentials, api_key)
     # Build query parameters
     params = {}
     if language:
@@ -1197,92 +770,57 @@ async def get_tts_voices(
     query_string = "&".join([f"{k}={v}" for k, v in params.items()])
     path = f"/api/v1/tts/voices?{query_string}" if query_string else "/api/v1/tts/voices"
     
-    headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, path, "tts-service", headers=headers)
+    return await proxy_to_service(request, path, "tts-service")
 
 # NMT Service Endpoints (Proxy to NMT Service)
 
 @app.post("/api/v1/nmt/inference", response_model=NMTInferenceResponse)
-async def nmt_inference(payload: NMTInferenceRequest, request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def nmt_inference(request: NMTInferenceRequest):
     """Perform NMT inference"""
-    ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
-    body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    return await proxy_to_service(None, "/api/v1/nmt/inference", "nmt-service", method="POST", body=body, headers=headers)
+    body = json.dumps(request.dict()).encode()
+    return await proxy_to_service(None, "/api/v1/nmt/inference", "nmt-service", method="POST", body=body)
 
 @app.post("/api/v1/nmt/batch-translate")
-async def batch_translate(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def batch_translate(request: Request):
     """Batch translate multiple texts using NMT service"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/nmt/batch-translate", "nmt-service", headers=headers)
+    return await proxy_to_service(request, "/api/v1/nmt/batch-translate", "nmt-service")
 
 @app.get("/api/v1/nmt/languages", response_model=Dict[str, Any])
-async def get_nmt_languages(request: Request, model_id: str = "ai4bharat/indictrans-v2-all-gpu--t4", credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def get_nmt_languages(model_id: str = "ai4bharat/indictrans-v2-all-gpu--t4"):
     """Get supported languages for NMT service"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    return await proxy_to_service(None, f"/api/v1/nmt/languages?model_id={model_id}", "nmt-service", headers=headers)
+    return await proxy_to_service(None, f"/api/v1/nmt/languages?model_id={model_id}", "nmt-service")
 
 @app.get("/api/v1/nmt/models", response_model=Dict[str, Any])
-async def get_nmt_models(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def get_nmt_models():
     """Get available NMT models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    return await proxy_to_service(None, "/api/v1/nmt/models", "nmt-service", headers=headers)
+    return await proxy_to_service(None, "/api/v1/nmt/models", "nmt-service")
 
 @app.get("/api/v1/nmt/health")
-async def nmt_health(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def nmt_health(request: Request):
     """NMT service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/nmt/health", "nmt-service", headers=headers)
+    return await proxy_to_service(request, "/api/v1/nmt/health", "nmt-service")
 
 # Pipeline Service Endpoints (Proxy to Pipeline Service)
 
 @app.post("/api/v1/pipeline/inference", response_model=PipelineInferenceResponse)
-async def pipeline_inference(payload: PipelineInferenceRequest, request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def pipeline_inference(request: PipelineInferenceRequest):
     """Execute pipeline inference (e.g., Speech-to-Speech translation)"""
-    ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
-    body = json.dumps(payload.dict()).encode()
-    headers = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    return await proxy_to_service(None, "/api/v1/pipeline/inference", "pipeline-service", method="POST", body=body, headers=headers)
+    body = json.dumps(request.dict()).encode()
+    return await proxy_to_service(None, "/api/v1/pipeline/inference", "pipeline-service", method="POST", body=body)
 
 @app.get("/api/v1/pipeline/info", response_model=PipelineInfo)
-async def get_pipeline_info(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme), api_key: Optional[str] = Security(api_key_scheme)):
+async def get_pipeline_info():
     """Get pipeline service information"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    return await proxy_to_service(None, "/api/v1/pipeline/info", "pipeline-service", headers=headers)
+    return await proxy_to_service(None, "/api/v1/pipeline/info", "pipeline-service")
 
 # Protected Endpoints (Require Authentication)
 
 @app.get("/api/v1/protected/status")
-async def protected_status(request: Request, credentials: HTTPAuthorizationCredentials = Security(bearer_scheme)):
+async def protected_status(request: Request):
     """Protected status endpoint"""
     user = await auth_middleware.require_auth(request)
     return {
@@ -1292,7 +830,7 @@ async def protected_status(request: Request, credentials: HTTPAuthorizationCrede
     }
 
 @app.get("/api/v1/protected/profile")
-async def get_user_profile(request: Request, credentials: HTTPAuthorizationCredentials = Security(bearer_scheme)):
+async def get_user_profile(request: Request):
     """Get user profile (requires authentication)"""
     user = await auth_middleware.require_auth(request)
     return {
@@ -1342,7 +880,7 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
     
     # Direct service URL mapping (bypassing service registry)
     service_urls = {
-        'auth-service': os.getenv('AUTH_SERVICE_URL', 'http://auth-service:8081'),
+        'auth-service': os.getenv('AUTH_SERVICE_URL', 'http://localhost:8081'),
         'config-service': os.getenv('CONFIG_SERVICE_URL', 'http://localhost:8082'),
         'metrics-service': os.getenv('METRICS_SERVICE_URL', 'http://localhost:8083'),
         'telemetry-service': os.getenv('TELEMETRY_SERVICE_URL', 'http://localhost:8084'),
