@@ -47,7 +47,6 @@ class NMTService:
         "ai4bharat/indictrans--gpu-t4": ("13.200.133.97:8000", "nmt"),
         "indictrans-v2-all": ("13.200.133.97:8000", "nmt"),
         "ai4bharat/indictrans-v2-all-gpu": ("13.200.133.97:8000", "nmt"),
-        "translnew2": ("3.110.118.163:8000", "nmt"),  # NLLB African languages model - uses "nmt" as model name
         "facebook/nllb-200-1.3B": ("3.110.118.163:8000", "nmt")  # NLLB model - uses "nmt" as model name
     }
     
