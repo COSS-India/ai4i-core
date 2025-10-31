@@ -159,7 +159,7 @@ const PipelineBuilderPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Pipeline Builder - Custom | Simple UI</title>
+        <title>Customize Pipeline - Custom | Simple UI</title>
         <meta name="description" content="Build and test custom AI pipelines" />
       </Head>
 
@@ -178,7 +178,7 @@ const PipelineBuilderPage: React.FC = () => {
             </Button>
             <Box textAlign="center">
               <Heading size="xl" color="gray.800" mb={2}>
-                Pipeline Builder
+                Customize Pipeline
               </Heading>
               <Text color="gray.600" fontSize="lg">
                 Configure and test custom AI pipelines
