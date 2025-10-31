@@ -211,42 +211,6 @@ async def list_services() -> Dict[str, Any]:
                 ]
             },
             {
-                "service_id": "translnew2",
-                "model_id": "facebook/nllb-200-1.3B",
-                "triton_endpoint": "3.110.118.163:8000",
-                "triton_model": "nmt",
-                "provider": "Meta AI",
-                "description": "NLLB-200 is Meta AI's state-of-the-art multilingual neural machine translation model with 1.3B parameters, supporting 200 languages across 24+ writing systems. This deployment focuses on African languages including Swahili, Yoruba, Hausa, Somali, Amharic, Tigrinya, and many others.",
-                "supported_languages": [
-                    "en", "sw", "yo", "ha", "so", "am", "ti", "ig", "zu", "xh", 
-                    "sn", "rw", "om", "lg", "wo", "ts", "tn", "af", "fr", "ar"
-                ],
-                "supported_language_pairs": [
-                    {"sourceLanguage": "en", "targetLanguage": "sw", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "sw", "targetLanguage": "en", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "en", "targetLanguage": "yo", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "yo", "targetLanguage": "en", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "en", "targetLanguage": "ha", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "ha", "targetLanguage": "en", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "en", "targetLanguage": "so", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "so", "targetLanguage": "en", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "en", "targetLanguage": "am", "sourceScriptCode": "Latn", "targetScriptCode": "Ethi"},
-                    {"sourceLanguage": "am", "targetLanguage": "en", "sourceScriptCode": "Ethi", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "en", "targetLanguage": "ti", "sourceScriptCode": "Latn", "targetScriptCode": "Ethi"},
-                    {"sourceLanguage": "ti", "targetLanguage": "en", "sourceScriptCode": "Ethi", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "en", "targetLanguage": "ig", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "ig", "targetLanguage": "en", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "sw", "targetLanguage": "yo", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "yo", "targetLanguage": "sw", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "sw", "targetLanguage": "ha", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "ha", "targetLanguage": "sw", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "fr", "targetLanguage": "sw", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "sw", "targetLanguage": "fr", "sourceScriptCode": "Latn", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "ar", "targetLanguage": "sw", "sourceScriptCode": "Arab", "targetScriptCode": "Latn"},
-                    {"sourceLanguage": "sw", "targetLanguage": "ar", "sourceScriptCode": "Latn", "targetScriptCode": "Arab"}
-                ]
-            },
-            {
                 "service_id": "facebook/nllb-200-1.3B",
                 "model_id": "facebook/nllb-200-1.3B",
                 "triton_endpoint": "3.110.118.163:8000",
@@ -259,7 +223,7 @@ async def list_services() -> Dict[str, Any]:
                 ]
             }
         ],
-        "total_services": 5
+        "total_services": 4
     }
 
 
@@ -280,7 +244,6 @@ async def list_languages(
         "ai4bharat/indictrans--gpu-t4": "ai4bharat/indictrans-v2-all-gpu--t4",
         "indictrans-v2-all": "ai4bharat/indictrans-v2-all-gpu--t4",
         "ai4bharat/indictrans-v2-all-gpu": "ai4bharat/indictrans-v2-all-gpu--t4",
-        "translnew2": "facebook/nllb-200-1.3B",
         "facebook/nllb-200-1.3B": "facebook/nllb-200-1.3B"
     }
     
