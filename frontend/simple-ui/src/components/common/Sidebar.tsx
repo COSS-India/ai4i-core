@@ -97,7 +97,7 @@ const Sidebar: React.FC = () => {
             transition="opacity 0.2s"
             h="16px"
           >
-            Simple UI
+            AI4Inclusion Console
           </Text>
         </VStack>
 
