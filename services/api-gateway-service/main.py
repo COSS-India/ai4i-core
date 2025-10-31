@@ -8,7 +8,7 @@ import uuid
 import time
 from typing import Dict, Any, List, Optional, Tuple
 from enum import Enum
-from fastapi import FastAPI, Request, HTTPException, Response
+from fastapi import FastAPI, Request, HTTPException, Response, Query
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -788,14 +788,33 @@ async def batch_translate(request: Request):
     return await proxy_to_service(request, "/api/v1/nmt/batch-translate", "nmt-service")
 
 @app.get("/api/v1/nmt/languages", response_model=Dict[str, Any])
-async def get_nmt_languages(model_id: str = "ai4bharat/indictrans-v2-all-gpu--t4"):
+async def get_nmt_languages(
+    request: Request,
+    model_id: Optional[str] = Query(None, description="Model ID to get languages for"),
+    service_id: Optional[str] = Query(None, description="Service ID to get languages for")
+):
     """Get supported languages for NMT service"""
-    return await proxy_to_service(None, f"/api/v1/nmt/languages?model_id={model_id}", "nmt-service")
+    # Build query string with available parameters
+    params = []
+    if model_id:
+        params.append(f"model_id={model_id}")
+    if service_id:
+        params.append(f"service_id={service_id}")
+    
+    query_string = "&".join(params) if params else ""
+    path = f"/api/v1/nmt/languages" + (f"?{query_string}" if query_string else "")
+    
+    return await proxy_to_service(request, path, "nmt-service")
 
 @app.get("/api/v1/nmt/models", response_model=Dict[str, Any])
 async def get_nmt_models():
     """Get available NMT models"""
     return await proxy_to_service(None, "/api/v1/nmt/models", "nmt-service")
+
+@app.get("/api/v1/nmt/services", response_model=Dict[str, Any])
+async def get_nmt_services():
+    """Get available NMT services"""
+    return await proxy_to_service(None, "/api/v1/nmt/services", "nmt-service")
 
 @app.get("/api/v1/nmt/health")
 async def nmt_health(request: Request):
