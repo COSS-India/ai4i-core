@@ -12,14 +12,14 @@ const MAX_TEXT_LENGTH = 50000;
 const DEFAULT_LLM_CONFIG = {
   serviceId: 'llm',
   inputLanguage: 'en',
-  outputLanguage: 'en',
+  outputLanguage: 'hi',
 };
 
 export const useLLM = (): UseLLMReturn => {
   // State
   const [selectedModelId, setSelectedModelId] = useState<string>('llm');
   const [inputLanguage, setInputLanguage] = useState<string>('en');
-  const [outputLanguage, setOutputLanguage] = useState<string>('en');
+  const [outputLanguage, setOutputLanguage] = useState<string>('hi');
   const [inputText, setInputText] = useState<string>('');
   const [outputText, setOutputText] = useState<string>('');
   const [nmtOutputText, setNmtOutputText] = useState<string>('');
