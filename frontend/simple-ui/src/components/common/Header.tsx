@@ -13,24 +13,26 @@ import {
   MenuItem,
   MenuDivider,
   IconButton,
-  Button,
+  Image,
   useColorModeValue,
+  Button
 } from '@chakra-ui/react';
-import { HamburgerIcon } from '@chakra-ui/icons';
+import { HamburgerIcon, ArrowBackIcon } from '@chakra-ui/icons';
 import { useApiKey } from '../../hooks/useApiKey';
-import { useAuth } from '../../hooks/useAuth';
 import ApiKeyModal from './ApiKeyModal';
-import AuthModal from '../auth/AuthModal';
-import UserMenu from '../auth/UserMenu';
+import { useAuth } from '../../hooks/useAuth';  // <-- add this import
+import UserMenu from './UserMenu';              // <-- add this if not already
+// (Make sure you have these components implemented)
 
 const Header: React.FC = () => {
   const router = useRouter();
   const { apiKey, isAuthenticated: hasApiKey, clearApiKey } = useApiKey();
   const { isAuthenticated: isUserAuthenticated, user, isLoading: isAuthLoading } = useAuth();
+
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [title, setTitle] = useState('Dashboard');
-  
+
   // Determine if we should show user menu or sign in button
   const showUserMenu = !isAuthLoading && isUserAuthenticated && user && user.username;
 
@@ -39,32 +41,36 @@ const Header: React.FC = () => {
     const pathname = router.pathname;
     switch (pathname) {
       case '/asr':
-        setTitle('Speech Recognition');
+        setTitle('ASR – Automatic Speech Recognition');
         break;
       case '/tts':
-        setTitle('Text-to-Speech');
+        setTitle('TTS – Text-to-Speech');
         break;
       case '/nmt':
-        setTitle('Translation');
+        setTitle('Text Translation');
+        break;
+      case '/llm':
+        setTitle('Large Language Model - GPT OSS 20B');
+        break;
+      case '/pipeline':
+        setTitle('Speech-to-Speech Pipeline');
+        break;
+      case '/pipeline-builder':
+        setTitle('Pipeline Builder');
         break;
       case '/':
-        setTitle('Dashboard');
+        setTitle('AI4Inclusion Console');
         break;
       default:
-        setTitle('Simple UI');
+        setTitle('AI4Inclusion Console');
     }
   }, [router.pathname]);
 
-  const handleManageApiKey = () => {
-    setIsApiKeyModalOpen(true);
-  };
+  const handleManageApiKey = () => setIsApiKeyModalOpen(true);
 
-  const handleClearApiKey = () => {
-    clearApiKey();
-  };
+  const handleClearApiKey = () => clearApiKey();
 
   const handleDocumentation = () => {
-    // Future: Navigate to documentation
     console.log('Navigate to documentation');
   };
 
@@ -76,16 +82,23 @@ const Header: React.FC = () => {
     return 'No API Key';
   };
 
-  const getApiKeyColor = () => {
-    return hasApiKey ? 'green' : 'red';
+  const getApiKeyColor = () => (hasApiKey ? 'green' : 'red');
+
+  const bgColor = useColorModeValue('white', 'gray.800');
+  const borderColor = useColorModeValue('gray.200', 'gray.700');
+  const showBackButton = router.pathname !== '/';
+
+  const handleBack = () => {
+    if (router.pathname === '/pipeline-builder') {
+      router.push('/');
+    } else {
+      router.back();
+    }
   };
 
   const handleAuthClick = () => {
     setIsAuthModalOpen(true);
   };
-
-  const bgColor = useColorModeValue('white', 'gray.800');
-  const borderColor = useColorModeValue('gray.200', 'gray.700');
 
   return (
     <>
@@ -101,12 +114,39 @@ const Header: React.FC = () => {
         borderColor={borderColor}
       >
         <HStack justify="space-between" h="full">
-          {/* Left side - Page title */}
-          <Heading size="lg" color="gray.800">
-            {title}
-          </Heading>
+          {/* Left side - Back button, Logo and Page title */}
+          <HStack spacing={4}>
+            {showBackButton && (
+              <IconButton
+                aria-label="Go back"
+                icon={<ArrowBackIcon />}
+                variant="ghost"
+                size="md"
+                onClick={handleBack}
+                colorScheme="gray"
+                _hover={{ bg: 'gray.100' }}
+              />
+            )}
+            <Box
+              cursor="pointer"
+              onClick={() => router.push('/')}
+              _hover={{ opacity: 0.8 }}
+              transition="opacity 0.2s"
+            >
+              <Image
+                src="/AI4Inclusion_Logo.svg"
+                alt="AI4Inclusion Logo"
+                h="50px"
+                w="auto"
+                objectFit="contain"
+              />
+            </Box>
+            <Heading size="lg" color="gray.800">
+              {title}
+            </Heading>
+          </HStack>
 
-          {/* Right side - Authentication, API key status and menu */}
+          {/* Right side - Menu and Auth */}
           <HStack spacing={4}>
             {/* Authentication */}
             {showUserMenu ? (
@@ -121,17 +161,6 @@ const Header: React.FC = () => {
                 Sign In
               </Button>
             )}
-
-            {/* API Key Badge */}
-            <Badge
-              colorScheme={getApiKeyColor()}
-              px={3}
-              py={1}
-              borderRadius="full"
-              fontSize="sm"
-            >
-              {getApiKeyDisplay()}
-            </Badge>
 
             {/* Menu */}
             <Menu>
@@ -165,11 +194,8 @@ const Header: React.FC = () => {
         onClose={() => setIsApiKeyModalOpen(false)}
       />
 
-      {/* Authentication Modal */}
-      <AuthModal
-        isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
-      />
+      {/* Auth Modal placeholder */}
+      {/* You can render your AuthModal here if implemented */}
     </>
   );
 };
