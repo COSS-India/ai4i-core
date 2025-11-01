@@ -35,7 +35,8 @@ async def get_llm_service(request: Request, db: AsyncSession = Depends(get_db_se
     repository = LLMRepository(db)
     triton_client = TritonClient(
         triton_url=request.app.state.triton_endpoint,
-        api_key=request.app.state.triton_api_key
+        api_key=request.app.state.triton_api_key,
+        timeout=getattr(request.app.state, 'triton_timeout', 300.0)
     )
     return LLMService(repository, triton_client)
 
