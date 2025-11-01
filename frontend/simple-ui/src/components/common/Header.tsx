@@ -13,23 +13,17 @@ import {
   MenuItem,
   MenuDivider,
   IconButton,
-  Button,
   Image,
   useColorModeValue,
 } from '@chakra-ui/react';
 import { HamburgerIcon, ArrowBackIcon } from '@chakra-ui/icons';
 import { useApiKey } from '../../hooks/useApiKey';
-import { useAuth } from '../../hooks/useAuth';
 import ApiKeyModal from './ApiKeyModal';
-import AuthModal from '../auth/AuthModal';
-import UserMenu from '../auth/UserMenu';
 
 const Header: React.FC = () => {
   const router = useRouter();
   const { apiKey, isAuthenticated: hasApiKey, clearApiKey } = useApiKey();
-  const { isAuthenticated: isUserAuthenticated, user } = useAuth();
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [title, setTitle] = useState('AI4Inclusion Console');
 
   // Update title based on route
@@ -85,10 +79,6 @@ const Header: React.FC = () => {
 
   const getApiKeyColor = () => {
     return hasApiKey ? 'green' : 'red';
-  };
-
-  const handleAuthClick = () => {
-    setIsAuthModalOpen(true);
   };
 
   const bgColor = useColorModeValue('white', 'gray.800');
@@ -149,33 +139,8 @@ const Header: React.FC = () => {
             </Heading>
           </HStack>
 
-          {/* Right side - Authentication, API key status and menu */}
+          {/* Right side - Menu */}
           <HStack spacing={4}>
-            {/* Authentication */}
-            {isUserAuthenticated && user ? (
-              <UserMenu user={user} />
-            ) : (
-              <Button
-                colorScheme="blue"
-                variant="outline"
-                size="sm"
-                onClick={handleAuthClick}
-              >
-                Sign In
-              </Button>
-            )}
-
-            {/* API Key Badge - Hidden for now */}
-            {/* <Badge
-              colorScheme={getApiKeyColor()}
-              px={3}
-              py={1}
-              borderRadius="full"
-              fontSize="sm"
-            >
-              {getApiKeyDisplay()}
-            </Badge> */}
-
             {/* Menu */}
             <Menu>
               <MenuButton
@@ -206,12 +171,6 @@ const Header: React.FC = () => {
       <ApiKeyModal
         isOpen={isApiKeyModalOpen}
         onClose={() => setIsApiKeyModalOpen(false)}
-      />
-
-      {/* Authentication Modal */}
-      <AuthModal
-        isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
       />
     </>
   );
