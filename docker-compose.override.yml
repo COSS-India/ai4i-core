@@ -15,10 +15,11 @@ services:
       - TTS_SERVICE_URL=http://tts-service:8088
 
   # Auth Service - Development overrides
+  # Commented out command override to use Dockerfile ENTRYPOINT
   auth-service:
-    volumes:
-      - ./services/auth-service:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8081 --reload
+    # volumes:
+    #   - ./services/auth-service:/app
+    # command: uvicorn main:app --host 0.0.0.0 --port 8081 --reload
     environment:
       - DEBUG=true
       - LOG_LEVEL=DEBUG

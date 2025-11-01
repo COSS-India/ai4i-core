@@ -57,9 +57,9 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMode = 'l
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="md" isCentered>
-      <ModalOverlay bg="blackAlpha.300" backdropFilter="blur(10px)" />
-      <ModalContent>
+    <Modal isOpen={isOpen} onClose={onClose} size="md" isCentered closeOnOverlayClick={true}>
+      <ModalOverlay bg="blackAlpha.300" backdropFilter="blur(10px)" zIndex={1400} />
+      <ModalContent zIndex={1500}>
         <ModalHeader>
           {mode === 'login' ? 'Sign In' : 'Sign Up'}
         </ModalHeader>

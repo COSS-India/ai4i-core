@@ -6,16 +6,19 @@ import { useToast } from '@chakra-ui/react';
 // API Base URL from environment
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
-// API Key from environment (fallback to localStorage)
+// API Key from localStorage (user-provided) or environment (fallback)
 const getApiKey = (): string | null => {
   if (typeof window !== 'undefined') {
-    // First check environment variable
+    // First check localStorage (user-provided via "manage API key")
+    const storedApiKey = localStorage.getItem('api_key');
+    if (storedApiKey && storedApiKey.trim() !== '') {
+      return storedApiKey.trim();
+    }
+    // Fallback to environment variable if no API key is provided
     const envApiKey = process.env.NEXT_PUBLIC_API_KEY;
     if (envApiKey && envApiKey.trim() !== '' && envApiKey !== 'your_api_key_here') {
       return envApiKey.trim();
     }
-    // Fallback to localStorage
-    return localStorage.getItem('api_key');
   }
   return null;
 };
@@ -70,11 +73,10 @@ const llmApiClient: AxiosInstance = axios.create({
 llmApiClient.interceptors.request.use(
   (config) => {
     config.headers['request-startTime'] = new Date().getTime().toString();
-    if (typeof window !== 'undefined') {
-      const apiKey = localStorage.getItem('api_key');
-      if (apiKey) {
-        config.headers['Authorization'] = `Bearer ${apiKey}`;
-      }
+    // Use getApiKey() to respect priority: localStorage first, then env
+    const apiKey = getApiKey();
+    if (apiKey) {
+      config.headers['Authorization'] = `Bearer ${apiKey}`;
     }
     return config;
   },
