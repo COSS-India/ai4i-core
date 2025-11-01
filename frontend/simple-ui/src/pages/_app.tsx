@@ -9,6 +9,7 @@ import { useRouter } from 'next/router';
 import Script from 'next/script';
 import customTheme from '../theme';
 import Layout from '../components/common/Layout';
+import AuthGuard from '../components/auth/AuthGuard';
 import '../styles/globals.css';
 
 // Define routes that need the full layout
@@ -44,14 +45,16 @@ export default function App({ Component, pageProps }: AppProps) {
           strategy="beforeInteractive"
         />
         
-        {/* Conditional Layout Rendering */}
-        {needsLayout ? (
-          <Layout>
+        {/* Conditional Layout Rendering with Auth Guard */}
+        <AuthGuard>
+          {needsLayout ? (
+            <Layout>
+              <Component {...pageProps} />
+            </Layout>
+          ) : (
             <Component {...pageProps} />
-          </Layout>
-        ) : (
-          <Component {...pageProps} />
-        )}
+          )}
+        </AuthGuard>
         
         {/* React Query DevTools */}
         <ReactQueryDevtools initialIsOpen={false} />
