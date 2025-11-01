@@ -270,6 +270,7 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     )
     
     db.add(db_user)
+    await db.flush()  # Flush to ensure the user is added to the session
     await db.commit()
     await db.refresh(db_user)
     
@@ -313,7 +314,7 @@ async def login(
         expires_delta=refresh_token_expires
     )
     
-    # Create session
+    # Create session using raw SQL to avoid async ORM issues
     session_token = AuthUtils.generate_session_token()
     device_info = {
         "ip_address": request.client.host if request.client else None,
@@ -321,19 +322,24 @@ async def login(
         "remember_me": login_data.remember_me
     }
     
-    await AuthUtils.create_user_session(
-        db=db,
-        user_id=user.id,
-        session_token=session_token,
-        refresh_token=refresh_token,
-        device_info=device_info,
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
-        expires_delta=refresh_token_expires
+    # Insert session row (Core insert) and update last_login in same commit
+    from sqlalchemy import insert as sa_insert
+    now = datetime.utcnow()
+    expires_at = now + refresh_token_expires
+    await db.execute(
+        sa_insert(UserSession.__table__).values(
+            user_id=user.id,
+            session_token=session_token,
+            refresh_token=refresh_token,
+            device_info=device_info,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            is_active=True,
+            expires_at=expires_at
+        )
     )
+    user.last_login = now
     
-    # Update last login
-    user.last_login = datetime.utcnow()
     await db.commit()
     
     logger.info(f"User logged in: {user.email}")
@@ -341,23 +347,8 @@ async def login(
     return LoginResponse(
         access_token=access_token,
         refresh_token=refresh_token,
-        expires_in=int(access_token_expires.total_seconds()),
-        user=UserResponse(
-            id=user.id,
-            email=user.email,
-            username=user.username,
-            full_name=user.full_name,
-            phone_number=user.phone_number,
-            timezone=user.timezone,
-            language=user.language,
-            is_active=user.is_active,
-            is_verified=user.is_verified,
-            is_superuser=user.is_superuser,
-            created_at=user.created_at,
-            updated_at=user.updated_at,
-            last_login=user.last_login,
-            avatar_url=user.avatar_url
-        )
+        token_type="bearer",
+        expires_in=int(access_token_expires.total_seconds())
     )
 
 @app.post("/api/v1/auth/refresh", response_model=TokenRefreshResponse)
@@ -449,10 +440,11 @@ async def logout(
 
 @app.get("/api/v1/auth/validate", response_model=TokenValidationResponse)
 async def validate_token(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Validate token and return user info"""
-    permissions = await AuthUtils.get_user_permissions(db_session(), current_user.id)
+    permissions = await AuthUtils.get_user_permissions(db, current_user.id)
     
     return TokenValidationResponse(
         valid=True,
