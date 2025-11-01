@@ -6,6 +6,20 @@ import { useToast } from '@chakra-ui/react';
 // API Base URL from environment
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
+// API Key from environment (fallback to localStorage)
+const getApiKey = (): string | null => {
+  if (typeof window !== 'undefined') {
+    // First check environment variable
+    const envApiKey = process.env.NEXT_PUBLIC_API_KEY;
+    if (envApiKey && envApiKey.trim() !== '' && envApiKey !== 'your_api_key_here') {
+      return envApiKey.trim();
+    }
+    // Fallback to localStorage
+    return localStorage.getItem('api_key');
+  }
+  return null;
+};
+
 // API Endpoints
 export const apiEndpoints = {
   asr: {
@@ -97,12 +111,10 @@ apiClient.interceptors.request.use(
     // Add request start time for timing calculation
     config.headers['request-startTime'] = new Date().getTime().toString();
     
-    // Add API key if available
-    if (typeof window !== 'undefined') {
-      const apiKey = localStorage.getItem('api_key');
-      if (apiKey) {
-        config.headers['Authorization'] = `Bearer ${apiKey}`;
-      }
+    // Add API key if available (from env or localStorage)
+    const apiKey = getApiKey();
+    if (apiKey) {
+      config.headers['Authorization'] = `Bearer ${apiKey}`;
     }
     
     return config;

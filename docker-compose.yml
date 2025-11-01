@@ -490,6 +490,7 @@ services:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://api-gateway-service:8080
+      - NEXT_PUBLIC_API_KEY=ak_xBy1d54a2F56_8lhh1kMPyab7jEUNzx4ot2FLy4pf4ks
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
       - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
     depends_on:

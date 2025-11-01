@@ -15,16 +15,26 @@ import {
   IconButton,
   Image,
   useColorModeValue,
+  Button
 } from '@chakra-ui/react';
 import { HamburgerIcon, ArrowBackIcon } from '@chakra-ui/icons';
 import { useApiKey } from '../../hooks/useApiKey';
 import ApiKeyModal from './ApiKeyModal';
+import { useAuth } from '../../hooks/useAuth';  // <-- add this import
+import UserMenu from './UserMenu';              // <-- add this if not already
+// (Make sure you have these components implemented)
 
 const Header: React.FC = () => {
   const router = useRouter();
   const { apiKey, isAuthenticated: hasApiKey, clearApiKey } = useApiKey();
+  const { isAuthenticated: isUserAuthenticated, user, isLoading: isAuthLoading } = useAuth();
+
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
-  const [title, setTitle] = useState('AI4Inclusion Console');
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [title, setTitle] = useState('Dashboard');
+
+  // Determine if we should show user menu or sign in button
+  const showUserMenu = !isAuthLoading && isUserAuthenticated && user && user.username;
 
   // Update title based on route
   useEffect(() => {
@@ -56,16 +66,11 @@ const Header: React.FC = () => {
     }
   }, [router.pathname]);
 
-  const handleManageApiKey = () => {
-    setIsApiKeyModalOpen(true);
-  };
+  const handleManageApiKey = () => setIsApiKeyModalOpen(true);
 
-  const handleClearApiKey = () => {
-    clearApiKey();
-  };
+  const handleClearApiKey = () => clearApiKey();
 
   const handleDocumentation = () => {
-    // Future: Navigate to documentation
     console.log('Navigate to documentation');
   };
 
@@ -77,9 +82,7 @@ const Header: React.FC = () => {
     return 'No API Key';
   };
 
-  const getApiKeyColor = () => {
-    return hasApiKey ? 'green' : 'red';
-  };
+  const getApiKeyColor = () => (hasApiKey ? 'green' : 'red');
 
   const bgColor = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.700');
@@ -91,6 +94,10 @@ const Header: React.FC = () => {
     } else {
       router.back();
     }
+  };
+
+  const handleAuthClick = () => {
+    setIsAuthModalOpen(true);
   };
 
   return (
@@ -139,8 +146,22 @@ const Header: React.FC = () => {
             </Heading>
           </HStack>
 
-          {/* Right side - Menu */}
+          {/* Right side - Menu and Auth */}
           <HStack spacing={4}>
+            {/* Authentication */}
+            {showUserMenu ? (
+              <UserMenu user={user} />
+            ) : (
+              <Button
+                colorScheme="blue"
+                variant="outline"
+                size="sm"
+                onClick={handleAuthClick}
+              >
+                Sign In
+              </Button>
+            )}
+
             {/* Menu */}
             <Menu>
               <MenuButton
@@ -172,6 +193,9 @@ const Header: React.FC = () => {
         isOpen={isApiKeyModalOpen}
         onClose={() => setIsApiKeyModalOpen(false)}
       />
+
+      {/* Auth Modal placeholder */}
+      {/* You can render your AuthModal here if implemented */}
     </>
   );
 };
