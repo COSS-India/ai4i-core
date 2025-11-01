@@ -50,7 +50,8 @@ async def health_check(request: Request) -> Dict[str, Any]:
         try:
             triton_client = TritonClient(
                 triton_url=request.app.state.triton_endpoint,
-                api_key=request.app.state.triton_api_key
+                api_key=request.app.state.triton_api_key,
+                timeout=getattr(request.app.state, 'triton_timeout', 300.0)
             )
             if not triton_client.is_server_ready():
                 triton_status = "unhealthy"

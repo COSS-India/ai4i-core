@@ -34,14 +34,62 @@ export const apiEndpoints = {
   },
 } as const;
 
-// Create Axios instance
+// Create Axios instance with standard timeout
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000,
+  timeout: 30000, // 30 seconds for most requests
   headers: {
     'Content-Type': 'application/json',
   },
 });
+
+// Create Axios instance with extended timeout for LLM requests (5 minutes)
+const llmApiClient: AxiosInstance = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 300000, // 5 minutes (300 seconds) for LLM requests
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Apply same interceptors to LLM client
+llmApiClient.interceptors.request.use(
+  (config) => {
+    config.headers['request-startTime'] = new Date().getTime().toString();
+    if (typeof window !== 'undefined') {
+      const apiKey = localStorage.getItem('api_key');
+      if (apiKey) {
+        config.headers['Authorization'] = `Bearer ${apiKey}`;
+      }
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+llmApiClient.interceptors.response.use(
+  (response: AxiosResponse) => {
+    const startTime = response.config.headers['request-startTime'];
+    if (startTime) {
+      const duration = new Date().getTime() - parseInt(startTime);
+      response.headers['request-duration'] = duration.toString();
+    }
+    return response;
+  },
+  (error: AxiosError) => {
+    // Handle errors same way as apiClient
+    if (error.response) {
+      const { status, data } = error.response;
+      if (status === 401 && typeof window !== 'undefined') {
+        localStorage.removeItem('api_key');
+        window.location.href = '/';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 // Request interceptor for authentication and timing
 apiClient.interceptors.request.use(
@@ -116,5 +164,5 @@ apiClient.interceptors.response.use(
 );
 
 // Export API client and endpoints
-export { apiClient, API_BASE_URL };
+export { apiClient, llmApiClient, API_BASE_URL };
 export default apiClient;
