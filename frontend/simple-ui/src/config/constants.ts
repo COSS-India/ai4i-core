@@ -24,6 +24,28 @@ export const SUPPORTED_LANGUAGES = [
   { code: 'mai', label: 'Maithili', scriptCode: 'Deva' },
   { code: 'brx', label: 'Bodo', scriptCode: 'Deva' },
   { code: 'mni', label: 'Manipuri', scriptCode: 'Beng' },
+  { code: 'gom', label: 'Goan Konkani', scriptCode: 'Latn' },
+  { code: 'sat', label: 'Santali', scriptCode: 'Latn' },
+  // African languages
+  { code: 'sw', label: 'Swahili', scriptCode: 'Latn' },
+  { code: 'yo', label: 'Yoruba', scriptCode: 'Latn' },
+  { code: 'ha', label: 'Hausa', scriptCode: 'Latn' },
+  { code: 'so', label: 'Somali', scriptCode: 'Latn' },
+  { code: 'am', label: 'Amharic', scriptCode: 'Ethi' },
+  { code: 'ti', label: 'Tigrinya', scriptCode: 'Ethi' },
+  { code: 'ig', label: 'Igbo', scriptCode: 'Latn' },
+  { code: 'zu', label: 'Zulu', scriptCode: 'Latn' },
+  { code: 'xh', label: 'Xhosa', scriptCode: 'Latn' },
+  { code: 'sn', label: 'Shona', scriptCode: 'Latn' },
+  { code: 'rw', label: 'Kinyarwanda', scriptCode: 'Latn' },
+  { code: 'om', label: 'Oromo', scriptCode: 'Latn' },
+  { code: 'lg', label: 'Ganda', scriptCode: 'Latn' },
+  { code: 'wo', label: 'Wolof', scriptCode: 'Latn' },
+  { code: 'ts', label: 'Tsonga', scriptCode: 'Latn' },
+  { code: 'tn', label: 'Tswana', scriptCode: 'Latn' },
+  { code: 'af', label: 'Afrikaans', scriptCode: 'Latn' },
+  { code: 'fr', label: 'French', scriptCode: 'Latn' },
+  { code: 'ar', label: 'Arabic', scriptCode: 'Arab' },
 ];
 
 // Language code to label mapping

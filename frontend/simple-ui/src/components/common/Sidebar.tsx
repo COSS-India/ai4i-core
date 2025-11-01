@@ -17,6 +17,7 @@ import {
   IoVolumeHighOutline,
   IoLanguageOutline,
   IoGitNetworkOutline,
+  IoSparklesOutline,
 } from 'react-icons/io5';
 import { FaMicrophone } from 'react-icons/fa';
 import { useAuth } from '../../hooks/useAuth';
@@ -35,8 +36,10 @@ const navItems: NavItem[] = [
   { id: 'asr', label: 'ASR', path: '/asr', icon: FaMicrophone, requiresAuth: true },
   { id: 'tts', label: 'TTS', path: '/tts', icon: IoVolumeHighOutline, requiresAuth: true },
   { id: 'nmt', label: 'NMT', path: '/nmt', icon: IoLanguageOutline, requiresAuth: true },
+  { id: 'llm', label: 'LLM', path: '/llm', icon: IoSparklesOutline, requiresAuth: true },
   { id: 'pipeline', label: 'Pipeline', path: '/pipeline', icon: IoGitNetworkOutline, requiresAuth: true },
 ];
+
 
 const Sidebar: React.FC = () => {
   const router = useRouter();
@@ -95,26 +98,34 @@ const Sidebar: React.FC = () => {
       <VStack spacing={4} p={4} h="full">
         {/* Logo Section */}
         <VStack spacing={2} w="full">
-          <Image
-            src="/logo.png"
-            alt="AI4Bharat Logo"
-            boxSize="40px"
-            fallback={
-              <Box
-                boxSize="40px"
-                bg="orange.500"
-                borderRadius="md"
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                color="white"
-                fontWeight="bold"
-                fontSize="lg"
-              >
-                AI
-              </Box>
-            }
-          />
+          <Box
+            cursor="pointer"
+            onClick={() => router.push('/')}
+            _hover={{ opacity: 0.8 }}
+            transition="opacity 0.2s"
+          >
+            <Image
+              src="/AI4Inclusion_Logo.svg"
+              alt="AI4Inclusion Logo"
+              boxSize="40px"
+              objectFit="contain"
+              fallback={
+                <Box
+                  boxSize="40px"
+                  bg="orange.500"
+                  borderRadius="md"
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  color="white"
+                  fontWeight="bold"
+                  fontSize="lg"
+                >
+                  AI
+                </Box>
+              }
+            />
+          </Box>
           <Text 
             fontSize="sm" 
             fontWeight="bold" 
@@ -123,7 +134,7 @@ const Sidebar: React.FC = () => {
             transition="opacity 0.2s"
             h="16px"
           >
-            Simple UI
+            AI4Inclusion Console
           </Text>
         </VStack>
 
