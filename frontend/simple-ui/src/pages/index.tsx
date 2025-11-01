@@ -27,6 +27,7 @@ import {
   IoGitMergeOutline,
 } from 'react-icons/io5';
 import { FaMicrophone } from 'react-icons/fa';
+import { IoSparklesOutline } from 'react-icons/io5';
 import ContentLayout from '../components/common/ContentLayout';
 
 const HomePage: React.FC = () => {
@@ -60,6 +61,14 @@ const HomePage: React.FC = () => {
       color: 'green',
     },
     {
+      id: 'llm',
+      title: 'LLM – GPT OSS 20B',
+      description: 'Translate and process text using GPT OSS 20B large language model with advanced capabilities',
+      icon: IoSparklesOutline,
+      path: '/llm',
+      color: 'pink',
+    },
+    {
       id: 'pipeline',
       title: 'Pipeline',
       description: 'Chain multiple Langauge AI services together for seamless end-to-end workflows',
@@ -70,7 +79,7 @@ const HomePage: React.FC = () => {
   ];
 
   const stats = [
-    { label: 'Total Services', value: '4' },
+    { label: 'Total Services', value: '5' },
     { label: 'Supported Languages', value: '22+' },
     { label: 'Uptime', value: '99.9%' },
   ];
@@ -79,7 +88,7 @@ const HomePage: React.FC = () => {
     <>
       <Head>
         <title>Simple UI - AI Accessibility Studio</title>
-        <meta name="description" content="Test ASR, TTS, NMT, and Pipeline microservices with a modern web interface" />
+        <meta name="description" content="Test ASR, TTS, NMT, LLM (GPT OSS 20B), and Pipeline microservices with a modern web interface" />
       </Head>
 
       <ContentLayout>
@@ -106,10 +115,10 @@ const HomePage: React.FC = () => {
 
           {/* Service Cards Grid */}
           <SimpleGrid
-            columns={{ base: 1, md: 2, lg: 4 }}
+            columns={{ base: 1, md: 2, lg: 2, xl: 5 }}
             spacing={6}
             w="full"
-            maxW="1400px"
+            maxW="1600px"
             mx="auto"
           >
             {services.map((service) => (
