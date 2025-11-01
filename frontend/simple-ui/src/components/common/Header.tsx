@@ -20,9 +20,9 @@ import {
 import { HamburgerIcon, ArrowBackIcon } from '@chakra-ui/icons';
 import { useApiKey } from '../../hooks/useApiKey';
 import ApiKeyModal from './ApiKeyModal';
-import { useAuth } from '../../hooks/useAuth';  // <-- add this import
-import UserMenu from './UserMenu';              // <-- add this if not already
-// (Make sure you have these components implemented)
+import { useAuth } from '../../hooks/useAuth';
+import UserMenu from '../auth/UserMenu';
+import AuthModal from '../auth/AuthModal';
 
 const Header: React.FC = () => {
   const router = useRouter();
@@ -97,8 +97,15 @@ const Header: React.FC = () => {
   };
 
   const handleAuthClick = () => {
+    console.log('Header: Sign In button clicked, opening AuthModal');
     setIsAuthModalOpen(true);
   };
+
+  // Debug: Log API key state and modal state
+  useEffect(() => {
+    console.log('Header: API Key state:', { apiKey: apiKey ? '***' + apiKey.slice(-4) : null, hasApiKey });
+    console.log('Header: AuthModal state:', { isAuthModalOpen });
+  }, [apiKey, hasApiKey, isAuthModalOpen]);
 
   return (
     <>
@@ -148,6 +155,20 @@ const Header: React.FC = () => {
 
           {/* Right side - Menu and Auth */}
           <HStack spacing={4}>
+            {/* API Key Display */}
+            <Badge 
+              colorScheme={getApiKeyColor()} 
+              fontSize="sm" 
+              px={3} 
+              py={1} 
+              borderRadius="md"
+              cursor="pointer"
+              onClick={handleManageApiKey}
+              title="Click to manage API key"
+            >
+              {getApiKeyDisplay()}
+            </Badge>
+
             {/* Authentication */}
             {showUserMenu ? (
               <UserMenu user={user} />
@@ -156,7 +177,12 @@ const Header: React.FC = () => {
                 colorScheme="blue"
                 variant="outline"
                 size="sm"
-                onClick={handleAuthClick}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  console.log('Header: Sign In button clicked');
+                  handleAuthClick();
+                }}
               >
                 Sign In
               </Button>
@@ -194,8 +220,15 @@ const Header: React.FC = () => {
         onClose={() => setIsApiKeyModalOpen(false)}
       />
 
-      {/* Auth Modal placeholder */}
-      {/* You can render your AuthModal here if implemented */}
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => {
+          console.log('Header: Closing AuthModal');
+          setIsAuthModalOpen(false);
+        }}
+        initialMode="login"
+      />
     </>
   );
 };
