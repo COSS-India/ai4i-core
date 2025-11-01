@@ -431,6 +431,7 @@ services:
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=http://13.220.11.146:8000
+      - TRITON_TIMEOUT=300
     env_file:
       - ./services/llm-service/.env
     depends_on:

@@ -1,6 +1,6 @@
 // LLM service API client with typed methods
 
-import { apiClient, apiEndpoints } from './api';
+import { llmApiClient, apiEndpoints } from './api';
 import { 
   LLMInferenceRequest, 
   LLMInferenceResponse, 
@@ -27,7 +27,7 @@ export const performLLMInference = async (
       },
     };
 
-    const response = await apiClient.post<LLMInferenceResponse>(
+    const response = await llmApiClient.post<LLMInferenceResponse>(
       apiEndpoints.llm.inference,
       payload
     );
@@ -51,7 +51,7 @@ export const performLLMInference = async (
  */
 export const listLLMModels = async (): Promise<LLMModel[]> => {
   try {
-    const response = await apiClient.get<{ models: LLMModel[]; total_models: number }>(
+    const response = await llmApiClient.get<{ models: LLMModel[]; total_models: number }>(
       apiEndpoints.llm.models
     );
 
@@ -68,7 +68,7 @@ export const listLLMModels = async (): Promise<LLMModel[]> => {
  */
 export const checkLLMHealth = async (): Promise<LLMHealthResponse> => {
   try {
-    const response = await apiClient.get<LLMHealthResponse>(
+    const response = await llmApiClient.get<LLMHealthResponse>(
       apiEndpoints.llm.health
     );
 
