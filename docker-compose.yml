@@ -421,6 +421,34 @@ services:
       # start_period: 30s
     restart: unless-stopped
 
+  llm-service:
+    build:
+      context: ./services/llm-service
+      dockerfile: Dockerfile
+    container_name: ai4v-llm-service
+    ports:
+      - "8093:8090"
+    environment:
+      - ENV_FILE=.env
+      - TRITON_ENDPOINT=http://13.220.11.146:8000
+      - TRITON_TIMEOUT=300
+    env_file:
+      - ./services/llm-service/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/llm/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
+    restart: unless-stopped
+
   pipeline-service:
     build:
       context: ./services/pipeline-service
