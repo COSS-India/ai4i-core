@@ -939,14 +939,15 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             if headers is None:
                 headers = {}
         
-        # Forward request to service
+        # Forward request to service (5 minute timeout for LLM service, 300s for others)
+        timeout_value = 300.0 if service_name == 'llm-service' else 300.0
         response = await http_client.request(
             method=method,
             url=f"{service_url}{path}",
             headers=headers,
             params=params,
             content=body,
-            timeout=30.0
+            timeout=timeout_value
         )
         
         # Return response
