@@ -42,6 +42,7 @@ REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db")
 TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "http://13.220.11.146:8000")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
+TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT", "300.0"))
 
 # Global variables
 redis_client: Optional[redis.Redis] = None
@@ -116,6 +117,7 @@ async def lifespan(app: FastAPI):
         app.state.db_session_factory = db_session_factory
         app.state.triton_endpoint = TRITON_ENDPOINT
         app.state.triton_api_key = TRITON_API_KEY
+        app.state.triton_timeout = TRITON_TIMEOUT
         
         logger.info("LLM Service started successfully")
         
