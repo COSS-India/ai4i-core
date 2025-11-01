@@ -81,19 +81,19 @@ const LLMPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>LLM - Large Language Model | Simple UI</title>
-        <meta name="description" content="Test Large Language Model for text processing, translation, and generation" />
+        <title>LLM - GPT OSS 20B | Simple UI</title>
+        <meta name="description" content="Test GPT OSS 20B Large Language Model for text processing, translation, and generation" />
       </Head>
 
       <ContentLayout>
-        <VStack spacing={8} w="full">
+        <VStack spacing={6} w="full">
           {/* Page Header */}
-          <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
-              Large Language Model
+          <Box textAlign="center" mb={2}>
+            <Heading size="lg" color="gray.800" mb={1}>
+              Large Language Model - GPT OSS 20B
             </Heading>
-            <Text color="gray.600" fontSize="lg">
-              Process text with advanced language models for translation and generation
+            <Text color="gray.600" fontSize="sm">
+              Process text with GPT OSS 20B for translation and generation
             </Text>
           </Box>
 
