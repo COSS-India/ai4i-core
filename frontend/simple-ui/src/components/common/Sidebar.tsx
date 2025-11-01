@@ -71,26 +71,34 @@ const Sidebar: React.FC = () => {
       <VStack spacing={4} p={4} h="full">
         {/* Logo Section */}
         <VStack spacing={2} w="full">
-          <Image
-            src="/logo.png"
-            alt="AI4Bharat Logo"
-            boxSize="40px"
-            fallback={
-              <Box
-                boxSize="40px"
-                bg="orange.500"
-                borderRadius="md"
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                color="white"
-                fontWeight="bold"
-                fontSize="lg"
-              >
-                AI
-              </Box>
-            }
-          />
+          <Box
+            cursor="pointer"
+            onClick={() => router.push('/')}
+            _hover={{ opacity: 0.8 }}
+            transition="opacity 0.2s"
+          >
+            <Image
+              src="/AI4Inclusion_Logo.svg"
+              alt="AI4Inclusion Logo"
+              boxSize="40px"
+              objectFit="contain"
+              fallback={
+                <Box
+                  boxSize="40px"
+                  bg="orange.500"
+                  borderRadius="md"
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  color="white"
+                  fontWeight="bold"
+                  fontSize="lg"
+                >
+                  AI
+                </Box>
+              }
+            />
+          </Box>
           <Text 
             fontSize="sm" 
             fontWeight="bold" 

@@ -14,9 +14,10 @@ import {
   MenuDivider,
   IconButton,
   Button,
+  Image,
   useColorModeValue,
 } from '@chakra-ui/react';
-import { HamburgerIcon } from '@chakra-ui/icons';
+import { HamburgerIcon, ArrowBackIcon } from '@chakra-ui/icons';
 import { useApiKey } from '../../hooks/useApiKey';
 import { useAuth } from '../../hooks/useAuth';
 import ApiKeyModal from './ApiKeyModal';
@@ -44,8 +45,14 @@ const Header: React.FC = () => {
       case '/nmt':
         setTitle('Text Translation');
         break;
+      case '/llm':
+        setTitle('Large Language Model - GPT OSS 20B');
+        break;
       case '/pipeline':
         setTitle('Speech-to-Speech Pipeline');
+        break;
+      case '/pipeline-builder':
+        setTitle('Pipeline Builder');
         break;
       case '/':
         setTitle('AI4Inclusion Console');
@@ -86,6 +93,15 @@ const Header: React.FC = () => {
 
   const bgColor = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.700');
+  const showBackButton = router.pathname !== '/';
+
+  const handleBack = () => {
+    if (router.pathname === '/pipeline-builder') {
+      router.push('/');
+    } else {
+      router.back();
+    }
+  };
 
   return (
     <>
@@ -101,10 +117,37 @@ const Header: React.FC = () => {
         borderColor={borderColor}
       >
         <HStack justify="space-between" h="full">
-          {/* Left side - Page title */}
-          <Heading size="lg" color="gray.800">
-            {title}
-          </Heading>
+          {/* Left side - Back button, Logo and Page title */}
+          <HStack spacing={4}>
+            {showBackButton && (
+              <IconButton
+                aria-label="Go back"
+                icon={<ArrowBackIcon />}
+                variant="ghost"
+                size="md"
+                onClick={handleBack}
+                colorScheme="gray"
+                _hover={{ bg: 'gray.100' }}
+              />
+            )}
+            <Box
+              cursor="pointer"
+              onClick={() => router.push('/')}
+              _hover={{ opacity: 0.8 }}
+              transition="opacity 0.2s"
+            >
+              <Image
+                src="/AI4Inclusion_Logo.svg"
+                alt="AI4Inclusion Logo"
+                h="50px"
+                w="auto"
+                objectFit="contain"
+              />
+            </Box>
+            <Heading size="lg" color="gray.800">
+              {title}
+            </Heading>
+          </HStack>
 
           {/* Right side - Authentication, API key status and menu */}
           <HStack spacing={4}>
