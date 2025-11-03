@@ -1,50 +1,59 @@
 // Home page (landing page) with service overview and navigation cards
 
-import React, { useState } from 'react';
-import Head from 'next/head';
-import { useRouter } from 'next/router';
 import {
   Box,
-  Heading,
-  Text,
-  SimpleGrid,
+  Button,
   Card,
   CardBody,
   CardHeader,
-  Button,
-  VStack,
-  useColorModeValue,
+  Heading,
   Icon,
+  SimpleGrid,
   Stat,
   StatLabel,
   StatNumber,
-  StatHelpText,
-} from '@chakra-ui/react';
+  Text,
+  VStack,
+  useColorModeValue,
+} from "@chakra-ui/react";
+import Head from "next/head";
+import { useRouter } from "next/router";
+import React, { useState } from "react";
+import { FaMicrophone } from "react-icons/fa";
 import {
-  IoVolumeHighOutline,
-  IoLanguageOutline,
   IoGitMergeOutline,
+  IoLanguageOutline,
   IoSparklesOutline,
-} from 'react-icons/io5';
-import { FaMicrophone } from 'react-icons/fa';
-import ContentLayout from '../components/common/ContentLayout';
-import { useAuth } from '../hooks/useAuth';
-import AuthModal from '../components/auth/AuthModal';
+  IoVolumeHighOutline,
+} from "react-icons/io5";
+import AuthModal from "../components/auth/AuthModal";
+import ContentLayout from "../components/common/ContentLayout";
+import { useAuth } from "../hooks/useAuth";
 
 const HomePage: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
-  const cardBg = useColorModeValue('white', 'gray.800');
-  const cardBorder = useColorModeValue('gray.200', 'gray.700');
-  const hoverBg = useColorModeValue('gray.50', 'gray.700');
+  const [pendingNavigation, setPendingNavigation] = useState<string | null>(
+    null
+  );
+  const cardBg = useColorModeValue("white", "gray.800");
+  const cardBorder = useColorModeValue("gray.200", "gray.700");
+  const hoverBg = useColorModeValue("gray.50", "gray.700");
 
   // Navigate when authenticated and there's a pending navigation
   React.useEffect(() => {
-    console.log('HomePage useEffect:', { isAuthenticated, isLoading, pendingNavigation, showAuthModal });
+    console.log("HomePage useEffect:", {
+      isAuthenticated,
+      isLoading,
+      pendingNavigation,
+      showAuthModal,
+    });
     if (!isLoading && isAuthenticated && pendingNavigation) {
-      console.log('✅ Authentication detected, navigating to pending route:', pendingNavigation);
+      console.log(
+        "✅ Authentication detected, navigating to pending route:",
+        pendingNavigation
+      );
       const navPath = pendingNavigation;
       setPendingNavigation(null); // Clear before navigation
       setShowAuthModal(false); // Close modal
@@ -55,31 +64,35 @@ const HomePage: React.FC = () => {
   // Handle case where user becomes authenticated but there's no pending navigation
   React.useEffect(() => {
     if (!isLoading && isAuthenticated && showAuthModal) {
-      console.log('HomePage: User authenticated, closing modal');
+      console.log("HomePage: User authenticated, closing modal");
       setShowAuthModal(false);
-      if (!pendingNavigation && router.pathname !== '/') {
-        console.log('HomePage: Redirecting to home after login');
-        router.push('/');
+      if (!pendingNavigation && router.pathname !== "/") {
+        console.log("HomePage: Redirecting to home after login");
+        router.push("/");
       }
     }
   }, [isAuthenticated, isLoading, showAuthModal, pendingNavigation, router]);
 
   const handleServiceClick = async (path: string) => {
-    console.log('handleServiceClick called:', { path, isAuthenticated, isLoading });
+    console.log("handleServiceClick called:", {
+      path,
+      isAuthenticated,
+      isLoading,
+    });
 
     if (isLoading) {
-      console.log('HomePage: Auth still loading, waiting...');
+      console.log("HomePage: Auth still loading, waiting...");
       return;
     }
 
     if (isAuthenticated) {
-      console.log('HomePage: User authenticated, navigating to:', path);
+      console.log("HomePage: User authenticated, navigating to:", path);
       setPendingNavigation(null);
       setShowAuthModal(false);
       await new Promise((resolve) => setTimeout(resolve, 50));
       router.push(path);
     } else {
-      console.log('HomePage: User not authenticated, showing modal for:', path);
+      console.log("HomePage: User not authenticated, showing modal for:", path);
       setPendingNavigation(path);
       setShowAuthModal(true);
     }
@@ -91,54 +104,54 @@ const HomePage: React.FC = () => {
 
   const services = [
     {
-      id: 'asr',
-      title: 'ASR – Automatic Speech Recognition',
-      description: 'Convert speech to text in 12+ Indian languages',
+      id: "asr",
+      title: "ASR – Automatic Speech Recognition",
+      description: "Convert speech to text in 12+ Indian languages",
       icon: FaMicrophone,
-      path: '/asr',
-      color: 'orange',
+      path: "/asr",
+      color: "orange",
     },
     {
-      id: 'tts',
-      title: 'TTS – Text-to-Speech',
+      id: "tts",
+      title: "TTS – Text-to-Speech",
       description:
-        'Convert text to natural, human-like speech in multiple Indian languages and voices',
+        "Convert text to natural, human-like speech in multiple Indian languages and voices",
       icon: IoVolumeHighOutline,
-      path: '/tts',
-      color: 'blue',
+      path: "/tts",
+      color: "blue",
     },
     {
-      id: 'nmt',
-      title: 'Text Translation',
-      description: 'Translate text between 22+ Indian languages',
+      id: "nmt",
+      title: "Text Translation",
+      description: "Translate text between 22+ Indian languages",
       icon: IoLanguageOutline,
-      path: '/nmt',
-      color: 'green',
+      path: "/nmt",
+      color: "green",
     },
     {
-      id: 'llm',
-      title: 'LLM',
+      id: "llm",
+      title: "LLM",
       description:
-        'Interact with the large language model for text understanding and generation',
+        "Interact with the large language model for text understanding and generation",
       icon: IoSparklesOutline,
-      path: '/llm',
-      color: 'pink',
+      path: "/llm",
+      color: "pink",
     },
     {
-      id: 'pipeline',
-      title: 'Pipeline',
+      id: "pipeline",
+      title: "Pipeline",
       description:
-        'Chain multiple Language AI services together for seamless end-to-end workflows',
+        "Chain multiple Language AI services together for seamless end-to-end workflows",
       icon: IoGitMergeOutline,
-      path: '/pipeline',
-      color: 'purple',
+      path: "/pipeline",
+      color: "purple",
     },
   ];
 
   // Platform insight cards (uptime removed)
   const stats = [
-    { label: 'Total Services', value: '5' },
-    { label: 'Supported Languages', value: '22+' },
+    { label: "Total Services", value: "5" },
+    { label: "Supported Languages", value: "22+" },
   ];
 
   return (
@@ -180,8 +193,8 @@ const HomePage: React.FC = () => {
                 borderRadius="lg"
                 boxShadow="md"
                 _hover={{
-                  transform: 'translateY(-4px)',
-                  boxShadow: 'xl',
+                  transform: "translateY(-4px)",
+                  boxShadow: "xl",
                   bg: hoverBg,
                 }}
                 transition="all 0.2s"
@@ -221,7 +234,7 @@ const HomePage: React.FC = () => {
                         handleServiceClick(service.path);
                       }}
                       _hover={{
-                        transform: 'translateY(-1px)',
+                        transform: "translateY(-1px)",
                       }}
                     >
                       Try it now
@@ -237,7 +250,11 @@ const HomePage: React.FC = () => {
             <Heading size="lg" textAlign="center" mb={8} color="gray.800">
               Platform Insights
             </Heading>
-            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={8} justifyItems="center">
+            <SimpleGrid
+              columns={{ base: 1, md: 2 }}
+              spacing={8}
+              justifyItems="center"
+            >
               {stats.map((stat, index) => (
                 <Stat key={index} textAlign="center">
                   <StatLabel color="gray.600" fontSize="sm">
