@@ -15,16 +15,26 @@ import {
   IconButton,
   Image,
   useColorModeValue,
+  Button
 } from '@chakra-ui/react';
 import { HamburgerIcon, ArrowBackIcon } from '@chakra-ui/icons';
 import { useApiKey } from '../../hooks/useApiKey';
 import ApiKeyModal from './ApiKeyModal';
+import { useAuth } from '../../hooks/useAuth';
+import UserMenu from '../auth/UserMenu';
+import AuthModal from '../auth/AuthModal';
 
 const Header: React.FC = () => {
   const router = useRouter();
   const { apiKey, isAuthenticated: hasApiKey, clearApiKey } = useApiKey();
+  const { isAuthenticated: isUserAuthenticated, user, isLoading: isAuthLoading } = useAuth();
+
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
-  const [title, setTitle] = useState('AI4Inclusion Console');
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [title, setTitle] = useState('Dashboard');
+
+  // Determine if we should show user menu or sign in button
+  const showUserMenu = !isAuthLoading && isUserAuthenticated && user && user.username;
 
   // Update title based on route
   useEffect(() => {
@@ -56,16 +66,11 @@ const Header: React.FC = () => {
     }
   }, [router.pathname]);
 
-  const handleManageApiKey = () => {
-    setIsApiKeyModalOpen(true);
-  };
+  const handleManageApiKey = () => setIsApiKeyModalOpen(true);
 
-  const handleClearApiKey = () => {
-    clearApiKey();
-  };
+  const handleClearApiKey = () => clearApiKey();
 
   const handleDocumentation = () => {
-    // Future: Navigate to documentation
     console.log('Navigate to documentation');
   };
 
@@ -77,9 +82,7 @@ const Header: React.FC = () => {
     return 'No API Key';
   };
 
-  const getApiKeyColor = () => {
-    return hasApiKey ? 'green' : 'red';
-  };
+  const getApiKeyColor = () => (hasApiKey ? 'green' : 'red');
 
   const bgColor = useColorModeValue('white', 'gray.800');
   const borderColor = useColorModeValue('gray.200', 'gray.700');
@@ -92,6 +95,17 @@ const Header: React.FC = () => {
       router.back();
     }
   };
+
+  const handleAuthClick = () => {
+    console.log('Header: Sign In button clicked, opening AuthModal');
+    setIsAuthModalOpen(true);
+  };
+
+  // Debug: Log API key state and modal state
+  useEffect(() => {
+    console.log('Header: API Key state:', { apiKey: apiKey ? '***' + apiKey.slice(-4) : null, hasApiKey });
+    console.log('Header: AuthModal state:', { isAuthModalOpen });
+  }, [apiKey, hasApiKey, isAuthModalOpen]);
 
   return (
     <>
@@ -139,8 +153,41 @@ const Header: React.FC = () => {
             </Heading>
           </HStack>
 
-          {/* Right side - Menu */}
+          {/* Right side - Menu and Auth */}
           <HStack spacing={4}>
+            {/* API Key Display */}
+            <Badge 
+              colorScheme={getApiKeyColor()} 
+              fontSize="sm" 
+              px={3} 
+              py={1} 
+              borderRadius="md"
+              cursor="pointer"
+              onClick={handleManageApiKey}
+              title="Click to manage API key"
+            >
+              {getApiKeyDisplay()}
+            </Badge>
+
+            {/* Authentication */}
+            {showUserMenu ? (
+              <UserMenu user={user} />
+            ) : (
+              <Button
+                colorScheme="blue"
+                variant="outline"
+                size="sm"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  console.log('Header: Sign In button clicked');
+                  handleAuthClick();
+                }}
+              >
+                Sign In
+              </Button>
+            )}
+
             {/* Menu */}
             <Menu>
               <MenuButton
@@ -171,6 +218,16 @@ const Header: React.FC = () => {
       <ApiKeyModal
         isOpen={isApiKeyModalOpen}
         onClose={() => setIsApiKeyModalOpen(false)}
+      />
+
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => {
+          console.log('Header: Closing AuthModal');
+          setIsAuthModalOpen(false);
+        }}
+        initialMode="login"
       />
     </>
   );

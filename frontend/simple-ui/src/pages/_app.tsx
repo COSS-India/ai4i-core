@@ -6,9 +6,9 @@ import { ChakraProvider } from '@chakra-ui/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { useRouter } from 'next/router';
-import Script from 'next/script';
 import customTheme from '../theme';
 import Layout from '../components/common/Layout';
+import AuthGuard from '../components/auth/AuthGuard';
 import '../styles/globals.css';
 
 // Define routes that need the full layout
@@ -38,20 +38,16 @@ export default function App({ Component, pageProps }: AppProps) {
   return (
     <ChakraProvider theme={customTheme}>
       <QueryClientProvider client={queryClient}>
-        {/* Recorder.js Script */}
-        <Script
-          src="/recorder.js"
-          strategy="beforeInteractive"
-        />
-        
-        {/* Conditional Layout Rendering */}
-        {needsLayout ? (
-          <Layout>
+        {/* Conditional Layout Rendering with Auth Guard */}
+        <AuthGuard>
+          {needsLayout ? (
+            <Layout>
+              <Component {...pageProps} />
+            </Layout>
+          ) : (
             <Component {...pageProps} />
-          </Layout>
-        ) : (
-          <Component {...pageProps} />
-        )}
+          )}
+        </AuthGuard>
         
         {/* React Query DevTools */}
         <ReactQueryDevtools initialIsOpen={false} />

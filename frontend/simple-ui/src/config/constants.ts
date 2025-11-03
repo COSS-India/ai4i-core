@@ -26,6 +26,8 @@ export const SUPPORTED_LANGUAGES = [
   { code: 'mni', label: 'Manipuri', scriptCode: 'Beng' },
   { code: 'gom', label: 'Goan Konkani', scriptCode: 'Latn' },
   { code: 'sat', label: 'Santali', scriptCode: 'Latn' },
+  // Custom additions
+  { code: 'raj', label: 'Rajasthani', scriptCode: 'Deva' },
   // African languages
   { code: 'sw', label: 'Swahili', scriptCode: 'Latn' },
   { code: 'yo', label: 'Yoruba', scriptCode: 'Latn' },
@@ -48,6 +50,30 @@ export const SUPPORTED_LANGUAGES = [
   { code: 'ar', label: 'Arabic', scriptCode: 'Arab' },
 ];
 
+// ASR-supported languages (matching ai4bharat/conformer-multilingual-asr model)
+export const ASR_SUPPORTED_LANGUAGES = [
+  { code: 'as', label: 'Assamese', scriptCode: 'Beng' },
+  { code: 'bn', label: 'Bengali', scriptCode: 'Beng' },
+  { code: 'brx', label: 'Bodo', scriptCode: 'Deva' },
+  { code: 'doi', label: 'Dogri', scriptCode: 'Deva' },
+  { code: 'gu', label: 'Gujarati', scriptCode: 'Gujr' },
+  { code: 'hi', label: 'Hindi', scriptCode: 'Deva' },
+  { code: 'kn', label: 'Kannada', scriptCode: 'Knda' },
+  { code: 'ks', label: 'Kashmiri', scriptCode: 'Arab' },
+  { code: 'mai', label: 'Maithili', scriptCode: 'Deva' },
+  { code: 'ml', label: 'Malayalam', scriptCode: 'Mlym' },
+  { code: 'mni', label: 'Manipuri', scriptCode: 'Beng' },
+  { code: 'mr', label: 'Marathi', scriptCode: 'Deva' },
+  { code: 'ne', label: 'Nepali', scriptCode: 'Deva' },
+  { code: 'or', label: 'Odia', scriptCode: 'Orya' },
+  { code: 'pa', label: 'Punjabi', scriptCode: 'Guru' },
+  { code: 'sa', label: 'Sanskrit', scriptCode: 'Deva' },
+  { code: 'sd', label: 'Sindhi', scriptCode: 'Arab' },
+  { code: 'ta', label: 'Tamil', scriptCode: 'Taml' },
+  { code: 'te', label: 'Telugu', scriptCode: 'Telu' },
+  { code: 'ur', label: 'Urdu', scriptCode: 'Arab' },
+];
+
 // Language code to label mapping
 export const LANG_CODE_TO_LABEL: { [key: string]: string } = SUPPORTED_LANGUAGES.reduce(
   (acc, lang) => {
@@ -58,13 +84,13 @@ export const LANG_CODE_TO_LABEL: { [key: string]: string } = SUPPORTED_LANGUAGES
 );
 
 // Audio formats
-export const AUDIO_FORMATS = ['wav', 'mp3', 'flac', 'ogg', 'pcm'] as const;
+export const AUDIO_FORMATS = ['wav', 'mp3'] as const;
 
 // Sample rates for ASR
 export const ASR_SAMPLE_RATES = [8000, 16000, 48000] as const;
 
 // Sample rates for TTS
-export const TTS_SAMPLE_RATES = [8000, 16000, 22050, 44100, 48000] as const;
+export const TTS_SAMPLE_RATES = [22050] as const;
 
 // Gender options for TTS
 export const GENDER_OPTIONS = [
@@ -76,7 +102,7 @@ export const GENDER_OPTIONS = [
 export const MAX_TEXT_LENGTH = 512;
 
 // Maximum recording duration in seconds
-export const MAX_RECORDING_DURATION = 120;
+export const MAX_RECORDING_DURATION = 60;
 
 // Utility function to format duration in seconds to MM:SS format
 export const formatDuration = (seconds: number): string => {
@@ -87,8 +113,9 @@ export const formatDuration = (seconds: number): string => {
 
 // Default configurations
 export const DEFAULT_ASR_CONFIG = {
-  language: 'en',
+  language: 'hi', // Default to Hindi since it's in the ASR supported list
   sampleRate: 16000,
+  serviceId: 'asr_am_ensemble',
   audioFormat: 'wav',
   encoding: 'base64',
 } as const;

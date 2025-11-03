@@ -1,8 +1,8 @@
 // Home page (landing page) with service overview and navigation cards
 
-import React from 'react';
+import React, { useState } from 'react';
 import Head from 'next/head';
-import Link from 'next/link';
+import { useRouter } from 'next/router';
 import {
   Box,
   Heading,
@@ -13,7 +13,6 @@ import {
   CardHeader,
   Button,
   VStack,
-  Container,
   useColorModeValue,
   Icon,
   Stat,
@@ -25,21 +24,76 @@ import {
   IoVolumeHighOutline,
   IoLanguageOutline,
   IoGitMergeOutline,
+  IoSparklesOutline,
 } from 'react-icons/io5';
 import { FaMicrophone } from 'react-icons/fa';
-import { IoSparklesOutline } from 'react-icons/io5';
 import ContentLayout from '../components/common/ContentLayout';
+import { useAuth } from '../hooks/useAuth';
+import AuthModal from '../components/auth/AuthModal';
 
 const HomePage: React.FC = () => {
+  const router = useRouter();
+  const { isAuthenticated, isLoading } = useAuth();
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
   const cardBg = useColorModeValue('white', 'gray.800');
   const cardBorder = useColorModeValue('gray.200', 'gray.700');
   const hoverBg = useColorModeValue('gray.50', 'gray.700');
+
+  // Navigate when authenticated and there's a pending navigation
+  React.useEffect(() => {
+    console.log('HomePage useEffect:', { isAuthenticated, isLoading, pendingNavigation, showAuthModal });
+    if (!isLoading && isAuthenticated && pendingNavigation) {
+      console.log('✅ Authentication detected, navigating to pending route:', pendingNavigation);
+      const navPath = pendingNavigation;
+      setPendingNavigation(null); // Clear before navigation
+      setShowAuthModal(false); // Close modal
+      router.push(navPath);
+    }
+  }, [isAuthenticated, isLoading, pendingNavigation, router, showAuthModal]);
+
+  // Handle case where user becomes authenticated but there's no pending navigation
+  React.useEffect(() => {
+    if (!isLoading && isAuthenticated && showAuthModal) {
+      console.log('HomePage: User authenticated, closing modal');
+      setShowAuthModal(false);
+      if (!pendingNavigation && router.pathname !== '/') {
+        console.log('HomePage: Redirecting to home after login');
+        router.push('/');
+      }
+    }
+  }, [isAuthenticated, isLoading, showAuthModal, pendingNavigation, router]);
+
+  const handleServiceClick = async (path: string) => {
+    console.log('handleServiceClick called:', { path, isAuthenticated, isLoading });
+
+    if (isLoading) {
+      console.log('HomePage: Auth still loading, waiting...');
+      return;
+    }
+
+    if (isAuthenticated) {
+      console.log('HomePage: User authenticated, navigating to:', path);
+      setPendingNavigation(null);
+      setShowAuthModal(false);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      router.push(path);
+    } else {
+      console.log('HomePage: User not authenticated, showing modal for:', path);
+      setPendingNavigation(path);
+      setShowAuthModal(true);
+    }
+  };
+
+  const handleAuthModalClose = () => {
+    setShowAuthModal(false);
+  };
 
   const services = [
     {
       id: 'asr',
       title: 'ASR – Automatic Speech Recognition',
-      description: 'Convert speech to text in 22+ Indian languages',
+      description: 'Convert speech to text in 12+ Indian languages',
       icon: FaMicrophone,
       path: '/asr',
       color: 'orange',
@@ -47,7 +101,8 @@ const HomePage: React.FC = () => {
     {
       id: 'tts',
       title: 'TTS – Text-to-Speech',
-      description: 'Convert text to natural, human-like speech in multiple Indian languages and voices',
+      description:
+        'Convert text to natural, human-like speech in multiple Indian languages and voices',
       icon: IoVolumeHighOutline,
       path: '/tts',
       color: 'blue',
@@ -62,8 +117,9 @@ const HomePage: React.FC = () => {
     },
     {
       id: 'llm',
-      title: 'LLM – GPT OSS 20B',
-      description: 'Translate and process text using GPT OSS 20B large language model with advanced capabilities',
+      title: 'LLM',
+      description:
+        'Interact with the large language model for text understanding and generation',
       icon: IoSparklesOutline,
       path: '/llm',
       color: 'pink',
@@ -71,45 +127,39 @@ const HomePage: React.FC = () => {
     {
       id: 'pipeline',
       title: 'Pipeline',
-      description: 'Chain multiple Langauge AI services together for seamless end-to-end workflows',
+      description:
+        'Chain multiple Language AI services together for seamless end-to-end workflows',
       icon: IoGitMergeOutline,
       path: '/pipeline',
       color: 'purple',
     },
   ];
 
+  // Platform insight cards (uptime removed)
   const stats = [
     { label: 'Total Services', value: '5' },
     { label: 'Supported Languages', value: '22+' },
-    { label: 'Uptime', value: '99.9%' },
   ];
 
   return (
     <>
       <Head>
         <title>Simple UI - AI Accessibility Studio</title>
-        <meta name="description" content="Test ASR, TTS, NMT, LLM (GPT OSS 20B), and Pipeline microservices with a modern web interface" />
+        <meta
+          name="description"
+          content="Test ASR, TTS, NMT, LLM (GPT OSS 20B), and Pipeline microservices with a modern web interface"
+        />
       </Head>
 
       <ContentLayout>
         <VStack spacing={12} w="full">
           {/* Hero Section */}
           <Box textAlign="center" pt="2rem" pb="4rem">
-            <Heading
-              size="xl"
-              fontWeight="bold"
-              color="gray.800"
-              mb={4}
-            >
+            <Heading size="xl" fontWeight="bold" color="gray.800" mb={4}>
               AI Accessibility Studio
             </Heading>
-            <Text
-              fontSize="lg"
-              color="gray.600"
-              maxW="600px"
-              mx="auto"
-            >
-              Test and explore Speech, Text, and Translation models in real time.
+            <Text fontSize="lg" color="gray.600" maxW="600px" mx="auto">
+              Test and explore NLP and LLM models
             </Text>
           </Box>
 
@@ -160,18 +210,22 @@ const HomePage: React.FC = () => {
                     >
                       {service.description}
                     </Text>
-                    <Link href={service.path} passHref>
-                      <Button
-                        colorScheme={service.color}
-                        size="md"
-                        w="full"
-                        _hover={{
-                          transform: 'translateY(-1px)',
-                        }}
-                      >
-                        Try it now
-                      </Button>
-                    </Link>
+
+                    {/* Auth-aware navigation button */}
+                    <Button
+                      colorScheme={service.color}
+                      size="md"
+                      w="full"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        handleServiceClick(service.path);
+                      }}
+                      _hover={{
+                        transform: 'translateY(-1px)',
+                      }}
+                    >
+                      Try it now
+                    </Button>
                   </VStack>
                 </CardBody>
               </Card>
@@ -183,7 +237,7 @@ const HomePage: React.FC = () => {
             <Heading size="lg" textAlign="center" mb={8} color="gray.800">
               Platform Insights
             </Heading>
-            <SimpleGrid columns={{ base: 1, md: 3 }} spacing={8}>
+            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={8} justifyItems="center">
               {stats.map((stat, index) => (
                 <Stat key={index} textAlign="center">
                   <StatLabel color="gray.600" fontSize="sm">
@@ -192,46 +246,21 @@ const HomePage: React.FC = () => {
                   <StatNumber color="orange.600" fontSize="2xl">
                     {stat.value}
                   </StatNumber>
-                  <StatHelpText color="gray.500">
-                    {index === 0 && 'Available Services'}
-                    {index === 1 && 'Indian Languages'}
-                    {index === 2 && 'Reliability'}
-                  </StatHelpText>
                 </Stat>
               ))}
             </SimpleGrid>
           </Box>
 
-          {/* Getting Started Section */}
-          <Box
-            bg="orange.50"
-            p={8}
-            borderRadius="lg"
-            w="full"
-            maxW="800px"
-            mx="auto"
-            textAlign="center"
-          >
-            <Heading size="md" color="gray.800" mb={4}>
-              Getting Started
-            </Heading>
-            <Text color="gray.600" mb={6}>
-              Set up your API key to start testing the AI services. 
-              Each service supports real-time processing and provides detailed statistics.
-            </Text>
-            <Button
-              colorScheme="orange"
-              size="lg"
-              onClick={() => {
-                // This will be handled by the Header component's API key modal
-                window.dispatchEvent(new CustomEvent('open-api-key-modal'));
-              }}
-            >
-              Set Up API Key
-            </Button>
-          </Box>
+          {/* Getting Started section removed per requirements */}
         </VStack>
       </ContentLayout>
+
+      {/* Auth Modal for service access */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={handleAuthModalClose}
+        initialMode="login"
+      />
     </>
   );
 };
