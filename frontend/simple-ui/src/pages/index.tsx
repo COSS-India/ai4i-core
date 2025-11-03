@@ -119,7 +119,7 @@ const HomePage: React.FC = () => {
       id: 'llm',
       title: 'LLM',
       description:
-        'Interact with the large language model for text understanding and generation',
+        'Enable contextual translation with GPT OSS 20B',
       icon: IoSparklesOutline,
       path: '/llm',
       color: 'pink',
@@ -159,7 +159,7 @@ const HomePage: React.FC = () => {
               AI Accessibility Studio
             </Heading>
             <Text fontSize="lg" color="gray.600" maxW="600px" mx="auto">
-              Test and explore NLP and LLM models
+              Test and explore Speech, Text, and Translation models in real time
             </Text>
           </Box>
 
