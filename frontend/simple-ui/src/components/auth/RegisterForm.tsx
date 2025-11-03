@@ -36,10 +36,6 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
     username: '',
     password: '',
     confirm_password: '',
-    full_name: '',
-    phone_number: '',
-    timezone: 'UTC',
-    language: 'en',
   });
 
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
@@ -61,7 +57,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       errors.email = 'Please enter a valid email address';
     }
 
-    if (formData.username.length < 3) {
+    if (!formData.username || formData.username.length < 3) {
       errors.username = 'Username must be at least 3 characters long';
     }
 
@@ -148,18 +144,6 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
             )}
           </FormControl>
 
-          <FormControl>
-            <FormLabel>Full Name</FormLabel>
-            <Input
-              type="text"
-              name="full_name"
-              value={formData.full_name}
-              onChange={handleChange}
-              placeholder="Enter your full name"
-              size="md"
-            />
-          </FormControl>
-
           <FormControl isRequired isInvalid={!!validationErrors.password}>
             <FormLabel>Password</FormLabel>
             <InputGroup>
@@ -216,60 +200,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
             )}
           </FormControl>
 
-          <FormControl>
-            <FormLabel>Phone Number</FormLabel>
-            <Input
-              type="tel"
-              name="phone_number"
-              value={formData.phone_number}
-              onChange={handleChange}
-              placeholder="Enter your phone number"
-              size="md"
-            />
-          </FormControl>
-
-          <FormControl>
-            <FormLabel>Timezone</FormLabel>
-            <Select
-              name="timezone"
-              value={formData.timezone}
-              onChange={handleChange}
-              size="md"
-            >
-              <option value="UTC">UTC</option>
-              <option value="America/New_York">Eastern Time</option>
-              <option value="America/Chicago">Central Time</option>
-              <option value="America/Denver">Mountain Time</option>
-              <option value="America/Los_Angeles">Pacific Time</option>
-              <option value="Europe/London">London</option>
-              <option value="Europe/Paris">Paris</option>
-              <option value="Asia/Tokyo">Tokyo</option>
-              <option value="Asia/Shanghai">Shanghai</option>
-              <option value="Asia/Kolkata">India</option>
-            </Select>
-          </FormControl>
-
-          <FormControl>
-            <FormLabel>Language</FormLabel>
-            <Select
-              name="language"
-              value={formData.language}
-              onChange={handleChange}
-              size="md"
-            >
-              <option value="en">English</option>
-              <option value="es">Spanish</option>
-              <option value="fr">French</option>
-              <option value="de">German</option>
-              <option value="it">Italian</option>
-              <option value="pt">Portuguese</option>
-              <option value="ru">Russian</option>
-              <option value="ja">Japanese</option>
-              <option value="ko">Korean</option>
-              <option value="zh">Chinese</option>
-              <option value="hi">Hindi</option>
-            </Select>
-          </FormControl>
+          {/* Phone, timezone, language removed per requirements */}
 
           <Button
             type="submit"
