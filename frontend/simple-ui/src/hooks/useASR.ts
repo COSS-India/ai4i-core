@@ -38,6 +38,11 @@ export const useASR = (): UseASRReturn => {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamingServiceRef = useRef<ASRStreamingService | null>(null);
+  const languageRef = useRef<string>(language);
+  const sampleRateRef = useRef<number>(sampleRate);
+  const currentRequestLanguageRef = useRef<string | null>(null);
+  const prevLanguageRef = useRef<string>(language);
+  const justCompletedRequestRef = useRef<boolean>(false);
 
   // Toast hook
   const toast = useToast();
@@ -108,9 +113,10 @@ export const useASR = (): UseASRReturn => {
     };
   }, [recording, timer, toast]);
 
-  // ASR inference mutation
+  // ASR inference mutation - recreate when language or sampleRate changes
   const asrMutation = useMutation({
     mutationFn: async (audioContent: string) => {
+      // Get current language and sampleRate from state at execution time
       // Get serviceId based on language
       const getServiceIdForLanguage = (lang: string): string => {
         if (['hi', 'bn', 'gu', 'mr', 'pa'].includes(lang)) {
@@ -122,11 +128,15 @@ export const useASR = (): UseASRReturn => {
         return 'asr_am_ensemble'; // Use asr_am_ensemble for all languages
       };
 
+      // Use ref values to ensure we always use the current language and sampleRate
+      const currentLanguage = languageRef.current;
+      const currentSampleRate = sampleRateRef.current;
+      
       const config: ASRInferenceRequest['config'] = {
-        language: { sourceLanguage: language },
-        serviceId: getServiceIdForLanguage(language),
+        language: { sourceLanguage: currentLanguage },
+        serviceId: getServiceIdForLanguage(currentLanguage),
         audioFormat: 'wav',
-        samplingRate: sampleRate,
+        samplingRate: currentSampleRate,
         transcriptionFormat: 'transcript',
         bestTokenCount: 0,
       };
@@ -134,28 +144,72 @@ export const useASR = (): UseASRReturn => {
       return transcribeAudio(audioContent, config);
     },
     onSuccess: (response, variables, context) => {
-      console.log('ASR Success - Full response:', response);
-      const transcript = response.output[0]?.source || '';
-      console.log('ASR Success - Extracted transcript:', transcript);
-      console.log('ASR Success - Transcript length:', transcript.length);
-      setAudioText(transcript);
-      setResponseWordCount(getWordCount(transcript));
-      setFetched(true);
-      setFetching(false);
-      setError(null);
-      console.log('ASR Success - States updated');
+      console.log('=== ASR Success Handler ===');
+      console.log('Full response:', response);
+      console.log('Request language (when started):', currentRequestLanguageRef.current);
+      console.log('Current language (now):', languageRef.current);
+      
+      // Accept response if request language matches current language
+      // This means the language hasn't changed since the request started
+      if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current === languageRef.current) {
+        const transcript = response.output[0]?.source || '';
+        console.log('✓ Response accepted - languages match');
+        console.log('Extracted transcript:', transcript);
+        console.log('Transcript length:', transcript.length);
+        setAudioText(transcript);
+        setResponseWordCount(getWordCount(transcript));
+        setFetched(true);
+        setFetching(false);
+        setError(null);
+        // Mark that we just completed a request to prevent language change effect from clearing results
+        justCompletedRequestRef.current = true;
+        // Reset the flag after a short delay to allow language change effect to run if needed
+        setTimeout(() => {
+          justCompletedRequestRef.current = false;
+        }, 100);
+        console.log('States updated successfully');
+      } else {
+        console.log('✗ Response ignored - language mismatch or cancelled');
+        console.log('  Request language:', currentRequestLanguageRef.current);
+        console.log('  Current language:', languageRef.current);
+        setFetching(false);
+        // Clear the request language ref to allow new requests
+        if (currentRequestLanguageRef.current !== languageRef.current) {
+          currentRequestLanguageRef.current = null;
+        }
+      }
     },
     onError: (error: any) => {
-      console.error('ASR inference error:', error);
-      setError('Failed to process audio. Please try again.');
-      setFetching(false);
-      toast({
-        title: 'ASR Error',
-        description: 'Failed to process audio. Please check your connection and try again.',
-        status: 'error',
-        duration: 5000,
-        isClosable: true,
-      });
+      console.error('=== ASR Error Handler ===');
+      console.error('Error:', error);
+      console.error('Request language (when started):', currentRequestLanguageRef.current);
+      console.error('Current language (now):', languageRef.current);
+      
+      // Accept error if request language matches current language
+      if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current === languageRef.current) {
+        console.log('✓ Error accepted - languages match, showing error');
+        setError('Failed to process audio. Please try again.');
+        setFetching(false);
+        setFetched(false);
+        setAudioText('');
+        setResponseWordCount(0);
+        toast({
+          title: 'ASR Error',
+          description: 'Failed to process audio. Please check your connection and try again.',
+          status: 'error',
+          duration: 5000,
+          isClosable: true,
+        });
+      } else {
+        console.log('✗ Error ignored - language mismatch or cancelled');
+        console.log('  Request language:', currentRequestLanguageRef.current);
+        console.log('  Current language:', languageRef.current);
+        setFetching(false);
+        // Clear the request language ref to allow new requests
+        if (currentRequestLanguageRef.current !== languageRef.current) {
+          currentRequestLanguageRef.current = null;
+        }
+      }
     },
   });
 
@@ -262,18 +316,49 @@ export const useASR = (): UseASRReturn => {
   // Perform inference
   const performInference = useCallback(async (audioContent: string) => {
     try {
+      console.log('=== ASR Inference Start ===');
       console.log('performInference called with audio content length:', audioContent.length);
-      setFetching(true);
+      console.log('Current language state:', language);
+      console.log('Current language ref:', languageRef.current);
+      
+      // Track the language for this request BEFORE starting
+      const requestLanguage = languageRef.current;
+      currentRequestLanguageRef.current = requestLanguage;
+      console.log('Request language set to:', requestLanguage);
+      
+      // Clear any previous errors and reset state before starting new request
       setError(null);
-      console.log('Calling asrMutation.mutateAsync...');
+      setFetched(false);
+      setAudioText('');
+      setResponseWordCount(0);
+      setFetching(true);
+      
+      console.log('Calling asrMutation.mutateAsync with language:', requestLanguage);
+      console.log('Config will use language:', languageRef.current);
+      
       const result = await asrMutation.mutateAsync(audioContent);
-      console.log('ASR mutation completed successfully, result:', result);
+      console.log('ASR mutation completed, result:', result);
+      
+      // The onSuccess handler will check if the language matches
+      // We don't need to check here since onSuccess handles it
     } catch (err) {
+      console.error('=== ASR Inference Error ===');
       console.error('Inference error:', err);
-      setError('Failed to transcribe audio');
-      setFetching(false);
+      console.error('Request language:', currentRequestLanguageRef.current);
+      console.error('Current language:', languageRef.current);
+      
+      // Only set error if this is still the current request
+      if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current === languageRef.current) {
+        setError('Failed to transcribe audio');
+        setFetching(false);
+        setFetched(false);
+        setAudioText('');
+        setResponseWordCount(0);
+      } else {
+        console.log('Ignoring error - language changed during request');
+      }
     }
-  }, [asrMutation]);
+  }, [asrMutation, language]);
 
   // Handle recording completion
   const handleRecording = useCallback((blob: Blob) => {
@@ -339,24 +424,67 @@ export const useASR = (): UseASRReturn => {
 
   // Handle file upload
   const handleFileUpload = useCallback((file: File) => {
-    if (!file) return;
+    if (!file) {
+      console.log('handleFileUpload: No file provided');
+      return;
+    }
+
+    console.log('handleFileUpload: Processing file:', file.name, 'Size:', file.size, 'Type:', file.type);
 
     try {
+      // Reset state before processing new file
+      setError(null);
+      setFetched(false);
+      setAudioText('');
+      setResponseWordCount(0);
+      
       const reader = new FileReader();
+      
       reader.onload = () => {
-        const result = reader.result as string;
-        const base64Data = result.split(',')[1];
-        
-        // Play audio
-        const audio = new Audio(result);
-        audio.play();
-        
-        performInference(base64Data);
+        try {
+          const result = reader.result as string;
+          if (!result) {
+            throw new Error('FileReader result is empty');
+          }
+          const base64Data = result.split(',')[1];
+          if (!base64Data) {
+            throw new Error('Failed to extract base64 data');
+          }
+          
+          console.log('File read successfully, base64 length:', base64Data.length);
+          
+          // Play audio preview
+          try {
+            const audio = new Audio(result);
+            audio.play().catch(err => {
+              console.log('Audio playback failed (non-critical):', err);
+            });
+          } catch (audioErr) {
+            console.log('Audio preview not available (non-critical):', audioErr);
+          }
+          
+          // Process the audio
+          performInference(base64Data);
+        } catch (err) {
+          console.error('Error processing file result:', err);
+          setError('Failed to process file. Please try again.');
+        }
       };
+      
+      reader.onerror = (error) => {
+        console.error('FileReader error:', error);
+        setError('Failed to read the selected file.');
+      };
+      
+      reader.onabort = () => {
+        console.log('File read aborted by user');
+      };
+      
+      console.log('Starting to read file...');
       reader.readAsDataURL(file);
     } catch (err) {
       console.error('Error processing file upload:', err);
-      setError('Failed to process file upload.');
+      setError('Failed to process file upload. Please try again.');
     }
   }, [performInference]);
 
@@ -373,6 +501,80 @@ export const useASR = (): UseASRReturn => {
   const resetTimer = useCallback(() => {
     setTimer(0);
   }, []);
+
+  // Update refs when language or sampleRate changes
+  useEffect(() => {
+    const oldLanguage = languageRef.current;
+    console.log('Language changed from', oldLanguage, 'to', language);
+    languageRef.current = language;
+    
+    // If language changed while a request is in progress, cancel that request
+    // by setting the request language to null so it won't match
+    if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current !== language) {
+      console.log('Language changed during request - cancelling old request');
+      console.log('  Old request language:', currentRequestLanguageRef.current);
+      console.log('  New language:', language);
+      // Don't set to null immediately - let handlers check and clear
+      // This way we can see in logs what happened
+    }
+  }, [language]);
+
+  useEffect(() => {
+    sampleRateRef.current = sampleRate;
+  }, [sampleRate]);
+
+  // Clear results when language changes (only clear when language actually changes)
+  useEffect(() => {
+    // Only clear if language actually changed
+    if (prevLanguageRef.current !== language) {
+      // If we just completed a request, delay clearing to avoid race condition
+      if (justCompletedRequestRef.current) {
+        console.log('Language change detected right after request completion - delaying clear');
+        justCompletedRequestRef.current = false;
+        // Use requestAnimationFrame to wait until after state updates are applied
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            // Double check language still changed after state updates settle
+            if (prevLanguageRef.current !== language) {
+              console.log('Confirmed: Language changed from', prevLanguageRef.current, 'to', language);
+              const oldLanguage = prevLanguageRef.current;
+              prevLanguageRef.current = language;
+              console.log('Clearing results due to language change');
+              setAudioText('');
+              setResponseWordCount(0);
+              setFetched(false);
+              setError(null);
+              if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current !== language) {
+                currentRequestLanguageRef.current = null;
+                console.log('Cancelled in-flight request for language:', oldLanguage);
+              }
+            } else {
+              console.log('Language change was false alarm - not clearing results');
+            }
+          });
+        });
+        return;
+      }
+      
+      console.log('Language changed from', prevLanguageRef.current, 'to', language);
+      const oldLanguage = prevLanguageRef.current;
+      prevLanguageRef.current = language;
+      
+      // Always clear results when language changes, regardless of fetching state
+      // If a request is in progress, we'll ignore its response anyway
+      console.log('Clearing results due to language change');
+      setAudioText('');
+      setResponseWordCount(0);
+      setFetched(false);
+      setError(null);
+      // Clear the request language ref so any in-flight responses will be ignored
+      if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current !== language) {
+        currentRequestLanguageRef.current = null;
+        console.log('Cancelled in-flight request for language:', oldLanguage);
+      }
+    }
+    // Only depend on language - this effect should only run when language changes
+  }, [language]);
 
   // Cleanup streaming service on unmount
   useEffect(() => {
