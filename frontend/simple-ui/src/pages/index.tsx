@@ -159,7 +159,7 @@ const HomePage: React.FC = () => {
               AI Accessibility Studio
             </Heading>
             <Text fontSize="lg" color="gray.600" maxW="600px" mx="auto">
-              Test and explore Speech, Text, and Translation models in real time
+            Test and explore NLP and LLM models
             </Text>
           </Box>
 
