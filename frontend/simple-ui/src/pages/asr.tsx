@@ -213,15 +213,6 @@ const ASRPage: React.FC = () => {
                   </Box>
                 )}
 
-                {/* Recording Timer */}
-                {recording && (
-                  <Box p={4} bg="orange.50" borderRadius="md" textAlign="center">
-                    <Text color="orange.600" fontWeight="semibold">
-                      Recording: {Math.floor(timer / 60)}:{(timer % 60).toString().padStart(2, '0')}
-                    </Text>
-                  </Box>
-                )}
-
                 {/* ASR Results */}
                 {fetched && audioText && (
                   <>

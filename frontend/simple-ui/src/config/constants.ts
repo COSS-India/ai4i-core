@@ -76,7 +76,7 @@ export const GENDER_OPTIONS = [
 export const MAX_TEXT_LENGTH = 512;
 
 // Maximum recording duration in seconds
-export const MAX_RECORDING_DURATION = 120;
+export const MAX_RECORDING_DURATION = 60;
 
 // Utility function to format duration in seconds to MM:SS format
 export const formatDuration = (seconds: number): string => {

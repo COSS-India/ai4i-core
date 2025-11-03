@@ -6,10 +6,7 @@ import { useToast } from '@chakra-ui/react';
 import { performASRInference, transcribeAudio } from '../services/asrService';
 import { getWordCount, convertWebmToWav } from '../utils/helpers';
 import { UseASRReturn, ASRInferenceRequest } from '../types/asr';
-import { DEFAULT_ASR_CONFIG } from '../config/constants';
-
-// Constants
-const MAX_RECORDING_DURATION = 60; // 2 minutes in seconds
+import { DEFAULT_ASR_CONFIG, MAX_RECORDING_DURATION } from '../config/constants';
 
 // MediaRecorder is a standard Web API, no need to extend Window
 
@@ -87,15 +84,15 @@ export const useASR = (): UseASRReturn => {
 
   // Timer effect
   useEffect(() => {
-    if (recording && timer < 120) {
+    if (recording && timer < 60) {
       timerRef.current = setInterval(() => {
         setTimer(prev => {
           const newTimer = prev + 1;
-          if (newTimer >= 120 && stopRecordingRef.current) {
+          if (newTimer >= 60 && stopRecordingRef.current) {
             stopRecordingRef.current();
             toast({
               title: 'Recording Time Limit',
-              description: 'Maximum recording time of 2 minutes reached.',
+              description: 'Maximum recording time of 1 minute reached.',
               status: 'warning',
               duration: 3000,
               isClosable: true,
@@ -606,52 +603,104 @@ export const useASR = (): UseASRReturn => {
 
     console.log('handleFileUpload: Processing file:', file.name, 'Size:', file.size, 'Type:', file.type);
 
-    try {
-      // Reset state before processing new file
-      setError(null);
-      setFetched(false);
-      setAudioText('');
-      setResponseWordCount(0);
-      
-      const reader = new FileReader();
-      
-      reader.onload = () => {
-        try {
-          const result = reader.result as string;
-          if (!result) {
-            throw new Error('FileReader result is empty');
-          }
-          const base64Data = result.split(',')[1];
-          if (!base64Data) {
-            throw new Error('Failed to extract base64 data');
-          }
-          
-          console.log('File read successfully, base64 length:', base64Data.length);
-          
-          // Process the audio
-          performInference(base64Data);
-        } catch (err) {
-          console.error('Error processing file result:', err);
-          setError('Failed to process file. Please try again.');
+    // Validate audio duration (max 1 minute)
+    const validateAudioDuration = (file: File): Promise<boolean> => {
+      return new Promise((resolve) => {
+        const audio = new Audio();
+        const url = URL.createObjectURL(file);
+        
+        audio.addEventListener('loadedmetadata', () => {
+          URL.revokeObjectURL(url);
+          const duration = audio.duration;
+          console.log('Audio duration:', duration, 'seconds');
+          resolve(duration <= MAX_RECORDING_DURATION);
+        });
+        
+        audio.addEventListener('error', () => {
+          URL.revokeObjectURL(url);
+          console.error('Error loading audio metadata');
+          // If we can't determine duration, allow it but warn user
+          resolve(true);
+        });
+        
+        audio.src = url;
+      });
+    };
+
+    // Validate duration first, then process file
+    validateAudioDuration(file)
+      .then((isValidDuration) => {
+        if (!isValidDuration) {
+          toast({
+            title: 'Audio Too Long',
+            description: `Audio file exceeds the 1 minute limit. Please select a file that is ${MAX_RECORDING_DURATION} seconds or less.`,
+            status: 'error',
+            duration: 5000,
+            isClosable: true,
+          });
+          setError(`Audio file exceeds the 1 minute limit. Please select a file that is ${MAX_RECORDING_DURATION} seconds or less.`);
+          return;
         }
-      };
-      
-      reader.onerror = (error) => {
-        console.error('FileReader error:', error);
-        setError('Failed to read the selected file.');
-      };
-      
-      reader.onabort = () => {
-        console.log('File read aborted by user');
-      };
-      
-      console.log('Starting to read file...');
-      reader.readAsDataURL(file);
-    } catch (err) {
-      console.error('Error processing file upload:', err);
-      setError('Failed to process file upload. Please try again.');
-    }
-  }, [performInference]);
+
+        // If duration is valid, proceed with file processing
+        try {
+          // Reset state before processing new file
+          setError(null);
+          setFetched(false);
+          setAudioText('');
+          setResponseWordCount(0);
+          
+          const reader = new FileReader();
+          
+          reader.onload = () => {
+            try {
+              const result = reader.result as string;
+              if (!result) {
+                throw new Error('FileReader result is empty');
+              }
+              const base64Data = result.split(',')[1];
+              if (!base64Data) {
+                throw new Error('Failed to extract base64 data');
+              }
+              
+              console.log('File read successfully, base64 length:', base64Data.length);
+              
+              // Process the audio
+              performInference(base64Data);
+            } catch (err) {
+              console.error('Error processing file result:', err);
+              setError('Failed to process file. Please try again.');
+            }
+          };
+          
+          reader.onerror = (error) => {
+            console.error('FileReader error:', error);
+            setError('Failed to read the selected file.');
+          };
+          
+          reader.onabort = () => {
+            console.log('File read aborted by user');
+          };
+          
+          console.log('Starting to read file...');
+          reader.readAsDataURL(file);
+        } catch (err) {
+          console.error('Error processing file upload:', err);
+          setError('Failed to process file upload. Please try again.');
+        }
+      })
+      .catch((error) => {
+        console.error('Error validating audio duration:', error);
+        toast({
+          title: 'File Validation Error',
+          description: 'Failed to validate audio file. Please try again.',
+          status: 'error',
+          duration: 3000,
+          isClosable: true,
+        });
+        setError('Failed to validate audio file. Please try again.');
+      });
+  }, [performInference, toast]);
 
   // Clear results
   const clearResults = useCallback(() => {
