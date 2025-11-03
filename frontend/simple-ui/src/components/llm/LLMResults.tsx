@@ -81,17 +81,16 @@ const LLMResults: React.FC<LLMResultsProps> = ({
       {/* Statistics */}
       <HStack spacing={4} justify="space-around">
         <Stat>
-          <StatLabel>Input Words</StatLabel>
+          <StatLabel>Request word count</StatLabel>
           <StatNumber>{requestWordCount}</StatNumber>
         </Stat>
         <Stat>
-          <StatLabel>Output Words</StatLabel>
+          <StatLabel>Response word count</StatLabel>
           <StatNumber>{responseWordCount}</StatNumber>
         </Stat>
         <Stat>
-          <StatLabel>Response Time</StatLabel>
+          <StatLabel>Response time</StatLabel>
           <StatNumber>{(responseTime / 1000).toFixed(2)}s</StatNumber>
-          <StatHelpText>API response time</StatHelpText>
         </Stat>
       </HStack>
 
