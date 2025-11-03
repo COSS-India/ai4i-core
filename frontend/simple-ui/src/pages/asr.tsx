@@ -117,7 +117,7 @@ const ASRPage: React.FC = () => {
                 {/* ASR Service Selection */}
                 <FormControl>
                   <FormLabel className="dview-service-try-option-title">
-                    ASR Service
+                    ASR Service <Text as="span" color="red.500">*</Text>
                   </FormLabel>
                   <Select
                     value={serviceId}
@@ -131,7 +131,7 @@ const ASRPage: React.FC = () => {
                 {/* Language Selection */}
                 <FormControl>
                   <FormLabel className="dview-service-try-option-title">
-                    Language
+                    Language <Text as="span" color="red.500">*</Text>
                   </FormLabel>
                   <Select
                     value={language}
@@ -148,7 +148,7 @@ const ASRPage: React.FC = () => {
                 {/* Audio Recorder */}
                 <Box>
                   <FormLabel className="dview-service-try-option-title" mb={4}>
-                    Audio Input
+                    Audio Input <Text as="span" color="red.500">*</Text>
                   </FormLabel>
                   <AudioRecorder
                     onAudioReady={handleAudioReady}
