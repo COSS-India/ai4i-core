@@ -22,13 +22,14 @@ import ContentLayout from '../components/common/ContentLayout';
 import AudioRecorder from '../components/asr/AudioRecorder';
 import ASRResults from '../components/asr/ASRResults';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { SUPPORTED_LANGUAGES } from '../config/constants';
+import { ASR_SUPPORTED_LANGUAGES } from '../config/constants';
 
 const ASRPage: React.FC = () => {
   const toast = useToast();
   const {
     language,
     sampleRate,
+    serviceId,
     inferenceMode,
     recording,
     fetching,
@@ -43,6 +44,7 @@ const ASRPage: React.FC = () => {
     performInference,
     setLanguage,
     setSampleRate,
+    setServiceId,
     setInferenceMode,
     clearResults,
   } = useASR();
@@ -84,7 +86,7 @@ const ASRPage: React.FC = () => {
               Automatic Speech Recognition
             </Heading>
             <Text color="gray.600" fontSize="lg">
-              Convert speech to text with support for 22+ Indian languages
+              Convert speech to text with support for 20+ Indian languages
             </Text>
           </Box>
 
@@ -112,6 +114,20 @@ const ASRPage: React.FC = () => {
                   </Select>
                 </FormControl>
 
+                {/* ASR Service Selection */}
+                <FormControl>
+                  <FormLabel className="dview-service-try-option-title">
+                    ASR Service
+                  </FormLabel>
+                  <Select
+                    value={serviceId}
+                    onChange={(e) => setServiceId(e.target.value)}
+                    isDisabled={fetching}
+                  >
+                    <option value="asr_am_ensemble">ai4bharat/conformer-multilingual-asr</option>
+                  </Select>
+                </FormControl>
+
                 {/* Language Selection */}
                 <FormControl>
                   <FormLabel className="dview-service-try-option-title">
@@ -121,7 +137,7 @@ const ASRPage: React.FC = () => {
                     value={language}
                     onChange={(e) => setLanguage(e.target.value)}
                   >
-                    {SUPPORTED_LANGUAGES.map((lang) => (
+                    {ASR_SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
                         {lang.label}
                       </option>
@@ -173,7 +189,7 @@ const ASRPage: React.FC = () => {
                   <>
                     <ASRResults
                       transcript={audioText}
-                      wordCount={responseWordCount}
+                      responseWordCount={responseWordCount}
                       responseTime={Number(requestTime)}
                     />
 

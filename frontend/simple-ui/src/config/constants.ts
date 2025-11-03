@@ -48,6 +48,30 @@ export const SUPPORTED_LANGUAGES = [
   { code: 'ar', label: 'Arabic', scriptCode: 'Arab' },
 ];
 
+// ASR-supported languages (matching ai4bharat/conformer-multilingual-asr model)
+export const ASR_SUPPORTED_LANGUAGES = [
+  { code: 'as', label: 'Assamese', scriptCode: 'Beng' },
+  { code: 'bn', label: 'Bengali', scriptCode: 'Beng' },
+  { code: 'brx', label: 'Bodo', scriptCode: 'Deva' },
+  { code: 'doi', label: 'Dogri', scriptCode: 'Deva' },
+  { code: 'gu', label: 'Gujarati', scriptCode: 'Gujr' },
+  { code: 'hi', label: 'Hindi', scriptCode: 'Deva' },
+  { code: 'kn', label: 'Kannada', scriptCode: 'Knda' },
+  { code: 'ks', label: 'Kashmiri', scriptCode: 'Arab' },
+  { code: 'mai', label: 'Maithili', scriptCode: 'Deva' },
+  { code: 'ml', label: 'Malayalam', scriptCode: 'Mlym' },
+  { code: 'mni', label: 'Manipuri', scriptCode: 'Beng' },
+  { code: 'mr', label: 'Marathi', scriptCode: 'Deva' },
+  { code: 'ne', label: 'Nepali', scriptCode: 'Deva' },
+  { code: 'or', label: 'Odia', scriptCode: 'Orya' },
+  { code: 'pa', label: 'Punjabi', scriptCode: 'Guru' },
+  { code: 'sa', label: 'Sanskrit', scriptCode: 'Deva' },
+  { code: 'sd', label: 'Sindhi', scriptCode: 'Arab' },
+  { code: 'ta', label: 'Tamil', scriptCode: 'Taml' },
+  { code: 'te', label: 'Telugu', scriptCode: 'Telu' },
+  { code: 'ur', label: 'Urdu', scriptCode: 'Arab' },
+];
+
 // Language code to label mapping
 export const LANG_CODE_TO_LABEL: { [key: string]: string } = SUPPORTED_LANGUAGES.reduce(
   (acc, lang) => {
@@ -87,8 +111,9 @@ export const formatDuration = (seconds: number): string => {
 
 // Default configurations
 export const DEFAULT_ASR_CONFIG = {
-  language: 'en',
+  language: 'hi', // Default to Hindi since it's in the ASR supported list
   sampleRate: 16000,
+  serviceId: 'asr_am_ensemble',
   audioFormat: 'wav',
   encoding: 'base64',
 } as const;

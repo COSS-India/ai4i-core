@@ -14,6 +14,7 @@ export const useASR = (): UseASRReturn => {
   // State
   const [language, setLanguage] = useState<string>(DEFAULT_ASR_CONFIG.language);
   const [sampleRate, setSampleRate] = useState<number>(DEFAULT_ASR_CONFIG.sampleRate);
+  const [serviceId, setServiceId] = useState<string>(DEFAULT_ASR_CONFIG.serviceId);
   const [inferenceMode, setInferenceMode] = useState<'rest' | 'streaming'>('rest');
   const [recording, setRecording] = useState<boolean>(false);
   const [fetching, setFetching] = useState<boolean>(false);
@@ -31,6 +32,7 @@ export const useASR = (): UseASRReturn => {
   const audioChunksRef = useRef<BlobPart[]>([]);
   const languageRef = useRef<string>(language);
   const sampleRateRef = useRef<number>(sampleRate);
+  const serviceIdRef = useRef<string>(serviceId);
   const currentRequestLanguageRef = useRef<string | null>(null);
   const prevLanguageRef = useRef<string>(language);
   const justCompletedRequestRef = useRef<boolean>(false);
@@ -115,28 +117,17 @@ export const useASR = (): UseASRReturn => {
     };
   }, [recording, timer, toast]);
 
-  // ASR inference mutation - recreate when language or sampleRate changes
+  // ASR inference mutation - recreate when language, sampleRate, or serviceId changes
   const asrMutation = useMutation({
     mutationFn: async (audioContent: string) => {
-      // Get current language and sampleRate from state at execution time
-      // Get serviceId based on language
-      const getServiceIdForLanguage = (lang: string): string => {
-        if (['hi', 'bn', 'gu', 'mr', 'pa'].includes(lang)) {
-          return 'asr_am_ensemble';
-        }
-        if (['ta', 'te', 'kn', 'ml'].includes(lang)) {
-          return 'asr_am_ensemble';
-        }
-        return 'asr_am_ensemble'; // Use asr_am_ensemble for all languages
-      };
-
-      // Use ref values to ensure we always use the current language and sampleRate
+      // Use ref values to ensure we always use the current language, sampleRate, and serviceId
       const currentLanguage = languageRef.current;
       const currentSampleRate = sampleRateRef.current;
+      const currentServiceId = serviceIdRef.current;
       
       const config: ASRInferenceRequest['config'] = {
         language: { sourceLanguage: currentLanguage },
-        serviceId: getServiceIdForLanguage(currentLanguage),
+        serviceId: currentServiceId,
         audioFormat: 'wav',
         samplingRate: currentSampleRate,
         transcriptionFormat: 'transcript',
@@ -753,6 +744,10 @@ export const useASR = (): UseASRReturn => {
     sampleRateRef.current = sampleRate;
   }, [sampleRate]);
 
+  useEffect(() => {
+    serviceIdRef.current = serviceId;
+  }, [serviceId]);
+
   // Clear results when language changes (only clear when language actually changes)
   useEffect(() => {
     // Only clear if language actually changed
@@ -811,6 +806,7 @@ export const useASR = (): UseASRReturn => {
     // State
     language,
     sampleRate,
+    serviceId,
     inferenceMode,
     recording,
     fetching,
@@ -830,6 +826,7 @@ export const useASR = (): UseASRReturn => {
     performInference,
     setLanguage,
     setSampleRate,
+    setServiceId,
     setInferenceMode,
     clearResults,
     resetTimer,
