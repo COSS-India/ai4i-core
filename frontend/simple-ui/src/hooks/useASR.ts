@@ -157,12 +157,16 @@ export const useASR = (): UseASRReturn => {
       // Accept response if request language matches current language
       // This means the language hasn't changed since the request started
       if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current === languageRef.current) {
-        const transcript = response.output[0]?.source || '';
+        const transcript = response.data.output[0]?.source || '';
         console.log('✓ Response accepted - languages match');
         console.log('Extracted transcript:', transcript);
         console.log('Transcript length:', transcript.length);
         setAudioText(transcript);
         setResponseWordCount(getWordCount(transcript));
+        
+        // Update request time with actual API response time (in milliseconds)
+        setRequestTime(response.responseTime.toString());
+        
         setFetched(true);
         setFetching(false);
         setError(null);

@@ -45,12 +45,12 @@ export const performASRInference = async (
  * Transcribe audio using the transcribe endpoint (alias for inference)
  * @param audioContent - Base64 encoded audio content
  * @param config - ASR configuration
- * @returns Promise with ASR inference response
+ * @returns Promise with ASR inference response and timing info
  */
 export const transcribeAudio = async (
   audioContent: string,
   config: ASRInferenceRequest['config']
-): Promise<ASRInferenceResponse> => {
+): Promise<{ data: ASRInferenceResponse; responseTime: number }> => {
   try {
     // Dhruva Platform ASR request schema
     const payload: ASRInferenceRequest = {
@@ -85,7 +85,13 @@ export const transcribeAudio = async (
     console.log('Response data:', response.data);
     console.log('Response output:', response.data.output);
 
-    return response.data;
+    // Extract response time from headers
+    const responseTime = parseInt(response.headers['request-duration'] || '0');
+
+    return {
+      data: response.data,
+      responseTime
+    };
   } catch (error) {
     console.error('ASR transcription error:', error);
     throw new Error('Failed to transcribe audio');
