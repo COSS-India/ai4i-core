@@ -1,6 +1,6 @@
 // TTS service testing page with text input, voice selection, and audio playback
 
-import React from 'react';
+  import React, { useState } from 'react';
 import Head from 'next/head';
 import {
   Grid,
@@ -12,6 +12,9 @@ import {
   VStack,
   Box,
   useToast,
+  FormControl,
+  FormLabel,
+  Select,
 } from '@chakra-ui/react';
 import { useQuery } from '@tanstack/react-query';
 import { FaRegFileAudio } from 'react-icons/fa';
@@ -26,6 +29,7 @@ import { SUPPORTED_LANGUAGES } from '../config/constants';
 
 const TTSPage: React.FC = () => {
   const toast = useToast();
+  const [serviceId, setServiceId] = useState<string>('');
   const {
     language,
     gender,
@@ -69,7 +73,8 @@ const TTSPage: React.FC = () => {
     performInference(inputText);
   };
 
-  const availableLanguages = SUPPORTED_LANGUAGES.map(lang => lang.code);
+  // Restrict available languages to Indo-Aryan list requested
+  const indoAryanLanguages = ['hi', 'mr', 'as', 'bn', 'gu', 'or', 'pa', 'raj'];
 
   return (
     <>
@@ -100,6 +105,44 @@ const TTSPage: React.FC = () => {
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
+                {/* Service Selection (fixed to Indo-Aryan model) */}
+                <Box>
+                  <FormControl>
+                    <FormLabel className="dview-service-try-option-title">
+                      Translation Service:
+                    </FormLabel>
+                    <Select
+                      placeholder="Select a model"
+                      value={serviceId}
+                      onChange={(e) => setServiceId(e.target.value)}
+                    >
+                      <option value="indic-tts-coqui-indo_aryan">indic-tts-coqui-indo_aryan</option>
+                    </Select>
+                  </FormControl>
+
+                  <Text className="dview-service-try-option-title" mt={4} mb={2}>
+                    Language Configuration
+                  </Text>
+
+                  {!serviceId ? (
+                    <Box p={3} bg="gray.50" borderRadius="md" textAlign="center">
+                      <Text fontSize="sm" color="gray.600">No model selected</Text>
+                    </Box>
+                  ) : (
+                    <Box p={3} bg="gray.50" borderRadius="md">
+                      <Text fontSize="sm" color="gray.600" mb={1}>
+                        <strong>Provider:</strong> AI4Bharat
+                      </Text>
+                      <Text fontSize="sm" color="gray.600" mb={1}>
+                        <strong>Supported Languages:</strong> 8
+                      </Text>
+                      <Text fontSize="sm" color="gray.600" mb={1}>
+                        <strong>Service ID:</strong> ai4bharat/indic-tts-coqui-indo_aryan-gpu--t4
+                      </Text>
+                    </Box>
+                  )}
+                </Box>
+
                 {/* Voice Selector */}
                 <Box>
                   <Text className="dview-service-try-option-title" mb={4}>
@@ -114,7 +157,7 @@ const TTSPage: React.FC = () => {
                     onGenderChange={setGender}
                     onFormatChange={setAudioFormat}
                     onSampleRateChange={setSamplingRate}
-                    availableLanguages={availableLanguages}
+                    availableLanguages={serviceId ? indoAryanLanguages : []}
                     availableVoices={voicesData?.voices}
                     loading={voicesLoading}
                   />

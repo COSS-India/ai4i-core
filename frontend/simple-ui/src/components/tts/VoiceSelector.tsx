@@ -6,17 +6,12 @@ import {
   FormControl,
   FormLabel,
   Select,
-  NumberInput,
-  NumberInputField,
-  NumberInputStepper,
-  NumberIncrementStepper,
-  NumberDecrementStepper,
   useMediaQuery,
   Spinner,
   Text,
 } from '@chakra-ui/react';
 import { VoiceSelectorProps } from '../../types/tts';
-import { LANG_CODE_TO_LABEL, AUDIO_FORMATS, TTS_SAMPLE_RATES, GENDER_OPTIONS } from '../../config/constants';
+import { LANG_CODE_TO_LABEL, AUDIO_FORMATS, GENDER_OPTIONS } from '../../config/constants';
 
 const VoiceSelector: React.FC<VoiceSelectorProps> = ({
   language,
@@ -45,9 +40,7 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
     onFormatChange(event.target.value as any);
   };
 
-  const handleSampleRateChange = (valueString: string, valueNumber: number) => {
-    onSampleRateChange(valueNumber as any);
-  };
+  // Sampling rate selection removed from UI
 
   if (loading) {
     return (
@@ -69,6 +62,7 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
           value={language}
           onChange={handleLanguageChange}
           placeholder="Choose language"
+          disabled={availableLanguages.length === 0}
         >
           {availableLanguages.map((lang) => (
             <option key={lang} value={lang}>
@@ -114,25 +108,7 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
         </Select>
       </FormControl>
 
-      {/* Sample Rate Selection */}
-      <FormControl flex={1}>
-        <FormLabel className="dview-service-try-option-title">
-          Sampling Rate:
-        </FormLabel>
-        <NumberInput
-          value={samplingRate}
-          onChange={handleSampleRateChange}
-          min={8000}
-          max={48000}
-          step={1000}
-        >
-          <NumberInputField />
-          <NumberInputStepper>
-            <NumberIncrementStepper />
-            <NumberDecrementStepper />
-          </NumberInputStepper>
-        </NumberInput>
-      </FormControl>
+      {/* Sampling Rate control removed per requirements */}
     </Stack>
   );
 };
