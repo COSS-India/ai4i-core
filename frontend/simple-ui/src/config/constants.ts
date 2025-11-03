@@ -26,6 +26,8 @@ export const SUPPORTED_LANGUAGES = [
   { code: 'mni', label: 'Manipuri', scriptCode: 'Beng' },
   { code: 'gom', label: 'Goan Konkani', scriptCode: 'Latn' },
   { code: 'sat', label: 'Santali', scriptCode: 'Latn' },
+  // Custom additions
+  { code: 'raj', label: 'Rajasthani', scriptCode: 'Deva' },
   // African languages
   { code: 'sw', label: 'Swahili', scriptCode: 'Latn' },
   { code: 'yo', label: 'Yoruba', scriptCode: 'Latn' },
@@ -58,13 +60,13 @@ export const LANG_CODE_TO_LABEL: { [key: string]: string } = SUPPORTED_LANGUAGES
 );
 
 // Audio formats
-export const AUDIO_FORMATS = ['wav', 'mp3', 'flac', 'ogg', 'pcm'] as const;
+export const AUDIO_FORMATS = ['wav', 'mp3'] as const;
 
 // Sample rates for ASR
 export const ASR_SAMPLE_RATES = [8000, 16000, 48000] as const;
 
 // Sample rates for TTS
-export const TTS_SAMPLE_RATES = [8000, 16000, 22050, 44100, 48000] as const;
+export const TTS_SAMPLE_RATES = [22050] as const;
 
 // Gender options for TTS
 export const GENDER_OPTIONS = [

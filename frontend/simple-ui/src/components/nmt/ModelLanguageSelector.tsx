@@ -63,16 +63,11 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
     }
   }, [languagesData]);
 
-  // Set default service when services are loaded
+  // Do not auto-select a service; user must choose explicitly
   useEffect(() => {
-    if (services && services.length > 0 && !currentServiceId) {
-      const defaultService = services[0];
-      setCurrentServiceId(defaultService.service_id);
-      if (onServiceChange) {
-        onServiceChange(defaultService.service_id);
-      }
-    }
-  }, [services, currentServiceId, onServiceChange]);
+    if (!services || services.length === 0) return;
+    // keep currentServiceId as-is until user selects
+  }, [services]);
 
   const handleServiceChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const serviceId = event.target.value;
@@ -124,14 +119,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                           availableLanguages.includes(languagePair.targetLanguage) &&
                           languagePair.sourceLanguage !== languagePair.targetLanguage;
 
-  if (loading || servicesLoading) {
-    return (
-      <Stack spacing={4} align="center" py={8}>
-        <Spinner size="lg" color="orange.500" />
-        <Text color="gray.600">Loading services and languages...</Text>
-      </Stack>
-    );
-  }
+  // Do not block UI on loading; show controls with placeholders instead
 
   return (
     <Stack spacing={6}>
@@ -144,7 +132,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
           <Select
             value={currentServiceId}
             onChange={handleServiceChange}
-            placeholder="Select a service"
+            placeholder="Select a model"
             disabled={servicesLoading}
           >
             {services?.map((service) => (
@@ -158,22 +146,13 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
         {selectedService && (
           <Box mt={2} p={3} bg="gray.50" borderRadius="md">
             <Text fontSize="sm" color="gray.600" mb={1}>
-              <strong>Service ID:</strong> {selectedService.service_id}
-            </Text>
-            <Text fontSize="sm" color="gray.600" mb={1}>
               <strong>Provider:</strong> {selectedService.provider}
             </Text>
             <Text fontSize="sm" color="gray.600" mb={1}>
-              <strong>Description:</strong> {selectedService.description}
-            </Text>
-            <Text fontSize="sm" color="gray.600" mb={1}>
-              <strong>Model:</strong> {selectedService.model_id}
-            </Text>
-            <Text fontSize="sm" color="gray.600" mb={1}>
-              <strong>Triton Endpoint:</strong> {selectedService.triton_endpoint}
-            </Text>
-            <Text fontSize="sm" color="gray.600" mb={1}>
               <strong>Supported Languages:</strong> {selectedService.supported_languages.length}
+            </Text>
+            <Text fontSize="sm" color="gray.600" mb={1}>
+              <strong>Service ID:</strong> {selectedService.provider}/{selectedService.model_id}
             </Text>
           </Box>
         )}
@@ -187,7 +166,11 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
           Language Configuration
         </Text>
         
-        {languagesLoading ? (
+        {!currentServiceId ? (
+          <Box p={4} bg="gray.50" borderRadius="md" textAlign="center">
+            <Text fontSize="sm" color="gray.600">No model selected</Text>
+          </Box>
+        ) : languagesLoading ? (
           <Stack spacing={2} align="center" py={4}>
             <Spinner size="md" color="orange.500" />
             <Text fontSize="sm" color="gray.600">Loading languages...</Text>
@@ -253,19 +236,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
               </Text>
             </Box>
 
-            {/* Language Count Info */}
-            <HStack justify="center" spacing={4}>
-              <HStack spacing={1}>
-                <FaInfoCircle size={12} color="#718096" />
-                <Text fontSize="xs" color="gray.500">
-                  {availableLanguages.length} languages supported
-                </Text>
-              </HStack>
-              <Text fontSize="xs" color="gray.400">•</Text>
-              <Text fontSize="xs" color="gray.500">
-                {availableLanguages.length * (availableLanguages.length - 1)} possible pairs
-              </Text>
-            </HStack>
+            {/* Language Count Info removed per requirements */}
           </Stack>
         )}
       </Box>
