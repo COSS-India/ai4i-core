@@ -17,9 +17,10 @@ import {
   useColorModeValue,
   Button
 } from '@chakra-ui/react';
-import { HamburgerIcon, ArrowBackIcon } from '@chakra-ui/icons';
+import { HamburgerIcon, ArrowBackIcon, ViewIcon, ViewOffIcon } from '@chakra-ui/icons';
 import { useApiKey } from '../../hooks/useApiKey';
 import ApiKeyModal from './ApiKeyModal';
+import ApiKeyViewerModal from './ApiKeyViewerModal';
 import { useAuth } from '../../hooks/useAuth';
 import UserMenu from '../auth/UserMenu';
 import AuthModal from '../auth/AuthModal';
@@ -27,11 +28,13 @@ import AuthModal from '../auth/AuthModal';
 const Header: React.FC = () => {
   const router = useRouter();
   const { apiKey, isAuthenticated: hasApiKey, clearApiKey } = useApiKey();
-  const { isAuthenticated: isUserAuthenticated, user, isLoading: isAuthLoading } = useAuth();
+  const { isAuthenticated: isUserAuthenticated, user, isLoading: isAuthLoading, logout } = useAuth();
 
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
+  const [isApiKeyViewerOpen, setIsApiKeyViewerOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [title, setTitle] = useState('Dashboard');
+  const [isApiKeyVisible, setIsApiKeyVisible] = useState(false);
 
   // Determine if we should show user menu or sign in button
   const showUserMenu = !isAuthLoading && isUserAuthenticated && user && user.username;
@@ -134,20 +137,22 @@ const Header: React.FC = () => {
                 _hover={{ bg: 'gray.100' }}
               />
             )}
-            <Box
-              cursor="pointer"
-              onClick={() => router.push('/')}
-              _hover={{ opacity: 0.8 }}
-              transition="opacity 0.2s"
-            >
-              <Image
-                src="/AI4Inclusion_Logo.svg"
-                alt="AI4Inclusion Logo"
-                h="50px"
-                w="auto"
-                objectFit="contain"
-              />
-            </Box>
+            {router.pathname !== '/' && (
+              <Box
+                cursor="pointer"
+                onClick={() => router.push('/')}
+                _hover={{ opacity: 0.8 }}
+                transition="opacity 0.2s"
+              >
+                <Image
+                  src="/AI4Inclusion_Logo.svg"
+                  alt="AI4Inclusion Logo"
+                  h="50px"
+                  w="auto"
+                  objectFit="contain"
+                />
+              </Box>
+            )}
             <Heading size="lg" color="gray.800">
               {title}
             </Heading>
@@ -155,37 +160,45 @@ const Header: React.FC = () => {
 
           {/* Right side - Menu and Auth */}
           <HStack spacing={4}>
-            {/* API Key Display */}
-            <Badge 
-              colorScheme={getApiKeyColor()} 
-              fontSize="sm" 
-              px={3} 
-              py={1} 
-              borderRadius="md"
-              cursor="pointer"
-              onClick={handleManageApiKey}
-              title="Click to manage API key"
-            >
-              {getApiKeyDisplay()}
-            </Badge>
-
-            {/* Authentication */}
-            {showUserMenu ? (
-              <UserMenu user={user} />
+            {/* Authentication: On home page, show only username after sign-in; elsewhere keep existing behavior */}
+            {router.pathname === '/' ? (
+              showUserMenu ? (
+                <Badge colorScheme="gray" fontSize="sm" px={3} py={1} borderRadius="md">
+                  {user.username}
+                </Badge>
+              ) : (
+                <Button
+                  colorScheme="blue"
+                  variant="outline"
+                  size="sm"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('Header: Sign In button clicked');
+                    handleAuthClick();
+                  }}
+                >
+                  Sign In
+                </Button>
+              )
             ) : (
-              <Button
-                colorScheme="blue"
-                variant="outline"
-                size="sm"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  console.log('Header: Sign In button clicked');
-                  handleAuthClick();
-                }}
-              >
-                Sign In
-              </Button>
+              showUserMenu ? (
+                <UserMenu user={user} />
+              ) : (
+                <Button
+                  colorScheme="blue"
+                  variant="outline"
+                  size="sm"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('Header: Sign In button clicked');
+                    handleAuthClick();
+                  }}
+                >
+                  Sign In
+                </Button>
+              )
             )}
 
             {/* Menu */}
@@ -198,26 +211,35 @@ const Header: React.FC = () => {
                 size="sm"
               />
               <MenuList>
-                <MenuItem onClick={handleManageApiKey}>
-                  Manage API Key
-                </MenuItem>
-                <MenuItem onClick={handleClearApiKey} isDisabled={!hasApiKey}>
-                  Clear API Key
-                </MenuItem>
-                <MenuDivider />
-                <MenuItem onClick={handleDocumentation}>
-                  Documentation
-                </MenuItem>
+                {router.pathname === '/' ? (
+                  <>
+                    <MenuItem onClick={() => setIsApiKeyViewerOpen(true)}>API Key</MenuItem>
+                    <MenuItem onClick={() => logout()}>Sign out</MenuItem>
+                  </>
+                ) : (
+                  <>
+                    <MenuItem onClick={handleManageApiKey}>Manage API Key</MenuItem>
+                    <MenuItem onClick={handleClearApiKey} isDisabled={!hasApiKey}>Clear API Key</MenuItem>
+                    <MenuDivider />
+                    <MenuItem onClick={handleDocumentation}>Documentation</MenuItem>
+                  </>
+                )}
               </MenuList>
             </Menu>
           </HStack>
         </HStack>
       </Box>
 
-      {/* API Key Modal */}
+      {/* API Key Modal (kept for non-home pages via menu) */}
       <ApiKeyModal
         isOpen={isApiKeyModalOpen}
         onClose={() => setIsApiKeyModalOpen(false)}
+      />
+
+      {/* API Key Viewer Modal (home page) */}
+      <ApiKeyViewerModal
+        isOpen={isApiKeyViewerOpen}
+        onClose={() => setIsApiKeyViewerOpen(false)}
       />
 
       {/* Auth Modal */}
