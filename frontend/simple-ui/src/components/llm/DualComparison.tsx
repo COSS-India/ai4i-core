@@ -75,6 +75,17 @@ const DualComparison: React.FC<DualComparisonProps> = ({
                 {llmOutput || 'No output yet'}
               </Text>
             </Box>
+            {/* LLM Stats under the box */}
+            <HStack spacing={6} mt={3}>
+              <Stat>
+                <StatLabel>Response word count</StatLabel>
+                <StatNumber>{llmResponseWordCount}</StatNumber>
+              </Stat>
+              <Stat>
+                <StatLabel>Response time</StatLabel>
+                <StatNumber>{(llmResponseTime / 1000).toFixed(2)}s</StatNumber>
+              </Stat>
+            </HStack>
           </Box>
         </GridItem>
 
@@ -107,37 +118,28 @@ const DualComparison: React.FC<DualComparisonProps> = ({
                 {nmtOutput || 'No output yet'}
               </Text>
             </Box>
+            {/* NMT Stats under the box */}
+            <HStack spacing={6} mt={3}>
+              <Stat>
+                <StatLabel>Response word count</StatLabel>
+                <StatNumber>{nmtResponseWordCount}</StatNumber>
+              </Stat>
+              <Stat>
+                <StatLabel>Response time</StatLabel>
+                <StatNumber>{(nmtResponseTime / 1000).toFixed(2)}s</StatNumber>
+              </Stat>
+            </HStack>
           </Box>
         </GridItem>
       </Grid>
 
-      <Divider />
-
-      {/* Statistics Row */}
-      <HStack spacing={4} justify="space-around">
+      {/* Request word count - displayed once at bottom */}
+      <Box>
         <Stat>
-          <StatLabel>Input Words</StatLabel>
+          <StatLabel>Request word count</StatLabel>
           <StatNumber>{requestWordCount}</StatNumber>
         </Stat>
-        <Stat>
-          <StatLabel>LLM Words</StatLabel>
-          <StatNumber>{llmResponseWordCount}</StatNumber>
-        </Stat>
-        <Stat>
-          <StatLabel>NMT Words</StatLabel>
-          <StatNumber>{nmtResponseWordCount}</StatNumber>
-        </Stat>
-        <Stat>
-          <StatLabel>LLM Time</StatLabel>
-          <StatNumber>{(llmResponseTime / 1000).toFixed(2)}s</StatNumber>
-          <StatHelpText>API response time</StatHelpText>
-        </Stat>
-        <Stat>
-          <StatLabel>NMT Time</StatLabel>
-          <StatNumber>{(nmtResponseTime / 1000).toFixed(2)}s</StatNumber>
-          <StatHelpText>API response time</StatHelpText>
-        </Stat>
-      </HStack>
+      </Box>
     </VStack>
   );
 };
