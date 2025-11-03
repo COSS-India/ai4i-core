@@ -69,60 +69,110 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
       return;
     }
 
-    try {
-      console.log('Reading file:', file.name);
-      const reader = new FileReader();
-      
-      reader.onload = () => {
-        try {
-          const result = reader.result as string;
-          if (!result) {
-            throw new Error('FileReader result is empty');
-          }
-          const base64Data = result.split(',')[1];
-          if (!base64Data) {
-            throw new Error('Failed to extract base64 data');
-          }
-          console.log('File read successfully, base64 length:', base64Data.length);
-          onAudioReady(base64Data);
-        } catch (err) {
-          console.error('Error processing file result:', err);
+    // Validate audio duration (max 1 minute)
+    const validateAudioDuration = (file: File): Promise<boolean> => {
+      return new Promise((resolve) => {
+        const audio = new Audio();
+        const url = URL.createObjectURL(file);
+        
+        audio.addEventListener('loadedmetadata', () => {
+          URL.revokeObjectURL(url);
+          const duration = audio.duration;
+          console.log('Audio duration:', duration, 'seconds');
+          resolve(duration <= MAX_RECORDING_DURATION);
+        });
+        
+        audio.addEventListener('error', () => {
+          URL.revokeObjectURL(url);
+          console.error('Error loading audio metadata');
+          // If we can't determine duration, allow it but warn user
+          resolve(true);
+        });
+        
+        audio.src = url;
+      });
+    };
+
+    // Validate duration first, then process file
+    validateAudioDuration(file)
+      .then((isValidDuration) => {
+        if (!isValidDuration) {
           toast({
-            title: 'File Processing Error',
-            description: 'Failed to process the selected file.',
+            title: 'Audio Too Long',
+            description: `Audio file exceeds the 1 minute limit. Please select a file that is ${MAX_RECORDING_DURATION} seconds or less.`,
+            status: 'error',
+            duration: 5000,
+            isClosable: true,
+          });
+          return;
+        }
+
+        // If duration is valid, proceed with file processing
+        try {
+          console.log('Reading file:', file.name);
+          const reader = new FileReader();
+          
+          reader.onload = () => {
+            try {
+              const result = reader.result as string;
+              if (!result) {
+                throw new Error('FileReader result is empty');
+              }
+              const base64Data = result.split(',')[1];
+              if (!base64Data) {
+                throw new Error('Failed to extract base64 data');
+              }
+              console.log('File read successfully, base64 length:', base64Data.length);
+              onAudioReady(base64Data);
+            } catch (err) {
+              console.error('Error processing file result:', err);
+              toast({
+                title: 'File Processing Error',
+                description: 'Failed to process the selected file.',
+                status: 'error',
+                duration: 3000,
+                isClosable: true,
+              });
+            }
+          };
+          
+          reader.onerror = (error) => {
+            console.error('FileReader error:', error);
+            toast({
+              title: 'File Read Error',
+              description: 'Failed to read the selected file.',
+              status: 'error',
+              duration: 3000,
+              isClosable: true,
+            });
+          };
+          
+          reader.onabort = () => {
+            console.log('File read aborted');
+          };
+          
+          reader.readAsDataURL(file);
+        } catch (error) {
+          console.error('Error reading file:', error);
+          toast({
+            title: 'File Read Error',
+            description: 'Failed to read the selected file.',
             status: 'error',
             duration: 3000,
             isClosable: true,
           });
         }
-      };
-      
-      reader.onerror = (error) => {
-        console.error('FileReader error:', error);
+      })
+      .catch((error) => {
+        console.error('Error validating audio duration:', error);
         toast({
-          title: 'File Read Error',
-          description: 'Failed to read the selected file.',
+          title: 'File Validation Error',
+          description: 'Failed to validate audio file. Please try again.',
           status: 'error',
           duration: 3000,
           isClosable: true,
         });
-      };
-      
-      reader.onabort = () => {
-        console.log('File read aborted');
-      };
-      
-      reader.readAsDataURL(file);
-    } catch (error) {
-      console.error('Error reading file:', error);
-      toast({
-        title: 'File Read Error',
-        description: 'Failed to read the selected file.',
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
       });
-    }
   };
 
   const handleRecordClick = () => {
@@ -197,7 +247,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
       <Text fontSize="sm" color="gray.600" textAlign="center">
         {isRecording
           ? 'Click "Stop Recording" when finished'
-          : 'Click "Start Recording" to record audio or "Choose File" to upload an audio file'}
+          : `Click "Start Recording" to record audio or "Choose File" to upload an audio file (max ${MAX_RECORDING_DURATION} seconds)`}
       </Text>
     </Stack>
   );
