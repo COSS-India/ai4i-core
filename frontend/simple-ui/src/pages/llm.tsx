@@ -93,7 +93,7 @@ const LLMPage: React.FC = () => {
               Large Language Model - GPT OSS 20B
             </Heading>
             <Text color="gray.600" fontSize="sm">
-              Process text with GPT OSS 20B for translation and generation
+              Translate and generate text with GPT OSS 20B
             </Text>
           </Box>
 

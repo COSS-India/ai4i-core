@@ -131,8 +131,7 @@ const HomePage: React.FC = () => {
     {
       id: "llm",
       title: "LLM",
-      description:
-        "Interact with the large language model for text understanding and generation",
+      description: "Enable contextual translation with GPT OSS 20B",
       icon: IoSparklesOutline,
       path: "/llm",
       color: "pink",
