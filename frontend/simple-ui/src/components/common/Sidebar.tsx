@@ -7,7 +7,6 @@ import {
   Heading,
   Icon,
   Image,
-  Text,
   useColorModeValue,
   useMediaQuery,
   VStack,
@@ -188,16 +187,6 @@ const Sidebar: React.FC = () => {
               }
             />
           </Box>
-          <Text
-            fontSize="sm"
-            fontWeight="bold"
-            color="gray.700"
-            opacity={isExpanded ? 1 : 0}
-            transition="opacity 0.2s"
-            h="16px"
-          >
-            AI4Inclusion Console
-          </Text>
         </VStack>
 
         <Divider />
