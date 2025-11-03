@@ -8,6 +8,7 @@ import uuid
 import time
 from typing import Dict, Any, List, Optional, Tuple
 from enum import Enum
+from urllib.parse import urlencode, urlparse, parse_qs
 from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from pydantic import BaseModel, Field
@@ -1358,7 +1359,8 @@ async def batch_translate(
 @app.get("/api/v1/nmt/languages", response_model=Dict[str, Any], tags=["NMT"])
 async def get_nmt_languages(
     request: Request,
-    model_id: str = "ai4bharat/indictrans-v2-all-gpu--t4",
+    model_id: Optional[str] = Query(None, description="Model ID to get languages for"),
+    service_id: Optional[str] = Query(None, description="Service ID to get languages for"),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
@@ -1369,7 +1371,20 @@ async def get_nmt_languages(
         headers['Authorization'] = f"Bearer {credentials.credentials}"
     if api_key:
         headers['X-API-Key'] = api_key
-    return await proxy_to_service(None, f"/api/v1/nmt/languages?model_id={model_id}", "nmt-service", headers=headers)
+    
+    # Build query parameters dict
+    query_params = {}
+    if service_id:
+        query_params["service_id"] = service_id
+    elif model_id:
+        query_params["model_id"] = model_id
+    # If neither provided, service will default to AI4Bharat
+    
+    # Build path and pass params separately to avoid httpx param conflicts
+    path = "/api/v1/nmt/languages"
+    
+    # Create a custom proxy call that handles params correctly
+    return await proxy_to_service_with_params(None, path, "nmt-service", query_params, headers=headers)
 
 @app.get("/api/v1/nmt/models", response_model=Dict[str, Any], tags=["NMT"])
 async def get_nmt_models(
@@ -1544,6 +1559,70 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         
         # Forward request to service (5 minute timeout for LLM service, 300s for others)
         timeout_value = 300.0 if service_name == 'llm-service' else 300.0
+        response = await http_client.request(
+            method=method,
+            url=f"{service_url}{path}",
+            headers=headers,
+            params=params,
+            content=body,
+            timeout=timeout_value
+        )
+        
+        # Return response
+        return Response(
+            content=response.content,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=response.headers.get('content-type')
+        )
+        
+    except Exception as e:
+        logger.error(f"Error proxying to {service_name}: {e}")
+        raise HTTPException(status_code=500, detail=f"{service_name} temporarily unavailable")
+
+
+# Helper function to proxy requests with explicit query parameters
+async def proxy_to_service_with_params(
+    request: Optional[Request], 
+    path: str, 
+    service_name: str, 
+    query_params: Dict[str, str],
+    method: str = "GET", 
+    body: Optional[bytes] = None, 
+    headers: Optional[Dict[str, str]] = None
+):
+    """Proxy request to service with explicit query parameters"""
+    global http_client
+    
+    # Direct service URL mapping
+    service_urls = {
+        'auth-service': os.getenv('AUTH_SERVICE_URL', 'http://localhost:8081'),
+        'config-service': os.getenv('CONFIG_SERVICE_URL', 'http://localhost:8082'),
+        'metrics-service': os.getenv('METRICS_SERVICE_URL', 'http://localhost:8083'),
+        'telemetry-service': os.getenv('TELEMETRY_SERVICE_URL', 'http://localhost:8084'),
+        'alerting-service': os.getenv('ALERTING_SERVICE_URL', 'http://localhost:8085'),
+        'dashboard-service': os.getenv('DASHBOARD_SERVICE_URL', 'http://localhost:8086'),
+        'asr-service': os.getenv('ASR_SERVICE_URL', 'http://localhost:8087'),
+        'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
+        'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
+        'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
+        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://localhost:8090')
+    }
+    
+    try:
+        service_url = service_urls.get(service_name)
+        if not service_url:
+            raise HTTPException(status_code=503, detail=f"Service {service_name} not configured")
+        
+        # Prepare headers
+        if headers is None:
+            headers = {}
+        
+        # Use provided query_params directly
+        params = query_params if query_params else {}
+        
+        # Forward request to service
+        timeout_value = 300.0
         response = await http_client.request(
             method=method,
             url=f"{service_url}{path}",
