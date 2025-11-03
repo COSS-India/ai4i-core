@@ -78,11 +78,10 @@ const TTSResults: React.FC<TTSResultsProps> = ({
         bg="orange.100"
         borderRadius="15px"
       >
-        {/* Word Count Stat */}
+        {/* Request word count */}
         <Stat textAlign="center">
-          <StatLabel>Word Count</StatLabel>
+          <StatLabel>Request word count</StatLabel>
           <StatNumber color="orange.600">{wordCount}</StatNumber>
-          <StatHelpText>Request</StatHelpText>
         </Stat>
 
         {/* Response Time Stat */}
@@ -111,22 +110,6 @@ const TTSResults: React.FC<TTSResultsProps> = ({
             Generated Audio
           </Text>
           <HStack spacing={2}>
-            <Button
-              leftIcon={<FaPlay />}
-              size="sm"
-              colorScheme="orange"
-              onClick={onPlay}
-            >
-              Play
-            </Button>
-            <Button
-              leftIcon={<FaPause />}
-              size="sm"
-              variant="outline"
-              onClick={onPause}
-            >
-              Pause
-            </Button>
             <Button
               leftIcon={<FaDownload />}
               size="sm"

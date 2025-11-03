@@ -47,53 +47,16 @@ const UserMenu: React.FC<UserMenuProps> = ({ user }) => {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50">
+        <div className="absolute right-0 mt-2 w-40 bg-white rounded-md shadow-lg py-1 z-50">
           <div className="px-4 py-2 text-sm text-gray-700 border-b">
-            <div className="font-medium">{user.full_name || user.username}</div>
-            <div className="text-gray-500">{user.email}</div>
+            <div className="font-medium">{user.username}</div>
           </div>
-          
-          <a
-            href="#"
-            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-            onClick={(e) => {
-              e.preventDefault();
-              setIsOpen(false);
-            }}
+          <button
+            onClick={handleLogout}
+            className="block w-full text-left px-4 py-2 text-sm text-red-700 hover:bg-red-50"
           >
-            Profile
-          </a>
-          
-          <a
-            href="#"
-            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-            onClick={(e) => {
-              e.preventDefault();
-              setIsOpen(false);
-            }}
-          >
-            Settings
-          </a>
-          
-          <a
-            href="#"
-            className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-            onClick={(e) => {
-              e.preventDefault();
-              setIsOpen(false);
-            }}
-          >
-            API Keys
-          </a>
-          
-          <div className="border-t">
-            <button
-              onClick={handleLogout}
-              className="block w-full text-left px-4 py-2 text-sm text-red-700 hover:bg-red-50"
-            >
-              Sign out
-            </button>
-          </div>
+            Sign out
+          </button>
         </div>
       )}
     </div>
