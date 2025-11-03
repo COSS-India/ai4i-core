@@ -31,10 +31,21 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file) return;
+    
+    // Reset input value immediately to allow selecting the same file again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    
+    if (!file) {
+      console.log('No file selected');
+      return;
+    }
+
+    console.log('File selected:', file.name, 'Size:', file.size, 'Type:', file.type);
 
     // Validate file type
-    if (!file.type.startsWith('audio/')) {
+    if (!file.type.startsWith('audio/') && !file.name.match(/\.(mp3|wav|ogg|m4a|flac|aac|webm)$/i)) {
       toast({
         title: 'Invalid File Type',
         description: 'Please select an audio file.',
@@ -59,12 +70,48 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
     }
 
     try {
+      console.log('Reading file:', file.name);
       const reader = new FileReader();
+      
       reader.onload = () => {
-        const result = reader.result as string;
-        const base64Data = result.split(',')[1];
-        onAudioReady(base64Data);
+        try {
+          const result = reader.result as string;
+          if (!result) {
+            throw new Error('FileReader result is empty');
+          }
+          const base64Data = result.split(',')[1];
+          if (!base64Data) {
+            throw new Error('Failed to extract base64 data');
+          }
+          console.log('File read successfully, base64 length:', base64Data.length);
+          onAudioReady(base64Data);
+        } catch (err) {
+          console.error('Error processing file result:', err);
+          toast({
+            title: 'File Processing Error',
+            description: 'Failed to process the selected file.',
+            status: 'error',
+            duration: 3000,
+            isClosable: true,
+          });
+        }
       };
+      
+      reader.onerror = (error) => {
+        console.error('FileReader error:', error);
+        toast({
+          title: 'File Read Error',
+          description: 'Failed to read the selected file.',
+          status: 'error',
+          duration: 3000,
+          isClosable: true,
+        });
+      };
+      
+      reader.onabort = () => {
+        console.log('File read aborted');
+      };
+      
       reader.readAsDataURL(file);
     } catch (error) {
       console.error('Error reading file:', error);
@@ -87,6 +134,10 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
   };
 
   const handleUploadClick = () => {
+    // Reset input value before opening file dialog to ensure onChange fires
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
     fileInputRef.current?.click();
   };
 

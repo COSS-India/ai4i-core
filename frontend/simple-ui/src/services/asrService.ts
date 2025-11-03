@@ -66,15 +66,24 @@ export const transcribeAudio = async (
       },
     };
 
-    console.log('Sending ASR request:', {
-      audioLength: audioContent.length,
-      config: payload.config,
+    console.log('=== ASR API Request ===');
+    console.log('Endpoint:', apiEndpoints.asr.inference);
+    console.log('Audio length:', audioContent.length);
+    console.log('Config:', JSON.stringify(payload.config, null, 2));
+    console.log('Full payload (audio truncated):', {
+      ...payload,
+      audio: [{ audioContent: `${audioContent.substring(0, 50)}... (truncated)` }]
     });
 
     const response = await apiClient.post<ASRInferenceResponse>(
       apiEndpoints.asr.inference,
       payload
     );
+
+    console.log('=== ASR API Response ===');
+    console.log('Response status:', response.status);
+    console.log('Response data:', response.data);
+    console.log('Response output:', response.data.output);
 
     return response.data;
   } catch (error) {
