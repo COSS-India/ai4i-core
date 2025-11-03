@@ -603,6 +603,22 @@ export const useASR = (): UseASRReturn => {
 
     console.log('handleFileUpload: Processing file:', file.name, 'Size:', file.size, 'Type:', file.type);
 
+    // Validate file type - only MP3 and WAV files are supported
+    const isMP3 = file.type === 'audio/mpeg' || file.type === 'audio/mp3' || file.name.toLowerCase().endsWith('.mp3');
+    const isWAV = file.type === 'audio/wav' || file.type === 'audio/wave' || file.type === 'audio/x-wav' || file.name.toLowerCase().endsWith('.wav');
+    
+    if (!isMP3 && !isWAV) {
+      toast({
+        title: 'Invalid File Type',
+        description: 'Only MP3 and WAV files are supported. Please select a valid audio file.',
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      setError('Only MP3 and WAV files are supported. Please select a valid audio file.');
+      return;
+    }
+
     // Validate audio duration (max 1 minute)
     const validateAudioDuration = (file: File): Promise<boolean> => {
       return new Promise((resolve) => {

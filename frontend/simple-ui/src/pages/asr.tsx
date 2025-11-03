@@ -40,7 +40,6 @@ const ASRPage: React.FC = () => {
     error,
     startRecording,
     stopRecording,
-    handleFileUpload,
     performInference,
     setLanguage,
     setSampleRate,
@@ -159,33 +158,6 @@ const ASRPage: React.FC = () => {
                     sampleRate={sampleRate}
                     disabled={fetching}
                     timer={timer}
-                  />
-                </Box>
-
-                {/* File Upload */}
-                <Box>
-                  <FormLabel className="dview-service-try-option-title" mb={4}>
-                    File Upload (Alternative)
-                  </FormLabel>
-                  <input
-                    type="file"
-                    accept="audio/*,.mp3,.wav,.ogg,.m4a,.flac,.aac,.webm"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      
-                      if (file) {
-                        console.log('File input onChange: File selected:', file.name, 'Size:', file.size, 'Type:', file.type);
-                        // Process file first, then reset
-                        handleFileUpload(file);
-                      }
-                      
-                      // Reset input after a small delay to allow onChange to fire for same file next time
-                      // Use setTimeout to avoid race condition
-                      setTimeout(() => {
-                        e.target.value = '';
-                      }, 0);
-                    }}
-                    style={{ width: '100%' }}
                   />
                 </Box>
               </VStack>

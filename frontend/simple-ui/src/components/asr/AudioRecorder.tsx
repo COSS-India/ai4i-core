@@ -44,11 +44,14 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
     console.log('File selected:', file.name, 'Size:', file.size, 'Type:', file.type);
 
-    // Validate file type
-    if (!file.type.startsWith('audio/') && !file.name.match(/\.(mp3|wav|ogg|m4a|flac|aac|webm)$/i)) {
+    // Validate file type - only MP3 and WAV files are supported
+    const isMP3 = file.type === 'audio/mpeg' || file.type === 'audio/mp3' || file.name.toLowerCase().endsWith('.mp3');
+    const isWAV = file.type === 'audio/wav' || file.type === 'audio/wave' || file.type === 'audio/x-wav' || file.name.toLowerCase().endsWith('.wav');
+    
+    if (!isMP3 && !isWAV) {
       toast({
         title: 'Invalid File Type',
-        description: 'Please select an audio file.',
+        description: 'Only MP3 and WAV files are supported. Please select a valid audio file.',
         status: 'error',
         duration: 3000,
         isClosable: true,
@@ -238,7 +241,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
         <Input
           ref={fileInputRef}
           type="file"
-          accept="audio/*"
+          accept="audio/mpeg,audio/mp3,.mp3,audio/wav,audio/wave,audio/x-wav,.wav"
           onChange={handleFileUpload}
         />
       </FormControl>
@@ -247,7 +250,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
       <Text fontSize="sm" color="gray.600" textAlign="center">
         {isRecording
           ? 'Click "Stop Recording" when finished'
-          : `Click "Start Recording" to record audio or "Choose File" to upload an audio file (max ${MAX_RECORDING_DURATION} seconds)`}
+          : `Click "Start Recording" to record audio or "Choose File" to upload an audio file (max ${MAX_RECORDING_DURATION} seconds). Only MP3 and WAV files are supported.`}
       </Text>
     </Stack>
   );
