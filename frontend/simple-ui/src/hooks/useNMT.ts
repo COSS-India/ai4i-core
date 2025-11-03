@@ -11,7 +11,7 @@ import { DEFAULT_NMT_CONFIG, MAX_TEXT_LENGTH } from '../config/constants';
 export const useNMT = (): UseNMTReturn => {
   // State
   const [languagePair, setLanguagePair] = useState<LanguagePair>(DEFAULT_NMT_CONFIG);
-  const [selectedServiceId, setSelectedServiceId] = useState<string>('ai4bharat/indictrans-v2-all-gpu');
+  const [selectedServiceId, setSelectedServiceId] = useState<string>('');
   const [inputText, setInputText] = useState<string>('');
   const [translatedText, setTranslatedText] = useState<string>('');
   const [fetching, setFetching] = useState<boolean>(false);
@@ -99,6 +99,18 @@ export const useNMT = (): UseNMTReturn => {
       toast({
         title: 'Invalid Language Pair',
         description: 'Source and target languages must be different.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    // Require a model/service to be selected before translating
+    if (!selectedServiceId) {
+      toast({
+        title: 'Select a model',
+        description: 'Please select a translation model before testing.',
         status: 'warning',
         duration: 3000,
         isClosable: true,

@@ -199,8 +199,8 @@ const NMTPage: React.FC = () => {
             </GridItem>
           </Grid>
 
-          {/* Language Pairs Loading Indicator */}
-          {pairsLoading && (
+          {/* Language Pairs Loading Indicator - only when a model is selected */}
+          {selectedServiceId && pairsLoading && (
             <Box textAlign="center">
               <LoadingSpinner label="Loading language pairs..." />
             </Box>

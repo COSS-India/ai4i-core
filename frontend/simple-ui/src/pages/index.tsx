@@ -93,7 +93,7 @@ const HomePage: React.FC = () => {
     {
       id: 'asr',
       title: 'ASR – Automatic Speech Recognition',
-      description: 'Convert speech to text in 22+ Indian languages',
+      description: 'Convert speech to text in 12+ Indian languages',
       icon: FaMicrophone,
       path: '/asr',
       color: 'orange',
@@ -117,9 +117,9 @@ const HomePage: React.FC = () => {
     },
     {
       id: 'llm',
-      title: 'LLM – GPT OSS 20B',
+      title: 'LLM',
       description:
-        'Translate and process text using GPT OSS 20B large language model with advanced capabilities',
+        'Interact with the large language model for text understanding and generation',
       icon: IoSparklesOutline,
       path: '/llm',
       color: 'pink',
@@ -135,10 +135,10 @@ const HomePage: React.FC = () => {
     },
   ];
 
+  // Platform insight cards (uptime removed)
   const stats = [
     { label: 'Total Services', value: '5' },
     { label: 'Supported Languages', value: '22+' },
-    { label: 'Uptime', value: '99.9%' },
   ];
 
   return (
@@ -159,7 +159,7 @@ const HomePage: React.FC = () => {
               AI Accessibility Studio
             </Heading>
             <Text fontSize="lg" color="gray.600" maxW="600px" mx="auto">
-              Test and explore Speech, Text, and Translation models in real time.
+              Test and explore NLP and LLM models
             </Text>
           </Box>
 
@@ -237,7 +237,7 @@ const HomePage: React.FC = () => {
             <Heading size="lg" textAlign="center" mb={8} color="gray.800">
               Platform Insights
             </Heading>
-            <SimpleGrid columns={{ base: 1, md: 3 }} spacing={8}>
+            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={8} justifyItems="center">
               {stats.map((stat, index) => (
                 <Stat key={index} textAlign="center">
                   <StatLabel color="gray.600" fontSize="sm">
@@ -246,43 +246,12 @@ const HomePage: React.FC = () => {
                   <StatNumber color="orange.600" fontSize="2xl">
                     {stat.value}
                   </StatNumber>
-                  <StatHelpText color="gray.500">
-                    {index === 0 && 'Available Services'}
-                    {index === 1 && 'Indian Languages'}
-                    {index === 2 && 'Reliability'}
-                  </StatHelpText>
                 </Stat>
               ))}
             </SimpleGrid>
           </Box>
 
-          {/* Getting Started Section */}
-          <Box
-            bg="orange.50"
-            p={8}
-            borderRadius="lg"
-            w="full"
-            maxW="800px"
-            mx="auto"
-            textAlign="center"
-          >
-            <Heading size="md" color="gray.800" mb={4}>
-              Getting Started
-            </Heading>
-            <Text color="gray.600" mb={6}>
-              Set up your API key to start testing the AI services. Each service supports
-              real-time processing and provides detailed statistics.
-            </Text>
-            <Button
-              colorScheme="orange"
-              size="lg"
-              onClick={() => {
-                window.dispatchEvent(new CustomEvent('open-api-key-modal'));
-              }}
-            >
-              Set Up API Key
-            </Button>
-          </Box>
+          {/* Getting Started section removed per requirements */}
         </VStack>
       </ContentLayout>
 
