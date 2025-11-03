@@ -22,7 +22,7 @@ import ContentLayout from '../components/common/ContentLayout';
 import AudioRecorder from '../components/asr/AudioRecorder';
 import ASRResults from '../components/asr/ASRResults';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { SUPPORTED_LANGUAGES, ASR_SAMPLE_RATES } from '../config/constants';
+import { SUPPORTED_LANGUAGES } from '../config/constants';
 
 const ASRPage: React.FC = () => {
   const toast = useToast();
@@ -124,23 +124,6 @@ const ASRPage: React.FC = () => {
                     {SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
                         {lang.label}
-                      </option>
-                    ))}
-                  </Select>
-                </FormControl>
-
-                {/* Sample Rate Selection */}
-                <FormControl>
-                  <FormLabel className="dview-service-try-option-title">
-                    Sample Rate
-                  </FormLabel>
-                  <Select
-                    value={sampleRate}
-                    onChange={(e) => setSampleRate(Number(e.target.value))}
-                  >
-                    {ASR_SAMPLE_RATES.map((rate) => (
-                      <option key={rate} value={rate}>
-                        {rate} Hz
                       </option>
                     ))}
                   </Select>
