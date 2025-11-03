@@ -1,6 +1,6 @@
 // ASR service API client with typed methods
 
-import { apiClient, apiEndpoints } from './api';
+import { asrApiClient, apiEndpoints } from './api';
 import { 
   ASRInferenceRequest, 
   ASRInferenceResponse, 
@@ -29,7 +29,7 @@ export const performASRInference = async (
       },
     };
 
-    const response = await apiClient.post<ASRInferenceResponse>(
+    const response = await asrApiClient.post<ASRInferenceResponse>(
       apiEndpoints.asr.inference,
       payload
     );
@@ -75,7 +75,7 @@ export const transcribeAudio = async (
       audio: [{ audioContent: `${audioContent.substring(0, 50)}... (truncated)` }]
     });
 
-    const response = await apiClient.post<ASRInferenceResponse>(
+    const response = await asrApiClient.post<ASRInferenceResponse>(
       apiEndpoints.asr.inference,
       payload
     );
@@ -104,7 +104,7 @@ export const transcribeAudio = async (
  */
 export const listASRModels = async (): Promise<ASRModelsResponse> => {
   try {
-    const response = await apiClient.get<ASRModelsResponse>(
+    const response = await asrApiClient.get<ASRModelsResponse>(
       apiEndpoints.asr.models
     );
 
@@ -121,7 +121,7 @@ export const listASRModels = async (): Promise<ASRModelsResponse> => {
  */
 export const checkASRHealth = async (): Promise<ASRHealthResponse> => {
   try {
-    const response = await apiClient.get<ASRHealthResponse>(
+    const response = await asrApiClient.get<ASRHealthResponse>(
       apiEndpoints.asr.health
     );
 
@@ -138,7 +138,7 @@ export const checkASRHealth = async (): Promise<ASRHealthResponse> => {
  */
 export const getASRConfig = async () => {
   try {
-    const response = await apiClient.get('/api/v1/asr/config');
+    const response = await asrApiClient.get('/api/v1/asr/config');
     return response.data;
   } catch (error) {
     console.error('Failed to fetch ASR config:', error);
