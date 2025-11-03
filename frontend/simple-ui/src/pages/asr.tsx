@@ -20,7 +20,6 @@ import { useASR } from '../hooks/useASR';
 import { listASRModels } from '../services/asrService';
 import ContentLayout from '../components/common/ContentLayout';
 import AudioRecorder from '../components/asr/AudioRecorder';
-import AudioPlayer from '../components/asr/AudioPlayer';
 import ASRResults from '../components/asr/ASRResults';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { SUPPORTED_LANGUAGES, ASR_SAMPLE_RATES } from '../config/constants';
@@ -225,44 +224,31 @@ const ASRPage: React.FC = () => {
 
                 {/* ASR Results */}
                 {fetched && audioText && (
-                  <ASRResults
-                    transcript={audioText}
-                    wordCount={responseWordCount}
-                    responseTime={Number(requestTime)}
-                  />
-                )}
-
-                {/* Audio Player (if available) */}
-                {audioText && (
-                  <Box>
-                    <Text mb={2} fontSize="sm" fontWeight="semibold" color="gray.700">
-                      Audio Playback
-                    </Text>
-                    <AudioPlayer
-                      audioSrc=""
-                      showVisualization={true}
+                  <>
+                    <ASRResults
+                      transcript={audioText}
+                      wordCount={responseWordCount}
+                      responseTime={Number(requestTime)}
                     />
-                  </Box>
-                )}
 
-                {/* Clear Results Button */}
-                {fetched && (
-                  <Box textAlign="center">
-                    <button
-                      onClick={clearResults}
-                      style={{
-                        padding: '8px 16px',
-                        backgroundColor: '#f7fafc',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontSize: '14px',
-                        color: '#4a5568',
-                      }}
-                    >
-                      Clear Results
-                    </button>
-                  </Box>
+                    {/* Clear Results Button */}
+                    <Box textAlign="center">
+                      <button
+                        onClick={clearResults}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: '#f7fafc',
+                          border: '1px solid #e2e8f0',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                          color: '#4a5568',
+                        }}
+                      >
+                        Clear Results
+                      </button>
+                    </Box>
+                  </>
                 )}
               </VStack>
             </GridItem>
