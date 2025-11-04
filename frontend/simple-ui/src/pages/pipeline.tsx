@@ -30,7 +30,7 @@ import { FaMicrophone, FaMicrophoneSlash } from 'react-icons/fa';
 import { useRouter } from 'next/router';
 import ContentLayout from '../components/common/ContentLayout';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { ASR_SUPPORTED_LANGUAGES, TTS_SUPPORTED_LANGUAGES, LANG_CODE_TO_LABEL } from '../config/constants';
+import { ASR_SUPPORTED_LANGUAGES, TTS_SUPPORTED_LANGUAGES, LANG_CODE_TO_LABEL, formatDuration, MAX_RECORDING_DURATION } from '../config/constants';
 import { usePipeline } from '../hooks/usePipeline';
 import { listASRModels } from '../services/asrService';
 import { listNMTServices } from '../services/nmtService';
@@ -49,10 +49,12 @@ const PipelinePage: React.FC = () => {
     isLoading,
     result,
     isRecording,
+    timer,
     startRecording,
     stopRecording,
     processRecordedAudio,
     processUploadedAudio,
+    setProcessRecordedAudioCallback,
   } = usePipeline();
 
   // Fetch available models
@@ -77,21 +79,15 @@ const PipelinePage: React.FC = () => {
   const handleRecordClick = async () => {
     if (isRecording) {
       stopRecording();
-      // Process the recorded audio
-      setTimeout(async () => {
-        try {
-          await processRecordedAudio(
-            sourceLanguage,
-            targetLanguage,
-            asrServiceId,
-            nmtServiceId,
-            ttsServiceId
-          );
-        } catch (error) {
-          console.error('Pipeline processing error:', error);
-        }
-      }, 100);
     } else {
+      // Set the callback with current config before starting recording
+      setProcessRecordedAudioCallback(
+        sourceLanguage,
+        targetLanguage,
+        asrServiceId,
+        nmtServiceId,
+        ttsServiceId
+      );
       startRecording();
     }
   };
@@ -258,6 +254,16 @@ const PipelinePage: React.FC = () => {
                   </Select>
                 </FormControl>
 
+                {/* Recording Timer Display */}
+                {isRecording && (
+                  <Alert status="info" borderRadius="md">
+                    <AlertIcon />
+                    <AlertDescription>
+                      Recording Time: {formatDuration(timer)} / {formatDuration(MAX_RECORDING_DURATION)} seconds
+                    </AlertDescription>
+                  </Alert>
+                )}
+
                 {/* Recording Button */}
                 <Button
                   leftIcon={isRecording ? <FaMicrophoneSlash /> : <FaMicrophone />}
@@ -281,8 +287,12 @@ const PipelinePage: React.FC = () => {
                     style={{ display: 'none' }}
                   />
                 </Button>
+              </VStack>
+            </GridItem>
 
-
+            {/* Results Panel */}
+            <GridItem>
+              <VStack spacing={6} align="stretch">
                 {/* Progress Indicator */}
                 {isLoading && (
                   <Box>
@@ -292,12 +302,7 @@ const PipelinePage: React.FC = () => {
                     <Progress size="xs" isIndeterminate colorScheme="orange" />
                   </Box>
                 )}
-              </VStack>
-            </GridItem>
 
-            {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
                 {/* Results Stats */}
                 {result && (
                   <SimpleGrid
