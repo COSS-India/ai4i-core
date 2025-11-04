@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: simple-ui-frontend
+  namespace: dev
+  labels:
+    app: simple-ui-frontend
+spec:
+  selector:
+    app: simple-ui-frontend
+  ports:
+    - port: 3000
+      targetPort: 3000
+      protocol: TCP
+  type: ClusterIP
+

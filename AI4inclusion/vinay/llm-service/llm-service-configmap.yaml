@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-service-config
+  namespace: dev
+data:
+  SERVICE_NAME: "llm-service"
+  SERVICE_PORT: "8090"
+  LOG_LEVEL: "INFO"
+
+  DB_POOL_SIZE: "20"
+  DB_MAX_OVERFLOW: "10"
+
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+
+  TRITON_ENDPOINT: "http://13.220.11.146:8000"  #check with vikas for the endpoint
+  TRITON_TIMEOUT: "300"
+  TRITON_CONCURRENCY: "20"
+
+  MAX_BATCH_SIZE: "100"
+  MAX_TEXT_LENGTH: "50000"
+  DEFAULT_INPUT_LANGUAGE: "en"
+  DEFAULT_OUTPUT_LANGUAGE: "en"
+  SUPPORTED_LANGUAGES: "en,hi,ta,te,kn,ml,bn,gu,mr,pa,or,as,ur"
+
+  AUTH_ENABLED: "true"
+  API_KEY_CACHE_TTL: "300"
+  SESSION_TIMEOUT_SECONDS: "3600"
+
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_PER_MINUTE: "60"
+  RATE_LIMIT_PER_HOUR: "1000"
+  RATE_LIMIT_PER_DAY: "10000"
+
+  ALLOW_ANONYMOUS_ACCESS: "false"
+  REQUIRE_API_KEY: "true"
+

@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: asr-service-config
+  namespace: dev
+data:
+  # Service Configuration
+  SERVICE_NAME: "asr-service"
+  SERVICE_PORT: "8087"
+  LOG_LEVEL: "INFO"
+  
+  # Database Configuration
+  DATABASE_URL: "postgresql+asyncpg://ai4v_user:password123@postgres.dev.svc.cluster.local:5432/ai4v_db"
+  DB_POOL_SIZE: "20"
+  DB_MAX_OVERFLOW: "10"
+  
+  # Redis Configuration
+  REDIS_HOST: "redis.dev.svc.cluster.local"
+  REDIS_PORT_NUMBER: "6379"
+  
+  # Triton Inference Server Configuration
+  TRITON_ENDPOINT: "http://13.200.133.97:5000"
+  TRITON_TIMEOUT: "20"
+  TRITON_CONCURRENCY: "20"
+  
+  # ASR Service Configuration
+  DEFAULT_SAMPLE_RATE: "16000"
+  MAX_AUDIO_DURATION: "300"
+  DEFAULT_BATCH_SIZE: "32"
+  ENABLE_VAD: "true"
+  ENABLE_POSTPROCESSING: "true"
+  
+  # Audio Processing Configuration
+  MAX_CHUNK_DURATION_S: "7"
+  MIN_SPEECH_DURATION_MS: "100"
+  VAD_THRESHOLD: "0.3"
+  VAD_MIN_SILENCE_DURATION_MS: "400"
+  VAD_SPEECH_PAD_MS: "200"
+  
+  # Supported Languages (comma-separated)
+  SUPPORTED_LANGUAGES: "en,hi,ta,te,kn,ml,bn,gu,mr,pa,or,as,ur,sa,ks,ne,sd,kok,doi,mai,brx,mni"
+  
+  # Authentication Configuration
+  AUTH_ENABLED: "false"
+  API_KEY_CACHE_TTL: "300"
+  SESSION_TIMEOUT_SECONDS: "3600"
+  
+  # Rate Limiting Configuration
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_PER_MINUTE: "60"
+  RATE_LIMIT_PER_HOUR: "1000"
+  RATE_LIMIT_PER_DAY: "10000"
+  
+  # Security Configuration
+  ALLOW_ANONYMOUS_ACCESS: "true"
+  REQUIRE_API_KEY: "false"
+  
+  # Streaming Configuration
+  STREAMING_RESPONSE_FREQUENCY_MS: "2000"
+  STREAMING_MAX_CONNECTIONS: "100"
+  STREAMING_BUFFER_SIZE_BYTES: "32000"
+  STREAMING_ENABLE_VAD: "true"
+  STREAMING_TIMEOUT_SECONDS: "300"

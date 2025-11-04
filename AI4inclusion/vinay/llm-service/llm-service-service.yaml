@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-service
+  namespace: dev
+  labels:
+    app: llm-service
+spec:
+  selector:
+    app: llm-service
+  ports:
+    - port: 8090
+      targetPort: 8090
+      protocol: TCP
+  type: ClusterIP
+

@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: indictrans-nmt
+  namespace: dev
+  labels:
+    app: indictrans-nmt
+    workload-type: gpu
+    component: ai-model
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: indictrans-nmt
+  template:
+    metadata:
+      labels:
+        app: indictrans-nmt
+        workload-type: gpu
+        component: ai-model
+    spec:
+      nodeSelector:
+        node-type: gpu
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      restartPolicy: Always
+      containers:
+      - name: indictrans-nmt
+        image: ai4bharat/triton-indictrans-v2:latest
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        - containerPort: 8001
+          name: grpc
+          protocol: TCP
+        - containerPort: 8002
+          name: metrics
+          protocol: TCP
+        env:
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        - name: TRITON_SERVER_HTTP_PORT
+          value: "8000"
+        - name: TRITON_SERVER_GRPC_PORT
+          value: "8001"
+        - name: TRITON_SERVER_METRICS_PORT
+          value: "8002"
+        resources:
+          requests:
+            nvidia.com/gpu: 1
+            cpu: 2000m
+            memory: 8Gi
+          limits:
+            nvidia.com/gpu: 1
+            cpu: 4000m
+            memory: 16Gi
+        livenessProbe:
+          httpGet:
+            path: /v2/health/live
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /v2/health/ready
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - name: model-storage
+          mountPath: /models
+        - name: cache-storage
+          mountPath: /tmp
+      volumes:
+      - name: model-storage
+        emptyDir: {}
+      - name: cache-storage
+        emptyDir: {}

@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nmt-service-config
+  namespace: dev
+data:
+  # Service Configuration
+  SERVICE_NAME: "nmt-service"
+  SERVICE_PORT: "8089"
+  LOG_LEVEL: "INFO"
+
+  # PostgreSQL Configuration
+  DATABASE_URL: "postgresql+asyncpg://ai4v_user:password123@postgres:5432/ai4v_db"
+  DB_POOL_SIZE: "20"
+  DB_MAX_OVERFLOW: "10"
+
+  # Redis Configuration
+  REDIS_HOST: "redis"
+  REDIS_PORT_NUMBER: "6379"
+  REDIS_TIMEOUT: "5"
+
+  # Triton Inference Server Configuration
+  TRITON_ENDPOINT: "http://triton-server:8000"
+  TRITON_TIMEOUT: "20"
+  TRITON_CONCURRENCY: "20"
+
+  # NMT Service Configuration
+  MAX_BATCH_SIZE: "90"
+  MAX_TEXT_LENGTH: "10000"
+  DEFAULT_SOURCE_LANGUAGE: "en"
+  DEFAULT_TARGET_LANGUAGE: "hi"
+
+  # Text Processing Configuration
+  ENABLE_TEXT_NORMALIZATION: "true"
+  ENABLE_SCRIPT_DETECTION: "true"
+
+  # Supported Languages (comma-separated)
+  SUPPORTED_LANGUAGES: "en,hi,ta,te,kn,ml,bn,gu,mr,pa,or,as,ur,sa,ks,ne,sd,kok,doi,mai,brx,mni"
+
+  # Authentication Configuration
+  AUTH_ENABLED: "true"
+  API_KEY_CACHE_TTL: "300"
+  SESSION_TIMEOUT_SECONDS: "3600"
+
+  # Rate Limiting Configuration
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_PER_MINUTE: "60"
+  RATE_LIMIT_PER_HOUR: "1000"
+  RATE_LIMIT_PER_DAY: "10000"
+
+  # Security Configuration
+  ALLOW_ANONYMOUS_ACCESS: "false"
+  REQUIRE_API_KEY: "true"
+
+  # Language Detection Configuration
+  ENABLE_AUTO_LANGUAGE_DETECTION: "true"
+  LANGUAGE_DETECTION_CONFIDENCE_THRESHOLD: "0.7"

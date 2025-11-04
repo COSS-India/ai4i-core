@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: triton-multilingual-asr
+  namespace: dev
+  labels:
+    app: triton-multilingual-asr
+    workload-type: gpu
+    component: ai-model
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: triton-multilingual-asr
+  template:
+    metadata:
+      labels:
+        app: triton-multilingual-asr
+        workload-type: gpu
+        component: ai-model
+    spec:
+      nodeSelector:
+        node-type: gpu
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: triton-multilingual-asr
+        image: ai4bharat/triton-multilingual-asr:latest
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        - containerPort: 8001
+          name: grpc
+          protocol: TCP
+        - containerPort: 8002
+          name: metrics
+          protocol: TCP
+        resources:
+          requests:
+            nvidia.com/gpu: 1
+            cpu: 2000m
+            memory: 8Gi
+          limits:
+            nvidia.com/gpu: 1
+            cpu: 4000m
+            memory: 16Gi
+        env:
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        - name: TRITON_SERVER_HTTP_PORT
+          value: "8000"
+        - name: TRITON_SERVER_GRPC_PORT
+          value: "8001"
+        - name: TRITON_SERVER_METRICS_PORT
+          value: "8002"
+        livenessProbe:
+          httpGet:
+            path: /v2/health/live
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /v2/health/ready
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - name: model-storage
+          mountPath: /models
+        - name: cache-storage
+          mountPath: /tmp
+      volumes:
+      - name: model-storage
+        emptyDir: {}
+      - name: cache-storage
+        emptyDir: {}
+      restartPolicy: Always
+
+

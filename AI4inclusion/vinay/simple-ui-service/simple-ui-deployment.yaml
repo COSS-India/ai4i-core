@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simple-ui-frontend
+  namespace: dev
+  labels:
+    app: simple-ui-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: simple-ui-frontend
+  template:
+    metadata:
+      labels:
+        app: simple-ui-frontend
+    spec:
+      nodeSelector:
+      tolerations:
+      - key: "node-type"
+        operator: Equal
+        value: cpu
+        effect: NoSchedule
+      containers:
+      - name: simple-ui-frontend
+        image: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/simple-ui-frontend:v1.0
+        ports:
+        - containerPort: 3000
+        envFrom:
+          - configMapRef:
+              name: simple-ui-frontend-config
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "400m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      restartPolicy: Always
+
