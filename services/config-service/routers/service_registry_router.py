@@ -13,7 +13,13 @@ router = APIRouter(prefix="/api/v1/registry", tags=["Service Registry"])
 def get_registry_service() -> ServiceRegistryService:
     import main as app_main  # type: ignore
     repo = ServiceRegistryRepository(app_main.db_session)
-    return ServiceRegistryService(app_main.registry_client, repo, app_main.redis_client, cache_ttl=60)
+    return ServiceRegistryService(
+        app_main.registry_client,
+        repo,
+        app_main.redis_client,
+        cache_ttl=60,
+        health_monitor=app_main.health_monitor_service,
+    )
 
 
 @router.post("/register", status_code=201)
@@ -54,6 +60,37 @@ async def service_url(service_name: str, service: ServiceRegistryService = Depen
 async def trigger_health_check(service_name: str, service: ServiceRegistryService = Depends(get_registry_service)):
     status = await service.perform_health_check(service_name)
     return {"status": status.value}
+
+
+@router.post("/services/{service_name}/health/detailed")
+async def trigger_detailed_health_check(
+    service_name: str,
+    service: ServiceRegistryService = Depends(get_registry_service),
+):
+    """Trigger detailed health check with aggregated results"""
+    try:
+        aggregated_result = await service.perform_health_check_with_details(service_name)
+        return {
+            "service_name": aggregated_result.service_name,
+            "overall_status": aggregated_result.overall_status.value,
+            "total_instances": aggregated_result.total_instances,
+            "healthy_instances": aggregated_result.healthy_instances,
+            "unhealthy_instances": aggregated_result.unhealthy_instances,
+            "check_results": [
+                {
+                    "endpoint_url": r.endpoint_url,
+                    "is_healthy": r.is_healthy,
+                    "response_time_ms": r.response_time_ms,
+                    "status_code": r.status_code,
+                    "error_message": r.error_message,
+                    "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+                }
+                for r in aggregated_result.check_results
+            ],
+            "timestamp": aggregated_result.timestamp.isoformat() if aggregated_result.timestamp else None,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/discover/{service_name}", response_model=List[ServiceInstance])
