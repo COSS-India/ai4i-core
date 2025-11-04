@@ -74,7 +74,7 @@ const TTSPage: React.FC = () => {
   };
 
   // Restrict available languages to Indo-Aryan list requested
-  const indoAryanLanguages = ['hi', 'mr', 'as', 'bn', 'gu', 'or', 'pa', 'raj'];
+  const indoAryanLanguages = ['hi', 'mr', 'as', 'bn', 'gu', 'or', 'pa'];
 
   return (
     <>
