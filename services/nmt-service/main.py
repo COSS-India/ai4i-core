@@ -131,7 +131,7 @@ async def lifespan(app: FastAPI):
             else:
                 service_host = os.getenv("SERVICE_HOST", service_name)
                 service_url = f"http://{service_host}:{service_port}"
-            health_url = service_url + "/api/v1/nmt/health"
+            health_url = service_url + "/health"
             instance_id = os.getenv("SERVICE_INSTANCE_ID", f"{service_name}-{os.getpid()}")
             registered_instance_id = await registry_client.register(
                 service_name=service_name,
