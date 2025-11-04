@@ -21,10 +21,8 @@ pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
 JWT_REFRESH_SECRET_KEY = os.getenv("JWT_REFRESH_SECRET_KEY", "dhruva-refresh-secret-key-2024-super-secure")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-# Access token: 30 days = 30 * 24 * 60 = 43,200 minutes = 2,592,000 seconds
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "43200"))
-# Refresh token: 1 year = 365 days
-REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "365"))
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 
 class AuthUtils:
     """Authentication utility functions"""
@@ -129,7 +127,8 @@ class AuthUtils:
         device_info: Optional[Dict] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
-        expires_delta: Optional[timedelta] = None
+        expires_delta: Optional[timedelta] = None,
+        auto_commit: bool = True
     ) -> UserSession:
         """Create a new user session"""
         if expires_delta:
@@ -148,8 +147,10 @@ class AuthUtils:
         )
         
         db.add(session)
-        await db.commit()
-        await db.refresh(session)
+        await db.flush()  # Flush to get the session ID
+        if auto_commit:
+            await db.commit()
+        # Return session - no refresh needed as flush already gives us the ID
         return session
     
     @staticmethod
