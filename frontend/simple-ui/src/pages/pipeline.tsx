@@ -30,29 +30,31 @@ import { FaMicrophone, FaMicrophoneSlash } from 'react-icons/fa';
 import { useRouter } from 'next/router';
 import ContentLayout from '../components/common/ContentLayout';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { SUPPORTED_LANGUAGES, LANG_CODE_TO_LABEL } from '../config/constants';
+import { ASR_SUPPORTED_LANGUAGES, TTS_SUPPORTED_LANGUAGES, LANG_CODE_TO_LABEL, formatDuration, MAX_RECORDING_DURATION } from '../config/constants';
 import { usePipeline } from '../hooks/usePipeline';
 import { listASRModels } from '../services/asrService';
-import { listNMTModels } from '../services/nmtService';
+import { listNMTServices } from '../services/nmtService';
 import { listVoices } from '../services/ttsService';
 
 const PipelinePage: React.FC = () => {
   const toast = useToast();
   const router = useRouter();
-  const [sourceLanguage, setSourceLanguage] = useState('en');
-  const [targetLanguage, setTargetLanguage] = useState('hi');
+  const [sourceLanguage, setSourceLanguage] = useState('hi');
+  const [targetLanguage, setTargetLanguage] = useState('mr');
   const [asrServiceId, setAsrServiceId] = useState('asr_am_ensemble');
-  const [nmtServiceId, setNmtServiceId] = useState('ai4bharat/indictrans-v2-all-gpu--t4');
-  const [ttsServiceId, setTtsServiceId] = useState('indic-tts-coqui-dravidian');
+  const [nmtServiceId, setNmtServiceId] = useState('ai4bharat/indictrans-v2-all-gpu');
+  const [ttsServiceId, setTtsServiceId] = useState('indic-tts-coqui-indo_aryan');
 
   const {
     isLoading,
     result,
     isRecording,
+    timer,
     startRecording,
     stopRecording,
     processRecordedAudio,
     processUploadedAudio,
+    setProcessRecordedAudioCallback,
   } = usePipeline();
 
   // Fetch available models
@@ -62,9 +64,9 @@ const PipelinePage: React.FC = () => {
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data: nmtModels } = useQuery({
-    queryKey: ['nmt-models'],
-    queryFn: listNMTModels,
+  const { data: nmtServices } = useQuery({
+    queryKey: ['nmt-services'],
+    queryFn: listNMTServices,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -77,21 +79,15 @@ const PipelinePage: React.FC = () => {
   const handleRecordClick = async () => {
     if (isRecording) {
       stopRecording();
-      // Process the recorded audio
-      setTimeout(async () => {
-        try {
-          await processRecordedAudio(
-            sourceLanguage,
-            targetLanguage,
-            asrServiceId,
-            nmtServiceId,
-            ttsServiceId
-          );
-        } catch (error) {
-          console.error('Pipeline processing error:', error);
-        }
-      }, 100);
     } else {
+      // Set the callback with current config before starting recording
+      setProcessRecordedAudioCallback(
+        sourceLanguage,
+        targetLanguage,
+        asrServiceId,
+        nmtServiceId,
+        ttsServiceId
+      );
       startRecording();
     }
   };
@@ -125,7 +121,7 @@ const PipelinePage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Pipeline - Speech-to-Speech | Simple UI</title>
+        <title>Pipeline - Speech-to-Speech | AI4Inclusion Console</title>
         <meta
           name="description"
           content="Speech-to-Speech translation pipeline combining ASR, NMT, and TTS"
@@ -146,11 +142,11 @@ const PipelinePage: React.FC = () => {
                 colorScheme="gray"
                 onClick={() => router.push('/pipeline-builder')}
               >
-                📝 Pipeline Builder
+                📝 Customize Pipeline
               </Button>
             </Box>
             <Text color="gray.600" fontSize="lg">
-              Chain ASR → Translation → TTS for complete speech-to-speech translation
+              Chain Speech, Translation, and Voice models for end-to-end speech conversion.
             </Text>
           </Box>
 
@@ -183,7 +179,7 @@ const PipelinePage: React.FC = () => {
                     value={sourceLanguage}
                     onChange={(e) => setSourceLanguage(e.target.value)}
                   >
-                    {SUPPORTED_LANGUAGES.map((lang) => (
+                    {ASR_SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
                         {lang.label}
                       </option>
@@ -200,7 +196,7 @@ const PipelinePage: React.FC = () => {
                     value={targetLanguage}
                     onChange={(e) => setTargetLanguage(e.target.value)}
                   >
-                    {SUPPORTED_LANGUAGES.map((lang) => (
+                    {TTS_SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
                         {lang.label}
                       </option>
@@ -215,12 +211,15 @@ const PipelinePage: React.FC = () => {
                     value={asrServiceId}
                     onChange={(e) => setAsrServiceId(e.target.value)}
                   >
-                    <option value="asr_am_ensemble">asr_am_ensemble (Default)</option>
-                    {asrModels?.models?.map((model) => (
-                      <option key={model.model_id} value={model.model_id}>
-                        {model.model_id}
-                      </option>
-                    ))}
+                    {asrModels?.models
+                      ?.filter((model) => 
+                        model.model_id.toLowerCase().includes('conformer')
+                      )
+                      .map((model) => (
+                        <option key={model.model_id} value={model.model_id}>
+                          {model.model_id}
+                        </option>
+                      ))}
                   </Select>
                 </FormControl>
 
@@ -231,12 +230,16 @@ const PipelinePage: React.FC = () => {
                     value={nmtServiceId}
                     onChange={(e) => setNmtServiceId(e.target.value)}
                   >
-                    <option value="ai4bharat/indictrans-v2-all-gpu--t4">ai4bharat/indictrans-v2-all-gpu--t4 (Default)</option>
-                    {nmtModels?.map((model) => (
-                      <option key={model.model_id} value={model.model_id}>
-                        {model.model_id}
-                      </option>
-                    ))}
+                    <option value="ai4bharat/indictrans-v2-all-gpu">ai4bharat/indictrans-v2-all-gpu (Default)</option>
+                    {nmtServices
+                      ?.filter((service) => 
+                        !service.service_id.toLowerCase().includes('facebook')
+                      )
+                      .map((service) => (
+                        <option key={service.service_id} value={service.service_id}>
+                          {service.service_id}
+                        </option>
+                      ))}
                   </Select>
                 </FormControl>
 
@@ -247,16 +250,19 @@ const PipelinePage: React.FC = () => {
                     value={ttsServiceId}
                     onChange={(e) => setTtsServiceId(e.target.value)}
                   >
-                    <option value="indic-tts-coqui-dravidian">indic-tts-coqui-dravidian (Default)</option>
                     <option value="indic-tts-coqui-indo_aryan">indic-tts-coqui-indo_aryan</option>
-                    <option value="indic-tts-coqui-misc">indic-tts-coqui-misc</option>
-                    {ttsVoices?.voices?.slice(0, 10).map((voice) => (
-                      <option key={voice.voice_id} value={voice.voice_id}>
-                        {voice.voice_id}
-                      </option>
-                    ))}
                   </Select>
                 </FormControl>
+
+                {/* Recording Timer Display */}
+                {isRecording && (
+                  <Alert status="info" borderRadius="md">
+                    <AlertIcon />
+                    <AlertDescription>
+                      Recording Time: {formatDuration(timer)} / {formatDuration(MAX_RECORDING_DURATION)} seconds
+                    </AlertDescription>
+                  </Alert>
+                )}
 
                 {/* Recording Button */}
                 <Button
@@ -281,8 +287,12 @@ const PipelinePage: React.FC = () => {
                     style={{ display: 'none' }}
                   />
                 </Button>
+              </VStack>
+            </GridItem>
 
-
+            {/* Results Panel */}
+            <GridItem>
+              <VStack spacing={6} align="stretch">
                 {/* Progress Indicator */}
                 {isLoading && (
                   <Box>
@@ -292,12 +302,7 @@ const PipelinePage: React.FC = () => {
                     <Progress size="xs" isIndeterminate colorScheme="orange" />
                   </Box>
                 )}
-              </VStack>
-            </GridItem>
 
-            {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
                 {/* Results Stats */}
                 {result && (
                   <SimpleGrid
