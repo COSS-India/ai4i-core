@@ -133,7 +133,7 @@ const Sidebar: React.FC = () => {
 
   const bgColor = useColorModeValue("light.100", "dark.100");
   const borderColor = useColorModeValue("gray.200", "gray.700");
-  const hoverBgColor = useColorModeValue("orange.50", "orange.900");
+  const hoverBgColor = useColorModeValue("gray.50", "gray.900");
 
   // Hide sidebar on mobile
   if (isMobile) {
@@ -250,12 +250,12 @@ const Sidebar: React.FC = () => {
                     />
                   ) : undefined
                 }
-                bg={isActive ? "orange.500" : "transparent"}
+                bg={isActive ? "gray.300" : "transparent"}
                 color={isActive ? "white" : "gray.700"}
                 boxShadow={isActive ? "md" : "none"}
                 onClick={handleClick}
                 _hover={{
-                  bg: isActive ? "orange.600" : hoverBgColor,
+                  bg: isActive ? "gray.300" : hoverBgColor,
                   transform: "translateY(-1px)",
                 }}
                 transition="all 0.2s"
