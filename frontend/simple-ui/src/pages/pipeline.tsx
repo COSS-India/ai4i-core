@@ -125,7 +125,7 @@ const PipelinePage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Pipeline - Speech-to-Speech | Simple UI</title>
+        <title>Pipeline - Speech-to-Speech | AI4Inclusion Console</title>
         <meta
           name="description"
           content="Speech-to-Speech translation pipeline combining ASR, NMT, and TTS"
