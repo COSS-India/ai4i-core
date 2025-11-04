@@ -74,12 +74,12 @@ const TTSPage: React.FC = () => {
   };
 
   // Restrict available languages to Indo-Aryan list requested
-  const indoAryanLanguages = ['hi', 'mr', 'as', 'bn', 'gu', 'or', 'pa', 'raj'];
+  const indoAryanLanguages = ['hi', 'mr', 'as', 'bn', 'gu', 'or', 'pa'];
 
   return (
     <>
       <Head>
-        <title>TTS - Text-to-Speech | Simple UI</title>
+        <title>TTS - Text-to-Speech | AI4Inclusion Console</title>
         <meta name="description" content="Test Text-to-Speech with multiple voice options and audio formats" />
       </Head>
 

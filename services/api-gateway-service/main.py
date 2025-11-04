@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from enum import Enum
 from urllib.parse import urlencode, urlparse, parse_qs
 from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security
+from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
@@ -468,6 +469,58 @@ app = FastAPI(
     description="Central entry point for all microservice requests",
     openapi_tags=tags_metadata
 )
+
+# Frontend deep-link support: redirect SPA routes to Simple UI so refreshes on these paths work
+FRONTEND_BASE = os.getenv("SIMPLE_UI_URL", "http://simple-ui-frontend:3000")
+
+# Specific SPA redirects (avoid generic catch-all to not shadow /health and API routes)
+@app.get("/asr")
+async def spa_asr():
+    return RedirectResponse(url=f"{FRONTEND_BASE}/asr", status_code=307)
+
+@app.get("/asr/")
+async def spa_asr_trailing():
+    return RedirectResponse(url=f"{FRONTEND_BASE}/asr", status_code=307)
+
+@app.get("/tts")
+async def spa_tts():
+    return RedirectResponse(url=f"{FRONTEND_BASE}/tts", status_code=307)
+
+@app.get("/tts/")
+async def spa_tts_trailing():
+    return RedirectResponse(url=f"{FRONTEND_BASE}/tts", status_code=307)
+
+@app.get("/nmt")
+async def spa_nmt():
+    return RedirectResponse(url=f"{FRONTEND_BASE}/nmt", status_code=307)
+
+@app.get("/nmt/")
+async def spa_nmt_trailing():
+    return RedirectResponse(url=f"{FRONTEND_BASE}/nmt", status_code=307)
+
+@app.get("/pipeline")
+async def spa_pipeline():
+    return RedirectResponse(url=f"{FRONTEND_BASE}/pipeline", status_code=307)
+
+@app.get("/pipeline/")
+async def spa_pipeline_trailing():
+    return RedirectResponse(url=f"{FRONTEND_BASE}/pipeline", status_code=307)
+
+@app.get("/llm")
+async def spa_llm():
+    return RedirectResponse(url=f"{FRONTEND_BASE}/llm", status_code=307)
+
+@app.get("/llm/")
+async def spa_llm_trailing():
+    return RedirectResponse(url=f"{FRONTEND_BASE}/llm", status_code=307)
+
+@app.get("/pipeline-builder")
+async def spa_pipeline_builder():
+    return RedirectResponse(url=f"{FRONTEND_BASE}/pipeline-builder", status_code=307)
+
+@app.get("/pipeline-builder/")
+async def spa_pipeline_builder_trailing():
+    return RedirectResponse(url=f"{FRONTEND_BASE}/pipeline-builder", status_code=307)
 
 # OpenAPI/Swagger security scheme (Bearer auth)
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -1526,17 +1579,17 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
     
     # Direct service URL mapping (bypassing service registry)
     service_urls = {
-        'auth-service': os.getenv('AUTH_SERVICE_URL', 'http://localhost:8081'),
-        'config-service': os.getenv('CONFIG_SERVICE_URL', 'http://localhost:8082'),
-        'metrics-service': os.getenv('METRICS_SERVICE_URL', 'http://localhost:8083'),
-        'telemetry-service': os.getenv('TELEMETRY_SERVICE_URL', 'http://localhost:8084'),
-        'alerting-service': os.getenv('ALERTING_SERVICE_URL', 'http://localhost:8085'),
-        'dashboard-service': os.getenv('DASHBOARD_SERVICE_URL', 'http://localhost:8086'),
-        'asr-service': os.getenv('ASR_SERVICE_URL', 'http://localhost:8087'),
+        'auth-service': os.getenv('AUTH_SERVICE_URL', 'http://auth-service:8081'),
+        'config-service': os.getenv('CONFIG_SERVICE_URL', 'http://config-service:8082'),
+        'metrics-service': os.getenv('METRICS_SERVICE_URL', 'http://metrics-service:8083'),
+        'telemetry-service': os.getenv('TELEMETRY_SERVICE_URL', 'http://telemetry-service:8084'),
+        'alerting-service': os.getenv('ALERTING_SERVICE_URL', 'http://alerting-service:8085'),
+        'dashboard-service': os.getenv('DASHBOARD_SERVICE_URL', 'http://dashboard-service:8086'),
+        'asr-service': os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
-        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://localhost:8090')
+        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
     }
     
     try:
@@ -1596,17 +1649,17 @@ async def proxy_to_service_with_params(
     
     # Direct service URL mapping
     service_urls = {
-        'auth-service': os.getenv('AUTH_SERVICE_URL', 'http://localhost:8081'),
-        'config-service': os.getenv('CONFIG_SERVICE_URL', 'http://localhost:8082'),
-        'metrics-service': os.getenv('METRICS_SERVICE_URL', 'http://localhost:8083'),
-        'telemetry-service': os.getenv('TELEMETRY_SERVICE_URL', 'http://localhost:8084'),
-        'alerting-service': os.getenv('ALERTING_SERVICE_URL', 'http://localhost:8085'),
-        'dashboard-service': os.getenv('DASHBOARD_SERVICE_URL', 'http://localhost:8086'),
-        'asr-service': os.getenv('ASR_SERVICE_URL', 'http://localhost:8087'),
+        'auth-service': os.getenv('AUTH_SERVICE_URL', 'http://auth-service:8081'),
+        'config-service': os.getenv('CONFIG_SERVICE_URL', 'http://config-service:8082'),
+        'metrics-service': os.getenv('METRICS_SERVICE_URL', 'http://metrics-service:8083'),
+        'telemetry-service': os.getenv('TELEMETRY_SERVICE_URL', 'http://telemetry-service:8084'),
+        'alerting-service': os.getenv('ALERTING_SERVICE_URL', 'http://alerting-service:8085'),
+        'dashboard-service': os.getenv('DASHBOARD_SERVICE_URL', 'http://dashboard-service:8086'),
+        'asr-service': os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
-        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://localhost:8090')
+        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
     }
     
     try:
