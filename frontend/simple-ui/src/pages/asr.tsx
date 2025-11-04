@@ -74,7 +74,7 @@ const ASRPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>ASR - Speech Recognition | Simple UI</title>
+        <title>ASR - Speech Recognition | AI4Inclusion Console</title>
         <meta name="description" content="Test Automatic Speech Recognition with microphone recording and file upload" />
       </Head>
 
