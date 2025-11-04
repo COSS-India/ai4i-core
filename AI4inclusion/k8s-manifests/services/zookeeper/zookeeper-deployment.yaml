@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zookeeper
+  namespace: dev
+  labels:
+    app: zookeeper
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+    spec:
+      initContainers:
+      - name: fix-permissions
+        image: busybox:latest
+        command: ['sh', '-c', 'chown -R 1000:1000 /var/lib/zookeeper/data /var/lib/zookeeper/log']
+        volumeMounts:
+        - name: zookeeper-data
+          mountPath: /var/lib/zookeeper/data
+        - name: zookeeper-logs
+          mountPath: /var/lib/zookeeper/log
+      tolerations:
+      - key: "node-type"
+        operator: Equal
+        value: cpu
+        effect: NoSchedule
+      containers:
+      - name: zookeeper
+        image: confluentinc/cp-zookeeper:7.4.0
+        ports:
+        - containerPort: 2181
+        env:
+        - name: ZOOKEEPER_CLIENT_PORT
+          value: "2181"
+        - name: ZOOKEEPER_TICK_TIME
+          value: "2000"
+        - name: ZOOKEEPER_SERVER_ID
+          value: "1"
+        volumeMounts:
+        - name: zookeeper-data
+          mountPath: /var/lib/zookeeper/data
+        - name: zookeeper-logs
+          mountPath: /var/lib/zookeeper/log
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "400m"
+        livenessProbe:
+          tcpSocket:
+            port: 2181
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 2181
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: zookeeper-data
+        persistentVolumeClaim:
+          claimName: zookeeper-data-pvc
+      - name: zookeeper-logs
+        persistentVolumeClaim:
+          claimName: zookeeper-logs-pvc
+      restartPolicy: Always

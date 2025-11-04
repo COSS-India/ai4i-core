@@ -1,0 +1,36 @@
+# FastAPI and ASGI server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Elasticsearch for log storage
+elasticsearch>=8.10.0
+
+# Database ORM and driver
+sqlalchemy>=2.0.0
+asyncpg>=0.29.0
+
+# Redis for caching
+redis>=5.0.0
+
+# Data validation and settings
+pydantic>=2.4.0
+pydantic-settings>=2.0.0
+
+# Kafka for event streaming
+kafka-python>=2.0.2
+aiokafka>=0.8.0
+
+# OpenTelemetry for distributed tracing
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+opentelemetry-instrumentation-fastapi>=0.41b0
+
+# Structured logging
+python-json-logger>=2.0.7
+
+# Development dependencies (commented out for production)
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+# black>=23.0.0
+# flake8>=6.0.0
+# mypy>=1.5.0

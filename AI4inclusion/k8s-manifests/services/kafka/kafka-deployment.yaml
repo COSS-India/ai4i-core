@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  namespace: dev
+  labels:
+    app: kafka
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      initContainers:
+      - name: fix-permissions
+        image: busybox:latest
+        command: ['sh', '-c', 'chown -R 1000:1000 /kafka-logs']
+        volumeMounts:
+        - name: kafka-storage
+          mountPath: /kafka-logs
+      tolerations:
+      - key: "node-type"
+        operator: Equal
+        value: cpu
+        effect: NoSchedule
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - zookeeper
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: kafka
+        image: wurstmeister/kafka:2.13-2.8.1
+        ports:
+        - containerPort: 9092
+        env:
+        - name: KAFKA_BROKER_ID
+          value: "1"
+        - name: KAFKA_ZOOKEEPER_CONNECT
+          value: "10.100.90.206:2181"
+        - name: KAFKA_LISTENERS
+          value: "PLAINTEXT://0.0.0.0:9092"
+        - name: KAFKA_ADVERTISED_LISTENERS
+          value: "PLAINTEXT://kafka:9092"
+        - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+          value: "1"
+        - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+          value: "1"
+        - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+          value: "1"
+        - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+          value: "true"
+        - name: KAFKA_LOG_DIRS
+          value: "/kafka-logs"
+        - name: KAFKA_ZOOKEEPER_CONNECTION_TIMEOUT_MS
+          value: "180000"
+        - name: KAFKA_ZOOKEEPER_SESSION_TIMEOUT_MS
+          value: "180000"
+        - name: KAFKA_ZOOKEEPER_SYNC_TIME_MS
+          value: "2000"
+        - name: KAFKA_HEAP_OPTS
+          value: "-Xms512m -Xmx512m"
+        - name: KAFKA_PORT
+          value: "9092"
+        - name: KAFKA_HOSTNAME
+          value: "kafka"
+        volumeMounts:
+        - name: kafka-storage
+          mountPath: /kafka-logs
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "300m"
+          limits:
+            memory: "1Gi"
+            cpu: "600m"
+      volumes:
+      - name: kafka-storage
+        persistentVolumeClaim:
+          claimName: kafka-data-pvc
+      restartPolicy: Always

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-service-config
+  namespace: dev
+data:
+  # Add your environment variables here
+  # Example:
+  # DATABASE_URL: "postgresql://ai4v_user:password123@postgres:5432/ai4v_db"
+  # REDIS_URL: "redis://redis:6379"

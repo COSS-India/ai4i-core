@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-service
+  namespace: dev
+  labels:
+    app: llm-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llm-service
+  template:
+    metadata:
+      labels:
+        app: llm-service
+    spec:
+      containers:
+      - name: llm-service
+        image: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/llm-service:v1.0
+        ports:
+        - containerPort: 8090
+        envFrom:
+          - configMapRef:
+              name: llm-service-config
+          - secretRef:
+              name: llm-service-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "300m"
+          limits:
+            memory: "1Gi"
+            cpu: "600m"
+        livenessProbe:
+          httpGet:
+            path: /api/v1/llm/health
+            port: 8090
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/v1/llm/health
+            port: 8090
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      restartPolicy: Always
+

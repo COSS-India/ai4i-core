@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: indo-aryan-tts-service
+  namespace: dev
+  labels:
+    app: indo-aryan-tts
+    component: ai-model
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9000
+    targetPort: 9000
+    protocol: TCP
+    name: http
+  - port: 9001
+    targetPort: 9001
+    protocol: TCP
+    name: grpc
+  - port: 9002
+    targetPort: 9002
+    protocol: TCP
+    name: metrics
+  selector:
+    app: indo-aryan-tts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: indo-aryan-tts-nodeport
+  namespace: default
+  labels:
+    app: indo-aryan-tts
+    component: ai-model
+spec:
+  type: NodePort
+  ports:
+  - port: 9000
+    targetPort: 9000
+    nodePort: 30900
+    protocol: TCP
+    name: http
+  - port: 9001
+    targetPort: 9001
+    nodePort: 30901
+    protocol: TCP
+    name: grpc
+  - port: 9002
+    targetPort: 9002
+    nodePort: 30902
+    protocol: TCP
+    name: metrics
+  selector:
+    app: indo-aryan-tts

@@ -1,0 +1,243 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kong-database-config
+  namespace: kong
+data:
+  kong.yml: |
+    _format_version: "3.0"
+    _transform: true
+    
+    # Services
+    services:
+    - name: ai-model-service
+      url: http://ai-model-service.default.svc.cluster.local:8080
+      routes:
+      - name: ai-model-route
+        paths:
+        - /api/v1/ai-models
+        - /api/v1/ai-models/
+        methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        strip_path: true
+        plugins:
+        - name: rate-limiting
+          config:
+            minute: 100
+            hour: 1000
+        - name: key-auth
+          config:
+            key_names:
+            - apikey
+        - name: cors
+          config:
+            origins:
+            - "https://dev.ai4inclusion.org"
+            methods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+            headers:
+            - Accept
+            - Accept-Version
+            - Content-Length
+            - Content-MD5
+            - Content-Type
+            - Date
+            - X-Auth-Token
+            - Authorization
+            exposed_headers:
+            - X-Auth-Token
+            credentials: true
+            max_age: 3600
+            preflight_continue: false
+    
+    - name: dhruva-service
+      url: http://dhruva-service.default.svc.cluster.local:8080
+      routes:
+      - name: dhruva-route
+        paths:
+        - /api/v1/dhruva
+        - /api/v1/dhruva/
+        methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        strip_path: true
+        plugins:
+        - name: rate-limiting
+          config:
+            minute: 200
+            hour: 2000
+        - name: key-auth
+          config:
+            key_names:
+            - apikey
+        - name: cors
+          config:
+            origins:
+            - "https://dev.ai4inclusion.org"
+            methods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+            headers:
+            - Accept
+            - Accept-Version
+            - Content-Length
+            - Content-MD5
+            - Content-Type
+            - Date
+            - X-Auth-Token
+            - Authorization
+            exposed_headers:
+            - X-Auth-Token
+            credentials: true
+            max_age: 3600
+            preflight_continue: false
+    
+    - name: triton-multilingual-asr-service
+      url: http://10.100.155.202:8000
+      routes:
+      - name: triton-asr-route
+        paths:
+        - /api/v1/asr
+        - /api/v1/asr/
+        - /v2/models
+        - /v2/models/
+        - /v2/health
+        - /v2/health/
+        methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        strip_path: true
+        plugins:
+        - name: rate-limiting
+          config:
+            minute: 300
+            hour: 3000
+        - name: key-auth
+          config:
+            key_names:
+            - apikey
+        - name: cors
+          config:
+            origins:
+            - "https://dev.ai4inclusion.org"
+            methods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+            headers:
+            - Accept
+            - Accept-Version
+            - Content-Length
+            - Content-MD5
+            - Content-Type
+            - Date
+            - X-Auth-Token
+            - Authorization
+            exposed_headers:
+            - X-Auth-Token
+            credentials: true
+            max_age: 3600
+            preflight_continue: false
+        - name: request-transformer
+          config:
+            add:
+              headers:
+                - "X-Forwarded-For:$(proxy_proxy_address)"
+                - "X-Real-IP:$(proxy_proxy_address)"
+        - name: response-transformer
+          config:
+            add:
+              headers:
+                - "X-Service: triton-multilingual-asr"
+    
+    - name: simple-ui-frontend-service
+      url: http://simple-ui-frontend.dev.svc.cluster.local:3000
+      routes:
+      - name: simple-ui-route
+        paths:
+        - /
+        methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+        strip_path: false
+        plugins:
+        - name: rate-limiting
+          config:
+            minute: 500
+            hour: 5000
+        - name: cors
+          config:
+            origins:
+            - "https://dev.ai4inclusion.org"
+            methods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+            headers:
+            - Accept
+            - Accept-Version
+            - Content-Length
+            - Content-MD5
+            - Content-Type
+            - Date
+            - X-Auth-Token
+            - Authorization
+            exposed_headers:
+            - X-Auth-Token
+            credentials: true
+            max_age: 3600
+            preflight_continue: false
+    
+    # Consumers (API Keys)
+    consumers:
+    - username: ai4voice-client
+      keyauth_credentials:
+      - key: ai4voice-api-key-2024
+        tags:
+        - ai4voice
+        - production
+    - username: dhruva-client
+      keyauth_credentials:
+      - key: dhruva-api-key-2024
+        tags:
+        - dhruva
+        - production
+    - username: triton-asr-client
+      keyauth_credentials:
+      - key: triton-asr-api-key-2024
+        tags:
+        - triton
+        - asr
+        - production
+    
+    # Plugins
+    plugins:
+    - name: rate-limiting
+      config:
+        minute: 1000
+        hour: 10000
+        policy: local
+    - name: prometheus
+      config:
+        per_consumer: true

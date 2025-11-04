@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: dev
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      nodeSelector:
+        node-type: cpu
+      tolerations:
+      - key: node-type
+        operator: Equal
+        value: cpu
+        effect: NoSchedule
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+        ports:
+        - containerPort: 6379
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-secret
+              key: REDIS_PASSWORD
+        volumeMounts:
+        - name: redis-storage
+          mountPath: /data
+        - name: redis-config
+          mountPath: /usr/local/etc/redis/redis.conf
+          subPath: redis.conf
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+      volumes:
+      - name: redis-storage
+        emptyDir: {}
+      - name: redis-config
+        configMap:
+          name: redis-config
+          optional: true
+      restartPolicy: Always

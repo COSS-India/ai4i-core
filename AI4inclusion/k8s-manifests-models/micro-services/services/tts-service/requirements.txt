@@ -1,0 +1,50 @@
+# FastAPI and ASGI server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Database ORM and driver
+sqlalchemy>=2.0.0
+asyncpg>=0.29.0
+alembic>=1.12.0
+
+# Redis for caching
+redis>=5.0.0
+
+# Data validation
+pydantic>=2.4.0
+pydantic-settings>=2.0.0
+
+# Audio processing
+soundfile>=0.12.1
+librosa>=0.10.0
+pydub>=0.25.1
+scipy>=1.11.0
+numpy>=1.24.0
+
+# Triton client
+tritonclient[http]>=2.40.0
+gevent>=23.9.0
+
+# PyTorch (for audio effects) - commented out due to build issues
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# HTTP client
+httpx>=0.25.0
+
+# WebSocket support
+python-socketio>=5.8.0
+
+# Utilities
+python-multipart>=0.0.6
+python-dotenv>=1.0.0
+
+# Authentication and security
+passlib[bcrypt]>=1.7.4
+python-jose[cryptography]>=3.3.0
+
+# Optional (for development)
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+# black>=23.0.0
+# flake8>=6.0.0

@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tts-service-config
+  namespace: dev
+data:
+  # Service Configuration
+  SERVICE_NAME: "tts-service"
+  SERVICE_PORT: "8088"
+  LOG_LEVEL: "INFO"
+
+  # PostgreSQL Configuration
+  DATABASE_URL: "postgresql+asyncpg://ai4v_user:password123@postgres:5432/ai4v_db"
+  DB_POOL_SIZE: "20"
+  DB_MAX_OVERFLOW: "10"
+  
+  # Redis Configuration
+  REDIS_HOST: "redis"
+  REDIS_PORT_NUMBER: "6379"
+
+  # Triton Inference Server Configuration
+  TRITON_ENDPOINT: "http://13.200.133.97:9000"
+  TRITON_TIMEOUT: "20"
+  TRITON_CONCURRENCY: "20"
+
+  # TTS Service Configuration
+  DEFAULT_SAMPLE_RATE: "22050"
+  MAX_TEXT_LENGTH: "5000"
+  DEFAULT_AUDIO_FORMAT: "wav"
+  DEFAULT_GENDER: "female"
+  TEXT_CHUNK_SIZE: "400"
+
+  # Audio Generation Configuration
+  ENABLE_DURATION_ADJUSTMENT: "true"
+  ENABLE_FORMAT_CONVERSION: "true"
+  MAX_AUDIO_DURATION: "300"
+
+  # Supported Languages (comma-separated)
+  SUPPORTED_LANGUAGES: "en,hi,ta,te,kn,ml,bn,gu,mr,pa,or,as,ur,sa,ks,ne,sd,kok,doi,mai,brx,mni"
+
+  # Streaming Configuration
+  STREAMING_RESPONSE_FREQUENCY_MS: "2000"
+  STREAMING_MAX_CONNECTIONS: "100"
+  STREAMING_ENABLE_CHUNKING: "true"
+  STREAMING_TIMEOUT_SECONDS: "300"
+
+  # Authentication Configuration
+  AUTH_ENABLED: "false"
+  API_KEY_CACHE_TTL: "300"
+  SESSION_TIMEOUT_SECONDS: "3600"
+
+  # Rate Limiting Configuration
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_PER_MINUTE: "60"
+  RATE_LIMIT_PER_HOUR: "1000"
+  RATE_LIMIT_PER_DAY: "10000"
+
+  # Security Configuration
+  ALLOW_ANONYMOUS_ACCESS: "false"
+  REQUIRE_API_KEY: "true"

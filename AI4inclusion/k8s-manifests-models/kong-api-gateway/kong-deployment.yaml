@@ -1,0 +1,141 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong-gateway
+  namespace: kong
+  labels:
+    app: kong-gateway
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kong-gateway
+  template:
+    metadata:
+      labels:
+        app: kong-gateway
+    spec:
+      dnsPolicy: ClusterFirst
+      dnsConfig:
+        nameservers:
+        - "10.100.0.10"
+        options:
+        - name: ndots
+          value: "5"
+        - name: timeout
+          value: "1"
+        - name: attempts
+          value: "2"
+        - name: single-request-reopen
+      containers:
+      - name: kong
+        image: kong:3.4.2
+        env:
+        - name: KONG_DATABASE
+          value: "off"
+        - name: KONG_DECLARATIVE_CONFIG
+          value: "/kong/declarative/kong.yml"
+        - name: KONG_PROXY_ACCESS_LOG
+          value: "/dev/stdout"
+        - name: KONG_ADMIN_ACCESS_LOG
+          value: "/dev/stdout"
+        - name: KONG_PROXY_ERROR_LOG
+          value: "/dev/stderr"
+        - name: KONG_ADMIN_ERROR_LOG
+          value: "/dev/stderr"
+        - name: KONG_ADMIN_LISTEN
+          value: "0.0.0.0:8001"
+        - name: KONG_ADMIN_GUI_URL
+          value: "http://kong-gateway-service.kong.svc.cluster.local:8002"
+        - name: KONG_ADMIN_GUI_LISTEN
+          value: "0.0.0.0:8002"
+        - name: KONG_PROXY_LISTEN
+          value: "0.0.0.0:8000"
+        - name: KONG_NGINX_DAEMON
+          value: "off"
+        - name: KONG_PLUGINS
+          value: "bundled,rate-limiting,key-auth,cors,prometheus"
+        - name: KONG_DNS_RESOLVER
+          value: "10.100.0.10"
+        - name: KONG_DNS_ORDER
+          value: "LAST,SRV,A"
+        - name: KONG_DNS_NO_SYNC
+          value: "off"
+        - name: KONG_DNS_ERR_TTL
+          value: "1"
+        - name: KONG_DNS_QUERY_TIMEOUT
+          value: "500"
+        - name: KONG_DNS_NOT_FOUND_TTL
+          value: "30"
+        - name: KONG_DNS_STALE_TTL
+          value: "600"
+        - name: KONG_DNS_CACHE_SIZE
+          value: "10000"
+        ports:
+        - containerPort: 8000
+          name: proxy
+        - containerPort: 8001
+          name: admin-api
+        - containerPort: 8002
+          name: admin-gui
+        - containerPort: 8443
+          name: proxy-ssl
+        - containerPort: 8444
+          name: admin-api-ssl
+        - containerPort: 8445
+          name: admin-gui-ssl
+        livenessProbe:
+          httpGet:
+            path: /status
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /status
+            port: 8001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        volumeMounts:
+        - name: kong-config
+          mountPath: /kong/declarative
+          readOnly: true
+      volumes:
+      - name: kong-config
+        configMap:
+          name: kong-database-config
+          items:
+          - key: kong.yml
+            path: kong.yml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong-gateway-service
+  namespace: kong
+  labels:
+    app: kong-gateway
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8000
+    protocol: TCP
+    name: proxy
+  - port: 8001
+    targetPort: 8001
+    protocol: TCP
+    name: admin-api
+  - port: 8002
+    targetPort: 8002
+    protocol: TCP
+    name: admin-gui
+  selector:
+    app: kong-gateway

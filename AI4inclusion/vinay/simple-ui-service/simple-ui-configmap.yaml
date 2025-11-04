@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: simple-ui-frontend-config
+  namespace: dev
+data:
+  NEXT_PUBLIC_API_URL: "http://dev.ai4inclusion.org"
+  NEXT_PUBLIC_API_KEY: "your_api_key_here"
+  NEXT_PUBLIC_ASR_STREAM_URL: "ws://asr-service:8087/socket.io/asr"
+  NEXT_PUBLIC_TTS_STREAM_URL: "ws://tts-service:8088/socket.io/tts"
+  NEXT_PUBLIC_ENABLE_STREAMING: "true"
+  NEXT_PUBLIC_ENABLE_FEEDBACK: "false"
+

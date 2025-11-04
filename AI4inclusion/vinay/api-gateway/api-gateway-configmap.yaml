@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-gateway-config
+  namespace: dev
+data:
+  SERVICE_NAME: "api-gateway-service"
+  SERVICE_PORT: "8080"
+  LOG_LEVEL: "INFO"
+
+  # Redis Configuration
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+
+  # Rate Limiting
+  RATE_LIMIT_PER_MINUTE: "100"
+  RATE_LIMIT_PER_HOUR: "1000"
+
+  # Downstream Internal Service URLs
+  AUTH_SERVICE_URL: "http://auth-service.dev.svc.cluster.local:8081"
+  CONFIG_SERVICE_URL: "http://config-service.dev.svc.cluster.local:8082"
+  METRICS_SERVICE_URL: "http://metrics-service.dev.svc.cluster.local:8083"
+  TELEMETRY_SERVICE_URL: "http://telemetry-service.dev.svc.cluster.local:8084"
+  ALERTING_SERVICE_URL: "http://alerting-service.dev.svc.cluster.local:8085"
+  DASHBOARD_SERVICE_URL: "http://dashboard-service.dev.svc.cluster.local:8086"
+
+  # AI Microservices
+  ASR_SERVICE_URL: "http://asr-service.dev.svc.cluster.local:8087"
+  TTS_SERVICE_URL: "http://tts-service.dev.svc.cluster.local:8088"
+  NMT_SERVICE_URL: "http://nmt-service.dev.svc.cluster.local:8089"
+  PIPELINE_SERVICE_URL: "http://pipeline-service.dev.svc.cluster.local:8090"
+
+  # Timeout and Circuit Breaker
+  REQUEST_TIMEOUT: "30"
+  CIRCUIT_BREAKER_THRESHOLD: "5"
+
+  # Health Check & Registry
+  SERVICE_REGISTRY_TTL: "300"
+  HEALTH_CHECK_INTERVAL: "30"
+  HEALTH_CHECK_TIMEOUT: "5"
+  MAX_CONSECUTIVE_FAILURES: "3"
+  LOAD_BALANCER_ALGORITHM: "weighted_round_robin"
+
+  # Header Propagation
+  ENABLE_CORRELATION_ID: "true"
+  ENABLE_REQUEST_ID: "true"
+  CORRELATION_ID_HEADER: "X-Correlation-ID"
+  REQUEST_ID_HEADER: "X-Request-ID"
+
+  # Retry Settings
+  MAX_RETRY_ATTEMPTS: "2"
+  RETRY_BACKOFF_FACTOR: "1.5"
+  CIRCUIT_BREAKER_ENABLED: "true"
+

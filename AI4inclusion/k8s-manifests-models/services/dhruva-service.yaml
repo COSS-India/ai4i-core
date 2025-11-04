@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dhruva-service
+  namespace: default
+  labels:
+    app: dhruva-service
+    workload-type: cpu
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: dhruva-service
+  template:
+    metadata:
+      labels:
+        app: dhruva-service
+        workload-type: cpu
+    spec:
+      nodeSelector:
+        node-type: cpu
+      containers:
+      - name: dhruva-service
+        image: ubuntu:22.04
+        command: ["/bin/bash"]
+        args:
+        - -c
+        - |
+          apt-get update && apt-get install -y python3 python3-pip curl
+          pip3 install flask requests
+          cat > /app/app.py << 'EOF'
+          from flask import Flask, request, jsonify
+          import os
+          
+          app = Flask(__name__)
+          
+          @app.route('/health', methods=['GET'])
+          def health():
+              return jsonify({"status": "healthy", "service": "dhruva-service"})
+          
+          @app.route('/api/v1/dhruva', methods=['GET'])
+          def list_dhruva_features():
+              return jsonify({
+                  "features": [
+                      {"id": "feature-1", "name": "Text-to-Speech", "status": "active"},
+                      {"id": "feature-2", "name": "Speech-to-Text", "status": "active"},
+                      {"id": "feature-3", "name": "Voice Cloning", "status": "beta"}
+                  ]
+              })
+          
+          @app.route('/api/v1/dhruva/tts', methods=['POST'])
+          def text_to_speech():
+              data = request.get_json()
+              return jsonify({
+                  "text": data.get('text', ''),
+                  "audio_url": "https://example.com/audio/sample.mp3",
+                  "status": "completed"
+              })
+          
+          @app.route('/api/v1/dhruva/stt', methods=['POST'])
+          def speech_to_text():
+              data = request.get_json()
+              return jsonify({
+                  "audio_url": data.get('audio_url', ''),
+                  "text": "Sample transcribed text",
+                  "confidence": 0.95
+              })
+          
+          if __name__ == '__main__':
+              app.run(host='0.0.0.0', port=8080)
+          EOF
+          python3 /app/app.py
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dhruva-service
+  namespace: default
+  labels:
+    app: dhruva-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: dhruva-service

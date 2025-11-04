@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: telemetry-service
+  namespace: dev
+  labels:
+    app: telemetry-service
+spec:
+  selector:
+    app: telemetry-service
+  ports:
+    - port: 8084
+      targetPort: 8084
+      protocol: TCP
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telemetry-service
+  namespace: dev
+  labels:
+    app: telemetry-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: telemetry-service
+  template:
+    metadata:
+      labels:
+        app: telemetry-service
+    spec:
+      nodeSelector:
+      tolerations:
+      - key: "node-type"
+        operator: Equal
+        value: cpu
+        effect: NoSchedule
+      containers:
+      - name: telemetry-service
+        image: ai4v/telemetry-service:latest
+        ports:
+        - containerPort: 8084
+        env:
+        - name: ENV_FILE
+          value: ".env"
+        envFrom:
+        - configMapRef:
+            name: telemetry-service-config
+        - secretRef:
+            name: telemetry-service-secret
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "400m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8084
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8084
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      restartPolicy: Always
