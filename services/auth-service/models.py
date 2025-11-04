@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.sql import func
 
 Base = declarative_base()
@@ -104,7 +104,7 @@ class LoginResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int
-    user: UserResponse
+    user: Optional[UserResponse] = None
 
 class TokenRefreshRequest(BaseModel):
     refresh_token: str

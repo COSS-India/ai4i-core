@@ -127,7 +127,8 @@ class AuthUtils:
         device_info: Optional[Dict] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
-        expires_delta: Optional[timedelta] = None
+        expires_delta: Optional[timedelta] = None,
+        auto_commit: bool = True
     ) -> UserSession:
         """Create a new user session"""
         if expires_delta:
@@ -146,8 +147,10 @@ class AuthUtils:
         )
         
         db.add(session)
-        await db.commit()
-        await db.refresh(session)
+        await db.flush()  # Flush to get the session ID
+        if auto_commit:
+            await db.commit()
+        # Return session - no refresh needed as flush already gives us the ID
         return session
     
     @staticmethod
