@@ -5,6 +5,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { User, AuthState, LoginRequest, RegisterRequest } from '../types/auth';
 import authService from '../services/authService';
 
+// Broadcast auth state changes so other hook instances (e.g., Header) can react immediately
+const AUTH_UPDATED_EVENT = 'auth:updated';
+
 export const useAuth = () => {
   const [authState, setAuthState] = useState<AuthState>({
     user: null,
@@ -17,6 +20,29 @@ export const useAuth = () => {
 
   // Initialize auth state
   useEffect(() => {
+    const handleAuthUpdated = () => {
+      try {
+        const storedUser = authService.getStoredUser();
+        const hasToken = authService.isAuthenticated();
+        setAuthState(prev => ({
+          ...prev,
+          user: storedUser,
+          accessToken: authService.getAccessToken(),
+          refreshToken: authService.getRefreshToken(),
+          isAuthenticated: !!hasToken && !!storedUser,
+          isLoading: false,
+          error: null,
+        }));
+      } catch {
+        // noop
+      }
+    };
+
+    // Listen for cross-component auth updates
+    if (typeof window !== 'undefined') {
+      window.addEventListener(AUTH_UPDATED_EVENT, handleAuthUpdated as EventListener);
+    }
+
     const initializeAuth = async () => {
       try {
         const storedUser = authService.getStoredUser();
@@ -83,6 +109,11 @@ export const useAuth = () => {
     };
 
     initializeAuth();
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener(AUTH_UPDATED_EVENT, handleAuthUpdated as EventListener);
+      }
+    };
   }, []);
 
   const login = useCallback(async (credentials: LoginRequest) => {
@@ -129,11 +160,12 @@ export const useAuth = () => {
         });
 
         console.log('useAuth: ✅ Authentication complete - user logged in successfully');
-        
-        // Force a small delay to ensure state propagation, then return
-        // This helps React batch updates and ensures UI updates immediately
-        await new Promise(resolve => setTimeout(resolve, 0));
-        
+
+        // Notify other components/hooks to refresh their view immediately
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
+        }
+
         return response;
       } catch (meError) {
         console.error('useAuth: Failed to fetch user data / token validation failed:', meError);
@@ -200,9 +232,9 @@ export const useAuth = () => {
       // Clear stored user data
       authService.clearStoredUser();
 
-      // Navigate to home page and refresh to show sign-in button
+      // Broadcast auth update so UI reflects logout without manual refresh
       if (typeof window !== 'undefined') {
-        window.location.href = '/';
+        window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
       }
     } catch (error) {
       console.error('Logout failed:', error);
@@ -217,9 +249,8 @@ export const useAuth = () => {
       });
       authService.clearStoredUser();
 
-      // Navigate to home page even if logout API call failed
       if (typeof window !== 'undefined') {
-        window.location.href = '/';
+        window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
       }
     }
   }, []);

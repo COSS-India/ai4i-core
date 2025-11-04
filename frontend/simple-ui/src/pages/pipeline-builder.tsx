@@ -159,7 +159,7 @@ const PipelineBuilderPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Customize Pipeline - Custom | Simple UI</title>
+        <title>Customize Pipeline - Custom | AI4Inclusion Console</title>
         <meta name="description" content="Build and test custom AI pipelines" />
       </Head>
 
