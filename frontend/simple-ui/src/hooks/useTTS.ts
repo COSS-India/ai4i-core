@@ -15,7 +15,7 @@ const getServiceIdForLanguage = (language: string): string => {
     return 'indic-tts-coqui-dravidian';
   }
   // Indo-Aryan languages (expanded as requested)
-  if (['hi', 'bn', 'gu', 'mr', 'pa', 'as', 'or', 'raj'].includes(language)) {
+  if (['hi', 'bn', 'gu', 'mr', 'pa', 'as', 'or'].includes(language)) {
     return 'indic-tts-coqui-indo_aryan';
   }
   // Miscellaneous languages (English, etc.)
