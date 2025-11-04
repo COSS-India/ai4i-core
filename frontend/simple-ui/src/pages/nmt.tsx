@@ -78,7 +78,7 @@ const NMTPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>NMT - Neural Machine Translation | Simple UI</title>
+        <title>NMT - Neural Machine Translation | AI4Inclusion Console</title>
         <meta name="description" content="Test Neural Machine Translation between 22+ Indian languages" />
       </Head>
 

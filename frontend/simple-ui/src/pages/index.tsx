@@ -144,7 +144,7 @@ const HomePage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Simple UI - AI Accessibility Studio</title>
+        <title>AI4Inclusion Console</title>
         <meta
           name="description"
           content="Test ASR, TTS, NMT, LLM (GPT OSS 20B), and Pipeline microservices with a modern web interface"
