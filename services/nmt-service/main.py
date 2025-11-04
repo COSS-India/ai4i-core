@@ -259,6 +259,27 @@ async def root():
     }
 
 
+@app.get("/health")
+async def health_check():
+    """Root health check endpoint - basic health check"""
+    try:
+        # Basic health check - just verify service is running
+        # The detailed health check is available at /api/v1/nmt/health
+        return {
+            "status": "healthy",
+            "service": "nmt-service",
+            "version": "1.0.0",
+            "message": "Service is running. For detailed health check, use /api/v1/nmt/health"
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "service": "nmt-service",
+            "error": str(e)
+        }
+
+
 
 
 if __name__ == "__main__":
