@@ -8,6 +8,7 @@ from redis.asyncio import Redis
 from models.service_registry_models import ServiceInstance, ServiceStatus
 from registry.base import ServiceRegistryClient
 from repositories.service_registry_repository import ServiceRegistryRepository
+from services.health_monitor_service import HealthMonitorService, AggregatedHealthResult
 
 
 logger = logging.getLogger(__name__)
@@ -20,11 +21,13 @@ class ServiceRegistryService:
         repository: ServiceRegistryRepository,
         redis_client: Redis,
         cache_ttl: int = 60,
+        health_monitor: Optional[HealthMonitorService] = None,
     ) -> None:
         self.registry = registry_client
         self.repository = repository
         self.redis = redis_client
         self.cache_ttl = cache_ttl
+        self.health_monitor = health_monitor
 
     def _instances_cache_key(self, service_name: str) -> str:
         return f"registry:instances:{service_name}"
@@ -84,19 +87,83 @@ class ServiceRegistryService:
             for r in rows
         ]
 
-    async def perform_health_check(self, service_name: str, timeout: float = 3.0) -> ServiceStatus:
+    async def perform_health_check(
+        self,
+        service_name: str,
+        timeout: float = 3.0,
+        use_health_monitor: bool = True,
+        additional_endpoints: Optional[List[str]] = None,
+    ) -> ServiceStatus:
+        """
+        Perform health check for a service.
+        
+        Args:
+            service_name: Name of the service to check
+            timeout: Request timeout in seconds (legacy parameter)
+            use_health_monitor: If True, use enhanced health monitor with retry logic
+            additional_endpoints: Additional endpoints to check (e.g., /ready, /live)
+        
+        Returns:
+            ServiceStatus indicating overall health
+        """
+        if use_health_monitor and self.health_monitor:
+            # Use enhanced health monitor with retry logic and multi-endpoint support
+            instances = await self.get_service_instances(service_name)
+            aggregated_result = await self.health_monitor.check_service_health(
+                service_name,
+                instances,
+                additional_endpoints,
+            )
+            await self.repository.update_service_status(
+                service_name,
+                aggregated_result.overall_status.value,
+            )
+            return aggregated_result.overall_status
+        else:
+            # Legacy health check logic (backward compatibility)
+            instances = await self.get_service_instances(service_name)
+            status = ServiceStatus.UNKNOWN
+            for inst in instances:
+                url = inst.health_check_url or inst.service_url
+                ok = await self._http_health_ok(url, timeout)
+                if ok:
+                    status = ServiceStatus.HEALTHY
+                    break
+            await self.repository.update_service_status(service_name, status.value)
+            return status
+
+    async def perform_health_check_with_details(
+        self,
+        service_name: str,
+        additional_endpoints: Optional[List[str]] = None,
+    ) -> AggregatedHealthResult:
+        """
+        Perform health check and return detailed results.
+        
+        Args:
+            service_name: Name of the service to check
+            additional_endpoints: Additional endpoints to check
+        
+        Returns:
+            AggregatedHealthResult with detailed health information
+        """
+        if not self.health_monitor:
+            raise ValueError("Health monitor not initialized")
+        
         instances = await self.get_service_instances(service_name)
-        status = ServiceStatus.UNKNOWN
-        for inst in instances:
-            url = inst.health_check_url or inst.service_url
-            ok = await self._http_health_ok(url, timeout)
-            if ok:
-                status = ServiceStatus.HEALTHY
-                break
-        await self.repository.update_service_status(service_name, status.value)
-        return status
+        aggregated_result = await self.health_monitor.check_service_health(
+            service_name,
+            instances,
+            additional_endpoints,
+        )
+        await self.repository.update_service_status(
+            service_name,
+            aggregated_result.overall_status.value,
+        )
+        return aggregated_result
 
     async def _http_health_ok(self, url: str, timeout: float) -> bool:
+        """Legacy health check method for backward compatibility"""
         try:
             import aiohttp
             async with aiohttp.ClientSession() as session:

@@ -27,6 +27,9 @@ pyyaml>=6.0
 # ZooKeeper client
 kazoo>=2.9.0
 
+# HTTP client for health checks
+aiohttp>=3.9.0
+
 # Development dependencies (commented out for production)
 # pytest>=7.4.0
 # pytest-asyncio>=0.21.0
