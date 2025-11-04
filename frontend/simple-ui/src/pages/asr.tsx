@@ -20,16 +20,16 @@ import { useASR } from '../hooks/useASR';
 import { listASRModels } from '../services/asrService';
 import ContentLayout from '../components/common/ContentLayout';
 import AudioRecorder from '../components/asr/AudioRecorder';
-import AudioPlayer from '../components/asr/AudioPlayer';
 import ASRResults from '../components/asr/ASRResults';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { SUPPORTED_LANGUAGES, ASR_SAMPLE_RATES } from '../config/constants';
+import { ASR_SUPPORTED_LANGUAGES } from '../config/constants';
 
 const ASRPage: React.FC = () => {
   const toast = useToast();
   const {
     language,
     sampleRate,
+    serviceId,
     inferenceMode,
     recording,
     fetching,
@@ -41,10 +41,10 @@ const ASRPage: React.FC = () => {
     error,
     startRecording,
     stopRecording,
-    handleFileUpload,
     performInference,
     setLanguage,
     setSampleRate,
+    setServiceId,
     setInferenceMode,
     clearResults,
   } = useASR();
@@ -74,7 +74,7 @@ const ASRPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>ASR - Speech Recognition | Simple UI</title>
+        <title>ASR - Speech Recognition | AI4Inclusion Console</title>
         <meta name="description" content="Test Automatic Speech Recognition with microphone recording and file upload" />
       </Head>
 
@@ -86,7 +86,7 @@ const ASRPage: React.FC = () => {
               Automatic Speech Recognition
             </Heading>
             <Text color="gray.600" fontSize="lg">
-              Convert speech to text with support for 22+ Indian languages
+              Convert speech to text with support for 12+ Indian languages
             </Text>
           </Box>
 
@@ -114,35 +114,32 @@ const ASRPage: React.FC = () => {
                   </Select>
                 </FormControl>
 
+                {/* ASR Service Selection */}
+                <FormControl>
+                  <FormLabel className="dview-service-try-option-title">
+                    ASR Service <Text as="span" color="red.500">*</Text>
+                  </FormLabel>
+                  <Select
+                    value={serviceId}
+                    onChange={(e) => setServiceId(e.target.value)}
+                    isDisabled={fetching}
+                  >
+                    <option value="asr_am_ensemble">ai4bharat/conformer-multilingual-asr</option>
+                  </Select>
+                </FormControl>
+
                 {/* Language Selection */}
                 <FormControl>
                   <FormLabel className="dview-service-try-option-title">
-                    Language
+                    Language <Text as="span" color="red.500">*</Text>
                   </FormLabel>
                   <Select
                     value={language}
                     onChange={(e) => setLanguage(e.target.value)}
                   >
-                    {SUPPORTED_LANGUAGES.map((lang) => (
+                    {ASR_SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
                         {lang.label}
-                      </option>
-                    ))}
-                  </Select>
-                </FormControl>
-
-                {/* Sample Rate Selection */}
-                <FormControl>
-                  <FormLabel className="dview-service-try-option-title">
-                    Sample Rate
-                  </FormLabel>
-                  <Select
-                    value={sampleRate}
-                    onChange={(e) => setSampleRate(Number(e.target.value))}
-                  >
-                    {ASR_SAMPLE_RATES.map((rate) => (
-                      <option key={rate} value={rate}>
-                        {rate} Hz
                       </option>
                     ))}
                   </Select>
@@ -151,7 +148,7 @@ const ASRPage: React.FC = () => {
                 {/* Audio Recorder */}
                 <Box>
                   <FormLabel className="dview-service-try-option-title" mb={4}>
-                    Audio Input
+                    Audio Input <Text as="span" color="red.500">*</Text>
                   </FormLabel>
                   <AudioRecorder
                     onAudioReady={handleAudioReady}
@@ -160,22 +157,6 @@ const ASRPage: React.FC = () => {
                     sampleRate={sampleRate}
                     disabled={fetching}
                     timer={timer}
-                  />
-                </Box>
-
-                {/* File Upload */}
-                <Box>
-                  <FormLabel className="dview-service-try-option-title" mb={4}>
-                    File Upload
-                  </FormLabel>
-                  <input
-                    type="file"
-                    accept="audio/*"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) handleFileUpload(file);
-                    }}
-                    style={{ width: '100%' }}
                   />
                 </Box>
               </VStack>
@@ -203,55 +184,33 @@ const ASRPage: React.FC = () => {
                   </Box>
                 )}
 
-                {/* Recording Timer */}
-                {recording && (
-                  <Box p={4} bg="orange.50" borderRadius="md" textAlign="center">
-                    <Text color="orange.600" fontWeight="semibold">
-                      Recording: {Math.floor(timer / 60)}:{(timer % 60).toString().padStart(2, '0')}
-                    </Text>
-                  </Box>
-                )}
-
                 {/* ASR Results */}
                 {fetched && audioText && (
-                  <ASRResults
-                    transcript={audioText}
-                    wordCount={responseWordCount}
-                    responseTime={Number(requestTime)}
-                  />
-                )}
-
-                {/* Audio Player (if available) */}
-                {audioText && (
-                  <Box>
-                    <Text mb={2} fontSize="sm" fontWeight="semibold" color="gray.700">
-                      Audio Playback
-                    </Text>
-                    <AudioPlayer
-                      audioSrc=""
-                      showVisualization={true}
+                  <>
+                    <ASRResults
+                      transcript={audioText}
+                      responseWordCount={responseWordCount}
+                      responseTime={Number(requestTime)}
                     />
-                  </Box>
-                )}
 
-                {/* Clear Results Button */}
-                {fetched && (
-                  <Box textAlign="center">
-                    <button
-                      onClick={clearResults}
-                      style={{
-                        padding: '8px 16px',
-                        backgroundColor: '#f7fafc',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontSize: '14px',
-                        color: '#4a5568',
-                      }}
-                    >
-                      Clear Results
-                    </button>
-                  </Box>
+                    {/* Clear Results Button */}
+                    <Box textAlign="center">
+                      <button
+                        onClick={clearResults}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: '#f7fafc',
+                          border: '1px solid #e2e8f0',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                          color: '#4a5568',
+                        }}
+                      >
+                        Clear Results
+                      </button>
+                    </Box>
+                  </>
                 )}
               </VStack>
             </GridItem>

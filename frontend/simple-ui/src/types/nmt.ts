@@ -69,7 +69,7 @@ export interface NMTModelsResponse {
 // NMT Hook State
 export interface NMTHookState {
   languagePair: LanguagePair;
-  selectedModelId: string;
+  selectedServiceId: string;
   inputText: string;
   translatedText: string;
   fetching: boolean;
@@ -85,7 +85,7 @@ export interface NMTHookMethods {
   performInference: (text: string) => Promise<void>;
   setInputText: (text: string) => void;
   setLanguagePair: (pair: LanguagePair) => void;
-  setSelectedModelId: (modelId: string) => void;
+  setSelectedServiceId: (serviceId: string) => void;
   clearResults: () => void;
   swapLanguages: () => void;
 }
@@ -211,4 +211,21 @@ export interface NMTModelDetailsResponse {
   description: string;
   max_batch_size: number;
   supported_scripts: string[];
+}
+
+// NMT Service Details Response
+export interface NMTServiceDetailsResponse {
+  service_id: string;
+  model_id: string;
+  triton_endpoint: string;
+  triton_model: string;
+  provider: string;
+  description: string;
+  supported_languages: string[];
+  supported_language_pairs?: Array<{
+    sourceLanguage: string;
+    targetLanguage: string;
+    sourceScriptCode?: string;
+    targetScriptCode?: string;
+  }>;
 }
