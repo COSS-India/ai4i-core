@@ -1516,6 +1516,17 @@ async def get_pipeline_info(
         headers['X-API-Key'] = api_key
     return await proxy_to_service(None, "/api/v1/pipeline/info", "pipeline-service", headers=headers)
 
+@app.get("/api/v1/pipeline/health", tags=["Pipeline"])
+async def pipeline_health(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Pipeline service health check"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/health", "pipeline-service", headers=headers)
+
 # Protected Endpoints (Require Authentication)
 
 @app.get("/api/v1/protected/status")
