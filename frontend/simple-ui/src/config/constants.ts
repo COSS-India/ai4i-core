@@ -49,7 +49,7 @@ export const SUPPORTED_LANGUAGES = [
   { code: 'ar', label: 'Arabic', scriptCode: 'Arab' },
 ];
 
-// ASR-supported languages (matching ai4bharat/conformer-multilingual-asr model)
+// ASR-supported languages (matching ASR service supported languages)
 export const ASR_SUPPORTED_LANGUAGES = [
   { code: 'as', label: 'Assamese', scriptCode: 'Beng' },
   { code: 'bn', label: 'Bengali', scriptCode: 'Beng' },
@@ -71,6 +71,17 @@ export const ASR_SUPPORTED_LANGUAGES = [
   { code: 'ta', label: 'Tamil', scriptCode: 'Taml' },
   { code: 'te', label: 'Telugu', scriptCode: 'Telu' },
   { code: 'ur', label: 'Urdu', scriptCode: 'Arab' },
+];
+
+// TTS-supported languages (matching TTS service supported languages)
+export const TTS_SUPPORTED_LANGUAGES = [
+  { code: 'hi', label: 'Hindi', scriptCode: 'Deva' },
+  { code: 'mr', label: 'Marathi', scriptCode: 'Deva' },
+  { code: 'as', label: 'Assamese', scriptCode: 'Beng' },
+  { code: 'bn', label: 'Bengali', scriptCode: 'Beng' },
+  { code: 'gu', label: 'Gujarati', scriptCode: 'Gujr' },
+  { code: 'or', label: 'Odia', scriptCode: 'Orya' },
+  { code: 'pa', label: 'Punjabi', scriptCode: 'Guru' },
 ];
 
 // Language code to label mapping
