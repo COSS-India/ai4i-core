@@ -30,7 +30,7 @@ import { FaMicrophone, FaMicrophoneSlash } from 'react-icons/fa';
 import { useRouter } from 'next/router';
 import ContentLayout from '../components/common/ContentLayout';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import { SUPPORTED_LANGUAGES, LANG_CODE_TO_LABEL } from '../config/constants';
+import { ASR_SUPPORTED_LANGUAGES, TTS_SUPPORTED_LANGUAGES, LANG_CODE_TO_LABEL } from '../config/constants';
 import { usePipeline } from '../hooks/usePipeline';
 import { listASRModels } from '../services/asrService';
 import { listNMTServices } from '../services/nmtService';
@@ -39,7 +39,7 @@ import { listVoices } from '../services/ttsService';
 const PipelinePage: React.FC = () => {
   const toast = useToast();
   const router = useRouter();
-  const [sourceLanguage, setSourceLanguage] = useState('en');
+  const [sourceLanguage, setSourceLanguage] = useState('hi');
   const [targetLanguage, setTargetLanguage] = useState('hi');
   const [asrServiceId, setAsrServiceId] = useState('asr_am_ensemble');
   const [nmtServiceId, setNmtServiceId] = useState('ai4bharat/indictrans-v2-all-gpu');
@@ -183,7 +183,7 @@ const PipelinePage: React.FC = () => {
                     value={sourceLanguage}
                     onChange={(e) => setSourceLanguage(e.target.value)}
                   >
-                    {SUPPORTED_LANGUAGES.map((lang) => (
+                    {ASR_SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
                         {lang.label}
                       </option>
@@ -200,7 +200,7 @@ const PipelinePage: React.FC = () => {
                     value={targetLanguage}
                     onChange={(e) => setTargetLanguage(e.target.value)}
                   >
-                    {SUPPORTED_LANGUAGES.map((lang) => (
+                    {TTS_SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
                         {lang.label}
                       </option>
