@@ -59,10 +59,13 @@ export const useTTS = (): UseTTSReturn => {
     },
     onSuccess: (response) => {
       try {
-        const audioContent = response.audio[0]?.audioContent;
+        const audioContent = response.data.audio[0]?.audioContent;
         if (audioContent) {
           const dataUrl = `data:audio/wav;base64,${audioContent}`;
           setAudio(dataUrl);
+          
+          // Set response time
+          setRequestTime(response.responseTime.toString());
           
           // Get audio duration
           const audioElement = new Audio(dataUrl);
