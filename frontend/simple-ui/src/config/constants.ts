@@ -27,7 +27,6 @@ export const SUPPORTED_LANGUAGES = [
   { code: 'gom', label: 'Goan Konkani', scriptCode: 'Latn' },
   { code: 'sat', label: 'Santali', scriptCode: 'Latn' },
   // Custom additions
-  { code: 'raj', label: 'Rajasthani', scriptCode: 'Deva' },
   // African languages
   { code: 'sw', label: 'Swahili', scriptCode: 'Latn' },
   { code: 'yo', label: 'Yoruba', scriptCode: 'Latn' },
