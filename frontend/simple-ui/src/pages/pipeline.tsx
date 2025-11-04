@@ -40,10 +40,10 @@ const PipelinePage: React.FC = () => {
   const toast = useToast();
   const router = useRouter();
   const [sourceLanguage, setSourceLanguage] = useState('hi');
-  const [targetLanguage, setTargetLanguage] = useState('hi');
+  const [targetLanguage, setTargetLanguage] = useState('mr');
   const [asrServiceId, setAsrServiceId] = useState('asr_am_ensemble');
   const [nmtServiceId, setNmtServiceId] = useState('ai4bharat/indictrans-v2-all-gpu');
-  const [ttsServiceId, setTtsServiceId] = useState('indic-tts-coqui-dravidian');
+  const [ttsServiceId, setTtsServiceId] = useState('indic-tts-coqui-indo_aryan');
 
   const {
     isLoading,
@@ -215,12 +215,15 @@ const PipelinePage: React.FC = () => {
                     value={asrServiceId}
                     onChange={(e) => setAsrServiceId(e.target.value)}
                   >
-                    <option value="asr_am_ensemble">asr_am_ensemble (Default)</option>
-                    {asrModels?.models?.map((model) => (
-                      <option key={model.model_id} value={model.model_id}>
-                        {model.model_id}
-                      </option>
-                    ))}
+                    {asrModels?.models
+                      ?.filter((model) => 
+                        model.model_id.toLowerCase().includes('conformer')
+                      )
+                      .map((model) => (
+                        <option key={model.model_id} value={model.model_id}>
+                          {model.model_id}
+                        </option>
+                      ))}
                   </Select>
                 </FormControl>
 
@@ -232,11 +235,15 @@ const PipelinePage: React.FC = () => {
                     onChange={(e) => setNmtServiceId(e.target.value)}
                   >
                     <option value="ai4bharat/indictrans-v2-all-gpu">ai4bharat/indictrans-v2-all-gpu (Default)</option>
-                    {nmtServices?.map((service) => (
-                      <option key={service.service_id} value={service.service_id}>
-                        {service.service_id}
-                      </option>
-                    ))}
+                    {nmtServices
+                      ?.filter((service) => 
+                        !service.service_id.toLowerCase().includes('facebook')
+                      )
+                      .map((service) => (
+                        <option key={service.service_id} value={service.service_id}>
+                          {service.service_id}
+                        </option>
+                      ))}
                   </Select>
                 </FormControl>
 
@@ -247,14 +254,7 @@ const PipelinePage: React.FC = () => {
                     value={ttsServiceId}
                     onChange={(e) => setTtsServiceId(e.target.value)}
                   >
-                    <option value="indic-tts-coqui-dravidian">indic-tts-coqui-dravidian (Default)</option>
                     <option value="indic-tts-coqui-indo_aryan">indic-tts-coqui-indo_aryan</option>
-                    <option value="indic-tts-coqui-misc">indic-tts-coqui-misc</option>
-                    {ttsVoices?.voices?.slice(0, 10).map((voice) => (
-                      <option key={voice.voice_id} value={voice.voice_id}>
-                        {voice.voice_id}
-                      </option>
-                    ))}
                   </Select>
                 </FormControl>
 
