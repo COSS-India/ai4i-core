@@ -1,4 +1,4 @@
-# Service Registry Quick Start Guide
+# Service Registry Developer Guide
 
 **For developers creating new microservices in this project**
 
