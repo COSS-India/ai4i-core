@@ -11,7 +11,13 @@ import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from aiokafka import AIOKafkaProducer
-from models.database_models import Base
+from models.database_models import (
+    Base,
+    Configuration,
+    FeatureFlag,
+    ServiceRegistry,
+    ConfigurationHistory,
+) 
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
