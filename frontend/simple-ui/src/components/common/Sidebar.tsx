@@ -168,7 +168,7 @@ const Sidebar: React.FC = () => {
             <Image
               src="/AI4Inclusion_Logo.svg"
               alt="AI4Inclusion Logo"
-              boxSize="40px"
+              boxSize={24}
               objectFit="contain"
               fallback={
                 <Box
