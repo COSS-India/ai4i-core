@@ -23,8 +23,8 @@ CREATE TABLE IF NOT EXISTS feature_flags (
     name VARCHAR(255) UNIQUE NOT NULL,
     description TEXT,
     is_enabled BOOLEAN DEFAULT false,
-    rollout_percentage DECIMAL(5,2) DEFAULT 0.00,
-    target_users TEXT[], -- Array of user IDs or user groups
+    rollout_percentage VARCHAR(255), -- Stored as string to match Python model (compatible with DECIMAL conversion in repo)
+    target_users JSONB, -- JSON array/list of user IDs or user groups
     environment VARCHAR(50) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS service_registry (
     health_check_url VARCHAR(255),
     status VARCHAR(20) DEFAULT 'unknown', -- 'healthy', 'unhealthy', 'unknown'
     last_health_check TIMESTAMP WITH TIME ZONE,
-    metadata JSONB,
+    service_metadata JSONB, -- Matches Python model field name
     registered_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
