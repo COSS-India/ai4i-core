@@ -37,7 +37,7 @@ class InvalidTextInputError(Exception):
 
 # Supported languages (Indian + African languages)
 SUPPORTED_LANGUAGES = [
-    # Indian languages
+    # Indic Languages
     "en", "hi", "ta", "te", "kn", "ml", "bn", "gu", "mr", "pa", 
     "or", "as", "ur", "sa", "ks", "ne", "sd", "kok", "doi", 
     "mai", "brx", "mni", "sat", "gom",

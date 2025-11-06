@@ -1,87 +1,92 @@
 // Header/navbar component for top navigation with authentication and API key management
 
-import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/router';
+import { ArrowBackIcon, HamburgerIcon } from "@chakra-ui/icons";
 import {
+  Badge,
   Box,
+  Button,
   HStack,
   Heading,
-  Badge,
+  IconButton,
   Menu,
   MenuButton,
-  MenuList,
   MenuItem,
-  IconButton,
+  MenuList,
   useColorModeValue,
-  Button
-} from '@chakra-ui/react';
-import { HamburgerIcon, ArrowBackIcon } from '@chakra-ui/icons';
-import ApiKeyViewerModal from './ApiKeyViewerModal';
-import { useAuth } from '../../hooks/useAuth';
-import AuthModal from '../auth/AuthModal';
+} from "@chakra-ui/react";
+import { useRouter } from "next/router";
+import React, { useEffect, useState } from "react";
+import { useAuth } from "../../hooks/useAuth";
+import AuthModal from "../auth/AuthModal";
+import ApiKeyViewerModal from "./ApiKeyViewerModal";
 
 const Header: React.FC = () => {
   const router = useRouter();
-  const { isAuthenticated: isUserAuthenticated, user, isLoading: isAuthLoading, logout } = useAuth();
+  const {
+    isAuthenticated: isUserAuthenticated,
+    user,
+    isLoading: isAuthLoading,
+    logout,
+  } = useAuth();
 
   const [isApiKeyViewerOpen, setIsApiKeyViewerOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [title, setTitle] = useState('Dashboard');
+  const [title, setTitle] = useState("Dashboard");
 
   // Determine if we should show user menu or sign in button
-  const showUserMenu = !isAuthLoading && isUserAuthenticated && user && user.username;
+  const showUserMenu =
+    !isAuthLoading && isUserAuthenticated && user && user.username;
 
   // Update title based on route
   useEffect(() => {
     const pathname = router.pathname;
     switch (pathname) {
-      case '/asr':
-        setTitle('ASR – Automatic Speech Recognition');
+      case "/asr":
+        setTitle("ASR – Automatic Speech Recognition");
         break;
-      case '/tts':
-        setTitle('TTS – Text-to-Speech');
+      case "/tts":
+        setTitle("TTS – Text-to-Speech");
         break;
-      case '/nmt':
-        setTitle('Text Translation');
+      case "/nmt":
+        setTitle("Text Translation");
         break;
-      case '/llm':
-        setTitle('Large Language Model - GPT OSS 20B');
+      case "/llm":
+        setTitle("Large Language Model - GPT OSS 20B");
         break;
-      case '/pipeline':
-        setTitle('Speech-to-Speech Pipeline');
+      case "/pipeline":
+        setTitle("Speech-to-Speech Pipeline");
         break;
-      case '/pipeline-builder':
-        setTitle('Pipeline Builder');
+      case "/pipeline-builder":
+        setTitle("Pipeline Builder");
         break;
-      case '/':
-        setTitle('AI4Inclusion Console');
+      case "/":
+        setTitle("AI4Inclusion Console");
         break;
       default:
-        setTitle('AI4Inclusion Console');
+        setTitle("AI4Inclusion Console");
     }
   }, [router.pathname]);
 
-
-  const bgColor = useColorModeValue('white', 'gray.800');
-  const borderColor = useColorModeValue('gray.200', 'gray.700');
-  const showBackButton = router.pathname !== '/';
+  const bgColor = useColorModeValue("white", "gray.800");
+  const borderColor = useColorModeValue("gray.200", "gray.700");
+  const showBackButton = router.pathname !== "/";
 
   const handleBack = () => {
-    if (router.pathname === '/pipeline-builder') {
-      router.push('/');
+    if (router.pathname === "/pipeline-builder") {
+      router.push("/");
     } else {
       router.back();
     }
   };
 
   const handleAuthClick = () => {
-    console.log('Header: Sign In button clicked, opening AuthModal');
+    console.log("Header: Sign In button clicked, opening AuthModal");
     setIsAuthModalOpen(true);
   };
 
   // Debug: Log AuthModal state
   useEffect(() => {
-    console.log('Header: AuthModal state:', { isAuthModalOpen });
+    console.log("Header: AuthModal state:", { isAuthModalOpen });
   }, [isAuthModalOpen]);
 
   return (
@@ -108,7 +113,7 @@ const Header: React.FC = () => {
                 size="md"
                 onClick={handleBack}
                 colorScheme="gray"
-                _hover={{ bg: 'gray.100' }}
+                _hover={{ bg: "gray.100" }}
               />
             )}
             <Heading size="lg" color="gray.800">
@@ -120,7 +125,13 @@ const Header: React.FC = () => {
           <HStack spacing={4}>
             {/* Authentication: Show username badge or Sign In button */}
             {showUserMenu ? (
-              <Badge colorScheme="gray" fontSize="sm" px={3} py={1} borderRadius="md">
+              <Badge
+                colorScheme="gray"
+                fontSize="sm"
+                px={3}
+                py={1}
+                borderRadius="md"
+              >
                 {user.username}
               </Badge>
             ) : (
@@ -131,7 +142,7 @@ const Header: React.FC = () => {
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  console.log('Header: Sign In button clicked');
+                  console.log("Header: Sign In button clicked");
                   handleAuthClick();
                 }}
               >
@@ -140,19 +151,23 @@ const Header: React.FC = () => {
             )}
 
             {/* Menu */}
-            <Menu>
-              <MenuButton
-                as={IconButton}
-                aria-label="Options"
-                icon={<HamburgerIcon />}
-                variant="ghost"
-                size="sm"
-              />
-              <MenuList>
-                <MenuItem onClick={() => setIsApiKeyViewerOpen(true)}>API Key</MenuItem>
-                <MenuItem onClick={() => logout()}>Sign out</MenuItem>
-              </MenuList>
-            </Menu>
+            {showUserMenu && (
+              <Menu>
+                <MenuButton
+                  as={IconButton}
+                  aria-label="Options"
+                  icon={<HamburgerIcon />}
+                  variant="ghost"
+                  size="sm"
+                />
+                <MenuList>
+                  <MenuItem onClick={() => setIsApiKeyViewerOpen(true)}>
+                    API Key
+                  </MenuItem>
+                  <MenuItem onClick={() => logout()}>Sign out</MenuItem>
+                </MenuList>
+              </Menu>
+            )}
           </HStack>
         </HStack>
       </Box>
@@ -167,7 +182,7 @@ const Header: React.FC = () => {
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => {
-          console.log('Header: Closing AuthModal');
+          console.log("Header: Closing AuthModal");
           setIsAuthModalOpen(false);
         }}
         initialMode="login"
