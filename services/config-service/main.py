@@ -47,6 +47,7 @@ kafka_producer = None
 registry_client = None
 health_monitor_service = None
 health_monitor_task = None
+vault_client = None
 
 async def periodic_health_check():
     """Background task for periodic health checks"""
@@ -145,6 +146,31 @@ async def startup_event():
             kafka_producer = None
             logger.warning(f"Kafka unavailable: {kafka_exc}")
         
+        # Initialize Vault client
+        try:
+            from utils.vault_client import VaultClient
+            global vault_client
+            
+            vault_addr = os.getenv('VAULT_ADDR', 'http://vault:8200')
+            vault_token = os.getenv('VAULT_TOKEN')
+            vault_mount_point = os.getenv('VAULT_MOUNT_POINT', 'secret')
+            vault_kv_version = int(os.getenv('VAULT_KV_VERSION', '2'))
+            
+            vault_client = VaultClient(
+                vault_addr=vault_addr,
+                vault_token=vault_token,
+                mount_point=vault_mount_point,
+                kv_version=vault_kv_version,
+            )
+            
+            if vault_client.is_connected():
+                logger.info("Vault client initialized and connected")
+            else:
+                logger.warning("Vault client initialized but not connected. Encrypted configs will be stored in PostgreSQL.")
+        except Exception as vault_exc:
+            vault_client = None
+            logger.warning(f"Vault initialization failed: {vault_exc}. Encrypted configs will be stored in PostgreSQL.")
+        
         # Initialize ZooKeeper registry client
         from registry.zookeeper_client import ZooKeeperRegistryClient
         global registry_client
@@ -210,7 +236,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up connections on shutdown"""
-    global redis_client, db_engine, kafka_producer, health_monitor_service, health_monitor_task
+    global redis_client, db_engine, kafka_producer, health_monitor_service, health_monitor_task, vault_client
     
     # Cancel health monitor task
     if health_monitor_task:
@@ -249,6 +275,10 @@ async def shutdown_event():
             await registry_client.disconnect()
         except Exception:
             pass
+    
+    # Vault client doesn't need explicit cleanup (no persistent connections)
+    if vault_client:
+        logger.info("Vault client cleanup complete")
 
 @app.get("/")
 async def root():
@@ -278,8 +308,10 @@ async def config_status():
             "Feature flags",
             "Service discovery",
             "Dynamic configuration updates",
-            "Configuration audit logging"
-        ]
+            "Configuration audit logging",
+            "Vault integration for encrypted configurations"
+        ],
+        "vault_enabled": vault_client.is_connected() if vault_client else False
     }
 
 

@@ -5,6 +5,7 @@ The configuration management service provides centralized environment-specific c
 
 ## Features
 - Environment-specific configurations
+- **Vault integration for encrypted configurations** - Secure storage of sensitive values in HashiCorp Vault
 - Feature flags with rollout percentage and targeted users
 - Service registry using ZooKeeper with ephemeral instances
 - Dynamic updates via Kafka (`config-updates` topic)
@@ -12,9 +13,10 @@ The configuration management service provides centralized environment-specific c
 - Audit trail for configuration changes
 
 ## Architecture
+- **HashiCorp Vault**: Secure storage for encrypted configuration values
 - ZooKeeper: service discovery and live instances (ephemeral nodes)
-- PostgreSQL: persistent storage for configurations, flags, registry audit
-- Redis: caching configuration values, flag evaluations, and registry results
+- PostgreSQL: persistent storage for configuration metadata, flags, registry audit
+- Redis: caching configuration values (non-encrypted only), flag evaluations, and registry results
 - Kafka: publish configuration/flag change events
 - Registry abstraction: pluggable `ServiceRegistryClient` interface
 
@@ -50,6 +52,7 @@ The configuration management service provides centralized environment-specific c
 Key environment variables (see `env.template`):
 - DATABASE_URL, REDIS_HOST/PORT/PASSWORD
 - KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC_CONFIG_UPDATES
+- **VAULT_ADDR, VAULT_TOKEN, VAULT_MOUNT_POINT, VAULT_KV_VERSION** - Vault integration settings
 - ZOOKEEPER_HOSTS, ZOOKEEPER_BASE_PATH, ZOOKEEPER_CONNECTION_TIMEOUT, ZOOKEEPER_SESSION_TIMEOUT
 - SERVICE_REGISTRY_ENABLED, SERVICE_HEALTH_CHECK_INTERVAL, SERVICE_INSTANCE_ID
 
@@ -59,6 +62,12 @@ Key environment variables (see `env.template`):
 curl -X POST http://localhost:8082/api/v1/config \
   -H 'Content-Type: application/json' \
   -d '{"key":"model_path","value":"/models/asr","environment":"development","service_name":"asr-service"}'
+```
+- Create encrypted configuration (stored in Vault):
+```bash
+curl -X POST http://localhost:8082/api/v1/config \
+  -H 'Content-Type: application/json' \
+  -d '{"key":"api_key","value":"secret_key_123","environment":"production","service_name":"asr-service","is_encrypted":true}'
 ```
 - Evaluate feature flag:
 ```bash
@@ -77,11 +86,19 @@ curl -X POST http://localhost:8082/api/v1/registry/register \
 curl http://localhost:8082/api/v1/registry/discover/asr-service
 ```
 
+## Documentation
+- [Vault Integration Guide](docs/VAULT_INTEGRATION.md) - Comprehensive guide for using Vault with encrypted configurations
+- [Service Registry Developer Guide](docs/SERVICE_REGISTRY_DEVELOPER_GUIDE.md) - How to integrate service registry in your microservice
+- [Service Registry Integration](docs/SERVICE_REGISTRY_INTEGRATION.md) - Service registry API documentation
+- [Testing Health Monitoring](docs/TESTING_HEALTH_MONITORING.md) - Health monitoring testing guide
+
 ## Development
-- Install requirements: `pip install -r services/config_service/requirements.txt`
-- Run locally: `uvicorn services.config_service.main:app --reload --port 8082`
+- Install requirements: `pip install -r services/config-service/requirements.txt`
+- Run locally: `uvicorn main:app --reload --port 8082`
+- For Vault integration, ensure Vault server is running and configured
 
 ## Deployment
 - Ensure ZooKeeper and Kafka are healthy
 - Configure `ZOOKEEPER_HOSTS`, `KAFKA_BOOTSTRAP_SERVERS`
-- Consider enabling TLS and ACLs on ZooKeeper and Kafka; monitor registry health
+- **For Vault integration**: Configure `VAULT_ADDR` and `VAULT_TOKEN`
+- Consider enabling TLS and ACLs on ZooKeeper, Kafka, and Vault; monitor registry health

@@ -24,7 +24,14 @@ def get_config_service() -> ConfigurationService:
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"Using Kafka topic for config updates: {topic}")
-    return ConfigurationService(repo, app_main.redis_client, app_main.kafka_producer, kafka_topic=topic, cache_ttl=300)
+    return ConfigurationService(
+        repo,
+        app_main.redis_client,
+        app_main.kafka_producer,
+        kafka_topic=topic,
+        vault_client=getattr(app_main, 'vault_client', None),
+        cache_ttl=300
+    )
 
 
 @router.post("/", response_model=ConfigurationResponse, status_code=201)
