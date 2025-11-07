@@ -17,7 +17,7 @@ docker compose down --remove-orphans 2>/dev/null || true
 
 # Start infrastructure services first
 echo "Starting infrastructure services..."
-docker compose up -d postgres redis influxdb elasticsearch zookeeper kafka
+docker compose up -d postgres redis influxdb elasticsearch zookeeper kafka vault
 
 # Wait for infrastructure to be ready
 echo "Waiting for infrastructure services to be ready..."

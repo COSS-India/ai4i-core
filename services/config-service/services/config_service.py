@@ -18,9 +18,6 @@ from utils.vault_client import VaultClient
 
 logger = logging.getLogger(__name__)
 
-# Placeholder value stored in PostgreSQL when actual value is in Vault
-VAULT_PLACEHOLDER = "VAULT_STORED"
-
 
 class ConfigurationService:
     def __init__(
@@ -51,120 +48,101 @@ class ConfigurationService:
             logger.warning(f"Failed to publish Kafka event: {e}")
 
     async def create_configuration(self, req: ConfigurationCreate, changed_by: Optional[str] = None) -> ConfigurationResponse:
-        # If encrypted and Vault is available, store value in Vault
-        value_to_store = req.value
-        if req.is_encrypted and self.vault_client and self.vault_client.is_connected():
-            # Store actual value in Vault
-            vault_success = self.vault_client.write_secret(
-                environment=req.environment,
-                service_name=req.service_name,
-                key=req.key,
-                value=req.value,
-                metadata={"changed_by": changed_by} if changed_by else None,
+        # Store ALL configs in Vault (single source of truth)
+        if not self.vault_client or not self.vault_client.is_connected():
+            raise ValueError(
+                "Cannot create configuration: Vault is not available. "
+                "Please configure VAULT_ADDR and VAULT_TOKEN."
             )
-            if vault_success:
-                # Store placeholder in PostgreSQL
-                value_to_store = VAULT_PLACEHOLDER
-            else:
-                logger.warning(
-                    f"Failed to write encrypted config to Vault for {req.key}, "
-                    f"storing in PostgreSQL instead (not recommended for sensitive data)"
-                )
         
-        cfg = await self.repository.create_configuration(
-            key=req.key,
-            value=value_to_store,
+        # Store value in Vault (both encrypted and non-encrypted)
+        vault_success = self.vault_client.write_secret(
             environment=req.environment,
             service_name=req.service_name,
+            key=req.key,
+            value=req.value,
             is_encrypted=req.is_encrypted,
-            changed_by=changed_by,
+            metadata={"changed_by": changed_by} if changed_by else None,
         )
         
+        if not vault_success:
+            raise RuntimeError(f"Failed to write config to Vault for {req.key}")
+        
         # Invalidate cache
-        await self.redis.delete(self._cache_key(cfg.environment, cfg.service_name, cfg.key))
+        await self.redis.delete(self._cache_key(req.environment, req.service_name, req.key))
         
         # Publish event
         await self._publish({
             "event_type": "CONFIG_CREATED",
-            "key": cfg.key,
-            "environment": cfg.environment,
-            "service_name": cfg.service_name,
+            "key": req.key,
+            "environment": req.environment,
+            "service_name": req.service_name,
         })
         
-        # For response, return actual value if not encrypted, or fetch from Vault if encrypted
-        response_value = cfg.value
-        if cfg.is_encrypted and self.vault_client and self.vault_client.is_connected():
-            vault_value = self.vault_client.read_secret(
-                environment=cfg.environment,
-                service_name=cfg.service_name,
-                key=cfg.key,
-            )
-            if vault_value:
-                response_value = vault_value
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
         
         return ConfigurationResponse(
-            id=cfg.id,
-            key=cfg.key,
-            value=response_value,
-            environment=cfg.environment,
-            service_name=cfg.service_name,
-            is_encrypted=cfg.is_encrypted,
-            version=cfg.version,
-            created_at=str(cfg.created_at),
-            updated_at=str(cfg.updated_at),
+            id=None,  # No database ID for Vault-stored configs (excluded from response)
+            key=req.key,
+            value=req.value,
+            environment=req.environment,
+            service_name=req.service_name,
+            is_encrypted=req.is_encrypted,
+            version=1,
+            created_at=str(now),
+            updated_at=str(now),
         )
 
     async def get_configuration(self, key: str, environment: str, service_name: str) -> Optional[ConfigurationResponse]:
-        ck = self._cache_key(environment, service_name, key)
-        cached = await self.redis.get(ck)
-        if cached:
-            try:
-                data = json.loads(cached)
-                # For encrypted configs, don't cache the actual value from Vault
-                # Only cache if it's not encrypted or if Vault is not available
-                cached_resp = ConfigurationResponse(**data)
-                if not cached_resp.is_encrypted or not self.vault_client or not self.vault_client.is_connected():
-                    return cached_resp
-            except Exception:
-                pass
-        
-        cfg = await self.repository.get_configuration(key, environment, service_name)
-        if not cfg:
+        # All configs are stored in Vault
+        if not self.vault_client or not self.vault_client.is_connected():
             return None
         
-        # If encrypted and Vault is available, fetch actual value from Vault
-        value = cfg.value
-        if cfg.is_encrypted and self.vault_client and self.vault_client.is_connected():
-            if cfg.value == VAULT_PLACEHOLDER:
-                # Value is stored in Vault, fetch it
-                vault_value = self.vault_client.read_secret(
-                    environment=cfg.environment,
-                    service_name=cfg.service_name,
-                    key=cfg.key,
-                )
-                if vault_value:
-                    value = vault_value
-                else:
-                    logger.warning(
-                        f"Encrypted config {key} marked as stored in Vault but not found. "
-                        f"Returning placeholder."
-                    )
-        
-        resp = ConfigurationResponse(
-            id=cfg.id,
-            key=cfg.key,
-            value=value,
-            environment=cfg.environment,
-            service_name=cfg.service_name,
-            is_encrypted=cfg.is_encrypted,
-            version=cfg.version,
-            created_at=str(cfg.created_at),
-            updated_at=str(cfg.updated_at),
+        secret_data = self.vault_client.read_secret(
+            environment=environment,
+            service_name=service_name,
+            key=key,
         )
         
-        # Only cache non-encrypted configs or if Vault is not available
-        # Encrypted configs should always be fetched fresh from Vault
-        if not cfg.is_encrypted or not self.vault_client or not self.vault_client.is_connected():
+        if not secret_data:
+            return None
+        
+        # Check cache for non-encrypted configs
+        if not secret_data.get("is_encrypted", False):
+            ck = self._cache_key(environment, service_name, key)
+            cached = await self.redis.get(ck)
+            if cached:
+                try:
+                    data = json.loads(cached)
+                    return ConfigurationResponse(**data)
+                except Exception:
+                    pass
+        
+        # Build response from Vault data
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        
+        # Get timestamps from Vault metadata if available
+        vault_metadata = secret_data.get("metadata", {})
+        created_at = vault_metadata.get("created_time", str(now))
+        updated_at = vault_metadata.get("updated_time", str(now))
+        
+        resp = ConfigurationResponse(
+            id=None,  # No database ID for Vault-stored configs (excluded from response)
+            key=key,
+            value=secret_data.get("value"),
+            environment=environment,
+            service_name=service_name,
+            is_encrypted=secret_data.get("is_encrypted", False),
+            version=1,  # Vault KV v2 tracks versions internally
+            created_at=created_at,
+            updated_at=updated_at,
+        )
+        
+        # Cache non-encrypted configs only
+        if not secret_data.get("is_encrypted", False):
+            ck = self._cache_key(environment, service_name, key)
             await self.redis.set(ck, json.dumps(resp.model_dump()), ex=self.cache_ttl)
         
         return resp
@@ -177,34 +155,63 @@ class ConfigurationService:
         limit: int,
         offset: int,
     ) -> Tuple[List[ConfigurationResponse], int]:
-        items, total = await self.repository.get_configurations(environment, service_name, keys, limit, offset)
+        # All configs are stored in Vault
+        if not self.vault_client or not self.vault_client.is_connected():
+            return [], 0
+        
+        if not environment or not service_name:
+            return [], 0
+        
         resp = []
-        for i in items:
-            # If encrypted and Vault is available, fetch actual value from Vault
-            value = i.value
-            if i.is_encrypted and self.vault_client and self.vault_client.is_connected():
-                if i.value == VAULT_PLACEHOLDER:
-                    vault_value = self.vault_client.read_secret(
-                        environment=i.environment,
-                        service_name=i.service_name,
-                        key=i.key,
-                    )
-                    if vault_value:
-                        value = vault_value
-            
-            resp.append(
-                ConfigurationResponse(
-                    id=i.id,
-                    key=i.key,
-                    value=value,
-                    environment=i.environment,
-                    service_name=i.service_name,
-                    is_encrypted=i.is_encrypted,
-                    version=i.version,
-                    created_at=str(i.created_at),
-                    updated_at=str(i.updated_at),
-                )
+        
+        try:
+            # List all secrets from Vault for the given environment and service
+            vault_keys = self.vault_client.list_secrets(
+                environment=environment,
+                service_name=service_name,
             )
+            
+            # Filter by keys if specified
+            if keys:
+                vault_keys = [k for k in vault_keys if k in keys]
+            
+            # Fetch values for each key
+            for vault_key in vault_keys:
+                secret_data = self.vault_client.read_secret(
+                    environment=environment,
+                    service_name=service_name,
+                    key=vault_key,
+                )
+                
+                if secret_data:
+                    from datetime import datetime, timezone
+                    now = datetime.now(timezone.utc)
+                    
+                    # Get timestamps from Vault metadata if available
+                    vault_metadata = secret_data.get("metadata", {})
+                    created_at = vault_metadata.get("created_time", str(now))
+                    updated_at = vault_metadata.get("updated_time", str(now))
+                    
+                    resp.append(
+                        ConfigurationResponse(
+                            id=None,
+                            key=vault_key,
+                            value=secret_data.get("value"),
+                            environment=environment,
+                            service_name=service_name,
+                            is_encrypted=secret_data.get("is_encrypted", False),
+                            version=1,
+                            created_at=created_at,
+                            updated_at=updated_at,
+                        )
+                    )
+        except Exception as e:
+            logger.warning(f"Error fetching configs from Vault: {e}")
+        
+        # Apply pagination
+        total = len(resp)
+        resp = resp[offset:offset + limit]
+        
         return resp, total
 
     async def update_configuration(
@@ -216,48 +223,33 @@ class ConfigurationService:
         is_encrypted: Optional[bool],
         changed_by: Optional[str] = None,
     ) -> Optional[ConfigurationResponse]:
-        # Get existing config to check if it was encrypted
-        existing_cfg = await self.repository.get_configuration(key, environment, service_name)
-        if not existing_cfg:
-            return None
-        
-        # Determine if this should be encrypted (use existing value if not specified)
-        should_be_encrypted = is_encrypted if is_encrypted is not None else existing_cfg.is_encrypted
-        
-        # If encrypted and Vault is available, store value in Vault
-        value_to_store = value
-        if should_be_encrypted and self.vault_client and self.vault_client.is_connected():
-            # Store actual value in Vault
-            vault_success = self.vault_client.write_secret(
-                environment=environment,
-                service_name=service_name,
-                key=key,
-                value=value,
-                metadata={"changed_by": changed_by} if changed_by else None,
+        # All configs are stored in Vault
+        if not self.vault_client or not self.vault_client.is_connected():
+            raise ValueError(
+                "Cannot update configuration: Vault is not available. "
+                "Please configure VAULT_ADDR and VAULT_TOKEN."
             )
-            if vault_success:
-                # Store placeholder in PostgreSQL
-                value_to_store = VAULT_PLACEHOLDER
-            else:
-                logger.warning(
-                    f"Failed to write encrypted config to Vault for {key}, "
-                    f"storing in PostgreSQL instead (not recommended for sensitive data)"
-                )
-        elif existing_cfg.is_encrypted and not should_be_encrypted:
-            # Config was encrypted but is being changed to non-encrypted
-            # Delete from Vault if it exists
-            if self.vault_client and self.vault_client.is_connected():
-                self.vault_client.delete_secret(environment, service_name, key)
-        elif existing_cfg.is_encrypted and should_be_encrypted:
-            # Config was encrypted and remains encrypted, but value changed
-            # Vault write above will handle it
-            pass
         
-        cfg = await self.repository.update_configuration(
-            key, environment, service_name, value_to_store, is_encrypted, changed_by
+        # Check if config exists to determine is_encrypted if not specified
+        existing_data = self.vault_client.read_secret(environment, service_name, key)
+        if not existing_data:
+            return None  # Config doesn't exist
+        
+        # Determine if this should be encrypted
+        should_be_encrypted = is_encrypted if is_encrypted is not None else existing_data.get("is_encrypted", False)
+        
+        # Update in Vault
+        vault_success = self.vault_client.write_secret(
+            environment=environment,
+            service_name=service_name,
+            key=key,
+            value=value,
+            is_encrypted=should_be_encrypted,
+            metadata={"changed_by": changed_by} if changed_by else None,
         )
-        if not cfg:
-            return None
+        
+        if not vault_success:
+            raise RuntimeError(f"Failed to update config in Vault for {key}")
         
         # Invalidate cache
         await self.redis.delete(self._cache_key(environment, service_name, key))
@@ -270,53 +262,46 @@ class ConfigurationService:
             "service_name": service_name,
         })
         
-        # For response, return actual value if not encrypted, or fetch from Vault if encrypted
-        response_value = cfg.value
-        if cfg.is_encrypted and self.vault_client and self.vault_client.is_connected():
-            vault_value = self.vault_client.read_secret(
-                environment=cfg.environment,
-                service_name=cfg.service_name,
-                key=cfg.key,
-            )
-            if vault_value:
-                response_value = vault_value
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
         
         return ConfigurationResponse(
-            id=cfg.id,
-            key=cfg.key,
-            value=response_value,
-            environment=cfg.environment,
-            service_name=cfg.service_name,
-            is_encrypted=cfg.is_encrypted,
-            version=cfg.version,
-            created_at=str(cfg.created_at),
-            updated_at=str(cfg.updated_at),
+            id=0,
+            key=key,
+            value=value,
+            environment=environment,
+            service_name=service_name,
+            is_encrypted=should_be_encrypted,
+            version=1,
+            created_at=str(now),
+            updated_at=str(now),
         )
 
     async def delete_configuration(self, key: str, environment: str, service_name: str) -> bool:
-        # Check if config exists and is encrypted before deleting
-        existing_cfg = await self.repository.get_configuration(key, environment, service_name)
-        if existing_cfg and existing_cfg.is_encrypted:
-            # Delete from Vault if it exists
-            if self.vault_client and self.vault_client.is_connected():
-                self.vault_client.delete_secret(environment, service_name, key)
+        # All configs are stored in Vault
+        if not self.vault_client or not self.vault_client.is_connected():
+            return False
         
-        ok = await self.repository.delete_configuration(key, environment, service_name)
+        deleted = self.vault_client.delete_secret(environment, service_name, key)
         
         # Invalidate cache
         await self.redis.delete(self._cache_key(environment, service_name, key))
         
-        if ok:
+        if deleted:
             await self._publish({
                 "event_type": "CONFIG_DELETED",
                 "key": key,
                 "environment": environment,
                 "service_name": service_name,
             })
-        return ok
+        
+        return deleted
 
     async def get_configuration_history(self, configuration_id: int):
-        return await self.repository.get_configuration_history(configuration_id)
+        # History is available through Vault KV v2 versioning
+        # For now, return empty list as we need to implement Vault version history
+        # TODO: Implement Vault version history retrieval
+        return []
 
     async def bulk_get_configurations(self, environment: str, service_name: str, keys: List[str]) -> Dict[str, Optional[ConfigurationResponse]]:
         result: Dict[str, Optional[ConfigurationResponse]] = {}

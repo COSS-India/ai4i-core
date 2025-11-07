@@ -27,7 +27,7 @@ help:
 	@echo "  metrics-service, telemetry-service, alerting-service"
 	@echo "  dashboard-service, asr-service, tts-service, nmt-service"
 	@echo "  pipeline-service, postgres, redis, influxdb"
-	@echo "  elasticsearch, kafka, zookeeper"
+	@echo "  elasticsearch, kafka, zookeeper, vault"
 
 # Start all services
 start:
@@ -127,6 +127,9 @@ shell-kafka:
 shell-zookeeper:
 	@docker-compose exec zookeeper /bin/bash
 
+shell-vault:
+	@docker-compose exec vault /bin/sh
+
 # Service-specific log commands
 logs-api-gateway:
 	@./scripts/logs.sh api-gateway-service
@@ -179,6 +182,9 @@ logs-kafka:
 logs-zookeeper:
 	@./scripts/logs.sh zookeeper
 
+logs-vault:
+	@./scripts/logs.sh vault
+
 # Service restart commands
 restart-api-gateway:
 	@./scripts/restart-service.sh api-gateway-service
@@ -230,6 +236,9 @@ restart-kafka:
 
 restart-zookeeper:
 	@./scripts/restart-service.sh zookeeper
+
+restart-vault:
+	@./scripts/restart-service.sh vault
 
 # Development commands
 dev-start:
@@ -292,3 +301,4 @@ urls:
 	@echo "  InfluxDB:        http://localhost:8086"
 	@echo "  Elasticsearch:   http://localhost:9200"
 	@echo "  Kafka:           localhost:9092"
+	@echo "  Vault:           http://localhost:8200"

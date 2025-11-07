@@ -3,7 +3,7 @@ Vault Client for managing encrypted configurations in HashiCorp Vault
 """
 import os
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import hvac
 from hvac.exceptions import VaultError
 
@@ -85,6 +85,7 @@ class VaultClient:
         service_name: str,
         key: str,
         value: str,
+        is_encrypted: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """
@@ -108,7 +109,10 @@ class VaultClient:
             secret_path = self._get_secret_path(environment, service_name, key)
             
             # Prepare data to write
-            data = {"value": value}
+            data = {
+                "value": value,
+                "is_encrypted": is_encrypted,
+            }
             if metadata:
                 data.update(metadata)
             
@@ -142,7 +146,7 @@ class VaultClient:
         environment: str,
         service_name: str,
         key: str,
-    ) -> Optional[str]:
+    ) -> Optional[Dict[str, Any]]:
         """
         Read a secret from Vault.
         
@@ -167,8 +171,39 @@ class VaultClient:
                     path=secret_path,
                     mount_point=self.mount_point,
                 )
-                if response and "data" in response and "data" in response["data"]:
-                    return response["data"]["data"].get("value")
+                # Handle hvac response structure for KV v2
+                # Structure: response['data']['data']['data'] contains the actual secret data
+                # This is because we write with secret={"data": data}, and Vault KV v2 wraps it again
+                if response and isinstance(response, dict) and "data" in response:
+                    response_data = response["data"]
+                    if isinstance(response_data, dict) and "data" in response_data:
+                        # KV v2 structure: response["data"]["data"]["data"] contains our secret
+                        kv_data = response_data["data"]
+                        if isinstance(kv_data, dict) and "data" in kv_data:
+                            # Our actual secret data is nested one level deeper
+                            secret_data = kv_data["data"]
+                            metadata = response_data.get("metadata", {})
+                        else:
+                            # Fallback: try direct access
+                            secret_data = kv_data
+                            metadata = response_data.get("metadata", {})
+                        
+                        # Extract value and is_encrypted
+                        if isinstance(secret_data, dict):
+                            value = secret_data.get("value")
+                            is_encrypted = secret_data.get("is_encrypted", False)
+                            
+                            if value is not None:
+                                return {
+                                    "value": value,
+                                    "is_encrypted": is_encrypted,
+                                    "metadata": metadata,
+                                }
+                            else:
+                                logger.warning(f"Secret data found but 'value' key is missing in Vault response for {secret_path}")
+                                logger.debug(f"Secret data keys: {list(secret_data.keys()) if isinstance(secret_data, dict) else 'not a dict'}")
+                        else:
+                            logger.warning(f"Secret data is not a dictionary for {secret_path}: {type(secret_data)}")
             else:
                 # KV v1
                 response = self._client.secrets.kv.v1.read_secret(
@@ -176,7 +211,12 @@ class VaultClient:
                     mount_point=self.mount_point,
                 )
                 if response and "data" in response:
-                    return response["data"].get("value")
+                    secret_data = response["data"]
+                    return {
+                        "value": secret_data.get("value"),
+                        "is_encrypted": secret_data.get("is_encrypted", False),
+                        "metadata": {},
+                    }
             
             return None
             
@@ -246,7 +286,7 @@ class VaultClient:
         self,
         environment: str,
         service_name: Optional[str] = None,
-    ) -> list:
+    ) -> List[str]:
         """
         List secrets in Vault for a given environment and optionally service.
         

@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.."
 
 # Start infrastructure services first
 echo "Starting infrastructure services..."
-docker-compose up -d postgres redis influxdb elasticsearch zookeeper kafka
+docker-compose up -d postgres redis influxdb elasticsearch zookeeper kafka vault
 
 # Wait for infrastructure services to be healthy
 echo "Waiting for infrastructure services to be healthy..."
@@ -56,6 +56,14 @@ until kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>
     sleep 5
 done
 echo "Kafka is ready"
+
+# Wait for Vault
+echo "Waiting for Vault..."
+until docker-compose exec vault vault status > /dev/null 2>&1; do
+    echo "Vault is not ready yet, waiting..."
+    sleep 5
+done
+echo "Vault is ready"
 
 # Run initialization scripts
 echo "Running infrastructure initialization scripts..."
@@ -178,6 +186,7 @@ echo "  Redis:           localhost:6379"
 echo "  InfluxDB:        http://localhost:8086"
 echo "  Elasticsearch:   http://localhost:9200"
 echo "  Kafka:           localhost:9092"
+echo "  Vault:           http://localhost:8200"
 echo ""
 echo "To view logs: ./scripts/logs.sh"
 echo "To check health: ./scripts/health-check-all.sh"
