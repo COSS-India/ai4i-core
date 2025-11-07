@@ -106,7 +106,7 @@ const HomePage: React.FC = () => {
     {
       id: "asr",
       title: "ASR – Automatic Speech Recognition",
-      description: "Convert speech to text in 12+ Indian languages",
+      description: "Convert speech to text in 12+ Indic languages",
       icon: FaMicrophone,
       path: "/asr",
       color: "orange",
@@ -115,7 +115,7 @@ const HomePage: React.FC = () => {
       id: "tts",
       title: "TTS – Text-to-Speech",
       description:
-        "Convert text to natural, human-like speech in multiple Indian languages and voices",
+        "Convert text to natural, human-like speech in multiple Indic languages and voices",
       icon: IoVolumeHighOutline,
       path: "/tts",
       color: "blue",
@@ -123,7 +123,7 @@ const HomePage: React.FC = () => {
     {
       id: "nmt",
       title: "Text Translation",
-      description: "Translate text between 22+ Indian languages",
+      description: "Translate text between 22+ Indic languages",
       icon: IoLanguageOutline,
       path: "/nmt",
       color: "green",

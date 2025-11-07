@@ -151,7 +151,7 @@ async def list_models() -> Dict[str, Any]:
             {
                 "model_id": "conformer-asr-multilingual",
                 "languages": ["hi", "ta", "te", "kn", "ml"],
-                "description": "Multilingual ASR model for Indian languages"
+                "description": "Multilingual ASR model for Indic languages"
             },
             {
                 "model_id": "whisper-large-v3",
