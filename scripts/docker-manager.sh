@@ -45,10 +45,11 @@ ALL_SERVICES=(
     "elasticsearch"
     "kafka"
     "zookeeper"
+    "vault"
 )
 
 # Infrastructure services (don't need rebuilds)
-INFRASTRUCTURE_SERVICES=("postgres" "redis" "influxdb" "elasticsearch" "kafka" "zookeeper")
+INFRASTRUCTURE_SERVICES=("postgres" "redis" "influxdb" "elasticsearch" "kafka" "zookeeper" "vault")
 
 # Microservices (need rebuilds)
 MICROSERVICES=("api-gateway-service" "auth-service" "config-service" "metrics-service" "telemetry-service" "alerting-service" "dashboard-service" "nmt-service" "asr-service" "tts-service" "pipeline-service" "simple-ui-frontend")

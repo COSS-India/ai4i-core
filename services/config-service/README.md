@@ -5,18 +5,18 @@ The configuration management service provides centralized environment-specific c
 
 ## Features
 - Environment-specific configurations
-- **Vault integration for encrypted configurations** - Secure storage of sensitive values in HashiCorp Vault
+- **Vault as single source of truth** - ALL configurations (encrypted and non-encrypted) stored in HashiCorp Vault
 - Feature flags with rollout percentage and targeted users
 - Service registry using ZooKeeper with ephemeral instances
 - Dynamic updates via Kafka (`config-updates` topic)
-- Redis caching for performance
-- Audit trail for configuration changes
+- Redis caching for non-encrypted configurations
+- Vault KV v2 versioning for configuration history
 
 ## Architecture
-- **HashiCorp Vault**: Secure storage for encrypted configuration values
+- **HashiCorp Vault**: Single source of truth for ALL configurations (encrypted and non-encrypted)
 - ZooKeeper: service discovery and live instances (ephemeral nodes)
-- PostgreSQL: persistent storage for configuration metadata, flags, registry audit
-- Redis: caching configuration values (non-encrypted only), flag evaluations, and registry results
+- PostgreSQL: persistent storage for feature flags and service registry (NOT for configurations)
+- Redis: caching non-encrypted configuration values, flag evaluations, and registry results
 - Kafka: publish configuration/flag change events
 - Registry abstraction: pluggable `ServiceRegistryClient` interface
 

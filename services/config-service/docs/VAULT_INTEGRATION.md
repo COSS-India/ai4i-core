@@ -2,20 +2,22 @@
 
 ## Overview
 
-The Configuration Management Service integrates with HashiCorp Vault to securely store and manage encrypted configurations. When a configuration is marked as `is_encrypted=True`, the actual sensitive value is stored in Vault, while metadata and audit information remain in PostgreSQL.
+The Configuration Management Service uses HashiCorp Vault as the **single source of truth** for **ALL configurations** (both encrypted and non-encrypted). This eliminates data inconsistency and simplifies the architecture. PostgreSQL is still used for feature flags and service registry, but not for configurations.
 
 ## Architecture
 
 ### Storage Strategy
 
-- **Encrypted Configurations** (`is_encrypted=True`):
-  - **Actual value**: Stored in HashiCorp Vault
-  - **Metadata**: Stored in PostgreSQL (key, environment, service_name, version, timestamps)
-  - **Placeholder**: PostgreSQL stores `VAULT_STORED` as the value field
+- **ALL Configurations** (both encrypted and non-encrypted):
+  - **Single Source of Truth**: Stored **ONLY** in HashiCorp Vault
+  - **No PostgreSQL Entry**: Configurations are not stored in PostgreSQL
+  - **Vault KV v2**: Uses Vault's built-in versioning for history tracking
+  - **Caching**: Non-encrypted values are cached in Redis for performance
+  - **Security**: Encrypted values are never cached in Redis
 
-- **Non-Encrypted Configurations** (`is_encrypted=False`):
-  - **Value**: Stored directly in PostgreSQL
-  - **Caching**: Cached in Redis for performance
+**Note:** PostgreSQL is still used for:
+- Feature flags (different data model with rollout percentages, target users)
+- Service registry (different data model with health checks, metadata)
 
 ### Vault Secret Path Structure
 
@@ -69,11 +71,13 @@ VAULT_KV_VERSION=2                     # KV secrets engine version (default: 2)
 
 ### Automatic Vault Integration
 
-- **Transparent Storage**: When creating/updating a config with `is_encrypted=True`, the value is automatically stored in Vault
-- **Automatic Retrieval**: When fetching encrypted configs, values are automatically retrieved from Vault
-- **Graceful Fallback**: If Vault is unavailable, encrypted configs fall back to PostgreSQL (with warnings)
-- **No Caching**: Encrypted values are never cached in Redis for security reasons
-- **Automatic Cleanup**: When deleting encrypted configs, both Vault and PostgreSQL entries are removed
+- **Single Source of Truth**: **ALL configs** (encrypted and non-encrypted) are stored **ONLY** in Vault
+- **Transparent Storage**: All configurations are automatically stored in Vault
+- **Automatic Retrieval**: All configurations are retrieved from Vault
+- **No Fallback**: If Vault is unavailable, config operations will fail (prevents inconsistency)
+- **Smart Caching**: Non-encrypted values are cached in Redis; encrypted values are never cached
+- **Versioning**: Vault KV v2 provides built-in versioning for all configs
+- **Automatic Cleanup**: When deleting configs, they are removed from Vault
 
 ### Security Features
 
@@ -100,7 +104,7 @@ curl -X POST http://localhost:8082/api/v1/config \
 
 **What happens:**
 1. Value `super_secret_password_123` is stored in Vault at `secret/data/production/auth-service/database_password`
-2. Metadata is stored in PostgreSQL with value field set to `VAULT_STORED`
+2. **No PostgreSQL entry** - all configs are stored ONLY in Vault
 3. Response returns the actual value from Vault
 
 ### Retrieving an Encrypted Configuration
@@ -110,9 +114,9 @@ curl "http://localhost:8082/api/v1/config/database_password?environment=producti
 ```
 
 **What happens:**
-1. Metadata is retrieved from PostgreSQL
-2. If `is_encrypted=True` and value is `VAULT_STORED`, the actual value is fetched from Vault
-3. Response includes the actual decrypted value
+1. Retrieves config from Vault (single source of truth)
+2. Response includes the actual value from Vault
+3. Non-encrypted values may be cached in Redis for performance
 
 ### Updating an Encrypted Configuration
 
@@ -127,8 +131,8 @@ curl -X PUT "http://localhost:8082/api/v1/config/database_password?environment=p
 
 **What happens:**
 1. New value is written to Vault (overwrites existing)
-2. PostgreSQL metadata is updated (version incremented, timestamp updated)
-3. History entry is created in PostgreSQL
+2. **No PostgreSQL update** - all configs exist only in Vault
+3. Vault KV v2 handles versioning internally
 
 ### Converting Between Encrypted and Non-Encrypted
 
@@ -143,9 +147,9 @@ curl -X PUT "http://localhost:8082/api/v1/config/api_key?environment=production&
 ```
 
 **What happens:**
-1. Value is deleted from Vault
-2. Actual value is stored in PostgreSQL
-3. `is_encrypted` flag is updated
+1. Config is updated in Vault with `is_encrypted=false`
+2. Config remains in Vault (single source of truth)
+3. Non-encrypted value can now be cached in Redis
 
 **Non-Encrypted → Encrypted:**
 ```bash
@@ -158,9 +162,9 @@ curl -X PUT "http://localhost:8082/api/v1/config/api_key?environment=production&
 ```
 
 **What happens:**
-1. Value is stored in Vault
-2. PostgreSQL value is set to `VAULT_STORED`
-3. `is_encrypted` flag is updated
+1. Config is updated in Vault with `is_encrypted=true`
+2. Config remains in Vault (single source of truth)
+3. Encrypted value is no longer cached in Redis
 
 ### Deleting an Encrypted Configuration
 
@@ -169,9 +173,9 @@ curl -X DELETE "http://localhost:8082/api/v1/config/database_password?environmen
 ```
 
 **What happens:**
-1. Value is deleted from Vault
-2. Metadata is deleted from PostgreSQL
-3. History entries remain for audit purposes
+1. Config is deleted from Vault (single source of truth)
+2. Cache is invalidated in Redis
+3. Kafka event is published for notification
 
 ## API Behavior
 
@@ -203,7 +207,10 @@ curl -X DELETE "http://localhost:8082/api/v1/config/database_password?environmen
 }
 ```
 
-**Note:** The response always returns the actual value, even for encrypted configs.
+**Note:** 
+- All configs are stored ONLY in Vault (single source of truth)
+- No PostgreSQL entries for configurations
+- The response always returns the actual value from Vault
 
 ### Get Configuration
 
@@ -215,7 +222,7 @@ GET /api/v1/config/secret_key?environment=production&service_name=my-service
 **Response:**
 ```json
 {
-  "id": 1,
+  "id": 0,
   "key": "secret_key",
   "value": "my_secret_value",
   "environment": "production",
@@ -227,7 +234,10 @@ GET /api/v1/config/secret_key?environment=production&service_name=my-service
 }
 ```
 
-**Note:** For encrypted configs, the value is fetched from Vault on every request (not cached).
+**Note:** 
+- All configs: `id=0` (no database ID since stored only in Vault)
+- Encrypted values are fetched from Vault on every request (not cached)
+- Non-encrypted values may be cached in Redis for performance
 
 ### List Configurations
 
@@ -258,7 +268,10 @@ GET /api/v1/config?environment=production&service_name=my-service
 }
 ```
 
-**Note:** For encrypted configs in the list, values are fetched from Vault.
+**Note:** 
+- All configs are fetched from Vault (single source of truth)
+- All configs have `id=0` (no database ID)
+- Pagination is applied to the Vault results
 
 ## Error Handling
 
@@ -267,19 +280,19 @@ GET /api/v1/config?environment=production&service_name=my-service
 If Vault is unavailable or authentication fails:
 
 1. **During Creation/Update:**
-   - Warning is logged
-   - Value is stored in PostgreSQL instead (not recommended for sensitive data)
-   - Service continues to operate
+   - **Operation fails** with an error (prevents inconsistency)
+   - Error message: "Cannot create/update configuration: Vault is not available"
+   - Service requires Vault to be available for all config operations
 
 2. **During Retrieval:**
-   - If value is marked as `VAULT_STORED` but Vault is unavailable:
-     - Warning is logged
-     - Placeholder value is returned
-     - Service continues to operate
+   - If config exists in Vault but Vault is unavailable:
+     - Config is not found (returns 404)
+     - No fallback (ensures single source of truth)
 
 3. **Service Status:**
    - Check `/api/v1/config/status` endpoint
    - `vault_enabled` field indicates Vault connection status
+   - All config operations require Vault to be available
 
 ### Best Practices
 
@@ -304,32 +317,34 @@ If Vault is unavailable or authentication fails:
 
 ## Troubleshooting
 
-### Issue: Encrypted configs not storing in Vault
+### Issue: Cannot create configs
 
 **Symptoms:**
-- Configs with `is_encrypted=True` are stored in PostgreSQL instead
-- Logs show "Failed to write encrypted config to Vault"
+- Error: "Cannot create configuration: Vault is not available"
+- Config creation fails for all configs
 
 **Solutions:**
 1. Check `VAULT_ADDR` is correct
 2. Verify `VAULT_TOKEN` is valid and has proper permissions
 3. Ensure KV secrets engine is enabled at the mount point
 4. Check Vault server is running and accessible
+5. Verify Vault connection in service logs
 
-### Issue: Cannot retrieve encrypted config values
+### Issue: Cannot retrieve config values
 
 **Symptoms:**
-- API returns `VAULT_STORED` instead of actual value
-- Logs show "Secret not found in Vault"
+- API returns 404 for configs
+- Config not found even though it should exist
 
 **Solutions:**
 1. Verify secret exists in Vault:
    ```bash
    vault kv get secret/production/my-service/my_key
    ```
-2. Check secret path matches expected format
+2. Check secret path matches expected format: `{environment}/{service_name}/{key}`
 3. Verify Vault token has read permissions
 4. Check Vault connection status in service logs
+5. Ensure you're querying with correct `environment` and `service_name` parameters
 
 ### Issue: Vault connection timeout
 
@@ -395,31 +410,36 @@ Check if Vault client is connected and authenticated.
 
 ## Migration Guide
 
-### Migrating Existing Encrypted Configs to Vault
+### Migrating Existing Configs to Vault
 
-If you have existing encrypted configs stored in PostgreSQL:
+If you have existing configs stored in PostgreSQL (from previous implementation):
 
 1. **Enable Vault integration** (set environment variables)
 
-2. **Update existing configs** to trigger Vault storage:
+2. **Migrate existing configs** to Vault:
    ```bash
-   # Get existing encrypted config
+   # Get existing config from PostgreSQL
    curl "http://localhost:8082/api/v1/config/my_key?environment=production&service_name=my-service"
    
-   # Update it (this will move it to Vault)
-   curl -X PUT "http://localhost:8082/api/v1/config/my_key?environment=production&service_name=my-service" \
+   # Recreate it in Vault (this will store it in Vault)
+   curl -X POST "http://localhost:8082/api/v1/config" \
      -H 'Content-Type: application/json' \
      -d '{
+       "key": "my_key",
        "value": "<same-value>",
-       "is_encrypted": true
+       "environment": "production",
+       "service_name": "my-service",
+       "is_encrypted": false
      }'
    ```
 
 3. **Verify migration**:
    ```bash
-   # Check PostgreSQL has VAULT_STORED placeholder
-   # Check Vault has the actual value
+   # Check Vault has the value
    vault kv get secret/production/my-service/my_key
+   
+   # Verify it's no longer in PostgreSQL (should return 404)
+   # The config should now exist ONLY in Vault
    ```
 
 ## Security Considerations

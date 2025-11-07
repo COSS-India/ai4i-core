@@ -109,6 +109,11 @@ check_service_health() {
                 health_status="healthy"
             fi
             ;;
+        vault)
+            if docker compose exec vault vault status > /dev/null 2>&1; then
+                health_status="healthy"
+            fi
+            ;;
     esac
     
     local end_time=$(date +%s%3N)

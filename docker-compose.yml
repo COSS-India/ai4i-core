@@ -143,6 +143,43 @@ services:
       start_period: 40s
     restart: unless-stopped
 
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: ai4v-vault
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_ROOT_TOKEN:-dev-root-token}
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://0.0.0.0:8200
+      VAULT_TOKEN: ${VAULT_ROOT_TOKEN:-dev-root-token}
+    ports:
+      - "8200:8200"
+    volumes:
+      - vault-data:/vault/data
+      - vault-logs:/vault/logs
+      - ./infrastructure/vault/init-vault.sh:/vault/init-vault.sh:ro
+    networks:
+      - microservices-network
+    cap_add:
+      - IPC_LOCK
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        vault server -dev -dev-root-token-id=$${VAULT_ROOT_TOKEN:-dev-root-token} &
+        VAULT_PID=$$!
+        sleep 5
+        export VAULT_ADDR=http://127.0.0.1:8200
+        export VAULT_TOKEN=$${VAULT_ROOT_TOKEN:-dev-root-token}
+        chmod +x /vault/init-vault.sh
+        /vault/init-vault.sh || echo "Init script failed, continuing..."
+        wait $$VAULT_PID
+    healthcheck:
+      test: ["CMD-SHELL", "vault status > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
   # Microservices
   api-gateway-service:
     build:
@@ -215,6 +252,8 @@ services:
       kafka:
         condition: service_healthy
       zookeeper:
+        condition: service_healthy
+      vault:
         condition: service_healthy
     networks:
       - microservices-network
@@ -530,6 +569,10 @@ volumes:
   zookeeper-data:
     driver: local
   zookeeper-logs:
+    driver: local
+  vault-data:
+    driver: local
+  vault-logs:
     driver: local
 
 networks:

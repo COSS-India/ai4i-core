@@ -40,10 +40,19 @@ async def create_configuration(data: ConfigurationCreate, service: Configuration
 
 
 @router.get("/{key}", response_model=ConfigurationResponse)
-async def get_configuration(key: str, environment: str = Query(...), service_name: str = Query(...), service: ConfigurationService = Depends(get_config_service)):
+async def get_configuration(
+    key: str, 
+    environment: str = Query(...), 
+    service_name: str = Query(...),
+    mask: bool = Query(False, description="Mask encrypted values in response"),
+    service: ConfigurationService = Depends(get_config_service)
+):
     result = await service.get_configuration(key, environment, service_name)
     if not result:
         raise HTTPException(status_code=404, detail="Configuration not found")
+    # Mask encrypted values if requested
+    if mask and result.is_encrypted:
+        result.mask_value = True
     return result
 
 
@@ -54,9 +63,15 @@ async def get_configurations(
     keys: Optional[List[str]] = Query(default=None),
     limit: int = 50,
     offset: int = 0,
+    mask: bool = Query(False, description="Mask encrypted values in response"),
     service: ConfigurationService = Depends(get_config_service),
 ):
     items, total = await service.get_configurations(environment, service_name, keys, limit, offset)
+    # Mask encrypted values if requested
+    if mask:
+        for item in items:
+            if item.is_encrypted:
+                item.mask_value = True
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 

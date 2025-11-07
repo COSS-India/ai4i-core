@@ -49,6 +49,29 @@ else
     echo "Warning: Kafka initialization script not found"
 fi
 
+# Run Vault initialization
+echo "Running Vault initialization..."
+if [ -f "infrastructure/vault/init-vault.sh" ]; then
+    # Vault initialization is handled automatically by the container startup script
+    # But we can verify it's working
+    sleep 5
+    if sudo docker compose exec -T vault vault status > /dev/null 2>&1; then
+        echo "Vault is initialized and ready"
+        # Verify KV v2 secrets engine is enabled
+        if sudo docker compose exec -T vault vault secrets list | grep -q "^secret/"; then
+            echo "KV v2 secrets engine is enabled at 'secret' mount point"
+        else
+            echo "Warning: KV v2 secrets engine not found, enabling it..."
+            sudo docker compose exec -T vault vault secrets enable -version=2 -path=secret kv || echo "Failed to enable KV v2"
+        fi
+    else
+        echo "Warning: Vault is not ready yet"
+    fi
+    echo "Vault initialization completed"
+else
+    echo "Warning: Vault initialization script not found"
+fi
+
 # Verify all initialization completed successfully
 echo "Verifying infrastructure initialization..."
 
@@ -99,6 +122,18 @@ for topic in "${REQUIRED_TOPICS[@]}"; do
     fi
 done
 
+# Check Vault
+echo "Checking Vault..."
+if sudo docker compose exec -T vault vault status > /dev/null 2>&1; then
+    if sudo docker compose exec -T vault vault secrets list | grep -q "^secret/"; then
+        echo "✓ Vault is healthy and KV v2 secrets engine is enabled"
+    else
+        echo "✗ Vault KV v2 secrets engine not enabled"
+    fi
+else
+    echo "✗ Vault is not accessible"
+fi
+
 echo ""
 echo "Infrastructure initialization completed successfully!"
-echo "All databases, buckets, indices, and topics are ready for use."
+echo "All databases, buckets, indices, topics, and Vault are ready for use."

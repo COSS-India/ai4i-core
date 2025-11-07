@@ -1,5 +1,5 @@
-from typing import List, Optional
-from pydantic import BaseModel, Field, field_validator
+from typing import List, Optional, Any, Dict
+from pydantic import BaseModel, Field, field_validator, ConfigDict, model_serializer
 
 
 class ConfigurationCreate(BaseModel):
@@ -30,7 +30,9 @@ class ConfigurationQuery(BaseModel):
 
 
 class ConfigurationResponse(BaseModel):
-    id: int
+    model_config = ConfigDict(exclude_none=True)
+    
+    id: Optional[int] = Field(None, description="Database ID (None for Vault-stored configs)", exclude=True)
     key: str
     value: str
     environment: str
@@ -39,6 +41,27 @@ class ConfigurationResponse(BaseModel):
     version: int
     created_at: str
     updated_at: str
+    mask_value: bool = Field(default=False, exclude=True)  # Internal flag to mask encrypted values
+    
+    @model_serializer
+    def serialize_model(self, mode='python') -> Dict[str, Any]:
+        """Custom serialization that masks encrypted values and excludes id"""
+        # Use model_fields_set to get actual values without recursion
+        data = {}
+        for field_name, field_info in self.model_fields.items():
+            if field_name == 'mask_value':
+                continue  # Skip internal field
+            value = getattr(self, field_name, None)
+            if value is not None or field_name != 'id':
+                data[field_name] = value
+        
+        # Exclude id if it's None or 0
+        if data.get("id") is None or data.get("id") == 0:
+            data.pop("id", None)
+        # Mask encrypted values if flag is set
+        if data.get("is_encrypted", False) and self.mask_value:
+            data["value"] = "***ENCRYPTED***"
+        return data
 
 
 class ConfigurationListResponse(BaseModel):
