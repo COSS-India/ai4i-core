@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field, field_validator, ConfigDict, model_serial
 
 
 class ConfigurationCreate(BaseModel):
-    key: str = Field(..., description="Configuration key", min_length=1, max_length=255)
+    key: str = Field(..., description="Configuration key (must be UPPERCASE)", min_length=1, max_length=255)
     value: str = Field(..., description="Configuration value")
     environment: str = Field(..., description="Environment name (development|staging|production)")
     service_name: str = Field(..., description="Service name", min_length=1, max_length=100)
@@ -15,6 +15,30 @@ class ConfigurationCreate(BaseModel):
         allowed = {"development", "staging", "production"}
         if v not in allowed:
             raise ValueError("environment must be one of development, staging, production")
+        return v
+
+    @field_validator("key")
+    @classmethod
+    def validate_key_uppercase(cls, v: str) -> str:
+        """Enforce that configuration keys must be in UPPERCASE format"""
+        # Must be all uppercase
+        if not v.isupper():
+            raise ValueError(
+                f"Configuration key '{v}' must be UPPERCASE. "
+                f"Example: 'REDIS_HOST', 'DATABASE_URL', 'TRITON_ENDPOINT'"
+            )
+        # After removing underscores, must be alphanumeric
+        if not v.replace("_", "").isalnum():
+            raise ValueError(
+                f"Configuration key '{v}' must contain only uppercase letters, numbers, and underscores. "
+                f"Example: 'REDIS_HOST', 'DATABASE_URL', 'TRITON_ENDPOINT'"
+            )
+        # Must contain at least one letter (not just numbers)
+        if not any(c.isalpha() for c in v):
+            raise ValueError(
+                f"Configuration key '{v}' must contain at least one letter. "
+                f"Example: 'REDIS_HOST', 'DATABASE_URL', 'TRITON_ENDPOINT'"
+            )
         return v
 
 
