@@ -56,18 +56,29 @@ Key environment variables (see `env.template`):
 - ZOOKEEPER_HOSTS, ZOOKEEPER_BASE_PATH, ZOOKEEPER_CONNECTION_TIMEOUT, ZOOKEEPER_SESSION_TIMEOUT
 - SERVICE_REGISTRY_ENABLED, SERVICE_HEALTH_CHECK_INTERVAL, SERVICE_INSTANCE_ID
 
+## Configuration Key Naming Convention
+
+**All configuration keys must be in UPPERCASE format with underscores only.**
+
+Examples:
+- ✅ `REDIS_HOST`, `DATABASE_URL`, `TRITON_ENDPOINT`
+- ❌ `redis_host`, `database_url`, `triton_endpoint` (lowercase - will be rejected)
+- ❌ `RedisHost`, `database-url` (mixed case or hyphens - will be rejected)
+
+The Config Service will automatically validate and reject keys that don't follow this convention.
+
 ## Usage Examples
-- Create configuration:
+- Create configuration (note: key must be UPPERCASE):
 ```bash
 curl -X POST http://localhost:8082/api/v1/config \
   -H 'Content-Type: application/json' \
-  -d '{"key":"model_path","value":"/models/asr","environment":"development","service_name":"asr-service"}'
+  -d '{"key":"MODEL_PATH","value":"/models/asr","environment":"development","service_name":"asr-service"}'
 ```
 - Create encrypted configuration (stored in Vault):
 ```bash
 curl -X POST http://localhost:8082/api/v1/config \
   -H 'Content-Type: application/json' \
-  -d '{"key":"api_key","value":"secret_key_123","environment":"production","service_name":"asr-service","is_encrypted":true}'
+  -d '{"key":"API_KEY","value":"secret_key_123","environment":"production","service_name":"asr-service","is_encrypted":true}'
 ```
 - Evaluate feature flag:
 ```bash
