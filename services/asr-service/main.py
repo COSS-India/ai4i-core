@@ -171,7 +171,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ASR Service",
     version="1.0.0",
-    description="Automatic Speech Recognition microservice for converting speech to text. Supports 22+ Indian languages with real-time streaming and batch processing.",
+    description="Automatic Speech Recognition microservice for converting speech to text. Supports 22+ Indic languages with real-time streaming and batch processing.",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
