@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from routers import health_router, inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
-from utils.config_client import ConfigurationClient
 from utils.triton_client import TritonClient
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
@@ -36,16 +35,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Environment variables (fallback defaults)
+# Environment variables (with defaults)
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db")
 TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "13.200.133.97:8000")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "1b69e9a1a24466c85e4bbca3c5295f50")
-
-# Configuration values (loaded from config service or env vars)
-_config_values: dict = {}
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+RATE_LIMIT_PER_HOUR = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "90"))
+MAX_TEXT_LENGTH = int(os.getenv("MAX_TEXT_LENGTH", "5000"))
+DEFAULT_SOURCE_LANGUAGE = os.getenv("DEFAULT_SOURCE_LANGUAGE", "en")
+DEFAULT_TARGET_LANGUAGE = os.getenv("DEFAULT_TARGET_LANGUAGE", "hi")
 
 # Global variables
 redis_client: Optional[redis.Redis] = None
@@ -74,87 +76,6 @@ except Exception as e:
     redis_client = None
 
 
-async def load_configurations() -> dict:
-    """Load configurations from Config Service with fallback to environment variables"""
-    global _config_values
-    
-    # List of configuration keys to load
-    config_keys = [
-        "REDIS_HOST",
-        "REDIS_PORT",
-        "REDIS_PASSWORD",
-        "DATABASE_URL",
-        "TRITON_ENDPOINT",
-        "TRITON_API_KEY",
-        "RATE_LIMIT_PER_MINUTE",
-        "RATE_LIMIT_PER_HOUR",
-        "MAX_BATCH_SIZE",
-        "MAX_TEXT_LENGTH",
-        "DEFAULT_SOURCE_LANGUAGE",
-        "DEFAULT_TARGET_LANGUAGE",
-    ]
-    
-    # Try to load from Config Service
-    try:
-        config_client = ConfigurationClient()
-        logger.info("Loading configurations from Config Service...")
-        configs = await config_client.get_configs(config_keys)
-        
-        # Use config service values if available, otherwise fall back to env vars
-        for key in config_keys:
-            value = configs.get(key)
-            if value is not None:
-                _config_values[key] = value
-                logger.debug(f"Loaded {key} from Config Service")
-            else:
-                # Fall back to environment variable
-                env_value = os.getenv(key)
-                if env_value is not None:
-                    _config_values[key] = env_value
-                else:
-                    # Use default from module-level variables
-                    if key == "REDIS_HOST":
-                        _config_values[key] = REDIS_HOST
-                    elif key == "REDIS_PORT":
-                        _config_values[key] = str(REDIS_PORT)
-                    elif key == "REDIS_PASSWORD":
-                        _config_values[key] = REDIS_PASSWORD
-                    elif key == "DATABASE_URL":
-                        _config_values[key] = DATABASE_URL
-                    elif key == "TRITON_ENDPOINT":
-                        _config_values[key] = TRITON_ENDPOINT
-                    elif key == "TRITON_API_KEY":
-                        _config_values[key] = TRITON_API_KEY
-                    else:
-                        _config_values[key] = os.getenv(key, "")
-        
-        logger.info(f"Loaded {len([k for k in config_keys if _config_values.get(k)])} configurations from Config Service")
-    except Exception as e:
-        logger.warning(f"Failed to load configurations from Config Service: {e}. Using environment variables.")
-        # Fall back to environment variables
-        for key in config_keys:
-            env_value = os.getenv(key)
-            if env_value is not None:
-                _config_values[key] = env_value
-            elif key == "REDIS_HOST":
-                _config_values[key] = REDIS_HOST
-            elif key == "REDIS_PORT":
-                _config_values[key] = str(REDIS_PORT)
-            elif key == "REDIS_PASSWORD":
-                _config_values[key] = REDIS_PASSWORD
-            elif key == "DATABASE_URL":
-                _config_values[key] = DATABASE_URL
-            elif key == "TRITON_ENDPOINT":
-                _config_values[key] = TRITON_ENDPOINT
-            elif key == "TRITON_API_KEY":
-                _config_values[key] = TRITON_API_KEY
-    
-    return _config_values
-
-
-def get_config(key: str, default: str = "") -> str:
-    """Get configuration value with fallback to default"""
-    return _config_values.get(key, os.getenv(key, default))
 
 
 @asynccontextmanager
@@ -166,16 +87,13 @@ async def lifespan(app: FastAPI):
     logger.info("Starting NMT Service...")
     
     try:
-        # Load configurations from Config Service
-        await load_configurations()
-        
-        # Get configuration values
-        redis_host = get_config("REDIS_HOST", REDIS_HOST)
-        redis_port = int(get_config("REDIS_PORT", str(REDIS_PORT)))
-        redis_password = get_config("REDIS_PASSWORD", REDIS_PASSWORD)
-        database_url = get_config("DATABASE_URL", DATABASE_URL)
-        triton_endpoint = get_config("TRITON_ENDPOINT", TRITON_ENDPOINT)
-        triton_api_key = get_config("TRITON_API_KEY", TRITON_API_KEY)
+        # Get configuration values from environment variables
+        redis_host = REDIS_HOST
+        redis_port = REDIS_PORT
+        redis_password = REDIS_PASSWORD
+        database_url = DATABASE_URL
+        triton_endpoint = TRITON_ENDPOINT
+        triton_api_key = TRITON_API_KEY
         
         # Use existing Redis client or initialize if needed
         global redis_client
@@ -325,16 +243,12 @@ app.add_middleware(
 app.add_middleware(RequestLoggingMiddleware)
 
 # Add rate limiting middleware (if Redis is available)
-# Note: Rate limit values will be loaded from config during startup
 if redis_client:
-    # These will be updated during startup when configs are loaded
-    rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-    rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
     app.add_middleware(
         RateLimitMiddleware,
         redis_client=redis_client,
-        requests_per_minute=rate_limit_per_minute,
-        requests_per_hour=rate_limit_per_hour
+        requests_per_minute=RATE_LIMIT_PER_MINUTE,
+        requests_per_hour=RATE_LIMIT_PER_HOUR
     )
     logger.info("Rate limiting middleware added")
 else:
