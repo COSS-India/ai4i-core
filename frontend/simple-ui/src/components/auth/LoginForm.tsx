@@ -1,41 +1,44 @@
 /**
  * Login form component with Chakra UI
  */
-import React, { useState } from 'react';
+import { ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
   Box,
-  Heading,
+  Button,
+  Checkbox,
   FormControl,
   FormLabel,
+  Heading,
+  IconButton,
   Input,
   InputGroup,
   InputRightElement,
-  IconButton,
-  Button,
-  Checkbox,
+  Link,
   Text,
   VStack,
-  Link,
-  Alert,
-  AlertIcon,
-  AlertTitle,
-  AlertDescription,
-} from '@chakra-ui/react';
-import { ViewIcon, ViewOffIcon } from '@chakra-ui/icons';
-import { useAuth } from '../../hooks/useAuth';
-import { LoginRequest } from '../../types/auth';
-import LoadingSpinner from '../common/LoadingSpinner';
+} from "@chakra-ui/react";
+import React, { useState } from "react";
+import { useAuth } from "../../hooks/useAuth";
+import { LoginRequest } from "../../types/auth";
+import LoadingSpinner from "../common/LoadingSpinner";
 
 interface LoginFormProps {
   onSuccess?: () => void;
   onSwitchToRegister?: () => void;
 }
 
-const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onSwitchToRegister }) => {
+const LoginForm: React.FC<LoginFormProps> = ({
+  onSuccess,
+  onSwitchToRegister,
+}) => {
   const { login, isLoading, error, clearError } = useAuth();
   const [formData, setFormData] = useState<LoginRequest>({
-    email: '',
-    password: '',
+    email: "",
+    password: "",
     remember_me: false,
   });
   const [showPassword, setShowPassword] = useState(false);
@@ -54,7 +57,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onSwitchToRegister }) 
   React.useEffect(() => {
     if (loginAttempted && error) {
       // Only show login-related errors, not initialization errors
-      if (error !== 'Failed to initialize authentication') {
+      if (error !== "Failed to initialize authentication") {
         setLoginError(error);
       } else {
         setLoginError(null);
@@ -74,21 +77,23 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onSwitchToRegister }) 
       await login(formData);
       // Login successful - close modal immediately via onSuccess callback
       // This ensures the modal closes as soon as /me endpoint succeeds
-      console.log('LoginForm: Login successful, calling onSuccess to close modal');
+      console.log(
+        "LoginForm: Login successful, calling onSuccess to close modal"
+      );
       onSuccess?.();
       setLoginAttempted(false);
       setLoginError(null);
     } catch (error) {
       // Error is handled by the hook
-      console.error('Login failed:', error);
+      console.error("Login failed:", error);
     }
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value, type, checked } = e.target;
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
-      [name]: type === 'checkbox' ? checked : value,
+      [name]: type === "checkbox" ? checked : value,
     }));
     // Clear error when user starts typing
     if (loginError) {
@@ -133,7 +138,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onSwitchToRegister }) 
             <FormLabel>Password</FormLabel>
             <InputGroup>
               <Input
-                type={showPassword ? 'text' : 'password'}
+                type={showPassword ? "text" : "password"}
                 name="password"
                 value={formData.password}
                 onChange={handleChange}
@@ -143,7 +148,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onSwitchToRegister }) 
               />
               <InputRightElement width="4.5rem">
                 <IconButton
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
                   icon={showPassword ? <ViewOffIcon /> : <ViewIcon />}
                   h="1.75rem"
                   size="sm"
@@ -173,19 +178,19 @@ const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onSwitchToRegister }) 
             loadingText="Signing in..."
             disabled={isLoading}
           >
-            {isLoading ? <LoadingSpinner size="sm" /> : 'Sign In'}
+            {isLoading ? <LoadingSpinner size="sm" /> : "Sign In"}
           </Button>
         </VStack>
       </form>
 
       <Box mt={6} textAlign="center">
         <Text fontSize="sm" color="gray.600">
-          Don&apos;t have an account?{' '}
+          Don&apos;t have an account?{" "}
           <Link
             color="blue.500"
             fontWeight="medium"
             onClick={onSwitchToRegister}
-            _hover={{ textDecoration: 'underline' }}
+            _hover={{ textDecoration: "underline" }}
             cursor="pointer"
           >
             Sign up
