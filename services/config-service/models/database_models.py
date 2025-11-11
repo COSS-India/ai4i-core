@@ -36,23 +36,6 @@ class Configuration(Base):
         return f"<Configuration id={self.id} key={self.key} env={self.environment} service={self.service_name} version={self.version}>"
 
 
-class FeatureFlag(Base):
-    __tablename__ = "feature_flags"
-
-    id = Column(Integer, primary_key=True)
-    name = Column(String(255), nullable=False, unique=True)
-    description = Column(Text)
-    is_enabled = Column(Boolean, default=False)
-    rollout_percentage = Column(String)  # store as string compatible with DECIMAL; convert in repo
-    target_users = Column(JSON)
-    environment = Column(String(50), nullable=False)
-    created_at = Column(DateTime(timezone=True))
-    updated_at = Column(DateTime(timezone=True))
-
-    def __repr__(self) -> str:
-        return f"<FeatureFlag id={self.id} name={self.name} env={self.environment} enabled={self.is_enabled}>"
-
-
 class ServiceRegistry(Base):
     __tablename__ = "service_registry"
 
