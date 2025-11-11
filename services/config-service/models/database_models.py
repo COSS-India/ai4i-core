@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     JSON,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -38,9 +39,12 @@ class Configuration(Base):
 
 class FeatureFlag(Base):
     __tablename__ = "feature_flags"
+    __table_args__ = (
+        UniqueConstraint('name', 'environment', name='uq_feature_flag_name_env'),
+    )
 
     id = Column(Integer, primary_key=True)
-    name = Column(String(255), nullable=False, unique=True)
+    name = Column(String(255), nullable=False)
     description = Column(Text)
     is_enabled = Column(Boolean, default=False)
     rollout_percentage = Column(String)  # store as string compatible with DECIMAL; convert in repo
@@ -48,6 +52,8 @@ class FeatureFlag(Base):
     environment = Column(String(50), nullable=False)
     created_at = Column(DateTime(timezone=True))
     updated_at = Column(DateTime(timezone=True))
+
+    history = relationship("FeatureFlagHistory", back_populates="feature_flag", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<FeatureFlag id={self.id} name={self.name} env={self.environment} enabled={self.is_enabled}>"
@@ -84,5 +90,25 @@ class ConfigurationHistory(Base):
 
     def __repr__(self) -> str:
         return f"<ConfigurationHistory id={self.id} configuration_id={self.configuration_id}>"
+
+
+class FeatureFlagHistory(Base):
+    __tablename__ = "feature_flag_history"
+
+    id = Column(Integer, primary_key=True)
+    feature_flag_id = Column(Integer, ForeignKey("feature_flags.id", ondelete="CASCADE"))
+    old_is_enabled = Column(Boolean)
+    new_is_enabled = Column(Boolean)
+    old_rollout_percentage = Column(String)
+    new_rollout_percentage = Column(String)
+    old_target_users = Column(JSON)
+    new_target_users = Column(JSON)
+    changed_by = Column(String(100))
+    changed_at = Column(DateTime(timezone=True))
+
+    feature_flag = relationship("FeatureFlag", back_populates="history")
+
+    def __repr__(self) -> str:
+        return f"<FeatureFlagHistory id={self.id} feature_flag_id={self.feature_flag_id}>"
 
 

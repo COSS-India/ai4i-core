@@ -77,6 +77,22 @@ curl -X POST http://localhost:8082/api/v1/registry/register \
 curl http://localhost:8082/api/v1/registry/discover/asr-service
 ```
 
+## Documentation
+
+### Feature Flags
+- [Feature Flags Implementation Guide](./docs/FEATURE_FLAGS.md) - Complete implementation details
+- [Feature Flags Integration Guide](./docs/FEATURE_FLAGS_INTEGRATION.md) - How to integrate in microservices
+- [Feature Flags Implementation Status](./FEATURE_FLAGS_IMPLEMENTATION.md) - Implementation status and testing
+
+### Service Registry
+- [Service Registry Integration](./docs/SERVICE_REGISTRY_INTEGRATION.md) - Integration guide
+- [Service Registry Developer Guide](./docs/SERVICE_REGISTRY_DEVELOPER_GUIDE.md) - Developer documentation
+
+### Testing
+- [Quick Test Guide](./docs/QUICK_TEST_GUIDE.md) - Quick testing instructions
+- [PostgreSQL E2E Testing](./docs/POSTGRES-E2E.md) - End-to-end testing guide
+- [Health Monitoring Testing](./docs/TESTING_HEALTH_MONITORING.md) - Health check testing
+
 ## Development
 - Install requirements: `pip install -r services/config_service/requirements.txt`
 - Run locally: `uvicorn services.config_service.main:app --reload --port 8082`

@@ -17,6 +17,7 @@ from models.database_models import (
     FeatureFlag,
     ServiceRegistry,
     ConfigurationHistory,
+    FeatureFlagHistory,
 ) 
 
 # Configure logging

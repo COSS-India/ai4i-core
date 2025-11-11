@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple
 from sqlalchemy import select, delete, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database_models import FeatureFlag
+from models.database_models import FeatureFlag, FeatureFlagHistory
 from datetime import datetime, timezone
 
 
@@ -76,6 +76,7 @@ class FeatureFlagRepository:
         is_enabled: Optional[bool] = None,
         rollout_percentage: Optional[float] = None,
         target_users: Optional[List[str]] = None,
+        changed_by: Optional[str] = None,
     ) -> Optional[FeatureFlag]:
         async with self._session_factory() as session:
             result = await session.execute(
@@ -87,6 +88,13 @@ class FeatureFlagRepository:
             flag = result.scalar_one_or_none()
             if not flag:
                 return None
+            
+            # Store old values for history
+            old_is_enabled = flag.is_enabled
+            old_rollout_percentage = flag.rollout_percentage
+            old_target_users = flag.target_users
+            
+            # Update flag
             if is_enabled is not None:
                 flag.is_enabled = is_enabled
             if rollout_percentage is not None:
@@ -94,6 +102,24 @@ class FeatureFlagRepository:
             if target_users is not None:
                 flag.target_users = target_users
             flag.updated_at = datetime.now(timezone.utc)
+            
+            # Create history entry if something changed
+            if (is_enabled is not None and old_is_enabled != is_enabled) or \
+               (rollout_percentage is not None and old_rollout_percentage != str(rollout_percentage)) or \
+               (target_users is not None and old_target_users != target_users):
+                history = FeatureFlagHistory(
+                    feature_flag_id=flag.id,
+                    old_is_enabled=old_is_enabled,
+                    new_is_enabled=flag.is_enabled,
+                    old_rollout_percentage=old_rollout_percentage,
+                    new_rollout_percentage=flag.rollout_percentage,
+                    old_target_users=old_target_users,
+                    new_target_users=flag.target_users,
+                    changed_by=changed_by,
+                    changed_at=datetime.now(timezone.utc),
+                )
+                session.add(history)
+            
             await session.commit()
             await session.refresh(flag)
             return flag
@@ -130,5 +156,18 @@ class FeatureFlagRepository:
         if bucket < int(rollout):
             return True, "percentage_rollout"
         return False, "percentage_excluded"
+
+    async def get_feature_flag_history(self, name: str, environment: str, limit: int = 50) -> List[FeatureFlagHistory]:
+        async with self._session_factory() as session:
+            flag = await self.get_feature_flag(name, environment)
+            if not flag:
+                return []
+            result = await session.execute(
+                select(FeatureFlagHistory)
+                .where(FeatureFlagHistory.feature_flag_id == flag.id)
+                .order_by(FeatureFlagHistory.changed_at.desc())
+                .limit(limit)
+            )
+            return list(result.scalars().all())
 
 
