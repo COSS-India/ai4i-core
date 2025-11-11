@@ -5,13 +5,6 @@ from .config_models import (
     ConfigurationResponse,
     ConfigurationListResponse,
 )
-from .feature_flag_models import (
-    FeatureFlagCreate,
-    FeatureFlagUpdate,
-    FeatureFlagEvaluate,
-    FeatureFlagResponse,
-    FeatureFlagEvaluationResponse,
-)
 from .service_registry_models import (
     ServiceRegistration,
     ServiceUpdate,
@@ -24,7 +17,6 @@ from .service_registry_models import (
 from .database_models import (
     Base,
     Configuration,
-    FeatureFlag,
     ServiceRegistry,
     ConfigurationHistory,
 )
@@ -35,11 +27,6 @@ __all__ = [
     "ConfigurationQuery",
     "ConfigurationResponse",
     "ConfigurationListResponse",
-    "FeatureFlagCreate",
-    "FeatureFlagUpdate",
-    "FeatureFlagEvaluate",
-    "FeatureFlagResponse",
-    "FeatureFlagEvaluationResponse",
     "ServiceRegistration",
     "ServiceUpdate",
     "ServiceQuery",
@@ -49,7 +36,6 @@ __all__ = [
     "ServiceStatus",
     "Base",
     "Configuration",
-    "FeatureFlag",
     "ServiceRegistry",
     "ConfigurationHistory",
 ]

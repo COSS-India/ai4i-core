@@ -8,7 +8,6 @@ from .cache_utils import (
 )
 from .kafka_utils import (
     publish_config_event,
-    publish_feature_flag_event,
     publish_service_registry_event,
 )
 
@@ -20,7 +19,6 @@ __all__ = [
     "cache_delete_pattern",
     "cache_get_or_set",
     "publish_config_event",
-    "publish_feature_flag_event",
     "publish_service_registry_event",
 ]
 

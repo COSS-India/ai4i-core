@@ -1,11 +1,10 @@
 ## PostgreSQL in Config Service: End-to-End Overview
 
-This document explains how PostgreSQL is used by the Config Service across configuration management, feature flags, and the service registry. It covers schema, connection, read/write flows, caching, and failure handling.
+This document explains how PostgreSQL is used by the Config Service across configuration management and the service registry. It covers schema, connection, read/write flows, caching, and failure handling.
 
 ### 1) What PostgreSQL stores
 - Configuration key/values with per-service and per-environment scoping.
 - Historical changes for audit/versioning.
-- Feature flags with targeting and rollout metadata.
 - A persistent view of the service registry (service URL, health status, metadata, timestamps).
 
 ### 2) Schema (SQLAlchemy models)
@@ -26,20 +25,6 @@ class Configuration(Base):
 ```
 
 ```39:54:services/config-service/models/database_models.py
-class FeatureFlag(Base):
-    __tablename__ = "feature_flags"
-    id = Column(Integer, primary_key=True)
-    name = Column(String(255), nullable=False, unique=True)
-    description = Column(Text)
-    is_enabled = Column(Boolean, default=False)
-    rollout_percentage = Column(String)
-    target_users = Column(JSON)
-    environment = Column(String(50), nullable=False)
-    created_at = Column(DateTime(timezone=True))
-    updated_at = Column(DateTime(timezone=True))
-```
-
-```56:71:services/config-service/models/database_models.py
 class ServiceRegistry(Base):
     __tablename__ = "service_registry"
     id = Column(Integer, primary_key=True)
@@ -84,10 +69,6 @@ db_session = sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False
   - Read: `ConfigRepository.get_configuration(...)` and list APIs query by `key`, `environment`, `service_name`.
   - Update/Delete: repository methods use `update`/`delete` with version and timestamp updates.
 
-- Feature Flags
-  - Create/Update/List implemented in `feature_flag_repository.py` with similar patterns.
-  - Stores targeting (`target_users`) and rollout percentage.
-
 - Service Registry (persistent state)
   - On registration API: `ServiceRegistryService.register_service(...)` writes/updates the `service_registry` row via `ServiceRegistryRepository.register_service(...)`.
   - On health checks: `ServiceRegistryService.perform_health_check(...)` updates the `status` and optionally `last_health_check`.
@@ -106,7 +87,6 @@ Flow summary for registry:
 
 ### 6) API surfaces touching PostgreSQL
 - Config endpoints: `routers/config_router.py` → `ConfigurationService` → `ConfigRepository` → PostgreSQL.
-- Feature flag endpoints: `routers/feature_flag_router.py` → `FeatureFlagService` → repository → PostgreSQL.
 - Registry endpoints: `routers/service_registry_router.py` → `ServiceRegistryService` → `ServiceRegistryRepository` → PostgreSQL.
 
 ### 7) Startup & lifecycle
@@ -120,7 +100,7 @@ Flow summary for registry:
 - ZooKeeper available but PostgreSQL down: registry updates in ZooKeeper succeed, but persistence will fail; cache may still be invalidated; subsequent list APIs may return stale or partial data.
 
 ### 9) Operations
-- Backups: dump `configurations`, `feature_flags`, `service_registry`, and `configuration_history` for DR/audit.
+- Backups: dump `configurations`, `service_registry`, and `configuration_history` for DR/audit.
 - Migrations: Model changes require Alembic or equivalent; currently tables are auto-created if missing.
 - Tuning: Adjust `pool_size`, `max_overflow`, and Postgres resources under load.
 
