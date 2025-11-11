@@ -3,6 +3,7 @@ import logging
 from typing import List, Optional, Tuple
 
 from redis.asyncio import Redis
+from aiokafka import AIOKafkaProducer
 
 from models.feature_flag_models import (
     FeatureFlagCreate,
@@ -11,15 +12,25 @@ from models.feature_flag_models import (
     FeatureFlagResponse,
 )
 from repositories.feature_flag_repository import FeatureFlagRepository
+from utils.kafka_utils import publish_feature_flag_event
 
 
 logger = logging.getLogger(__name__)
 
 
 class FeatureFlagService:
-    def __init__(self, repository: FeatureFlagRepository, redis_client: Redis, eval_ttl: int = 300):
+    def __init__(
+        self,
+        repository: FeatureFlagRepository,
+        redis_client: Redis,
+        kafka_producer: Optional[AIOKafkaProducer] = None,
+        kafka_topic: str = "feature-flag-updates",
+        eval_ttl: int = 300,
+    ):
         self.repository = repository
         self.redis = redis_client
+        self.kafka_producer = kafka_producer
+        self.kafka_topic = kafka_topic
         self.eval_ttl = eval_ttl
 
     def _flag_cache_key(self, environment: str, name: str) -> str:
@@ -38,6 +49,24 @@ class FeatureFlagService:
             environment=req.environment,
         )
         await self.redis.delete(self._flag_cache_key(flag.environment, flag.name))
+        
+        # Publish Kafka event
+        try:
+            await publish_feature_flag_event(
+                self.kafka_producer,
+                self.kafka_topic,
+                {
+                    "event_type": "feature_flag_created",
+                    "flag_name": flag.name,
+                    "environment": flag.environment,
+                    "is_enabled": flag.is_enabled,
+                    "rollout_percentage": float(flag.rollout_percentage or 0),
+                    "target_users": flag.target_users or [],
+                },
+            )
+        except Exception as e:
+            logger.warning(f"Failed to publish Kafka event for feature flag creation: {e}")
+        
         return FeatureFlagResponse(
             id=flag.id,
             name=flag.name,
@@ -99,16 +128,55 @@ class FeatureFlagService:
         is_enabled: Optional[bool],
         rollout_percentage: Optional[float],
         target_users: Optional[List[str]],
+        changed_by: Optional[str] = None,
     ) -> Optional[FeatureFlagResponse]:
-        flag = await self.repository.update_feature_flag(name, environment, is_enabled, rollout_percentage, target_users)
+        flag = await self.repository.update_feature_flag(
+            name, environment, is_enabled, rollout_percentage, target_users, changed_by=changed_by
+        )
         if not flag:
             return None
         await self.redis.delete(self._flag_cache_key(environment, name))
+        
+        # Publish Kafka event
+        try:
+            await publish_feature_flag_event(
+                self.kafka_producer,
+                self.kafka_topic,
+                {
+                    "event_type": "feature_flag_updated",
+                    "flag_name": flag.name,
+                    "environment": flag.environment,
+                    "is_enabled": flag.is_enabled,
+                    "rollout_percentage": float(flag.rollout_percentage or 0),
+                    "target_users": flag.target_users or [],
+                },
+            )
+        except Exception as e:
+            logger.warning(f"Failed to publish Kafka event for feature flag update: {e}")
+        
         return await self.get_feature_flag(name, environment)
 
     async def delete_feature_flag(self, name: str, environment: str) -> bool:
+        # Get flag before deletion for Kafka event
+        flag = await self.repository.get_feature_flag(name, environment)
         ok = await self.repository.delete_feature_flag(name, environment)
-        await self.redis.delete(self._flag_cache_key(environment, name))
+        if ok:
+            await self.redis.delete(self._flag_cache_key(environment, name))
+            
+            # Publish Kafka event
+            try:
+                await publish_feature_flag_event(
+                    self.kafka_producer,
+                    self.kafka_topic,
+                    {
+                        "event_type": "feature_flag_deleted",
+                        "flag_name": name,
+                        "environment": environment,
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"Failed to publish Kafka event for feature flag deletion: {e}")
+        
         return ok
 
     async def evaluate_feature_flag(self, name: str, environment: str, user_id: str) -> FeatureFlagEvaluationResponse:
@@ -124,5 +192,8 @@ class FeatureFlagService:
         resp = FeatureFlagEvaluationResponse(enabled=enabled, reason=reason)
         await self.redis.set(ck, json.dumps(resp.model_dump()), ex=self.eval_ttl)
         return resp
+
+    async def get_feature_flag_history(self, name: str, environment: str, limit: int = 50):
+        return await self.repository.get_feature_flag_history(name, environment, limit)
 
 
