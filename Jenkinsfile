@@ -12,20 +12,21 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                echo "Cloning branch: ${params.BRANCH_NAME}"
-                // Clone the specified branch
-                git branch: "${params.BRANCH_NAME}", url: "${env.GIT_REPO}"
+                echo "Checking out branch: ${params.BRANCH_NAME}"
+                // Use a fresh checkout each time, ignoring the default SCM clone
+                deleteDir()
+                checkout([$class: 'GitSCM',
+                    branches: [[name: "*/${params.BRANCH_NAME}"]],
+                    userRemoteConfigs: [[url: "${env.GIT_REPO}"]]
+                ])
             }
         }
 
         stage('Build') {
             steps {
                 echo "Building project from branch: ${params.BRANCH_NAME}"
-                // Add your build commands here, for example:
+                // Example build command
                 // sh 'mvn clean install'
-                // or
-                // sh './gradlew build'
-                // or any custom script
             }
         }
     }
