@@ -20,14 +20,15 @@ CREATE TABLE IF NOT EXISTS configurations (
 -- Feature flags table
 CREATE TABLE IF NOT EXISTS feature_flags (
     id SERIAL PRIMARY KEY,
-    name VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
     description TEXT,
     is_enabled BOOLEAN DEFAULT false,
     rollout_percentage VARCHAR(255), -- Stored as string to match Python model (compatible with DECIMAL conversion in repo)
     target_users JSONB, -- JSON array/list of user IDs or user groups
     environment VARCHAR(50) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(name, environment)
 );
 
 -- Service registry table
@@ -53,6 +54,20 @@ CREATE TABLE IF NOT EXISTS configuration_history (
     changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Feature flag history table for audit trail
+CREATE TABLE IF NOT EXISTS feature_flag_history (
+    id SERIAL PRIMARY KEY,
+    feature_flag_id INTEGER REFERENCES feature_flags(id) ON DELETE CASCADE,
+    old_is_enabled BOOLEAN,
+    new_is_enabled BOOLEAN,
+    old_rollout_percentage VARCHAR(255),
+    new_rollout_percentage VARCHAR(255),
+    old_target_users JSONB,
+    new_target_users JSONB,
+    changed_by VARCHAR(100),
+    changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_configurations_key ON configurations(key);
 CREATE INDEX IF NOT EXISTS idx_configurations_environment ON configurations(environment);
@@ -61,6 +76,9 @@ CREATE INDEX IF NOT EXISTS idx_configurations_key_env_service ON configurations(
 CREATE INDEX IF NOT EXISTS idx_feature_flags_name ON feature_flags(name);
 CREATE INDEX IF NOT EXISTS idx_feature_flags_environment ON feature_flags(environment);
 CREATE INDEX IF NOT EXISTS idx_feature_flags_enabled ON feature_flags(is_enabled);
+CREATE INDEX IF NOT EXISTS idx_feature_flags_name_env ON feature_flags(name, environment);
+CREATE INDEX IF NOT EXISTS idx_feature_flag_history_flag_id ON feature_flag_history(feature_flag_id);
+CREATE INDEX IF NOT EXISTS idx_feature_flag_history_changed_at ON feature_flag_history(changed_at);
 CREATE INDEX IF NOT EXISTS idx_service_registry_service_name ON service_registry(service_name);
 CREATE INDEX IF NOT EXISTS idx_service_registry_status ON service_registry(status);
 CREATE INDEX IF NOT EXISTS idx_configuration_history_config_id ON configuration_history(configuration_id);
