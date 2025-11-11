@@ -38,10 +38,6 @@ export interface RegisterRequest {
   username: string;
   password: string;
   confirm_password: string;
-  full_name?: string;
-  phone_number?: string;
-  timezone?: string;
-  language?: string;
 }
 
 export interface TokenRefreshRequest {

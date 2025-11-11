@@ -144,7 +144,7 @@ async def list_models() -> Dict[str, Any]:
                     "en", "gom", "gu", "sa", "te", "mr", "hi", "or", "mni", 
                     "ml", "as", "doi", "sat", "ta", "sd", "bn", "ks", "kn", "ne"
                 ],
-                "description": "IndicTrans2 model supporting 19 Indian languages with bidirectional translation",
+                "description": "IndicTrans2 model supporting 19 Indic Languages with bidirectional translation",
                 "max_batch_size": 90,
                 "supported_scripts": ["Deva", "Arab", "Taml", "Telu", "Knda", "Mlym", "Beng", "Gujr", "Guru", "Orya", "Latn"]
             },
@@ -180,7 +180,7 @@ async def list_services() -> Dict[str, Any]:
                 "triton_endpoint": "13.200.133.97:8000",
                 "triton_model": "nmt",
                 "provider": "AI4Bharat",
-                "description": "IndicTrans2 model supporting 19 Indian languages",
+                "description": "IndicTrans2 model supporting 19 Indic Languages",
                 "supported_languages": [
                     "en", "gom", "gu", "sa", "te", "mr", "hi", "or", "mni", 
                     "ml", "as", "doi", "sat", "ta", "sd", "bn", "ks", "kn", "ne"
@@ -192,7 +192,7 @@ async def list_services() -> Dict[str, Any]:
                 "triton_endpoint": "13.200.133.97:8000",
                 "triton_model": "nmt",
                 "provider": "AI4Bharat",
-                "description": "IndicTrans2 model supporting 19 Indian languages",
+                "description": "IndicTrans2 model supporting 19 Indic Languages",
                 "supported_languages": [
                     "en", "gom", "gu", "sa", "te", "mr", "hi", "or", "mni", 
                     "ml", "as", "doi", "sat", "ta", "sd", "bn", "ks", "kn", "ne"
@@ -204,7 +204,7 @@ async def list_services() -> Dict[str, Any]:
                 "triton_endpoint": "13.200.133.97:8000",
                 "triton_model": "nmt",
                 "provider": "AI4Bharat",
-                "description": "IndicTrans2 model supporting 19 Indian languages",
+                "description": "IndicTrans2 model supporting 19 Indic Languages",
                 "supported_languages": [
                     "en", "gom", "gu", "sa", "te", "mr", "hi", "or", "mni", 
                     "ml", "as", "doi", "sat", "ta", "sd", "bn", "ks", "kn", "ne"
@@ -239,6 +239,12 @@ async def list_languages(
 ) -> Dict[str, Any]:
     """List supported languages for a specific NMT model or service"""
     
+    # Normalize input parameters (strip whitespace, handle URL encoding)
+    if service_id:
+        service_id = service_id.strip()
+    if model_id:
+        model_id = model_id.strip()
+    
     # Service ID to Model ID mapping
     SERVICE_TO_MODEL_MAP = {
         "ai4bharat/indictrans--gpu-t4": "ai4bharat/indictrans-v2-all-gpu--t4",
@@ -247,11 +253,16 @@ async def list_languages(
         "facebook/nllb-200-1.3B": "facebook/nllb-200-1.3B"
     }
     
+    # Log received parameters for debugging
+    logger.info(f"list_languages called with service_id={service_id}, model_id={model_id}")
+    
     # Determine model_id from service_id if provided
     if service_id:
         if service_id in SERVICE_TO_MODEL_MAP:
             model_id = SERVICE_TO_MODEL_MAP[service_id]
+            logger.info(f"Mapped service_id '{service_id}' to model_id '{model_id}'")
         else:
+            logger.warning(f"Service '{service_id}' not found in mapping. Available services: {', '.join(SERVICE_TO_MODEL_MAP.keys())}")
             raise HTTPException(
                 status_code=404,
                 detail=f"Service '{service_id}' not found. Available services: {', '.join(SERVICE_TO_MODEL_MAP.keys())}"
@@ -260,6 +271,11 @@ async def list_languages(
     # Default to IndicTrans model if neither provided
     if not model_id:
         model_id = "ai4bharat/indictrans-v2-all-gpu--t4"
+        logger.info(f"No model_id provided, defaulting to '{model_id}'")
+    
+    # Normalize model_id for comparison
+    model_id = model_id.strip()
+    logger.info(f"Final model_id for lookup: '{model_id}'")
     
     # Hardcoded language data by model_id
     if model_id == "ai4bharat/indictrans-v2-all-gpu--t4":

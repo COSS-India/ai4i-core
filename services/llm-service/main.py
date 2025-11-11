@@ -149,7 +149,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LLM Service",
     version="1.0.0",
-    description="Large Language Model microservice for text processing, translation, and generation. Supports multiple Indian languages.",
+    description="Large Language Model microservice for text processing, translation, and generation. Supports multiple Indic Languages.",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",

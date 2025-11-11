@@ -1,7 +1,9 @@
 # 🚀 Comprehensive Microservice Architecture Implementation Prompt
+
 ## Building Enterprise-Grade AI/ML Microservices from Dhruva Platform 2.0
 
 ### 📋 **PROMPT OVERVIEW**
+
 Create a comprehensive microservice architecture following the Dhruva Platform's Frontend-Backend Communication Flow pattern, implementing the 6-step communication process with enterprise-grade API services and capabilities. This implementation will migrate existing monolithic ASR, TTS, and NMT services from Dhruva-Platform-2 into scalable microservices.
 
 ---
@@ -9,14 +11,16 @@ Create a comprehensive microservice architecture following the Dhruva Platform's
 ## 🎯 **CORE REQUIREMENTS**
 
 ### **Architecture Pattern**: Frontend-Backend Communication Flow (6 Steps)
+
 1. **User Interface Layer** → **API Configuration Layer**
-2. **API Configuration Layer** → **HTTP Transport Layer** 
+2. **API Configuration Layer** → **HTTP Transport Layer**
 3. **HTTP Transport Layer** → **Backend API Layer**
 4. **Backend API Layer** → **Service Layer** (Business Logic)
 5. **Service Layer** → **Repository Layer** (Data Access)
 6. **Repository Layer** → **Database Layer** (Data Persistence)
 
 ### **Required Microservices**:
+
 1. **API Gateway Service** (Central entry point) - ✅ **EXISTING**
 2. **Authentication & Authorization Service** (Identity management) - ✅ **EXISTING**
 3. **Configuration Management Service** (Centralized config) - ✅ **EXISTING**
@@ -30,6 +34,7 @@ Create a comprehensive microservice architecture following the Dhruva Platform's
 ## 🏗️ **DETAILED IMPLEMENTATION SPECIFICATIONS**
 
 ### **1. API Gateway Service** ✅ **EXISTING**
+
 ```yaml
 Service Name: api-gateway-service
 Port: 8080
@@ -43,6 +48,7 @@ Capabilities:
 ```
 
 ### **2. Authentication & Authorization Service** ✅ **EXISTING**
+
 ```yaml
 Service Name: auth-service
 Port: 8081
@@ -56,6 +62,7 @@ Capabilities:
 ```
 
 ### **3. Configuration Management Service** ✅ **EXISTING**
+
 ```yaml
 Service Name: config-service
 Port: 8082
@@ -72,6 +79,7 @@ Capabilities:
 ## 🆕 **NEW MICROSERVICES TO IMPLEMENT**
 
 ### **4. ASR Microservice** 🆕 **TO IMPLEMENT**
+
 ```yaml
 Service Name: asr-service
 Port: 8087
@@ -85,20 +93,24 @@ Technology Stack:
 ```
 
 **Capabilities to Implement**:
+
 - ✅ **Speech-to-Text Conversion**
-  - Support for 22+ Indian languages
+
+  - Support for 22+ Indic languages
   - Real-time streaming ASR
   - Batch processing
   - Audio format support (WAV, MP3, FLAC)
   - Language detection and validation
 
 - ✅ **Audio Processing**
+
   - Audio preprocessing and normalization
   - Chunking for long audio files
   - VAD (Voice Activity Detection)
   - Audio quality validation
 
 - ✅ **Model Management**
+
   - Multiple ASR model support
   - Model versioning
   - A/B testing capabilities
@@ -111,6 +123,7 @@ Technology Stack:
   - `/api/v1/asr/health` - Health check
 
 **Database Schema Integration**:
+
 ```sql
 -- Use existing auth_db schema for:
 -- - users table (user authentication)
@@ -144,6 +157,7 @@ CREATE TABLE asr_results (
 ```
 
 ### **5. TTS Microservice** 🆕 **TO IMPLEMENT**
+
 ```yaml
 Service Name: tts-service
 Port: 8088
@@ -157,19 +171,23 @@ Technology Stack:
 ```
 
 **Capabilities to Implement**:
+
 - ✅ **Text-to-Speech Conversion**
-  - Support for 22+ Indian languages
+
+  - Support for 22+ Indic languages
   - Multiple voice options (male/female)
   - SSML support for advanced speech control
   - Audio format output (WAV, MP3, OGG)
 
 - ✅ **Voice Management**
+
   - Multiple voice model support
   - Voice cloning capabilities
   - Voice quality optimization
   - Gender and age-specific voices
 
 - ✅ **Audio Generation**
+
   - High-quality audio synthesis
   - Real-time streaming TTS
   - Batch processing
@@ -182,6 +200,7 @@ Technology Stack:
   - `/api/v1/tts/health` - Health check
 
 **Database Schema Integration**:
+
 ```sql
 -- Add TTS-specific tables:
 CREATE TABLE tts_requests (
@@ -211,6 +230,7 @@ CREATE TABLE tts_results (
 ```
 
 ### **6. NMT Microservice** 🆕 **TO IMPLEMENT**
+
 ```yaml
 Service Name: nmt-service
 Port: 8089
@@ -224,19 +244,23 @@ Technology Stack:
 ```
 
 **Capabilities to Implement**:
+
 - ✅ **Neural Machine Translation**
-  - Support for 22+ Indian languages
+
+  - Support for 22+ Indic languages
   - Bidirectional translation
   - Batch translation
   - Domain-specific models
 
 - ✅ **Translation Management**
+
   - Multiple translation model support
   - Model versioning
   - Quality scoring
   - Translation confidence metrics
 
 - ✅ **Text Processing**
+
   - Text normalization
   - Language detection
   - Tokenization
@@ -249,6 +273,7 @@ Technology Stack:
   - `/api/v1/nmt/health` - Health check
 
 **Database Schema Integration**:
+
 ```sql
 -- Add NMT-specific tables:
 CREATE TABLE nmt_requests (
@@ -278,6 +303,7 @@ CREATE TABLE nmt_results (
 ```
 
 ### **7. Simple UI Frontend** 🆕 **TO IMPLEMENT**
+
 ```yaml
 Service Name: simple-ui-frontend
 Port: 3000
@@ -291,13 +317,16 @@ Technology Stack:
 ```
 
 **Capabilities to Implement**:
+
 - ✅ **Service Testing Interface**
+
   - ASR testing with audio upload/recording
   - TTS testing with text input and voice selection
   - NMT testing with language pair selection
   - Real-time streaming capabilities
 
 - ✅ **User Interface**
+
   - Modern, responsive design
   - Audio visualization
   - Progress indicators
@@ -314,6 +343,7 @@ Technology Stack:
 ## 📁 **FOLDER STRUCTURE IMPLEMENTATION**
 
 ### **ASR Microservice Structure**
+
 ```
 Ai4V-C/services/asr-service/
 ├── Dockerfile
@@ -348,6 +378,7 @@ Ai4V-C/services/asr-service/
 ```
 
 ### **TTS Microservice Structure**
+
 ```
 Ai4V-C/services/tts-service/
 ├── Dockerfile
@@ -382,6 +413,7 @@ Ai4V-C/services/tts-service/
 ```
 
 ### **NMT Microservice Structure**
+
 ```
 Ai4V-C/services/nmt-service/
 ├── Dockerfile
@@ -416,6 +448,7 @@ Ai4V-C/services/nmt-service/
 ```
 
 ### **Simple UI Frontend Structure**
+
 ```
 Ai4V-C/frontend/simple-ui/
 ├── package.json
@@ -479,11 +512,13 @@ Ai4V-C/frontend/simple-ui/
 ## 🔧 **IMPLEMENTATION STEPS**
 
 ### **Step 1: Database Schema Updates**
+
 1. Update PostgreSQL schemas to include ASR, TTS, NMT tables
 2. Create database migration scripts
 3. Update seed data for new services
 
 ### **Step 2: ASR Microservice Implementation**
+
 1. Create service folder structure
 2. Implement core ASR service logic from Dhruva-Platform-2
 3. Add WebSocket streaming support
@@ -491,6 +526,7 @@ Ai4V-C/frontend/simple-ui/
 5. Add comprehensive error handling and logging
 
 ### **Step 3: TTS Microservice Implementation**
+
 1. Create service folder structure
 2. Implement core TTS service logic from Dhruva-Platform-2
 3. Add voice management capabilities
@@ -498,6 +534,7 @@ Ai4V-C/frontend/simple-ui/
 5. Add audio generation and processing
 
 ### **Step 4: NMT Microservice Implementation**
+
 1. Create service folder structure
 2. Implement core NMT service logic from Dhruva-Platform-2
 3. Add language detection and validation
@@ -505,6 +542,7 @@ Ai4V-C/frontend/simple-ui/
 5. Add translation quality metrics
 
 ### **Step 5: Simple UI Frontend Implementation**
+
 1. Create Next.js application structure
 2. Implement ASR testing interface
 3. Implement TTS testing interface
@@ -512,12 +550,14 @@ Ai4V-C/frontend/simple-ui/
 5. Add real-time streaming capabilities
 
 ### **Step 6: Docker and Infrastructure Updates**
+
 1. Update docker-compose.yml with new services
 2. Create Dockerfiles for each microservice
 3. Update health check scripts
 4. Add service discovery configuration
 
 ### **Step 7: API Gateway Integration**
+
 1. Update route mappings for new services
 2. Add service discovery for ASR, TTS, NMT
 3. Update load balancing configuration
@@ -530,6 +570,7 @@ Ai4V-C/frontend/simple-ui/
 ### **Existing Code to Migrate**:
 
 #### **ASR Service Migration**:
+
 - **Source**: `Dhruva-Platform-2/server/module/services/service/inference_service.py` (lines 199-400)
 - **Key Functions**:
   - `run_asr_triton_inference()`
@@ -538,6 +579,7 @@ Ai4V-C/frontend/simple-ui/
 - **Streaming**: `Dhruva-Platform-2/server/asr_streamer.py`
 
 #### **TTS Service Migration**:
+
 - **Source**: `Dhruva-Platform-2/server/module/services/service/inference_service.py` (lines 500-700)
 - **Key Functions**:
   - `run_tts_triton_inference()`
@@ -545,12 +587,14 @@ Ai4V-C/frontend/simple-ui/
 - **Streaming**: `Dhruva-Platform-2/server/seq_streamer.py`
 
 #### **NMT Service Migration**:
+
 - **Source**: `Dhruva-Platform-2/server/module/services/service/inference_service.py` (lines 170-200)
 - **Key Functions**:
   - `run_translation_triton_inference()`
   - Text processing and validation
 
 #### **Frontend Migration**:
+
 - **Source**: `Dhruva-Platform-2/client/pages/pipeline.tsx`
 - **Key Components**:
   - Audio recording and playback
@@ -562,6 +606,7 @@ Ai4V-C/frontend/simple-ui/
 ## 🚀 **DEPLOYMENT CONFIGURATION**
 
 ### **Updated docker-compose.yml**:
+
 ```yaml
 # Add to existing docker-compose.yml
 services:
@@ -665,24 +710,28 @@ services:
 ## 🧪 **TESTING STRATEGY**
 
 ### **Unit Tests**:
+
 - Service layer testing
 - Repository layer testing
 - Utility function testing
 - Model validation testing
 
 ### **Integration Tests**:
+
 - API endpoint testing
 - Database integration testing
 - Redis cache testing
 - Triton server integration testing
 
 ### **End-to-End Tests**:
+
 - Complete ASR workflow testing
 - Complete TTS workflow testing
 - Complete NMT workflow testing
 - Frontend integration testing
 
 ### **Performance Tests**:
+
 - Load testing for each microservice
 - Streaming performance testing
 - Database performance testing
@@ -693,18 +742,21 @@ services:
 ## 📈 **MONITORING AND OBSERVABILITY**
 
 ### **Metrics Collection**:
+
 - Request/response metrics
 - Processing time metrics
 - Error rate metrics
 - Resource utilization metrics
 
 ### **Logging**:
+
 - Structured logging with correlation IDs
 - Request/response logging
 - Error logging with stack traces
 - Performance logging
 
 ### **Health Checks**:
+
 - Service health endpoints
 - Database connectivity checks
 - Redis connectivity checks
@@ -715,18 +767,21 @@ services:
 ## 🔒 **SECURITY CONSIDERATIONS**
 
 ### **Authentication**:
+
 - JWT token validation
 - API key authentication
 - Session management
 - Rate limiting per user
 
 ### **Authorization**:
+
 - Role-based access control
 - Service-level permissions
 - Resource-level permissions
 - Audit logging
 
 ### **Data Protection**:
+
 - Audio data encryption
 - Text data sanitization
 - Secure API communication
@@ -737,6 +792,7 @@ services:
 ## 🎯 **SUCCESS CRITERIA**
 
 ### **Functional Requirements**:
+
 - ✅ All ASR, TTS, NMT services working independently
 - ✅ WebSocket streaming support
 - ✅ Real-time frontend interface
@@ -744,6 +800,7 @@ services:
 - ✅ Database integration working
 
 ### **Non-Functional Requirements**:
+
 - ✅ Response time < 2 seconds for batch requests
 - ✅ Streaming latency < 500ms
 - ✅ 99.9% uptime
@@ -751,6 +808,7 @@ services:
 - ✅ Comprehensive error handling
 
 ### **Migration Requirements**:
+
 - ✅ 100% feature parity with Dhruva-Platform-2
 - ✅ Zero data loss during migration
 - ✅ Backward compatibility maintained
@@ -761,31 +819,37 @@ services:
 ## 📚 **IMPLEMENTATION TIMELINE**
 
 ### **Week 1-2: Foundation Setup**
+
 - Database schema updates
 - Service folder structure creation
 - Basic service scaffolding
 
 ### **Week 3-4: ASR Microservice**
+
 - Core ASR service implementation
 - WebSocket streaming
 - Database integration
 
 ### **Week 5-6: TTS Microservice**
+
 - Core TTS service implementation
 - Voice management
 - Audio generation
 
 ### **Week 7-8: NMT Microservice**
+
 - Core NMT service implementation
 - Language processing
 - Translation quality metrics
 
 ### **Week 9-10: Frontend Development**
+
 - Next.js application setup
 - Service integration
 - Real-time capabilities
 
 ### **Week 11-12: Testing & Deployment**
+
 - Comprehensive testing
 - Performance optimization
 - Production deployment
@@ -795,27 +859,32 @@ services:
 ## 🚀 **QUICK START COMMANDS**
 
 ### **1. Start Infrastructure**
+
 ```bash
 cd /home/appala/Projects/AI4V-Core/Ai4V-C
 docker-compose up -d postgres redis influxdb elasticsearch kafka
 ```
 
 ### **2. Start Core Services**
+
 ```bash
 docker-compose up -d api-gateway-service auth-service config-service
 ```
 
 ### **3. Start AI/ML Services**
+
 ```bash
 docker-compose up -d asr-service tts-service nmt-service
 ```
 
 ### **4. Start Frontend**
+
 ```bash
 docker-compose up -d simple-ui-frontend
 ```
 
 ### **5. Verify All Services**
+
 ```bash
 ./scripts/health-check-all.sh
 ```
@@ -825,18 +894,21 @@ docker-compose up -d simple-ui-frontend
 ## 📞 **SUPPORT AND MAINTENANCE**
 
 ### **Documentation**:
+
 - API documentation with Swagger/OpenAPI
 - Service architecture diagrams
 - Deployment guides
 - Troubleshooting guides
 
 ### **Monitoring**:
+
 - Grafana dashboards
 - Prometheus metrics
 - Alert management
 - Performance monitoring
 
 ### **Maintenance**:
+
 - Regular security updates
 - Performance optimization
 - Feature enhancements

@@ -1,23 +1,28 @@
 # API Documentation
 
 ## Overview
+
 Comprehensive API reference for ASR, TTS, and NMT microservices.
 
 ## Base URLs
+
 - **API Gateway**: `http://localhost:8080` (production: `https://api.dhruva-platform.com`)
 - **ASR Service**: `http://localhost:8087` (direct access, not recommended)
 - **TTS Service**: `http://localhost:8088` (direct access, not recommended)
 - **NMT Service**: `http://localhost:8089` (direct access, not recommended)
 
 ## Authentication
+
 **API Key Authentication**: All endpoints require API key in Authorization header.
 
 **Header Format**:
+
 ```
 Authorization: Bearer YOUR_API_KEY
 ```
 
 **Rate Limits**:
+
 - 60 requests per minute per API key
 - 1000 requests per hour per API key
 - 10000 requests per day per API key
@@ -25,16 +30,16 @@ Authorization: Bearer YOUR_API_KEY
 ## ASR Service API
 
 ### POST /api/v1/asr/inference
+
 **Description**: Convert speech to text (batch inference)
 
 **Request Body**:
+
 ```json
 {
-  "audio": [
-    {"audioContent": "base64_encoded_audio_data"}
-  ],
+  "audio": [{ "audioContent": "base64_encoded_audio_data" }],
   "config": {
-    "language": {"sourceLanguage": "en"},
+    "language": { "sourceLanguage": "en" },
     "serviceId": "vakyansh-asr-en",
     "audioFormat": "wav",
     "samplingRate": 16000
@@ -43,24 +48,26 @@ Authorization: Bearer YOUR_API_KEY
 ```
 
 **Response** (200 OK):
+
 ```json
 {
-  "output": [
-    {"source": "Hello, this is a test transcription."}
-  ]
+  "output": [{ "source": "Hello, this is a test transcription." }]
 }
 ```
 
 **Error Responses**:
+
 - 401: Invalid or missing API key
 - 422: Invalid audio format or configuration
 - 429: Rate limit exceeded
 - 503: Service unavailable
 
 #### GET /api/v1/asr/models
+
 **Description**: List available ASR models
 
 **Response** (200 OK):
+
 ```json
 {
   "models": [
@@ -74,19 +81,23 @@ Authorization: Bearer YOUR_API_KEY
 ```
 
 #### WebSocket /socket.io/asr
+
 **Description**: Real-time speech-to-text streaming
 
 **Connection Parameters**:
+
 - `serviceId`: ASR model identifier (required)
 - `language`: Language code (required)
 - `samplingRate`: Audio sample rate in Hz (required)
 - `apiKey`: API key for authentication (optional)
 
 **Events**:
+
 - Client → Server: `start`, `data`, `disconnect`
 - Server → Client: `ready`, `response`, `error`, `terminate`
 
 **Example** (Python):
+
 ```python
 import socketio
 sio = socketio.Client()
@@ -98,16 +109,16 @@ sio.emit('data', {'audioData': audio_bytes, 'isSpeaking': True, 'disconnectStrea
 ## TTS Service API
 
 ### POST /api/v1/tts/inference
+
 **Description**: Convert text to speech (batch inference)
 
 **Request Body**:
+
 ```json
 {
-  "input": [
-    {"source": "Hello world"}
-  ],
+  "input": [{ "source": "Hello world" }],
   "config": {
-    "language": {"sourceLanguage": "en"},
+    "language": { "sourceLanguage": "en" },
     "serviceId": "indic-tts-coqui-misc",
     "gender": "female",
     "audioFormat": "wav",
@@ -117,11 +128,10 @@ sio.emit('data', {'audioData': audio_bytes, 'isSpeaking': True, 'disconnectStrea
 ```
 
 **Response** (200 OK):
+
 ```json
 {
-  "audio": [
-    {"audioContent": "base64_encoded_audio_data"}
-  ],
+  "audio": [{ "audioContent": "base64_encoded_audio_data" }],
   "config": {
     "audioFormat": "wav",
     "samplingRate": 22050,
@@ -131,13 +141,16 @@ sio.emit('data', {'audioData': audio_bytes, 'isSpeaking': True, 'disconnectStrea
 ```
 
 #### GET /api/v1/tts/voices
+
 **Description**: List available TTS voices
 
 **Query Parameters**:
+
 - `language`: Filter by language code (optional)
 - `gender`: Filter by gender (male/female) (optional)
 
 **Response** (200 OK):
+
 ```json
 {
   "voices": [
@@ -155,9 +168,11 @@ sio.emit('data', {'audioData': audio_bytes, 'isSpeaking': True, 'disconnectStrea
 ```
 
 #### WebSocket /socket.io/tts
+
 **Description**: Real-time text-to-speech streaming
 
 **Connection Parameters**:
+
 - `serviceId`: TTS model identifier (required)
 - `voice_id`: Voice identifier (required)
 - `language`: Language code (required)
@@ -166,20 +181,21 @@ sio.emit('data', {'audioData': audio_bytes, 'isSpeaking': True, 'disconnectStrea
 - `apiKey`: API key for authentication (optional)
 
 **Events**:
+
 - Client → Server: `start`, `data`, `disconnect`
 - Server → Client: `ready`, `response`, `error`, `terminate`
 
 ## NMT Service API
 
 ### POST /api/v1/nmt/inference
+
 **Description**: Translate text between languages (batch inference, max 90 texts)
 
 **Request Body**:
+
 ```json
 {
-  "input": [
-    {"source": "Hello world"}
-  ],
+  "input": [{ "source": "Hello world" }],
   "config": {
     "language": {
       "sourceLanguage": "en",
@@ -191,6 +207,7 @@ sio.emit('data', {'audioData': audio_bytes, 'isSpeaking': True, 'disconnectStrea
 ```
 
 **Response** (200 OK):
+
 ```json
 {
   "output": [
@@ -203,19 +220,21 @@ sio.emit('data', {'audioData': audio_bytes, 'isSpeaking': True, 'disconnectStrea
 ```
 
 #### GET /api/v1/nmt/models
+
 **Description**: List available NMT models and language pairs
 
 **Response** (200 OK):
+
 ```json
 {
   "models": [
     {
       "model_id": "indictrans-v2-all",
       "language_pairs": [
-        {"source": "en", "target": "hi"},
-        {"source": "hi", "target": "en"}
+        { "source": "en", "target": "hi" },
+        { "source": "hi", "target": "en" }
       ],
-      "description": "IndicTrans2 model supporting all Indian languages"
+      "description": "IndicTrans2 model supporting all Indic languages"
     }
   ]
 }
@@ -224,6 +243,7 @@ sio.emit('data', {'audioData': audio_bytes, 'isSpeaking': True, 'disconnectStrea
 ## Interactive API Documentation
 
 Each service provides interactive Swagger UI documentation:
+
 - **ASR Service**: http://localhost:8087/docs
 - **TTS Service**: http://localhost:8088/docs
 - **NMT Service**: http://localhost:8089/docs
@@ -232,6 +252,7 @@ Each service provides interactive Swagger UI documentation:
 ## OpenAPI Specifications
 
 Download OpenAPI JSON specs:
+
 - **ASR Service**: http://localhost:8087/openapi.json
 - **TTS Service**: http://localhost:8088/openapi.json
 - **NMT Service**: http://localhost:8089/openapi.json
@@ -239,6 +260,7 @@ Download OpenAPI JSON specs:
 ## Error Response Format
 
 All services return consistent error responses:
+
 ```json
 {
   "detail": {
@@ -250,6 +272,7 @@ All services return consistent error responses:
 ```
 
 **Common Error Codes**:
+
 - `AUTHENTICATION_ERROR` (401): Invalid or missing API key
 - `AUTHORIZATION_ERROR` (403): Insufficient permissions
 - `RATE_LIMIT_EXCEEDED` (429): Too many requests
@@ -258,5 +281,6 @@ All services return consistent error responses:
 
 ## Supported Languages
 
-All services support 22+ Indian languages:
+All services support 22+ Indic languages:
+
 - English (en), Hindi (hi), Tamil (ta), Telugu (te), Kannada (kn), Malayalam (ml), Bengali (bn), Gujarati (gu), Marathi (mr), Punjabi (pa), Oriya (or), Assamese (as), Urdu (ur), Sanskrit (sa), Kashmiri (ks), Nepali (ne), Sindhi (sd), Konkani (kok), Dogri (doi), Maithili (mai), Bodo (brx), Manipuri (mni)

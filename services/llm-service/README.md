@@ -1,11 +1,11 @@
 # LLM Service
 
-Large Language Model microservice for text processing, translation, and generation. Supports multiple Indian languages.
+Large Language Model microservice for text processing, translation, and generation. Supports multiple Indic languages.
 
 ## Features
 
 - LLM inference for text processing and translation
-- Support for multiple Indian languages
+- Support for multiple Indic languages
 - Batch processing support
 - Database logging for requests and results
 - Rate limiting and authentication support
@@ -76,4 +76,3 @@ Set `TRITON_ENDPOINT` in the `.env` file to configure the endpoint URL.
 ## Port
 
 The service runs on port `8090` internally and is exposed on port `8093` externally.
-

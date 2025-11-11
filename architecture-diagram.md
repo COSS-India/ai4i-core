@@ -151,10 +151,10 @@ graph LR
     %% Client and Identity Provider
     CLIENT[Client<br/>Web/Mobile Apps<br/>Port: 3000]
     IDENTITY[Identity Provider<br/>Auth Service<br/>Port: 8081]
-    
+
     %% API Gateway (Central Hub)
     GATEWAY[API Gateway<br/>FastAPI + httpx<br/>Port: 8080<br/>Auth + Routing + Load Balancing]
-    
+
     %% Microservices Cluster
     subgraph MICROSERVICES["Microservices"]
         AUTH_SVC[Auth Service<br/>Port: 8081]
@@ -167,47 +167,47 @@ graph LR
         TTS_SVC[TTS Service<br/>Port: 8088]
         NMT_SVC[NMT Service<br/>Port: 8089]
     end
-    
+
     %% External Services
     TRITON[Triton Inference Server<br/>GPU Models<br/>22+ Languages]
-    
+
     %% Supporting Infrastructure
     STATIC[Static Content<br/>Next.js Assets]
     CDN[CDN<br/>Content Delivery]
     MANAGEMENT[Management<br/>Docker Compose<br/>Service Orchestration]
     SERVICE_DISCOVERY[Service Discovery<br/>Redis Registry<br/>Port: 6381]
-    
+
     %% Data Storage
     POSTGRES[PostgreSQL<br/>Primary Database<br/>Port: 5434]
     REDIS[Redis Cache<br/>Sessions & API Keys<br/>Port: 6381]
     INFLUXDB[InfluxDB<br/>Time Series Data<br/>Port: 8089]
     ELASTICSEARCH[Elasticsearch<br/>Search & Analytics<br/>Port: 9203]
     KAFKA[Kafka<br/>Event Streaming<br/>Port: 9093]
-    
+
     %% Monitoring
     GRAFANA[Grafana<br/>Dashboards]
     PROMETHEUS[Prometheus<br/>Metrics Collection]
-    
+
     %% Main Flow
     CLIENT --> IDENTITY
     CLIENT --> GATEWAY
     IDENTITY --> GATEWAY
     GATEWAY --> MICROSERVICES
-    
+
     %% Microservices to External Services
     ASR_SVC --> TRITON
     TTS_SVC --> TRITON
     NMT_SVC --> TRITON
-    
+
     %% Static Content Flow
     STATIC --> CDN
     CDN --> CLIENT
-    
+
     %% Management Flow
     MANAGEMENT --> SERVICE_DISCOVERY
     MANAGEMENT --> MICROSERVICES
     SERVICE_DISCOVERY --> MICROSERVICES
-    
+
     %% Data Connections
     AUTH_SVC --> POSTGRES
     AUTH_SVC --> REDIS
@@ -233,12 +233,12 @@ graph LR
     TTS_SVC --> REDIS
     NMT_SVC --> POSTGRES
     NMT_SVC --> REDIS
-    
+
     %% Monitoring Connections
     METRICS_SVC --> GRAFANA
     METRICS_SVC --> PROMETHEUS
     TELEMETRY_SVC --> ELASTICSEARCH
-    
+
     %% Styling to match reference image
     classDef client fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
     classDef identity fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000
@@ -248,7 +248,7 @@ graph LR
     classDef infrastructure fill:#e0f2f1,stroke:#00796b,stroke-width:2px,color:#000
     classDef data fill:#f1f8e9,stroke:#689f38,stroke-width:2px,color:#000
     classDef monitoring fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
-    
+
     class CLIENT client
     class IDENTITY identity
     class GATEWAY gateway
@@ -266,10 +266,10 @@ graph LR
     %% Left Side - Client and Identity
     CLIENT[Client<br/>Web/Mobile Apps<br/>Next.js Frontend<br/>Port: 3000]
     IDENTITY[Identity Provider<br/>Auth Service<br/>JWT + API Keys<br/>Port: 8081]
-    
+
     %% Center - API Gateway (Central Hub)
     GATEWAY[API Gateway<br/>FastAPI + httpx<br/>Port: 8080<br/>Authentication + Routing + Load Balancing + Rate Limiting]
-    
+
     %% Right Side - Microservices Cluster
     subgraph MICROSERVICES["Microservices Cluster"]
         direction TB
@@ -283,47 +283,47 @@ graph LR
         TTS[TTS Service<br/>Port: 8088]
         NMT[NMT Service<br/>Port: 8089]
     end
-    
+
     %% External Service (like Remote Service in reference)
-    TRITON[Triton Inference Server<br/>GPU-Accelerated AI Models<br/>22+ Indian Languages<br/>Real-time Inference]
-    
+    TRITON[Triton Inference Server<br/>GPU-Accelerated AI Models<br/>22+ Indic languages<br/>Real-time Inference]
+
     %% Bottom Row - Supporting Infrastructure
     STATIC[Static Content<br/>Next.js Assets<br/>Images, CSS, JS]
     CDN[CDN<br/>Content Delivery Network<br/>Global Distribution]
     MANAGEMENT[Management<br/>Docker Compose<br/>Service Orchestration<br/>Health Checks]
     SERVICE_DISCOVERY[Service Discovery<br/>Redis Registry<br/>Load Balancing<br/>Port: 6381]
-    
+
     %% Data Storage Layer
     POSTGRES[PostgreSQL<br/>Primary Database<br/>Users, API Keys, Results<br/>Port: 5434]
     REDIS[Redis Cache<br/>Sessions, API Keys<br/>Rate Limiting<br/>Port: 6381]
     INFLUXDB[InfluxDB<br/>Time Series Data<br/>Metrics, Performance<br/>Port: 8089]
     ELASTICSEARCH[Elasticsearch<br/>Search & Analytics<br/>Logs, Telemetry<br/>Port: 9203]
     KAFKA[Kafka<br/>Event Streaming<br/>Message Queuing<br/>Port: 9093]
-    
+
     %% Monitoring Stack
     GRAFANA[Grafana<br/>Dashboards<br/>Visualization]
     PROMETHEUS[Prometheus<br/>Metrics Collection<br/>Monitoring]
-    
+
     %% Main Request Flow (matching reference image)
     CLIENT --> IDENTITY
     CLIENT --> GATEWAY
     IDENTITY --> GATEWAY
     GATEWAY --> MICROSERVICES
-    
+
     %% External Service Connection (like Remote Service in reference)
     ASR --> TRITON
     TTS --> TRITON
     NMT --> TRITON
-    
+
     %% Static Content Flow (matching reference image)
     STATIC --> CDN
     CDN --> CLIENT
-    
+
     %% Management Flow (matching reference image)
     MANAGEMENT --> SERVICE_DISCOVERY
     MANAGEMENT --> MICROSERVICES
     SERVICE_DISCOVERY --> MICROSERVICES
-    
+
     %% Data Layer Connections
     AUTH --> POSTGRES
     AUTH --> REDIS
@@ -349,12 +349,12 @@ graph LR
     TTS --> REDIS
     NMT --> POSTGRES
     NMT --> REDIS
-    
+
     %% Monitoring Connections
     METRICS --> GRAFANA
     METRICS --> PROMETHEUS
     TELEMETRY --> ELASTICSEARCH
-    
+
     %% Styling to closely match reference image
     classDef client fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000
     classDef identity fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000
@@ -364,7 +364,7 @@ graph LR
     classDef infrastructure fill:#e0f2f1,stroke:#00796b,stroke-width:2px,color:#000
     classDef data fill:#f1f8e9,stroke:#689f38,stroke-width:2px,color:#000
     classDef monitoring fill:#f5f5f5,stroke:#616161,stroke-width:2px,color:#000
-    
+
     class CLIENT client
     class IDENTITY identity
     class GATEWAY gateway
@@ -674,6 +674,7 @@ graph LR
 ## Technology Stack Summary
 
 ### Frontend Layer
+
 - **Next.js 13** with TypeScript
 - **Chakra UI** for components
 - **TanStack React Query** for state management
@@ -681,30 +682,35 @@ graph LR
 - **WebSocket** for real-time streaming
 
 ### API Gateway Layer
+
 - **FastAPI** with async/await
 - **httpx** for service communication
 - **Redis** for caching and rate limiting
 - **Service discovery** and load balancing
 
 ### Core Services
+
 - **FastAPI** microservices
 - **PostgreSQL** for data persistence
 - **Redis** for caching and sessions
 - **Kafka** for event streaming
 
 ### AI/ML Services
+
 - **FastAPI** with Triton integration
 - **Triton Inference Server** for model serving
 - **librosa/soundfile** for audio processing
 - **WebSocket** for real-time streaming
 
 ### Data Storage
+
 - **PostgreSQL** (Primary database)
 - **Redis** (Caching and sessions)
 - **InfluxDB** (Time series metrics)
 - **Elasticsearch** (Logs and search)
 
 ### Infrastructure
+
 - **Docker Compose** for orchestration
 - **Kafka + Zookeeper** for messaging
 - **Health checks** for all services
@@ -712,25 +718,25 @@ graph LR
 
 ## Port Allocation
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| Simple UI | 3000 | Frontend interface |
-| API Gateway | 8080 | Central entry point |
-| Auth Service | 8081 | Authentication |
-| Config Service | 8082 | Configuration management |
-| Metrics Service | 8083 | Metrics collection |
-| Telemetry Service | 8084 | Telemetry data |
-| Alerting Service | 8085 | Alert management |
-| Dashboard Service | 8090/8501 | Monitoring dashboard |
-| ASR Service | 8087 | Speech-to-Text |
-| TTS Service | 8088 | Text-to-Speech |
-| NMT Service | 8089 | Neural Translation |
-| PostgreSQL | 5434 | Primary database |
-| Redis | 6381 | Caching layer |
-| InfluxDB | 8089 | Time series DB |
-| Elasticsearch | 9203 | Search engine |
-| Kafka | 9093 | Message broker |
-| Zookeeper | 2181 | Kafka coordination |
+| Service           | Port      | Purpose                  |
+| ----------------- | --------- | ------------------------ |
+| Simple UI         | 3000      | Frontend interface       |
+| API Gateway       | 8080      | Central entry point      |
+| Auth Service      | 8081      | Authentication           |
+| Config Service    | 8082      | Configuration management |
+| Metrics Service   | 8083      | Metrics collection       |
+| Telemetry Service | 8084      | Telemetry data           |
+| Alerting Service  | 8085      | Alert management         |
+| Dashboard Service | 8090/8501 | Monitoring dashboard     |
+| ASR Service       | 8087      | Speech-to-Text           |
+| TTS Service       | 8088      | Text-to-Speech           |
+| NMT Service       | 8089      | Neural Translation       |
+| PostgreSQL        | 5434      | Primary database         |
+| Redis             | 6381      | Caching layer            |
+| InfluxDB          | 8089      | Time series DB           |
+| Elasticsearch     | 9203      | Search engine            |
+| Kafka             | 9093      | Message broker           |
+| Zookeeper         | 2181      | Kafka coordination       |
 
 ## Security Architecture
 
