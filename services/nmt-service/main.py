@@ -184,7 +184,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="NMT Service",
     version="1.0.0",
-    description="Neural Machine Translation microservice for translating text between 22+ Indian languages. Supports bidirectional translation with script code handling and batch processing.",
+    description="Neural Machine Translation microservice for translating text between 22+ Indic languages. Supports bidirectional translation with script code handling and batch processing.",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
