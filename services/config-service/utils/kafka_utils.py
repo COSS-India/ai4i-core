@@ -21,10 +21,6 @@ async def publish_config_event(producer: Optional[AIOKafkaProducer], topic: str,
     await _publish(producer, topic, payload)
 
 
-async def publish_feature_flag_event(producer: Optional[AIOKafkaProducer], topic: str, payload: Dict[str, Any]) -> None:
-    await _publish(producer, topic, payload)
-
-
 async def publish_service_registry_event(producer: Optional[AIOKafkaProducer], topic: str, payload: Dict[str, Any]) -> None:
     await _publish(producer, topic, payload)
 

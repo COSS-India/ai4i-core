@@ -1,5 +1,5 @@
 """
-Configuration Management Service - Centralized configuration and feature flags
+Configuration Management Service - Centralized configuration
 """
 import os
 import asyncio
@@ -14,7 +14,6 @@ from aiokafka import AIOKafkaProducer
 from models.database_models import (
     Base,
     Configuration,
-    FeatureFlag,
     ServiceRegistry,
     ConfigurationHistory,
 ) 
@@ -27,7 +26,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Configuration Management Service",
     version="1.0.0",
-    description="Centralized configuration and feature flags for microservices"
+    description="Centralized configuration for microservices"
 )
 
 # Add CORS middleware
@@ -257,12 +256,11 @@ async def root():
         "service": "Configuration Management Service",
         "version": "1.0.0",
         "status": "running",
-        "description": "Centralized configuration and feature flags for microservices"
+        "description": "Centralized configuration for microservices"
     }
 
-from routers import config_router, feature_flag_router, service_registry_router, health_router
+from routers import config_router, service_registry_router, health_router
 app.include_router(config_router)
-app.include_router(feature_flag_router)
 app.include_router(service_registry_router)
 app.include_router(health_router)
 
@@ -275,7 +273,6 @@ async def config_status():
         "status": "operational",
         "features": [
             "Environment-specific configurations",
-            "Feature flags",
             "Service discovery",
             "Dynamic configuration updates",
             "Configuration audit logging"

@@ -1,11 +1,10 @@
 # Configuration Management Service
 
 ## Overview
-The configuration management service provides centralized environment-specific configurations, feature flags with progressive rollout, and a ZooKeeper-backed service registry. It integrates with PostgreSQL for persistence, Redis for caching, and Kafka for change notifications.
+The configuration management service provides centralized environment-specific configurations and a ZooKeeper-backed service registry. It integrates with PostgreSQL for persistence, Redis for caching, and Kafka for change notifications.
 
 ## Features
 - Environment-specific configurations
-- Feature flags with rollout percentage and targeted users
 - Service registry using ZooKeeper with ephemeral instances
 - Dynamic updates via Kafka (`config-updates` topic)
 - Redis caching for performance
@@ -13,9 +12,9 @@ The configuration management service provides centralized environment-specific c
 
 ## Architecture
 - ZooKeeper: service discovery and live instances (ephemeral nodes)
-- PostgreSQL: persistent storage for configurations, flags, registry audit
-- Redis: caching configuration values, flag evaluations, and registry results
-- Kafka: publish configuration/flag change events
+- PostgreSQL: persistent storage for configurations and registry audit
+- Redis: caching configuration values and registry results
+- Kafka: publish configuration change events
 - Registry abstraction: pluggable `ServiceRegistryClient` interface
 
 ## API Endpoints
@@ -27,14 +26,6 @@ The configuration management service provides centralized environment-specific c
   - DELETE `/{key}` delete configuration
   - GET `/{key}/history` configuration history
   - POST `/bulk` bulk get
-- Feature Flags (`/api/v1/feature-flags`)
-  - POST `/` create flag
-  - GET `/` list flags (filters: `environment`, `enabled`)
-  - GET `/{name}` get flag
-  - PUT `/{name}` update flag
-  - DELETE `/{name}` delete flag
-  - POST `/evaluate` evaluate user against a flag
-  - POST `/evaluate/batch` batch evaluate
 - Service Registry (`/api/v1/registry`)
   - POST `/register` register service instance
   - POST `/deregister` deregister instance
@@ -59,12 +50,6 @@ Key environment variables (see `env.template`):
 curl -X POST http://localhost:8082/api/v1/config \
   -H 'Content-Type: application/json' \
   -d '{"key":"model_path","value":"/models/asr","environment":"development","service_name":"asr-service"}'
-```
-- Evaluate feature flag:
-```bash
-curl -X POST http://localhost:8082/api/v1/feature-flags/evaluate \
-  -H 'Content-Type: application/json' \
-  -d '{"flag_name":"new_ui","user_id":"u123","environment":"development"}'
 ```
 - Register service:
 ```bash
