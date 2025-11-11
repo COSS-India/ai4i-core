@@ -5,7 +5,7 @@ Microservice for translating text between languages using Triton Inference Serve
 ## Features
 
 - **Batch NMT inference** (max 90 texts per request)
-- **Support for 22+ Indian languages** including Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Gujarati, Marathi, Punjabi, Oriya, Assamese, Urdu, and more
+- **Support for 22+ Indic languages** including Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Gujarati, Marathi, Punjabi, Oriya, Assamese, Urdu, and more
 - **Bidirectional translation** (any language pair)
 - **Script code support** (e.g., Devanagari, Arabic, Tamil)
 - **Text preprocessing and normalization**
@@ -24,6 +24,7 @@ Client → API Gateway → NMT Service → Triton Server
 ```
 
 The service follows a layered architecture:
+
 - **Routers**: FastAPI endpoints for HTTP requests
 - **Services**: Business logic for NMT processing
 - **Repositories**: Database operations
@@ -40,17 +41,20 @@ The service follows a layered architecture:
 ## Installation
 
 1. **Clone repository**
+
    ```bash
    git clone <repository-url>
    cd Ai4V-C/services/nmt-service
    ```
 
 2. **Install dependencies**
+
    ```bash
    pip install -r requirements.txt
    ```
 
 3. **Configure environment**
+
    ```bash
    cp env.template .env
    # Edit .env with your configuration
@@ -65,19 +69,20 @@ The service follows a layered architecture:
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SERVICE_PORT` | Service port | 8089 |
-| `DATABASE_URL` | PostgreSQL connection string | postgresql+asyncpg://... |
-| `REDIS_HOST` | Redis host | redis |
-| `REDIS_PORT` | Redis port | 6379 |
-| `TRITON_ENDPOINT` | Triton server URL | http://triton-server:8000 |
-| `MAX_BATCH_SIZE` | Maximum texts per batch | 90 |
-| `MAX_TEXT_LENGTH` | Maximum text length | 10000 |
+| Variable          | Description                  | Default                   |
+| ----------------- | ---------------------------- | ------------------------- |
+| `SERVICE_PORT`    | Service port                 | 8089                      |
+| `DATABASE_URL`    | PostgreSQL connection string | postgresql+asyncpg://...  |
+| `REDIS_HOST`      | Redis host                   | redis                     |
+| `REDIS_PORT`      | Redis port                   | 6379                      |
+| `TRITON_ENDPOINT` | Triton server URL            | http://triton-server:8000 |
+| `MAX_BATCH_SIZE`  | Maximum texts per batch      | 90                        |
+| `MAX_TEXT_LENGTH` | Maximum text length          | 10000                     |
 
 ### Database Setup
 
 The service uses two main tables:
+
 - `nmt_requests`: Stores request metadata and status
 - `nmt_results`: Stores individual translation results
 
@@ -98,12 +103,10 @@ uvicorn main:app --host 0.0.0.0 --port 8089
 Translate multiple texts in a single request.
 
 **Request Body:**
+
 ```json
 {
-  "input": [
-    {"source": "Hello world"},
-    {"source": "Good morning"}
-  ],
+  "input": [{ "source": "Hello world" }, { "source": "Good morning" }],
   "config": {
     "serviceId": "indictrans-v2-all",
     "language": {
@@ -117,6 +120,7 @@ Translate multiple texts in a single request.
 ```
 
 **Response:**
+
 ```json
 {
   "output": [
@@ -158,6 +162,7 @@ curl -X POST http://localhost:8089/api/v1/nmt/inference \
 ```
 
 **Supported Header Formats:**
+
 - `Authorization: Bearer <api_key>`
 - `Authorization: ApiKey <api_key>`
 - `Authorization: <api_key>`
@@ -165,6 +170,7 @@ curl -X POST http://localhost:8089/api/v1/nmt/inference \
 ### Rate Limiting
 
 API requests are rate-limited per API key:
+
 - **60 requests per minute**
 - **1000 requests per hour**
 - **10000 requests per day**
@@ -174,6 +180,7 @@ When rate limit is exceeded, you'll receive a `429 Too Many Requests` response w
 ### Error Responses
 
 **401 Unauthorized** - Missing or invalid API key:
+
 ```json
 {
   "detail": {
@@ -185,6 +192,7 @@ When rate limit is exceeded, you'll receive a `429 Too Many Requests` response w
 ```
 
 **403 Forbidden** - Insufficient permissions:
+
 ```json
 {
   "detail": {
@@ -196,6 +204,7 @@ When rate limit is exceeded, you'll receive a `429 Too Many Requests` response w
 ```
 
 **429 Too Many Requests** - Rate limit exceeded:
+
 ```json
 {
   "detail": {
@@ -209,6 +218,7 @@ When rate limit is exceeded, you'll receive a `429 Too Many Requests` response w
 ### Request Logging
 
 All authenticated requests are logged to the database with:
+
 - User ID
 - API key ID
 - Session ID (if applicable)
@@ -226,7 +236,7 @@ The NMT service can automatically detect the source language if not specified:
 
 ```json
 {
-  "input": [{"source": "नमस्ते दुनिया"}],
+  "input": [{ "source": "नमस्ते दुनिया" }],
   "config": {
     "serviceId": "indictrans-v2-all",
     "language": {
@@ -238,6 +248,7 @@ The NMT service can automatically detect the source language if not specified:
 ```
 
 **Supported Detection Methods:**
+
 - Unicode script detection (Devanagari → Hindi, Arabic → Urdu, etc.)
 - Confidence scoring (0.0-1.0)
 - Fallback to English if detection fails
@@ -262,6 +273,7 @@ Each translation includes a confidence score indicating translation quality:
 ```
 
 **Confidence Score Interpretation:**
+
 - 0.9-1.0: High confidence (excellent translation)
 - 0.7-0.9: Medium confidence (good translation)
 - 0.5-0.7: Low confidence (acceptable translation)
@@ -337,7 +349,7 @@ docker run -p 8089:8089 \
 ### Docker Compose
 
 ```yaml
-version: '3.8'
+version: "3.8"
 services:
   nmt-service:
     build: .
@@ -381,11 +393,13 @@ flake8 .
 ### Common Issues
 
 1. **Triton server not ready**
+
    - Check if Triton server is running
    - Verify NMT models are loaded
    - Check network connectivity
 
 2. **Database connection failed**
+
    - Verify PostgreSQL is running
    - Check connection string
    - Ensure database exists

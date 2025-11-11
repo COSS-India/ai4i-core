@@ -144,7 +144,7 @@ async def list_models() -> Dict[str, Any]:
                     "en", "gom", "gu", "sa", "te", "mr", "hi", "or", "mni", 
                     "ml", "as", "doi", "sat", "ta", "sd", "bn", "ks", "kn", "ne"
                 ],
-                "description": "IndicTrans2 model supporting 19 Indian languages with bidirectional translation",
+                "description": "IndicTrans2 model supporting 19 Indic Languages with bidirectional translation",
                 "max_batch_size": 90,
                 "supported_scripts": ["Deva", "Arab", "Taml", "Telu", "Knda", "Mlym", "Beng", "Gujr", "Guru", "Orya", "Latn"]
             },
@@ -180,7 +180,7 @@ async def list_services() -> Dict[str, Any]:
                 "triton_endpoint": "13.200.133.97:8000",
                 "triton_model": "nmt",
                 "provider": "AI4Bharat",
-                "description": "IndicTrans2 model supporting 19 Indian languages",
+                "description": "IndicTrans2 model supporting 19 Indic Languages",
                 "supported_languages": [
                     "en", "gom", "gu", "sa", "te", "mr", "hi", "or", "mni", 
                     "ml", "as", "doi", "sat", "ta", "sd", "bn", "ks", "kn", "ne"
@@ -192,7 +192,7 @@ async def list_services() -> Dict[str, Any]:
                 "triton_endpoint": "13.200.133.97:8000",
                 "triton_model": "nmt",
                 "provider": "AI4Bharat",
-                "description": "IndicTrans2 model supporting 19 Indian languages",
+                "description": "IndicTrans2 model supporting 19 Indic Languages",
                 "supported_languages": [
                     "en", "gom", "gu", "sa", "te", "mr", "hi", "or", "mni", 
                     "ml", "as", "doi", "sat", "ta", "sd", "bn", "ks", "kn", "ne"
@@ -204,7 +204,7 @@ async def list_services() -> Dict[str, Any]:
                 "triton_endpoint": "13.200.133.97:8000",
                 "triton_model": "nmt",
                 "provider": "AI4Bharat",
-                "description": "IndicTrans2 model supporting 19 Indian languages",
+                "description": "IndicTrans2 model supporting 19 Indic Languages",
                 "supported_languages": [
                     "en", "gom", "gu", "sa", "te", "mr", "hi", "or", "mni", 
                     "ml", "as", "doi", "sat", "ta", "sd", "bn", "ks", "kn", "ne"
