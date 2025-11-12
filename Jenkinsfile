@@ -8,19 +8,19 @@ pipeline {
     // Pick exactly one service under services/
     choice(
       name: 'SERVICE_NAME',
-      choices: [
-        'alerting-service',
-        'api-gateway-service',
-        'asr-service',
-        'auth-service',
-        'config-service',
-        'dashboard-service',
-        'metrics-service',
-        'nmt-service',
-        'pipeline-service',
-        'telemetry-service',
-        'tts-service'
-      ].join('\n'),
+      choices: """
+alerting-service
+api-gateway-service
+asr-service
+auth-service
+config-service
+dashboard-service
+metrics-service
+nmt-service
+pipeline-service
+telemetry-service
+tts-service
+""",
       description: 'Service directory under services/'
     )
 
@@ -33,7 +33,6 @@ pipeline {
   }
 
   options {
-    // Helpful timeouts & log decoration
     timeout(time: 45, unit: 'MINUTES')
     timestamps()
   }
@@ -43,7 +42,7 @@ pipeline {
       steps {
         script {
           if (params.CLEAN_WORKSPACE) {
-            echo "Cleaning workspace…"
+            echo "Cleaning workspace..."
             deleteDir()
           }
         }
@@ -56,7 +55,6 @@ pipeline {
         checkout([$class: 'GitSCM',
           branches: [[name: "*/${params.BRANCH_NAME}"]],
           userRemoteConfigs: [[url: "${env.GIT_REPO}"]]
-          // If private repo: add credentialsId: 'github-creds-id'
         ])
       }
     }
@@ -80,7 +78,6 @@ pipeline {
           sh '''
             set -eux
 
-            # Detect common build tools per service; pick what applies
             if [ -f "pom.xml" ]; then
               echo "[maven] Detected pom.xml"
               mvn -B -Dmaven.test.skip=true clean package
