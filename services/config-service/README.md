@@ -38,17 +38,14 @@ The configuration management service provides centralized environment-specific c
   - GET `/services/{service_name}/url` get balanced URL
   - POST `/services/{service_name}/health` trigger health check
   - GET `/discover/{service_name}` discover healthy instances
-- Feature Flags (`/api/v1/feature-flags`)
-  - POST `/evaluate` evaluate single flag
+- Feature Flags (`/api/v1/feature-flags`) - **Redis & Unleash Only**
+  - POST `/evaluate` evaluate single flag (cached in Redis)
   - POST `/evaluate/boolean` evaluate boolean flag
   - POST `/evaluate/bulk` bulk evaluate flags
-  - POST `/` create feature flag
-  - GET `/{name}` get flag by name
-  - GET `/` list flags
-  - PUT `/{name}` update flag
-  - DELETE `/{name}` delete flag
-  - GET `/{name}/history` evaluation history
-  - POST `/sync` sync from Unleash
+  - GET `/{name}` get flag by name from Unleash (cached in Redis)
+  - GET `/` list flags from Unleash (cached in Redis, environment required)
+  - POST `/sync` refresh cache from Unleash
+  - **Note**: Flags are managed in Unleash UI only - no create/update/delete endpoints
 - Health
   - GET `/health`, `/ready`, `/live`
 
@@ -58,9 +55,10 @@ Key environment variables (see `env.template`):
 - KAFKA_BOOTSTRAP_SERVERS, KAFKA_TOPIC_CONFIG_UPDATES
 - ZOOKEEPER_HOSTS, ZOOKEEPER_BASE_PATH, ZOOKEEPER_CONNECTION_TIMEOUT, ZOOKEEPER_SESSION_TIMEOUT
 - SERVICE_REGISTRY_ENABLED, SERVICE_HEALTH_CHECK_INTERVAL, SERVICE_INSTANCE_ID
-- UNLEASH_URL, UNLEASH_APP_NAME, UNLEASH_INSTANCE_ID, UNLEASH_API_TOKEN
+- UNLEASH_URL, UNLEASH_APP_NAME, UNLEASH_INSTANCE_ID, UNLEASH_API_TOKEN (must be Admin token)
 - UNLEASH_ENVIRONMENT, UNLEASH_REFRESH_INTERVAL, UNLEASH_METRICS_INTERVAL
-- FEATURE_FLAG_CACHE_TTL, FEATURE_FLAG_FALLBACK_ENABLED
+- FEATURE_FLAG_CACHE_TTL (default: 300s), FEATURE_FLAG_KAFKA_TOPIC
+- UNLEASH_AUTO_SYNC_ON_STARTUP (optional, default: false)
 
 ## Usage Examples
 - Create configuration:

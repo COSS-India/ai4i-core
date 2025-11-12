@@ -1,10 +1,11 @@
 """
-Business logic service for feature flags
+Business logic service for feature flags - Redis and Unleash only
 """
 import hashlib
 import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timezone
 
 import aiohttp
 from aiokafka import AIOKafkaProducer
@@ -14,13 +15,11 @@ from redis.asyncio import Redis
 
 from models.feature_flag_models import (
     BulkEvaluationRequest,
-    FeatureFlagCreate,
     FeatureFlagEvaluationRequest,
     FeatureFlagEvaluationResponse,
     FeatureFlagListResponse,
     FeatureFlagResponse,
 )
-from repositories.feature_flag_repository import FeatureFlagRepository
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,6 @@ logger = logging.getLogger(__name__)
 class FeatureFlagService:
     def __init__(
         self,
-        repository: FeatureFlagRepository,
         redis_client: Redis,
         kafka_producer: Optional[AIOKafkaProducer],
         openfeature_client,
@@ -37,7 +35,6 @@ class FeatureFlagService:
         unleash_url: Optional[str] = None,
         unleash_api_token: Optional[str] = None,
     ):
-        self.repository = repository
         self.redis = redis_client
         self.kafka = kafka_producer
         self.openfeature_client = openfeature_client
@@ -46,6 +43,18 @@ class FeatureFlagService:
         self.unleash_url = unleash_url
         self.unleash_api_token = unleash_api_token
 
+    def _format_auth_header(self, token: str) -> str:
+        """Format Authorization header for Unleash Admin API"""
+        if not token:
+            return token
+        
+        # If already has Bearer prefix, return as is
+        if token.startswith("Bearer "):
+            return token
+        
+        # Add Bearer prefix
+        return f"Bearer {token}"
+    
     def _cache_key(self, environment: str, flag_name: str, user_id: Optional[str], context: Optional[dict] = None) -> str:
         """Generate cache key for flag evaluation with context hash"""
         user_part = user_id or "anonymous"
@@ -56,12 +65,20 @@ class FeatureFlagService:
             try:
                 # Sort keys for consistent hashing
                 context_json = json.dumps(context, sort_keys=True)
-                context_hash = hashlib.sha256(context_json.encode('utf-8')).hexdigest()[:16]  # Use first 16 chars
+                context_hash = hashlib.sha256(context_json.encode('utf-8')).hexdigest()[:16]
             except Exception as e:
                 logger.warning(f"Failed to hash context for cache key: {e}")
         
         context_part = f":{context_hash}" if context_hash else ""
         return f"feature_flag:eval:{environment}:{flag_name}:{user_part}{context_part}"
+    
+    def _flags_cache_key(self, environment: str) -> str:
+        """Cache key for list of flags"""
+        return f"feature_flags:list:{environment}"
+    
+    def _flag_metadata_key(self, environment: str, flag_name: str) -> str:
+        """Cache key for flag metadata"""
+        return f"feature_flag:metadata:{environment}:{flag_name}"
     
     async def _invalidate_cache(self, environment: str, flag_name: str) -> None:
         """Invalidate cache keys matching pattern for a flag"""
@@ -71,17 +88,18 @@ class FeatureFlagService:
             deleted_count = 0
             
             while True:
-                # Use SCAN to find matching keys
                 cursor, keys = await self.redis.scan(cursor, match=pattern, count=100)
                 
                 if keys:
-                    # Delete all matching keys
                     deleted = await self.redis.delete(*keys)
                     deleted_count += deleted
                 
-                # If cursor is 0, we've scanned all keys
                 if cursor == 0:
                     break
+            
+            # Also invalidate flag metadata and list cache
+            await self.redis.delete(self._flag_metadata_key(environment, flag_name))
+            await self.redis.delete(self._flags_cache_key(environment))
             
             if deleted_count > 0:
                 logger.info(f"Invalidated {deleted_count} cache keys for flag {flag_name} in {environment}")
@@ -119,7 +137,6 @@ class FeatureFlagService:
         cached = await self.redis.get(cache_key)
         if cached:
             try:
-                # Decode bytes to string if needed
                 if isinstance(cached, bytes):
                     cached = cached.decode('utf-8')
                 data = json.loads(cached)
@@ -127,7 +144,7 @@ class FeatureFlagService:
             except Exception:
                 pass
 
-        # Evaluate using OpenFeature
+        # Evaluate using OpenFeature (Unleash)
         eval_context = self._build_evaluation_context(user_id, context)
         value = default_value
         reason = "ERROR"
@@ -136,71 +153,54 @@ class FeatureFlagService:
         try:
             if self.openfeature_client:
                 # Determine type and evaluate
-                if isinstance(default_value, bool):
-                    details = self.openfeature_client.get_boolean_details(flag_name, default_value, eval_context)
-                    value = details.value
-                    reason = details.reason
-                elif isinstance(default_value, str):
-                    details = self.openfeature_client.get_string_details(flag_name, default_value, eval_context)
-                    value = details.value
-                    reason = details.reason
-                    # Get variant from details if available, otherwise infer from value
-                    variant = getattr(details, 'variant', None)
-                    if variant is None and value != default_value:
-                        variant = str(value)
-                elif isinstance(default_value, int):
-                    details = self.openfeature_client.get_integer_details(flag_name, default_value, eval_context)
-                    value = details.value
-                    reason = details.reason
-                elif isinstance(default_value, float):
-                    details = self.openfeature_client.get_float_details(flag_name, default_value, eval_context)
-                    value = details.value
-                    reason = details.reason
-                elif isinstance(default_value, dict):
-                    details = self.openfeature_client.get_object_details(flag_name, default_value, eval_context)
-                    value = details.value
-                    reason = details.reason
-                    # Get variant from details if available
-                    variant = getattr(details, 'variant', None)
+                try:
+                    if isinstance(default_value, bool):
+                        details = self.openfeature_client.get_boolean_details(flag_name, default_value, eval_context)
+                        value = details.value
+                        reason = details.reason
+                    elif isinstance(default_value, str):
+                        details = self.openfeature_client.get_string_details(flag_name, default_value, eval_context)
+                        value = details.value
+                        reason = details.reason
+                        variant = getattr(details, 'variant', None)
+                        if variant is None and value != default_value:
+                            variant = str(value)
+                    elif isinstance(default_value, int):
+                        details = self.openfeature_client.get_integer_details(flag_name, default_value, eval_context)
+                        value = details.value
+                        reason = details.reason
+                    elif isinstance(default_value, float):
+                        details = self.openfeature_client.get_float_details(flag_name, default_value, eval_context)
+                        value = details.value
+                        reason = details.reason
+                    elif isinstance(default_value, dict):
+                        details = self.openfeature_client.get_object_details(flag_name, default_value, eval_context)
+                        value = details.value
+                        reason = details.reason
+                        variant = getattr(details, 'variant', None)
+                except AttributeError as ae:
+                    if "to_flag_evaluation_details" in str(ae):
+                        logger.warning(f"OpenFeature SDK compatibility issue for {flag_name}, using default value")
+                        value = default_value
+                        reason = "ERROR"
+                    else:
+                        raise
             else:
                 logger.warning("OpenFeature client not available, using default value")
+                value = default_value
+                reason = "ERROR"
         except Exception as e:
             logger.error(f"Error evaluating flag {flag_name}: {e}", exc_info=True)
             value = default_value
             reason = "ERROR"
 
-        # Record evaluation
-        try:
-            # For boolean types, store in result; for others, store in evaluated_value
-            result_value = None
-            evaluated_value_json = None
-            if isinstance(value, bool):
-                result_value = value
-            else:
-                # Store non-boolean values in evaluated_value as JSON
-                evaluated_value_json = value
-            
-            await self.repository.record_evaluation(
-                flag_name=flag_name,
-                user_id=user_id,
-                context=context or {},
-                result=result_value,
-                variant=variant,
-                environment=environment,
-                reason=reason,
-                evaluated_value=evaluated_value_json,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to record evaluation: {e}")
-
         # Cache result
-        from datetime import datetime
         response = FeatureFlagEvaluationResponse(
             flag_name=flag_name,
             value=value,
             variant=variant,
             reason=reason,
-            evaluated_at=datetime.utcnow().isoformat(),
+            evaluated_at=datetime.now(timezone.utc).isoformat(),
         )
         await self.redis.set(cache_key, json.dumps(response.model_dump()), ex=self.cache_ttl)
 
@@ -239,21 +239,6 @@ class FeatureFlagService:
             logger.error(f"Error evaluating boolean flag {flag_name}: {e}", exc_info=True)
             result = default_value
             reason = "ERROR"
-
-        # Record evaluation
-        try:
-            await self.repository.record_evaluation(
-                flag_name=flag_name,
-                user_id=user_id,
-                context=context or {},
-                result=result,
-                variant=None,
-                environment=environment,
-                reason=reason,
-                evaluated_value=None,  # Boolean values stored in result
-            )
-        except Exception as e:
-            logger.warning(f"Failed to record evaluation: {e}")
 
         return result, reason
 
@@ -357,7 +342,7 @@ class FeatureFlagService:
                     flag_name=flag_name,
                     user_id=user_id,
                     context=context,
-                    default_value=False,  # Default to False for bulk evaluation
+                    default_value=False,
                     environment=environment,
                 )
                 return flag_name, result.model_dump()
@@ -368,64 +353,64 @@ class FeatureFlagService:
         results = await asyncio.gather(*[eval_single(name) for name in flag_names])
         return {name: result for name, result in results}
 
-    async def create_feature_flag(self, req: FeatureFlagCreate) -> FeatureFlagResponse:
-        """Create a new feature flag"""
-        flag = await self.repository.create_feature_flag(
-            name=req.name,
-            description=req.description,
-            is_enabled=req.is_enabled,
-            environment=req.environment,
-            rollout_percentage=req.rollout_percentage,
-            target_users=req.target_users,
-        )
-        
-        # Invalidate cache
-        await self._invalidate_cache(req.environment, req.name)
-        
-        # Publish event
-        await self._publish({
-            "event_type": "FEATURE_FLAG_CREATED",
-            "flag_name": req.name,
-            "environment": req.environment,
-        })
-        
-        return FeatureFlagResponse(
-            id=flag.id,
-            name=flag.name,
-            description=flag.description,
-            is_enabled=flag.is_enabled,
-            environment=flag.environment,
-            rollout_percentage=flag.rollout_percentage,
-            target_users=flag.target_users,
-            unleash_flag_name=flag.unleash_flag_name,
-            last_synced_at=str(flag.last_synced_at) if flag.last_synced_at else None,
-            evaluation_count=flag.evaluation_count or 0,
-            last_evaluated_at=str(flag.last_evaluated_at) if flag.last_evaluated_at else None,
-            created_at=str(flag.created_at),
-            updated_at=str(flag.updated_at),
-        )
-
     async def get_feature_flag(self, name: str, environment: str) -> Optional[FeatureFlagResponse]:
-        """Get feature flag by name"""
-        flag = await self.repository.get_feature_flag(name, environment)
-        if not flag:
+        """Get feature flag by name from Unleash (cached in Redis)"""
+        # Check Redis cache first
+        metadata_key = self._flag_metadata_key(environment, name)
+        cached = await self.redis.get(metadata_key)
+        if cached:
+            try:
+                if isinstance(cached, bytes):
+                    cached = cached.decode('utf-8')
+                data = json.loads(cached)
+                return FeatureFlagResponse(**data)
+            except Exception:
+                pass
+        
+        # Fetch from Unleash API
+        if not self.unleash_url or not self.unleash_api_token:
+            logger.error("Unleash URL or API token not configured")
             return None
         
-        return FeatureFlagResponse(
-            id=flag.id,
-            name=flag.name,
-            description=flag.description,
-            is_enabled=flag.is_enabled,
-            environment=flag.environment,
-            rollout_percentage=flag.rollout_percentage,
-            target_users=flag.target_users,
-            unleash_flag_name=flag.unleash_flag_name,
-            last_synced_at=str(flag.last_synced_at) if flag.last_synced_at else None,
-            evaluation_count=flag.evaluation_count or 0,
-            last_evaluated_at=str(flag.last_evaluated_at) if flag.last_evaluated_at else None,
-            created_at=str(flag.created_at),
-            updated_at=str(flag.updated_at),
-        )
+        try:
+            base_url = self.unleash_url.rstrip('/api')
+            admin_url = f"{base_url}/api/admin/projects/default/features/{name}"
+            
+            headers = {
+                "Authorization": self._format_auth_header(self.unleash_api_token),
+                "Content-Type": "application/json",
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(admin_url, headers=headers) as response:
+                    if response.status == 404:
+                        return None
+                    if response.status == 403:
+                        error_text = await response.text()
+                        logger.error(f"403 Forbidden - Token type mismatch. Admin API requires an Admin token, not a Client token.")
+                        logger.error(f"Error details: {error_text[:500]}")
+                        logger.error(f"To fix: Create an Admin token in Unleash UI (Settings → API Access) and update UNLEASH_API_TOKEN")
+                        return None
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"Failed to fetch feature from Unleash: {response.status}. Response: {error_text[:500]}")
+                        return None
+                    
+                    feature = await response.json()
+                    flag_response = self._convert_unleash_feature_to_response(feature, environment)
+                    
+                    # Cache in Redis
+                    if flag_response:
+                        await self.redis.set(
+                            metadata_key,
+                            json.dumps(flag_response.model_dump()),
+                            ex=self.cache_ttl
+                        )
+                    
+                    return flag_response
+        except Exception as e:
+            logger.error(f"Error fetching feature flag {name} from Unleash: {e}", exc_info=True)
+            return None
 
     async def get_feature_flags(
         self,
@@ -433,183 +418,286 @@ class FeatureFlagService:
         limit: int,
         offset: int,
     ) -> Tuple[List[FeatureFlagResponse], int]:
-        """Get feature flags with pagination"""
-        items, total = await self.repository.get_feature_flags(environment, limit, offset)
-        resp = [
-            FeatureFlagResponse(
-                id=i.id,
-                name=i.name,
-                description=i.description,
-                is_enabled=i.is_enabled,
-                environment=i.environment,
-                rollout_percentage=i.rollout_percentage,
-                target_users=i.target_users,
-                unleash_flag_name=i.unleash_flag_name,
-                last_synced_at=str(i.last_synced_at) if i.last_synced_at else None,
-                evaluation_count=i.evaluation_count or 0,
-                last_evaluated_at=str(i.last_evaluated_at) if i.last_evaluated_at else None,
-                created_at=str(i.created_at),
-                updated_at=str(i.updated_at),
-            )
-            for i in items
-        ]
-        return resp, total
-
-    async def update_feature_flag(
-        self,
-        name: str,
-        environment: str,
-        **kwargs,
-    ) -> Optional[FeatureFlagResponse]:
-        """Update feature flag"""
-        flag = await self.repository.update_feature_flag(name, environment, **kwargs)
-        if not flag:
-            return None
+        """Get feature flags from Unleash (cached in Redis)"""
+        if not environment:
+            logger.error("Environment is required")
+            return [], 0
         
-        # Invalidate cache
-        await self._invalidate_cache(environment, name)
+        # Check Redis cache first
+        cache_key = self._flags_cache_key(environment)
+        cached = await self.redis.get(cache_key)
+        if cached:
+            try:
+                if isinstance(cached, bytes):
+                    cached = cached.decode('utf-8')
+                data = json.loads(cached)
+                flags = [FeatureFlagResponse(**item) for item in data.get("flags", [])]
+                total = data.get("total", len(flags))
+                # Apply pagination
+                paginated_flags = flags[offset:offset + limit]
+                return paginated_flags, total
+            except Exception:
+                pass
         
-        # Publish event
-        await self._publish({
-            "event_type": "FEATURE_FLAG_UPDATED",
-            "flag_name": name,
-            "environment": environment,
-        })
-        
-        return FeatureFlagResponse(
-            id=flag.id,
-            name=flag.name,
-            description=flag.description,
-            is_enabled=flag.is_enabled,
-            environment=flag.environment,
-            rollout_percentage=flag.rollout_percentage,
-            target_users=flag.target_users,
-            unleash_flag_name=flag.unleash_flag_name,
-            last_synced_at=str(flag.last_synced_at) if flag.last_synced_at else None,
-            evaluation_count=flag.evaluation_count or 0,
-            last_evaluated_at=str(flag.last_evaluated_at) if flag.last_evaluated_at else None,
-            created_at=str(flag.created_at),
-            updated_at=str(flag.updated_at),
-        )
-
-    async def delete_feature_flag(self, name: str, environment: str) -> bool:
-        """Delete feature flag"""
-        ok = await self.repository.delete_feature_flag(name, environment)
-        
-        if ok:
-            # Invalidate cache
-            await self._invalidate_cache(environment, name)
-            
-            # Publish event
-            await self._publish({
-                "event_type": "FEATURE_FLAG_DELETED",
-                "flag_name": name,
-                "environment": environment,
-            })
-        
-        return ok
-
-    async def sync_flags_from_unleash(self, environment: str) -> int:
-        """Sync flags from Unleash Admin API"""
+        # Fetch from Unleash API
         if not self.unleash_url or not self.unleash_api_token:
-            logger.error("Unleash URL or API token not configured for sync")
-            return 0
+            logger.error("Unleash URL or API token not configured")
+            return [], 0
         
         try:
-            # Construct Unleash Admin API URL
             base_url = self.unleash_url.rstrip('/api')
             admin_url = f"{base_url}/api/admin/projects/default/features"
             
+            logger.info(f"Fetching feature flags from Unleash: {admin_url} for environment: {environment}")
+            
             headers = {
-                "Authorization": self.unleash_api_token,
+                "Authorization": self._format_auth_header(self.unleash_api_token),
                 "Content-Type": "application/json",
             }
             
-            synced_count = 0
-            offset = 0
-            limit = 100
+            all_flags = []
+            page_offset = 0
+            page_limit = 100
             
             async with aiohttp.ClientSession() as session:
                 while True:
-                    # Fetch features with pagination
-                    params = {"offset": offset, "limit": limit}
+                    params = {"offset": page_offset, "limit": page_limit}
                     async with session.get(admin_url, headers=headers, params=params) as response:
+                        if response.status == 403:
+                            error_text = await response.text()
+                            logger.error(f"403 Forbidden - Token type mismatch. Admin API requires an Admin token, not a Client token.")
+                            logger.error(f"Error details: {error_text[:500]}")
+                            logger.error(f"To fix: Create an Admin token in Unleash UI (Settings → API Access) and update UNLEASH_API_TOKEN")
+                            break
                         if response.status != 200:
-                            logger.error(f"Failed to fetch features from Unleash: {response.status}")
+                            error_text = await response.text()
+                            logger.error(f"Failed to fetch features from Unleash: {response.status}. Response: {error_text[:500]}")
                             break
                         
                         data = await response.json()
-                        features = data.get("features", [])
+                        
+                        # Log response structure for debugging (first page only)
+                        if page_offset == 0:
+                            import json as json_lib
+                            logger.info(f"Unleash API response (first 2000 chars): {json_lib.dumps(data, indent=2)[:2000]}")
+                        
+                        # Handle different response formats
+                        if isinstance(data, list):
+                            features = data
+                            logger.info(f"Response is a list with {len(features)} features")
+                        elif isinstance(data, dict):
+                            features = data.get("features", [])
+                            logger.info(f"Response is a dict with 'features' key containing {len(features)} features")
+                            if "features" not in data and data:
+                                logger.warning(f"Unexpected response structure. Keys: {list(data.keys())}")
+                        else:
+                            logger.error(f"Unexpected response type: {type(data)}")
+                            features = []
                         
                         if not features:
+                            if page_offset == 0:
+                                logger.warning(f"No features found in Unleash API response for environment '{environment}'")
                             break
                         
-                        # Process each feature
+                        logger.info(f"Processing {len(features)} features from page {page_offset // page_limit + 1}")
+                        
+                        # Convert each feature
+                        converted_count = 0
                         for feature in features:
-                            try:
-                                feature_name = feature.get("name", "")
-                                if not feature_name:
-                                    continue
-                                
-                                # Determine if enabled based on strategies and environment
-                                strategies = feature.get("strategies", [])
-                                environments = feature.get("environments", [])
-                                
-                                # Find environment-specific config
-                                env_config = None
-                                for env in environments:
-                                    if env.get("name") == environment:
-                                        env_config = env
-                                        break
-                                
-                                is_enabled = False
-                                if env_config:
-                                    # Check if any strategy is enabled
-                                    strategies = env_config.get("strategies", [])
-                                    is_enabled = len(strategies) > 0 and any(
-                                        s.get("disabled", False) is False for s in strategies
-                                    )
-                                
-                                # Sync to local database
-                                await self.repository.sync_from_unleash(
-                                    name=feature_name,
-                                    environment=environment,
-                                    is_enabled=is_enabled,
-                                    unleash_data=feature,
-                                )
-                                
-                                synced_count += 1
-                            except Exception as e:
-                                logger.error(f"Error syncing feature {feature.get('name', 'unknown')}: {e}", exc_info=True)
+                            flag_response = self._convert_unleash_feature_to_response(feature, environment)
+                            if flag_response:
+                                all_flags.append(flag_response)
+                                converted_count += 1
+                            else:
+                                logger.debug(f"Failed to convert feature: {feature.get('name', 'unknown')}")
                         
-                        # Check if there are more pages
-                        if len(features) < limit:
+                        logger.info(f"Converted {converted_count} out of {len(features)} features for environment '{environment}'")
+                        
+                        if len(features) < page_limit:
                             break
-                        offset += limit
+                        page_offset += page_limit
             
-            logger.info(f"Synced {synced_count} flags from Unleash for environment {environment}")
-            return synced_count
+            # Cache in Redis
+            if all_flags:
+                cache_data = {
+                    "flags": [flag.model_dump() for flag in all_flags],
+                    "total": len(all_flags),
+                }
+                await self.redis.set(cache_key, json.dumps(cache_data), ex=self.cache_ttl)
+                logger.info(f"Cached {len(all_flags)} flags in Redis for environment '{environment}'")
+            else:
+                logger.warning(f"No flags were converted for environment '{environment}'. This could mean:")
+                logger.warning("  1. No flags exist in Unleash")
+                logger.warning("  2. Environment name mismatch (check UNLEASH_ENVIRONMENT)")
+                logger.warning("  3. Flags exist but not configured for this environment")
             
+            # Apply pagination
+            paginated_flags = all_flags[offset:offset + limit]
+            logger.info(f"Returning {len(paginated_flags)} flags (offset={offset}, limit={limit}) out of {len(all_flags)} total")
+            return paginated_flags, len(all_flags)
+            
+        except aiohttp.ClientError as e:
+            logger.error(f"HTTP client error fetching feature flags from Unleash: {e}", exc_info=True)
+            return [], 0
         except Exception as e:
-            logger.error(f"Error syncing flags from Unleash: {e}", exc_info=True)
-            return 0
+            logger.error(f"Error fetching feature flags from Unleash: {e}", exc_info=True)
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return [], 0
 
-    async def get_evaluation_history(self, flag_name: str, limit: int) -> List[dict]:
-        """Get evaluation history for a flag"""
-        evaluations = await self.repository.get_evaluation_history(flag_name, limit)
-        return [
-            {
-                "id": e.id,
-                "flag_name": e.flag_name,
-                "user_id": e.user_id,
-                "context": e.context,
-                "result": e.result,
-                "variant": e.variant,
-                "evaluated_value": e.evaluated_value,
-                "environment": e.environment,
-                "evaluated_at": str(e.evaluated_at),
-                "evaluation_reason": e.evaluation_reason,
+    def _convert_unleash_feature_to_response(
+        self,
+        feature: dict,
+        environment: str,
+    ) -> Optional[FeatureFlagResponse]:
+        """Convert Unleash API feature to FeatureFlagResponse"""
+        try:
+            feature_name = feature.get("name", "")
+            if not feature_name:
+                logger.debug("Feature missing name field, skipping")
+                return None
+            
+            description = feature.get("description") or ""
+            environments = feature.get("environments", [])
+            
+            logger.debug(f"Converting feature '{feature_name}' with {len(environments)} environments")
+            
+            # Find environment-specific config - try exact match first, then case-insensitive
+            env_config = None
+            available_envs = []
+            for env in environments:
+                if isinstance(env, dict):
+                    env_name = env.get("name", "")
+                    available_envs.append(env_name)
+                    if env_name == environment:
+                        env_config = env
+                        break
+            
+            # Try case-insensitive match if exact match failed
+            if not env_config:
+                for env in environments:
+                    if isinstance(env, dict):
+                        env_name = env.get("name", "")
+                        if env_name.lower() == environment.lower():
+                            env_config = env
+                            logger.debug(f"Matched environment '{env_name}' (case-insensitive) for '{environment}'")
+                            break
+            
+            rollout_percentage = None
+            target_users = None
+            
+            if not env_config:
+                logger.debug(f"Feature '{feature_name}' does not have environment '{environment}'. Available: {available_envs}")
+                # Still return the flag but mark as disabled
+                is_enabled = False
+            else:
+                is_enabled = env_config.get("enabled", False)
+            
+            # Note: The list endpoint may not include full strategy details
+            # The environment object might have hasStrategies: true but no strategies array
+            if env_config:
+                strategies = env_config.get("strategies", [])
+                
+                # If strategies array is empty but hasStrategies is true,
+                # the list endpoint doesn't include full strategy details
+                # We'll still return the flag but without strategy-specific data
+                if not strategies and env_config.get("hasStrategies", False):
+                    logger.debug(f"Feature '{feature_name}' has strategies but they're not in the list response. Strategy details unavailable.")
+                
+                # Extract rollout_percentage and target_users from strategies
+                for strategy in strategies:
+                    if strategy.get("disabled", False):
+                        continue
+                    
+                    strategy_name = strategy.get("name", "").lower()
+                    parameters = strategy.get("parameters", {})
+                    
+                    if "gradual" in strategy_name or "rollout" in strategy_name:
+                        percentage = parameters.get("percentage") or parameters.get("rollout")
+                        if percentage is not None:
+                            rollout_percentage = str(percentage)
+                    
+                    if "user" in strategy_name and "id" in strategy_name:
+                        user_ids = parameters.get("userIds")
+                        if isinstance(user_ids, str):
+                            target_users = [uid.strip() for uid in user_ids.split(",") if uid.strip()]
+                        elif isinstance(user_ids, list):
+                            target_users = [str(uid) for uid in user_ids if uid]
+                    
+                    constraints = strategy.get("constraints", [])
+                    for constraint in constraints:
+                        if constraint.get("contextName") == "userId" and constraint.get("operator") == "IN":
+                            values = constraint.get("values", [])
+                            if values:
+                                target_users = [str(v) for v in values]
+            
+            # Build response with only available data from Unleash
+            # Only include fields that have actual values (not null/empty)
+            response_data = {
+                "name": feature_name,
+                "is_enabled": is_enabled,
+                "environment": environment,
             }
-            for e in evaluations
-        ]
+            
+            # Only include description if it exists and is not empty
+            if description and description.strip():
+                response_data["description"] = description.strip()
+            
+            # Only include rollout_percentage if we extracted it from strategies
+            # Note: List endpoint may not include strategy details, so this may be None
+            if rollout_percentage:
+                response_data["rollout_percentage"] = rollout_percentage
+            
+            # Only include target_users if we extracted it from strategies
+            # Note: List endpoint may not include strategy details, so this may be None
+            if target_users:
+                response_data["target_users"] = target_users
+            
+            # Include unleash_flag_name (always same as name in this architecture)
+            response_data["unleash_flag_name"] = feature_name
+            
+            # Include sync timestamp (always available)
+            response_data["last_synced_at"] = datetime.now(timezone.utc).isoformat()
+            
+            # Include created_at if available from Unleash
+            created_at = feature.get("createdAt")
+            if created_at:
+                response_data["created_at"] = created_at
+            
+            # Include updated_at if available from Unleash
+            updated_at = feature.get("updatedAt")
+            if updated_at:
+                response_data["updated_at"] = updated_at
+            
+            # Create response - None values will be excluded by model's exclude_none=True
+            return FeatureFlagResponse(**response_data)
+        except Exception as e:
+            logger.error(f"Error converting Unleash feature to response: {e}", exc_info=True)
+            return None
 
+    async def sync_flags_from_unleash(self, environment: str) -> int:
+        """Sync flags from Unleash Admin API - refreshes Redis cache"""
+        logger.info(f"Refreshing feature flags cache from Unleash for environment '{environment}'")
+        logger.info(f"Unleash URL: {self.unleash_url}, Token: {self.unleash_api_token[:20] if self.unleash_api_token else 'None'}...")
+        
+        if not self.unleash_url or not self.unleash_api_token:
+            logger.error("Unleash URL or API token not configured")
+            return 0
+        
+        # Invalidate cache to force refresh
+        cache_key = self._flags_cache_key(environment)
+        await self.redis.delete(cache_key)
+        logger.info(f"Invalidated cache key: {cache_key}")
+        
+        # Fetch flags (this will populate cache)
+        flags, total = await self.get_feature_flags(environment, limit=1000, offset=0)
+        
+        if total == 0:
+            logger.warning(f"No flags found after sync. Check:")
+            logger.warning(f"  1. Flags exist in Unleash UI")
+            logger.warning(f"  2. Environment name matches: '{environment}'")
+            logger.warning(f"  3. API token has admin access")
+        else:
+            logger.info(f"Successfully refreshed {total} feature flags from Unleash for environment {environment}")
+        
+        return total
