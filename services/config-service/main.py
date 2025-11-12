@@ -46,6 +46,8 @@ kafka_producer = None
 registry_client = None
 health_monitor_service = None
 health_monitor_task = None
+openfeature_client = None
+unleash_provider = None
 
 async def periodic_health_check():
     """Background task for periodic health checks"""
@@ -155,7 +157,6 @@ async def startup_event():
             service_name = os.getenv('SERVICE_NAME', 'config-service')
             service_port = os.getenv('SERVICE_PORT', '8082')
             instance_id = os.getenv('SERVICE_INSTANCE_ID', f"{service_name}-1")
-            service_metadata = {"instance_id": instance_id}
             service_url = f"http://{service_name}:{service_port}"
             health_url = f"{service_url}/health"
             try:
@@ -202,6 +203,48 @@ async def startup_event():
             logger.warning(f"Failed to initialize health monitor service: {e}")
             health_monitor_service = None
         
+        # Initialize OpenFeature with Unleash provider
+        try:
+            from openfeature import api as openfeature_api
+            from providers.unleash_provider import UnleashFeatureProvider
+            from openfeature.evaluation_context import EvaluationContext
+            
+            unleash_url = os.getenv('UNLEASH_URL', 'http://unleash:4242/api')
+            unleash_app_name = os.getenv('UNLEASH_APP_NAME', 'config-service')
+            unleash_instance_id = os.getenv('UNLEASH_INSTANCE_ID', 'config-service-1')
+            unleash_api_token = os.getenv('UNLEASH_API_TOKEN', '*:*.unleash-insecure-api-token')
+            unleash_environment = os.getenv('UNLEASH_ENVIRONMENT', 'development')
+            unleash_refresh_interval = int(os.getenv('UNLEASH_REFRESH_INTERVAL', '15'))
+            unleash_metrics_interval = int(os.getenv('UNLEASH_METRICS_INTERVAL', '60'))
+            unleash_disable_metrics = os.getenv('UNLEASH_DISABLE_METRICS', 'false').lower() == 'true'
+            
+            global unleash_provider
+            unleash_provider = UnleashFeatureProvider(
+                url=unleash_url,
+                app_name=unleash_app_name,
+                instance_id=unleash_instance_id,
+                api_token=unleash_api_token,
+                environment=unleash_environment,
+                refresh_interval=unleash_refresh_interval,
+                metrics_interval=unleash_metrics_interval,
+                disable_metrics=unleash_disable_metrics,
+            )
+            
+            # Initialize provider with empty context
+            unleash_provider.initialize(EvaluationContext())
+            
+            openfeature_api.set_provider(unleash_provider)
+            global openfeature_client
+            openfeature_client = openfeature_api.get_client()
+            
+            # Store in app state for access in routers
+            app.state.openfeature_client = openfeature_client
+            
+            logger.info("OpenFeature with Unleash provider initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenFeature/Unleash: {e}")
+            openfeature_client = None
+        
     except Exception as e:
         logger.error(f"Failed to initialize essential connections: {e}")
         raise
@@ -209,7 +252,15 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up connections on shutdown"""
-    global redis_client, db_engine, kafka_producer, health_monitor_service, health_monitor_task
+    global redis_client, db_engine, kafka_producer, health_monitor_service, health_monitor_task, unleash_provider
+    
+    # Shutdown OpenFeature provider
+    if unleash_provider:
+        try:
+            unleash_provider.shutdown()
+            logger.info("OpenFeature provider shutdown complete")
+        except Exception as e:
+            logger.warning(f"Error shutting down OpenFeature provider: {e}")
     
     # Cancel health monitor task
     if health_monitor_task:
@@ -259,10 +310,11 @@ async def root():
         "description": "Centralized configuration for microservices"
     }
 
-from routers import config_router, service_registry_router, health_router
+from routers import config_router, service_registry_router, health_router, feature_flag_router
 app.include_router(config_router)
 app.include_router(service_registry_router)
 app.include_router(health_router)
+app.include_router(feature_flag_router)
 
 @app.get("/api/v1/config/status")
 async def config_status():
@@ -275,7 +327,8 @@ async def config_status():
             "Environment-specific configurations",
             "Service discovery",
             "Dynamic configuration updates",
-            "Configuration audit logging"
+            "Configuration audit logging",
+            "Feature flags with Unleash"
         ]
     }
 

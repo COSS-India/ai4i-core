@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     JSON,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -67,5 +68,51 @@ class ConfigurationHistory(Base):
 
     def __repr__(self) -> str:
         return f"<ConfigurationHistory id={self.id} configuration_id={self.configuration_id}>"
+
+
+class FeatureFlag(Base):
+    __tablename__ = "feature_flags"
+    __table_args__ = (
+        UniqueConstraint('name', 'environment', name='uq_feature_flags_name_environment'),
+    )
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    is_enabled = Column(Boolean, default=False)
+    rollout_percentage = Column(String(255))
+    target_users = Column(JSON)
+    environment = Column(String(50), nullable=False)
+    unleash_flag_name = Column(String(255))
+    last_synced_at = Column(DateTime(timezone=True))
+    evaluation_count = Column(Integer, default=0)
+    last_evaluated_at = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True))
+    updated_at = Column(DateTime(timezone=True))
+
+    evaluations = relationship("FeatureFlagEvaluation", back_populates="flag", cascade="all, delete-orphan")
+
+    def __repr__(self) -> str:
+        return f"<FeatureFlag id={self.id} name={self.name} env={self.environment}>"
+
+
+class FeatureFlagEvaluation(Base):
+    __tablename__ = "feature_flag_evaluations"
+
+    id = Column(Integer, primary_key=True)
+    flag_name = Column(String(255), nullable=False)
+    user_id = Column(String(255))
+    context = Column(JSON)
+    result = Column(Boolean, nullable=True)
+    variant = Column(String(100))
+    evaluated_value = Column(JSON)
+    environment = Column(String(50), nullable=False)
+    evaluated_at = Column(DateTime(timezone=True))
+    evaluation_reason = Column(String(50))
+
+    flag = relationship("FeatureFlag", back_populates="evaluations")
+
+    def __repr__(self) -> str:
+        return f"<FeatureFlagEvaluation id={self.id} flag_name={self.flag_name}>"
 
 
