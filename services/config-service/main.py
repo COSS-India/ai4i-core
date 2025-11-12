@@ -241,6 +241,30 @@ async def startup_event():
             app.state.openfeature_client = openfeature_client
             
             logger.info("OpenFeature with Unleash provider initialized")
+            
+            # Optionally sync flags from Unleash on startup
+            auto_sync_enabled = os.getenv('UNLEASH_AUTO_SYNC_ON_STARTUP', 'false').lower() == 'true'
+            if auto_sync_enabled:
+                try:
+                    from services.feature_flag_service import FeatureFlagService
+                    
+                    kafka_topic = os.getenv("FEATURE_FLAG_KAFKA_TOPIC", "feature-flag-events")
+                    cache_ttl = int(os.getenv("FEATURE_FLAG_CACHE_TTL", "300"))
+                    
+                    feature_flag_service = FeatureFlagService(
+                        redis_client=redis_client,
+                        kafka_producer=kafka_producer,
+                        openfeature_client=openfeature_client,
+                        kafka_topic=kafka_topic,
+                        cache_ttl=cache_ttl,
+                        unleash_url=unleash_url,
+                        unleash_api_token=unleash_api_token,
+                    )
+                    
+                    synced_count = await feature_flag_service.sync_flags_from_unleash(unleash_environment)
+                    logger.info(f"Auto-synced {synced_count} feature flags from Unleash on startup")
+                except Exception as sync_error:
+                    logger.warning(f"Failed to auto-sync flags from Unleash on startup: {sync_error}")
         except Exception as e:
             logger.warning(f"Failed to initialize OpenFeature/Unleash: {e}")
             openfeature_client = None

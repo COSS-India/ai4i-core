@@ -11,8 +11,9 @@ from sqlalchemy import (
     ForeignKey,
     JSON,
     UniqueConstraint,
+    and_,
 )
-from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.orm import declarative_base, relationship, foreign
 
 
 Base = declarative_base()
@@ -90,8 +91,6 @@ class FeatureFlag(Base):
     created_at = Column(DateTime(timezone=True))
     updated_at = Column(DateTime(timezone=True))
 
-    evaluations = relationship("FeatureFlagEvaluation", back_populates="flag", cascade="all, delete-orphan")
-
     def __repr__(self) -> str:
         return f"<FeatureFlag id={self.id} name={self.name} env={self.environment}>"
 
@@ -110,9 +109,28 @@ class FeatureFlagEvaluation(Base):
     evaluated_at = Column(DateTime(timezone=True))
     evaluation_reason = Column(String(50))
 
-    flag = relationship("FeatureFlag", back_populates="evaluations")
-
     def __repr__(self) -> str:
         return f"<FeatureFlagEvaluation id={self.id} flag_name={self.flag_name}>"
+
+
+# Configure relationships after both classes are defined
+FeatureFlag.evaluations = relationship(
+    "FeatureFlagEvaluation",
+    back_populates="flag",
+    cascade="all, delete-orphan",
+    primaryjoin=and_(
+        FeatureFlag.name == foreign(FeatureFlagEvaluation.flag_name),
+        FeatureFlag.environment == foreign(FeatureFlagEvaluation.environment)
+    ),
+)
+
+FeatureFlagEvaluation.flag = relationship(
+    "FeatureFlag",
+    back_populates="evaluations",
+    primaryjoin=and_(
+        foreign(FeatureFlagEvaluation.flag_name) == FeatureFlag.name,
+        foreign(FeatureFlagEvaluation.environment) == FeatureFlag.environment
+    ),
+)
 
 

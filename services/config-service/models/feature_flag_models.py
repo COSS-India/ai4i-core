@@ -66,20 +66,27 @@ class FeatureFlagEvaluationResponse(BaseModel):
 
 
 class FeatureFlagResponse(BaseModel):
-    """Response model for feature flag details"""
-    id: int
+    """Response model for feature flag details - only includes fields available from Unleash"""
     name: str
-    description: Optional[str]
+    description: Optional[str] = None
     is_enabled: bool
     environment: str
-    rollout_percentage: Optional[str]
-    target_users: Optional[List[str]]
-    unleash_flag_name: Optional[str]
-    last_synced_at: Optional[str]
-    evaluation_count: int
-    last_evaluated_at: Optional[str]
-    created_at: str
-    updated_at: str
+    rollout_percentage: Optional[str] = None
+    target_users: Optional[List[str]] = None
+    unleash_flag_name: Optional[str] = None
+    last_synced_at: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    
+    def dict(self, **kwargs):
+        """Override dict to exclude None values"""
+        return super().dict(exclude_none=True, **kwargs)
+    
+    def model_dump(self, **kwargs):
+        """Override model_dump to exclude None values (Pydantic v2 compatibility)"""
+        if hasattr(super(), 'model_dump'):
+            return super().model_dump(exclude_none=True, **kwargs)
+        return self.dict(**kwargs)
 
 
 class FeatureFlagListResponse(BaseModel):

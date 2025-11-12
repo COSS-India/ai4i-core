@@ -1,20 +1,18 @@
 """
-FastAPI router for feature flag endpoints
+FastAPI router for feature flag endpoints - Unleash and Redis only
 """
 import os
-from typing import Dict, List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from models.feature_flag_models import (
     BulkEvaluationRequest,
-    FeatureFlagCreate,
     FeatureFlagEvaluationRequest,
     FeatureFlagEvaluationResponse,
     FeatureFlagListResponse,
     FeatureFlagResponse,
 )
-from repositories.feature_flag_repository import FeatureFlagRepository
 from services.feature_flag_service import FeatureFlagService
 
 router = APIRouter(prefix="/api/v1/feature-flags", tags=["Feature Flags"])
@@ -23,8 +21,6 @@ router = APIRouter(prefix="/api/v1/feature-flags", tags=["Feature Flags"])
 def get_feature_flag_service() -> FeatureFlagService:
     """Dependency injection for FeatureFlagService"""
     import main as app_main
-    
-    repo = FeatureFlagRepository(app_main.db_session)
     
     # Get OpenFeature client from app state or None
     openfeature_client = getattr(app_main.app.state, "openfeature_client", None)
@@ -35,7 +31,6 @@ def get_feature_flag_service() -> FeatureFlagService:
     unleash_api_token = os.getenv("UNLEASH_API_TOKEN")
     
     return FeatureFlagService(
-        repository=repo,
         redis_client=app_main.redis_client,
         kafka_producer=app_main.kafka_producer,
         openfeature_client=openfeature_client,
@@ -113,30 +108,17 @@ async def bulk_evaluate_flags(
     return {"results": results}
 
 
-@router.post("/", response_model=FeatureFlagResponse, status_code=201)
-async def create_feature_flag(
-    request: FeatureFlagCreate,
-    service: FeatureFlagService = Depends(get_feature_flag_service),
-):
-    """
-    Create a new feature flag (admin)
-    
-    Creates a feature flag in the local database. Note that flags should typically
-    be created in Unleash UI, and this endpoint is for local flag management.
-    """
-    return await service.create_feature_flag(request)
-
-
-@router.get("/{name}", response_model=FeatureFlagResponse)
+@router.get("/{name}", response_model=FeatureFlagResponse, response_model_exclude_none=True)
 async def get_feature_flag(
     name: str,
     environment: str = Query(..., description="Environment name"),
     service: FeatureFlagService = Depends(get_feature_flag_service),
 ):
     """
-    Get feature flag by name
+    Get feature flag by name from Unleash
     
-    Retrieves flag details including status, rollout percentage, and evaluation statistics.
+    Retrieves flag details from Unleash API (cached in Redis).
+    Only includes fields that are available from Unleash.
     """
     result = await service.get_feature_flag(name, environment)
     if not result:
@@ -144,79 +126,22 @@ async def get_feature_flag(
     return result
 
 
-@router.get("/", response_model=FeatureFlagListResponse)
+@router.get("/", response_model=FeatureFlagListResponse, response_model_exclude_none=True)
 async def list_feature_flags(
-    environment: Optional[str] = Query(None, description="Filter by environment"),
+    environment: str = Query(..., description="Environment name (required)"),
     limit: int = Query(50, ge=1, le=100, description="Page size"),
     offset: int = Query(0, ge=0, description="Page offset"),
     service: FeatureFlagService = Depends(get_feature_flag_service),
 ):
     """
-    List feature flags
+    List feature flags from Unleash
     
-    Returns paginated list of feature flags with optional environment filter.
+    Returns paginated list of feature flags from Unleash (cached in Redis).
+    All flags come from Unleash - no local flags.
+    Only includes fields that are available from Unleash (null fields are excluded).
     """
     items, total = await service.get_feature_flags(environment, limit, offset)
     return FeatureFlagListResponse(items=items, total=total, limit=limit, offset=offset)
-
-
-@router.put("/{name}", response_model=FeatureFlagResponse)
-async def update_feature_flag(
-    name: str,
-    environment: str = Query(..., description="Environment name"),
-    request: Dict = None,
-    service: FeatureFlagService = Depends(get_feature_flag_service),
-):
-    """
-    Update feature flag (admin)
-    
-    Updates flag properties. Only provided fields will be updated.
-    """
-    if not request:
-        raise HTTPException(status_code=400, detail="Request body required")
-    
-    result = await service.update_feature_flag(name, environment, **request)
-    if not result:
-        raise HTTPException(status_code=404, detail=f"Feature flag '{name}' not found in environment '{environment}'")
-    return result
-
-
-@router.delete("/{name}", status_code=204)
-async def delete_feature_flag(
-    name: str,
-    environment: str = Query(..., description="Environment name"),
-    service: FeatureFlagService = Depends(get_feature_flag_service),
-):
-    """
-    Delete feature flag (admin)
-    
-    Permanently deletes a feature flag from the local database.
-    """
-    ok = await service.delete_feature_flag(name, environment)
-    if not ok:
-        raise HTTPException(status_code=404, detail=f"Feature flag '{name}' not found in environment '{environment}'")
-    return None
-
-
-@router.get("/{name}/history")
-async def get_evaluation_history(
-    name: str,
-    environment: str = Query(..., description="Environment name"),
-    limit: int = Query(100, ge=1, le=1000, description="Number of records to return"),
-    service: FeatureFlagService = Depends(get_feature_flag_service),
-):
-    """
-    Get evaluation history for a feature flag
-    
-    Returns audit trail of flag evaluations including user context and results.
-    """
-    # Verify flag exists
-    flag = await service.get_feature_flag(name, environment)
-    if not flag:
-        raise HTTPException(status_code=404, detail=f"Feature flag '{name}' not found in environment '{environment}'")
-    
-    history = await service.get_evaluation_history(name, limit)
-    return history
 
 
 @router.post("/sync")
@@ -225,10 +150,10 @@ async def sync_flags_from_unleash(
     service: FeatureFlagService = Depends(get_feature_flag_service),
 ):
     """
-    Sync flags from Unleash (admin)
+    Refresh feature flags cache from Unleash (admin)
     
-    Fetches all flags from Unleash API and syncs them to the local database.
+    Invalidates Redis cache and fetches fresh data from Unleash API.
+    This ensures the latest flags from Unleash are available.
     """
     synced_count = await service.sync_flags_from_unleash(environment)
     return {"synced_count": synced_count, "environment": environment}
-
