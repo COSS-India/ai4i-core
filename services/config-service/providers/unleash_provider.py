@@ -5,7 +5,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from openfeature.evaluation_context import EvaluationContext
-from openfeature.flag_evaluation import FlagEvaluationDetails, FlagType, Reason
+from openfeature.flag_evaluation import FlagEvaluationDetails, FlagResolutionDetails, FlagType, Reason
 from openfeature.provider import AbstractProvider, Metadata
 from UnleashClient import UnleashClient
 from UnleashClient.constants import FEATURES_URL
@@ -127,13 +127,12 @@ class UnleashFeatureProvider(AbstractProvider):
         flag_key: str,
         default_value: bool,
         evaluation_context: EvaluationContext,
-    ) -> FlagEvaluationDetails[bool]:
+    ) -> FlagResolutionDetails[bool]:
         """Resolve boolean flag value"""
         try:
             if not self._initialized or not self.client:
                 logger.warning("Unleash client not initialized, returning default")
-                return FlagEvaluationDetails(
-                    flag_key=flag_key,
+                return FlagResolutionDetails(
                     value=default_value,
                     reason=Reason.ERROR,
                 )
@@ -143,15 +142,13 @@ class UnleashFeatureProvider(AbstractProvider):
             
             reason = self._map_reason(is_enabled)
             
-            return FlagEvaluationDetails(
-                flag_key=flag_key,
+            return FlagResolutionDetails(
                 value=is_enabled,
                 reason=reason,
             )
         except Exception as e:
             logger.error(f"Error evaluating boolean flag {flag_key}: {e}", exc_info=True)
-            return FlagEvaluationDetails(
-                flag_key=flag_key,
+            return FlagResolutionDetails(
                 value=default_value,
                 reason=Reason.ERROR,
             )
@@ -161,13 +158,12 @@ class UnleashFeatureProvider(AbstractProvider):
         flag_key: str,
         default_value: str,
         evaluation_context: EvaluationContext,
-    ) -> FlagEvaluationDetails[str]:
+    ) -> FlagResolutionDetails[str]:
         """Resolve string flag value (variant)"""
         try:
             if not self._initialized or not self.client:
                 logger.warning("Unleash client not initialized, returning default")
-                return FlagEvaluationDetails(
-                    flag_key=flag_key,
+                return FlagResolutionDetails(
                     value=default_value,
                     reason=Reason.ERROR,
                 )
@@ -186,23 +182,14 @@ class UnleashFeatureProvider(AbstractProvider):
                 value = default_value
                 reason = Reason.DEFAULT
             
-            details = FlagEvaluationDetails(
-                flag_key=flag_key,
+            return FlagResolutionDetails(
                 value=value,
                 reason=reason,
+                variant=variant_name,
             )
-            # Set variant attribute if available
-            if hasattr(details, 'variant'):
-                details.variant = variant_name
-            elif variant_name:
-                # Store variant in a custom attribute if variant field doesn't exist
-                setattr(details, 'variant', variant_name)
-            
-            return details
         except Exception as e:
             logger.error(f"Error evaluating string flag {flag_key}: {e}", exc_info=True)
-            return FlagEvaluationDetails(
-                flag_key=flag_key,
+            return FlagResolutionDetails(
                 value=default_value,
                 reason=Reason.ERROR,
             )
@@ -212,13 +199,12 @@ class UnleashFeatureProvider(AbstractProvider):
         flag_key: str,
         default_value: int,
         evaluation_context: EvaluationContext,
-    ) -> FlagEvaluationDetails[int]:
+    ) -> FlagResolutionDetails[int]:
         """Resolve integer flag value"""
         try:
             if not self._initialized or not self.client:
                 logger.warning("Unleash client not initialized, returning default")
-                return FlagEvaluationDetails(
-                    flag_key=flag_key,
+                return FlagResolutionDetails(
                     value=default_value,
                     reason=Reason.ERROR,
                 )
@@ -242,15 +228,13 @@ class UnleashFeatureProvider(AbstractProvider):
                 value = default_value
                 reason = Reason.DEFAULT
             
-            return FlagEvaluationDetails(
-                flag_key=flag_key,
+            return FlagResolutionDetails(
                 value=value,
                 reason=reason,
             )
         except Exception as e:
             logger.error(f"Error evaluating integer flag {flag_key}: {e}", exc_info=True)
-            return FlagEvaluationDetails(
-                flag_key=flag_key,
+            return FlagResolutionDetails(
                 value=default_value,
                 reason=Reason.ERROR,
             )
@@ -260,13 +244,12 @@ class UnleashFeatureProvider(AbstractProvider):
         flag_key: str,
         default_value: float,
         evaluation_context: EvaluationContext,
-    ) -> FlagEvaluationDetails[float]:
+    ) -> FlagResolutionDetails[float]:
         """Resolve float flag value"""
         try:
             if not self._initialized or not self.client:
                 logger.warning("Unleash client not initialized, returning default")
-                return FlagEvaluationDetails(
-                    flag_key=flag_key,
+                return FlagResolutionDetails(
                     value=default_value,
                     reason=Reason.ERROR,
                 )
@@ -290,15 +273,13 @@ class UnleashFeatureProvider(AbstractProvider):
                 value = default_value
                 reason = Reason.DEFAULT
             
-            return FlagEvaluationDetails(
-                flag_key=flag_key,
+            return FlagResolutionDetails(
                 value=value,
                 reason=reason,
             )
         except Exception as e:
             logger.error(f"Error evaluating float flag {flag_key}: {e}", exc_info=True)
-            return FlagEvaluationDetails(
-                flag_key=flag_key,
+            return FlagResolutionDetails(
                 value=default_value,
                 reason=Reason.ERROR,
             )
@@ -308,13 +289,12 @@ class UnleashFeatureProvider(AbstractProvider):
         flag_key: str,
         default_value: dict,
         evaluation_context: EvaluationContext,
-    ) -> FlagEvaluationDetails[dict]:
+    ) -> FlagResolutionDetails[dict]:
         """Resolve object flag value (JSON)"""
         try:
             if not self._initialized or not self.client:
                 logger.warning("Unleash client not initialized, returning default")
-                return FlagEvaluationDetails(
-                    flag_key=flag_key,
+                return FlagResolutionDetails(
                     value=default_value,
                     reason=Reason.ERROR,
                 )
@@ -346,23 +326,14 @@ class UnleashFeatureProvider(AbstractProvider):
                 value = default_value
                 reason = Reason.DEFAULT
             
-            details = FlagEvaluationDetails(
-                flag_key=flag_key,
+            return FlagResolutionDetails(
                 value=value,
                 reason=reason,
+                variant=variant_name,
             )
-            # Set variant attribute if available
-            if hasattr(details, 'variant'):
-                details.variant = variant_name
-            elif variant_name:
-                # Store variant in a custom attribute if variant field doesn't exist
-                setattr(details, 'variant', variant_name)
-            
-            return details
         except Exception as e:
             logger.error(f"Error evaluating object flag {flag_key}: {e}", exc_info=True)
-            return FlagEvaluationDetails(
-                flag_key=flag_key,
+            return FlagResolutionDetails(
                 value=default_value,
                 reason=Reason.ERROR,
             )

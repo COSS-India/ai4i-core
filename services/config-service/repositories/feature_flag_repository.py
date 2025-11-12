@@ -71,8 +71,17 @@ class FeatureFlagRepository:
         environment: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
+        from_unleash: Optional[bool] = None,
     ) -> Tuple[List[FeatureFlag], int]:
-        """Get feature flags with optional environment filter and pagination"""
+        """Get feature flags with optional environment filter and pagination
+        
+        Args:
+            environment: Optional environment filter
+            limit: Page size
+            offset: Page offset
+            from_unleash: Filter by source - True=from Unleash (has unleash_flag_name), 
+                         False=local only (no unleash_flag_name), None=all
+        """
         async with self._session_factory() as session:
             query = select(FeatureFlag)
             count_q = select(func.count(FeatureFlag.id))
@@ -80,6 +89,16 @@ class FeatureFlagRepository:
             if environment:
                 query = query.where(FeatureFlag.environment == environment)
                 count_q = count_q.where(FeatureFlag.environment == environment)
+            
+            # Filter by source (Unleash vs local)
+            if from_unleash is True:
+                # Only flags from Unleash (have unleash_flag_name)
+                query = query.where(FeatureFlag.unleash_flag_name.isnot(None))
+                count_q = count_q.where(FeatureFlag.unleash_flag_name.isnot(None))
+            elif from_unleash is False:
+                # Only local flags (no unleash_flag_name)
+                query = query.where(FeatureFlag.unleash_flag_name.is_(None))
+                count_q = count_q.where(FeatureFlag.unleash_flag_name.is_(None))
 
             query = query.limit(limit).offset(offset)
 
@@ -143,6 +162,9 @@ class FeatureFlagRepository:
         environment: str,
         is_enabled: bool,
         unleash_data: dict,
+        description: Optional[str] = None,
+        rollout_percentage: Optional[str] = None,
+        target_users: Optional[List[str]] = None,
     ) -> FeatureFlag:
         """Upsert feature flag from Unleash data"""
         async with self._session_factory() as session:
@@ -162,12 +184,24 @@ class FeatureFlagRepository:
                     flag.unleash_flag_name = unleash_data.get("name", name)
                     flag.last_synced_at = now
                     flag.updated_at = now
+                    # Update description if provided
+                    if description is not None:
+                        flag.description = description
+                    # Update rollout_percentage if provided
+                    if rollout_percentage is not None:
+                        flag.rollout_percentage = rollout_percentage
+                    # Update target_users if provided
+                    if target_users is not None:
+                        flag.target_users = target_users
                 else:
                     # Create new flag
                     flag = FeatureFlag(
                         name=name,
+                        description=description,
                         is_enabled=is_enabled,
                         environment=environment,
+                        rollout_percentage=rollout_percentage,
+                        target_users=target_users,
                         unleash_flag_name=unleash_data.get("name", name),
                         last_synced_at=now,
                         created_at=now,
