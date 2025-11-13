@@ -208,6 +208,50 @@ class FeatureFlagService:
             targeting_key=user_id,
             attributes=attributes,
         )
+    
+    def _evaluate_with_admin_api_data(
+        self,
+        flag_metadata: FeatureFlagResponse,
+        user_id: Optional[str],
+        context: dict,
+        default_value: Any,
+        environment: str,
+    ) -> Tuple[Any, str]:
+        """
+        Evaluate flag using Admin API metadata (works for any environment)
+        This implements basic targeting evaluation without requiring SDK
+        """
+        # Flag is enabled, check targeting
+        rollout_percentage = flag_metadata.rollout_percentage
+        target_users = flag_metadata.target_users
+        
+        # Check user targeting first
+        if target_users and user_id:
+            if user_id in target_users:
+                return (True if isinstance(default_value, bool) else default_value), "TARGETING_MATCH"
+        
+        # Check percentage rollout
+        if rollout_percentage:
+            try:
+                percentage = float(rollout_percentage)
+                if percentage >= 100:
+                    return (True if isinstance(default_value, bool) else default_value), "TARGETING_MATCH"
+                elif percentage > 0 and user_id:
+                    # Simple hash-based rollout (consistent for same user)
+                    import hashlib
+                    hash_value = int(hashlib.md5(f"{flag_metadata.name}:{user_id}".encode()).hexdigest(), 16)
+                    user_percentage = (hash_value % 100) + 1
+                    if user_percentage <= percentage:
+                        return (True if isinstance(default_value, bool) else default_value), "TARGETING_MATCH"
+            except (ValueError, TypeError):
+                pass
+        
+        # No targeting matched, but flag is enabled
+        # For boolean flags, return True; for others, return default
+        if isinstance(default_value, bool):
+            return True, "TARGETING_MATCH"
+        else:
+            return default_value, "DEFAULT"
 
     async def evaluate_flag(
         self,
@@ -264,49 +308,40 @@ class FeatureFlagService:
             await self.redis.set(cache_key, json.dumps(response.model_dump()), ex=self.evaluation_cache_ttl)
             return response
 
-        # Flag is enabled, proceed with evaluation using OpenFeature (Unleash SDK)
-        # Note: The SDK may be initialized with a different environment, so we'll validate the result
-        eval_context = self._build_evaluation_context(user_id, context, environment)
+        # Flag is enabled, proceed with evaluation
+        # We'll use Admin API data first, then fall back to SDK if available and needed
         value = default_value
         reason = "ERROR"
         variant = None
 
-        try:
+        # Check if flag has targeting strategies that need evaluation
+        has_targeting = (
+            (flag_metadata.rollout_percentage and flag_metadata.rollout_percentage not in ["0", "100"]) or
+            (flag_metadata.target_users and len(flag_metadata.target_users) > 0)
+        )
+
+        # For simple boolean flags without targeting, return enabled value directly
+        if isinstance(default_value, bool) and not has_targeting:
+            value = True  # Flag is enabled, no targeting, so return True
+            reason = "TARGETING_MATCH"
+        elif has_targeting:
+            # Flag has targeting - try to evaluate using SDK if available, otherwise use Admin API data
+            eval_context = self._build_evaluation_context(user_id, context, environment)
+            
+            # Try SDK first if available
             if self.openfeature_client:
-                # Determine type and evaluate
                 try:
+                    # Determine type and evaluate
                     if isinstance(default_value, bool):
                         details = self.openfeature_client.get_boolean_details(flag_name, default_value, eval_context)
                         value = details.value
                         reason = details.reason
                         
-                        # If flag is enabled in requested environment but SDK returned DEFAULT,
-                        # this indicates the SDK is using a different environment's flag data
-                        # Override the result to reflect that the flag is actually enabled
-                        # For boolean flags, enabled means True (unless targeting excludes the user)
-                        if flag_metadata.is_enabled and reason == "DEFAULT":
-                            # Check if there's targeting that might legitimately exclude this user
-                            has_targeting = (
-                                (flag_metadata.rollout_percentage and flag_metadata.rollout_percentage not in ["0", "100"]) or
-                                (flag_metadata.target_users and len(flag_metadata.target_users) > 0)
+                        # If SDK returned DEFAULT but flag is enabled, evaluate using Admin API data
+                        if reason == "DEFAULT" and flag_metadata.is_enabled:
+                            value, reason = self._evaluate_with_admin_api_data(
+                                flag_metadata, user_id, context, default_value, environment
                             )
-                            
-                            if not has_targeting:
-                                # No targeting, so enabled flag should return True
-                                logger.warning(
-                                    f"Flag '{flag_name}' is enabled in '{environment}' but SDK returned DEFAULT. "
-                                    f"This suggests SDK environment mismatch. Overriding to True."
-                                )
-                                value = True
-                                reason = "TARGETING_MATCH"
-                            else:
-                                # Has targeting - SDK might be correctly evaluating targeting rules
-                                # But if SDK environment is wrong, targeting won't work either
-                                # For now, log a warning but trust the SDK result
-                                logger.warning(
-                                    f"Flag '{flag_name}' is enabled in '{environment}' with targeting, "
-                                    f"but SDK returned DEFAULT. SDK may be using wrong environment's targeting rules."
-                                )
                     elif isinstance(default_value, str):
                         details = self.openfeature_client.get_string_details(flag_name, default_value, eval_context)
                         value = details.value
@@ -334,14 +369,48 @@ class FeatureFlagService:
                         reason = "ERROR"
                     else:
                         raise
+                except Exception as sdk_error:
+                    logger.debug(f"SDK evaluation failed, falling back to Admin API evaluation: {sdk_error}")
+                    # Fall through to Admin API evaluation
+            
+            # If SDK not available or failed, evaluate using Admin API data
+            if value == default_value and reason == "ERROR":
+                value, reason = self._evaluate_with_admin_api_data(
+                    flag_metadata, user_id, context, default_value, environment
+                )
+        else:
+            # For non-boolean flags without targeting, use SDK if available, otherwise return default
+            eval_context = self._build_evaluation_context(user_id, context, environment)
+            if self.openfeature_client:
+                try:
+                    if isinstance(default_value, str):
+                        details = self.openfeature_client.get_string_details(flag_name, default_value, eval_context)
+                        value = details.value
+                        reason = details.reason
+                        variant = getattr(details, 'variant', None)
+                        if variant is None and value != default_value:
+                            variant = str(value)
+                    elif isinstance(default_value, int):
+                        details = self.openfeature_client.get_integer_details(flag_name, default_value, eval_context)
+                        value = details.value
+                        reason = details.reason
+                    elif isinstance(default_value, float):
+                        details = self.openfeature_client.get_float_details(flag_name, default_value, eval_context)
+                        value = details.value
+                        reason = details.reason
+                    elif isinstance(default_value, dict):
+                        details = self.openfeature_client.get_object_details(flag_name, default_value, eval_context)
+                        value = details.value
+                        reason = details.reason
+                        variant = getattr(details, 'variant', None)
+                except Exception as e:
+                    logger.debug(f"SDK evaluation failed for non-boolean flag: {e}")
+                    value = default_value
+                    reason = "ERROR"
             else:
-                logger.warning("OpenFeature client not available, using default value")
+                # No SDK, return default for non-boolean flags
                 value = default_value
                 reason = "ERROR"
-        except Exception as e:
-            logger.error(f"Error evaluating flag {flag_name}: {e}", exc_info=True)
-            value = default_value
-            reason = "ERROR"
 
         # Cache result with shorter TTL for evaluation to ensure accuracy
         response = FeatureFlagEvaluationResponse(

@@ -30,12 +30,14 @@ app = FastAPI(
 )
 
 # Add CORS middleware
+# Note: allow_origins=["*"] cannot be used with allow_credentials=True
+# If you need credentials, specify exact origins instead of "*"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=False,  # Must be False when allow_origins=["*"]
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
 )
 
 # Global variables for connections
@@ -174,7 +176,7 @@ async def periodic_flag_sync():
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections on startup"""
-    global redis_client, db_engine, db_session, kafka_producer, health_monitor_service, health_monitor_task, flag_sync_task
+    global redis_client, db_engine, db_session, kafka_producer, health_monitor_service, health_monitor_task, flag_sync_task, openfeature_client, unleash_provider
     
     try:
         # Initialize Redis connection
@@ -290,41 +292,45 @@ async def startup_event():
             unleash_app_name = os.getenv('UNLEASH_APP_NAME', 'config-service')
             unleash_instance_id = os.getenv('UNLEASH_INSTANCE_ID', 'config-service-1')
             unleash_api_token = os.getenv('UNLEASH_API_TOKEN', '*:*.unleash-insecure-api-token')
-            unleash_environment = os.getenv('UNLEASH_ENVIRONMENT', 'development')
+            unleash_environment = os.getenv('UNLEASH_ENVIRONMENT')  # Optional - if not set, SDK won't be used
             unleash_refresh_interval = int(os.getenv('UNLEASH_REFRESH_INTERVAL', '15'))
             unleash_metrics_interval = int(os.getenv('UNLEASH_METRICS_INTERVAL', '60'))
             unleash_disable_metrics = os.getenv('UNLEASH_DISABLE_METRICS', 'false').lower() == 'true'
             
-            global unleash_provider
-            unleash_provider = UnleashFeatureProvider(
-                url=unleash_url,
-                app_name=unleash_app_name,
-                instance_id=unleash_instance_id,
-                api_token=unleash_api_token,
-                environment=unleash_environment,
-                refresh_interval=unleash_refresh_interval,
-                metrics_interval=unleash_metrics_interval,
-                disable_metrics=unleash_disable_metrics,
-            )
-            
-            # Initialize provider with empty context
-            unleash_provider.initialize(EvaluationContext())
-            
-            openfeature_api.set_provider(unleash_provider)
-            global openfeature_client
-            openfeature_client = openfeature_api.get_client()
-            
-            # Store in app state for access in routers
-            app.state.openfeature_client = openfeature_client
-            
-            logger.info(f"OpenFeature with Unleash provider initialized for environment: {unleash_environment}")
-            logger.warning(
-                f"⚠️  IMPORTANT: Unleash SDK is configured for environment '{unleash_environment}'. "
-                f"The API can evaluate flags for ANY environment, but targeting rules (percentage rollouts, "
-                f"user targeting) will only work correctly for '{unleash_environment}'. "
-                f"For other environments, enabled/disabled state will be correct, but targeting may use "
-                f"the wrong environment's rules. Set UNLEASH_ENVIRONMENT to your primary environment."
-            )
+            # Only initialize SDK if UNLEASH_ENVIRONMENT is set
+            if unleash_environment:
+                unleash_provider = UnleashFeatureProvider(
+                    url=unleash_url,
+                    app_name=unleash_app_name,
+                    instance_id=unleash_instance_id,
+                    api_token=unleash_api_token,
+                    environment=unleash_environment,
+                    refresh_interval=unleash_refresh_interval,
+                    metrics_interval=unleash_metrics_interval,
+                    disable_metrics=unleash_disable_metrics,
+                )
+                
+                # Initialize provider with empty context
+                unleash_provider.initialize(EvaluationContext())
+                
+                openfeature_api.set_provider(unleash_provider)
+                openfeature_client = openfeature_api.get_client()
+                
+                # Store in app state for access in routers
+                app.state.openfeature_client = openfeature_client
+                
+                logger.info(f"OpenFeature with Unleash provider initialized for environment: {unleash_environment}")
+                logger.info(
+                    f"Note: SDK is configured for '{unleash_environment}'. Evaluation will use Admin API "
+                    f"for all environments, with SDK as fallback for complex targeting."
+                )
+            else:
+                openfeature_client = None
+                app.state.openfeature_client = None
+                logger.info(
+                    "UNLEASH_ENVIRONMENT not set - SDK disabled. Evaluation will use Admin API only, "
+                    "which works correctly for all environments."
+                )
             
             # Optionally sync flags from Unleash on startup
             auto_sync_enabled = os.getenv('UNLEASH_AUTO_SYNC_ON_STARTUP', 'false').lower() == 'true'
