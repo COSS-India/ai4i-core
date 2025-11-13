@@ -4,6 +4,7 @@ Business logic service for feature flags - Redis and Unleash only
 import hashlib
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timezone
 
@@ -40,6 +41,13 @@ class FeatureFlagService:
         self.openfeature_client = openfeature_client
         self.kafka_topic = kafka_topic
         self.cache_ttl = cache_ttl
+        # Evaluation cache TTL should be very short to ensure accuracy
+        # OpenFeature SDK refreshes every 15s, so set cache to 5s to ensure we get fresh data
+        # This means cache expires 3x before SDK refresh, ensuring accuracy
+        sync_interval = int(os.getenv("UNLEASH_SYNC_INTERVAL", "30"))
+        # Use 5 seconds for evaluation cache - ensures fresh data, sync will also invalidate every 30s
+        self.evaluation_cache_ttl = 5
+        logger.info(f"Evaluation cache TTL set to {self.evaluation_cache_ttl} seconds (sync interval: {sync_interval}s, OpenFeature refresh: 15s)")
         self.unleash_url = unleash_url
         self.unleash_api_token = unleash_api_token
 
@@ -105,6 +113,82 @@ class FeatureFlagService:
                 logger.info(f"Invalidated {deleted_count} cache keys for flag {flag_name} in {environment}")
         except Exception as e:
             logger.error(f"Failed to invalidate cache for flag {flag_name} in {environment}: {e}", exc_info=True)
+    
+    async def invalidate_environment_cache(self, environment: str) -> None:
+        """Invalidate all cache keys for an environment (used by webhooks)"""
+        try:
+            # Invalidate flag list cache
+            await self.redis.delete(self._flags_cache_key(environment))
+            
+            # Invalidate all evaluation caches for this environment
+            pattern = f"feature_flag:eval:{environment}:*"
+            cursor = 0
+            deleted_count = 0
+            
+            while True:
+                cursor, keys = await self.redis.scan(cursor, match=pattern, count=100)
+                
+                if keys:
+                    deleted = await self.redis.delete(*keys)
+                    deleted_count += deleted
+                
+                if cursor == 0:
+                    break
+            
+            # Invalidate all metadata caches for this environment
+            metadata_pattern = f"feature_flag:metadata:{environment}:*"
+            cursor = 0
+            while True:
+                cursor, keys = await self.redis.scan(cursor, match=metadata_pattern, count=100)
+                
+                if keys:
+                    await self.redis.delete(*keys)
+                
+                if cursor == 0:
+                    break
+            
+            logger.info(f"Invalidated all caches for environment '{environment}' (deleted {deleted_count} evaluation cache keys)")
+        except Exception as e:
+            logger.error(f"Failed to invalidate environment cache for {environment}: {e}", exc_info=True)
+    
+    async def invalidate_flag_cache(self, flag_name: str, environment: Optional[str] = None) -> None:
+        """Invalidate cache for a specific flag, optionally for a specific environment"""
+        try:
+            if environment:
+                # Invalidate for specific environment
+                await self._invalidate_cache(environment, flag_name)
+            else:
+                # Invalidate for all environments - scan for all environments
+                pattern = f"feature_flag:*:{flag_name}*"
+                cursor = 0
+                deleted_count = 0
+                
+                while True:
+                    cursor, keys = await self.redis.scan(cursor, match=pattern, count=100)
+                    
+                    if keys:
+                        deleted = await self.redis.delete(*keys)
+                        deleted_count += deleted
+                    
+                    if cursor == 0:
+                        break
+                
+                # Also invalidate list caches (they contain this flag)
+                list_pattern = "feature_flags:list:*"
+                cursor = 0
+                while True:
+                    cursor, keys = await self.redis.scan(cursor, match=list_pattern, count=100)
+                    
+                    if keys:
+                        # Delete all list caches since they may contain this flag
+                        await self.redis.delete(*keys)
+                    
+                    if cursor == 0:
+                        break
+                
+                logger.info(f"Invalidated all caches for flag '{flag_name}' (deleted {deleted_count} keys)")
+        except Exception as e:
+            logger.error(f"Failed to invalidate cache for flag {flag_name}: {e}", exc_info=True)
 
     async def _publish(self, payload: Dict[str, Any]) -> None:
         """Publish event to Kafka"""
@@ -115,11 +199,14 @@ class FeatureFlagService:
         except Exception as e:
             logger.warning(f"Failed to publish Kafka event: {e}")
 
-    def _build_evaluation_context(self, user_id: Optional[str], context: dict) -> EvaluationContext:
-        """Build OpenFeature EvaluationContext from user_id and context"""
+    def _build_evaluation_context(self, user_id: Optional[str], context: dict, environment: str) -> EvaluationContext:
+        """Build OpenFeature EvaluationContext from user_id, context, and environment"""
+        # Include environment in attributes so Unleash provider can use it
+        attributes = (context or {}).copy()
+        attributes["environment"] = environment
         return EvaluationContext(
             targeting_key=user_id,
-            attributes=context or {},
+            attributes=attributes,
         )
 
     async def evaluate_flag(
@@ -133,19 +220,53 @@ class FeatureFlagService:
         """Evaluate a feature flag and return detailed response"""
         cache_key = self._cache_key(environment, flag_name, user_id, context)
         
-        # Check cache first
+        # Check cache first (with very short TTL of 5s to ensure accuracy)
         cached = await self.redis.get(cache_key)
         if cached:
             try:
                 if isinstance(cached, bytes):
                     cached = cached.decode('utf-8')
                 data = json.loads(cached)
+                # Log cache hit for debugging
+                logger.debug(f"Cache hit for flag '{flag_name}' in environment '{environment}'")
                 return FeatureFlagEvaluationResponse(**data)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to parse cached evaluation result: {e}")
+                # Continue to fresh evaluation if cache parse fails
 
-        # Evaluate using OpenFeature (Unleash)
-        eval_context = self._build_evaluation_context(user_id, context)
+        # First, check the flag's enabled state from Unleash Admin API for the requested environment
+        # This ensures we're using the correct environment's flag state (same as list endpoint)
+        flag_metadata = await self.get_feature_flag(flag_name, environment)
+        if not flag_metadata:
+            # Flag doesn't exist in this environment, return default
+            logger.debug(f"Flag '{flag_name}' not found in environment '{environment}', returning default value")
+            response = FeatureFlagEvaluationResponse(
+                flag_name=flag_name,
+                value=default_value,
+                variant=None,
+                reason="ERROR",
+                evaluated_at=datetime.now(timezone.utc).isoformat(),
+            )
+            await self.redis.set(cache_key, json.dumps(response.model_dump()), ex=self.evaluation_cache_ttl)
+            return response
+        
+        # Check if flag is enabled in this environment
+        if not flag_metadata.is_enabled:
+            # Flag is disabled in this environment, return default value
+            logger.debug(f"Flag '{flag_name}' is disabled in environment '{environment}', returning default value")
+            response = FeatureFlagEvaluationResponse(
+                flag_name=flag_name,
+                value=default_value,
+                variant=None,
+                reason="DISABLED",
+                evaluated_at=datetime.now(timezone.utc).isoformat(),
+            )
+            await self.redis.set(cache_key, json.dumps(response.model_dump()), ex=self.evaluation_cache_ttl)
+            return response
+
+        # Flag is enabled, proceed with evaluation using OpenFeature (Unleash SDK)
+        # Note: The SDK may be initialized with a different environment, so we'll validate the result
+        eval_context = self._build_evaluation_context(user_id, context, environment)
         value = default_value
         reason = "ERROR"
         variant = None
@@ -158,6 +279,34 @@ class FeatureFlagService:
                         details = self.openfeature_client.get_boolean_details(flag_name, default_value, eval_context)
                         value = details.value
                         reason = details.reason
+                        
+                        # If flag is enabled in requested environment but SDK returned DEFAULT,
+                        # this indicates the SDK is using a different environment's flag data
+                        # Override the result to reflect that the flag is actually enabled
+                        # For boolean flags, enabled means True (unless targeting excludes the user)
+                        if flag_metadata.is_enabled and reason == "DEFAULT":
+                            # Check if there's targeting that might legitimately exclude this user
+                            has_targeting = (
+                                (flag_metadata.rollout_percentage and flag_metadata.rollout_percentage not in ["0", "100"]) or
+                                (flag_metadata.target_users and len(flag_metadata.target_users) > 0)
+                            )
+                            
+                            if not has_targeting:
+                                # No targeting, so enabled flag should return True
+                                logger.warning(
+                                    f"Flag '{flag_name}' is enabled in '{environment}' but SDK returned DEFAULT. "
+                                    f"This suggests SDK environment mismatch. Overriding to True."
+                                )
+                                value = True
+                                reason = "TARGETING_MATCH"
+                            else:
+                                # Has targeting - SDK might be correctly evaluating targeting rules
+                                # But if SDK environment is wrong, targeting won't work either
+                                # For now, log a warning but trust the SDK result
+                                logger.warning(
+                                    f"Flag '{flag_name}' is enabled in '{environment}' with targeting, "
+                                    f"but SDK returned DEFAULT. SDK may be using wrong environment's targeting rules."
+                                )
                     elif isinstance(default_value, str):
                         details = self.openfeature_client.get_string_details(flag_name, default_value, eval_context)
                         value = details.value
@@ -194,7 +343,7 @@ class FeatureFlagService:
             value = default_value
             reason = "ERROR"
 
-        # Cache result
+        # Cache result with shorter TTL for evaluation to ensure accuracy
         response = FeatureFlagEvaluationResponse(
             flag_name=flag_name,
             value=value,
@@ -202,7 +351,7 @@ class FeatureFlagService:
             reason=reason,
             evaluated_at=datetime.now(timezone.utc).isoformat(),
         )
-        await self.redis.set(cache_key, json.dumps(response.model_dump()), ex=self.cache_ttl)
+        await self.redis.set(cache_key, json.dumps(response.model_dump()), ex=self.evaluation_cache_ttl)
 
         # Publish event
         await self._publish({
@@ -225,22 +374,17 @@ class FeatureFlagService:
         environment: str,
     ) -> Tuple[bool, str]:
         """Evaluate boolean flag and return (value, reason) tuple"""
-        eval_context = self._build_evaluation_context(user_id, context)
-        
-        try:
-            if self.openfeature_client:
-                details = self.openfeature_client.get_boolean_details(flag_name, default_value, eval_context)
-                result = details.value
-                reason = details.reason
-            else:
-                result = default_value
-                reason = "ERROR"
-        except Exception as e:
-            logger.error(f"Error evaluating boolean flag {flag_name}: {e}", exc_info=True)
-            result = default_value
-            reason = "ERROR"
-
-        return result, reason
+        # Use evaluate_flag to ensure environment-specific enabled state is checked
+        response = await self.evaluate_flag(
+            flag_name=flag_name,
+            user_id=user_id,
+            context=context,
+            default_value=default_value,
+            environment=environment,
+        )
+        # Extract boolean value and reason from response
+        value = bool(response.value) if isinstance(response.value, (bool, int, str)) else default_value
+        return value, response.reason
 
     async def evaluate_string_flag(
         self,
@@ -251,7 +395,7 @@ class FeatureFlagService:
         environment: str,
     ) -> str:
         """Evaluate string flag and return string value"""
-        eval_context = self._build_evaluation_context(user_id, context)
+        eval_context = self._build_evaluation_context(user_id, context, environment)
         
         try:
             if self.openfeature_client:
@@ -272,7 +416,7 @@ class FeatureFlagService:
         environment: str,
     ) -> int:
         """Evaluate integer flag and return integer value"""
-        eval_context = self._build_evaluation_context(user_id, context)
+        eval_context = self._build_evaluation_context(user_id, context, environment)
         
         try:
             if self.openfeature_client:
@@ -293,7 +437,7 @@ class FeatureFlagService:
         environment: str,
     ) -> float:
         """Evaluate float flag and return float value"""
-        eval_context = self._build_evaluation_context(user_id, context)
+        eval_context = self._build_evaluation_context(user_id, context, environment)
         
         try:
             if self.openfeature_client:
@@ -314,7 +458,7 @@ class FeatureFlagService:
         environment: str,
     ) -> dict:
         """Evaluate object flag and return dict value"""
-        eval_context = self._build_evaluation_context(user_id, context)
+        eval_context = self._build_evaluation_context(user_id, context, environment)
         
         try:
             if self.openfeature_client:
@@ -588,8 +732,8 @@ class FeatureFlagService:
             
             if not env_config:
                 logger.debug(f"Feature '{feature_name}' does not have environment '{environment}'. Available: {available_envs}")
-                # Still return the flag but mark as disabled
-                is_enabled = False
+                # Filter out flags that don't have the requested environment
+                return None
             else:
                 is_enabled = env_config.get("enabled", False)
             
@@ -684,10 +828,10 @@ class FeatureFlagService:
             logger.error("Unleash URL or API token not configured")
             return 0
         
-        # Invalidate cache to force refresh
-        cache_key = self._flags_cache_key(environment)
-        await self.redis.delete(cache_key)
-        logger.info(f"Invalidated cache key: {cache_key}")
+        # Invalidate ALL caches for this environment (list, metadata, and evaluation caches)
+        # This ensures fresh data for both list and evaluate endpoints
+        await self.invalidate_environment_cache(environment)
+        logger.info(f"Invalidated all caches for environment '{environment}' (list, metadata, and evaluation caches)")
         
         # Fetch flags (this will populate cache)
         flags, total = await self.get_feature_flags(environment, limit=1000, offset=0)

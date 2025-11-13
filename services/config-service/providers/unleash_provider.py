@@ -109,8 +109,12 @@ class UnleashFeatureProvider(AbstractProvider):
             for key, value in evaluation_context.attributes.items():
                 context[key] = value
         
-        # Add environment
-        context["environment"] = self.environment
+        # Use environment from context attributes if provided, otherwise use default
+        # This allows per-request environment selection
+        if evaluation_context.attributes and "environment" in evaluation_context.attributes:
+            context["environment"] = evaluation_context.attributes["environment"]
+        else:
+            context["environment"] = self.environment
         
         return context
 
