@@ -213,6 +213,40 @@ UNLEASH_APP_NAME=config-service
 UNLEASH_INSTANCE_ID=config-service-1
 UNLEASH_API_TOKEN=your-admin-token-here  # Must be Admin token, not Client token
 UNLEASH_ENVIRONMENT=development
+```
+
+**Understanding UNLEASH_ENVIRONMENT**
+
+The `UNLEASH_ENVIRONMENT` variable sets which environment the **Unleash SDK client** uses. This is different from the `environment` parameter you pass in API requests:
+
+- **`UNLEASH_ENVIRONMENT`** (env var): Sets the SDK's environment - the SDK fetches flags for THIS environment only
+- **`environment`** (API parameter): The environment you want to evaluate flags for (can be any environment)
+
+**The Problem:**
+- The SDK client is initialized with a **fixed environment** (from `UNLEASH_ENVIRONMENT`)
+- The API can evaluate flags for **any environment** (development, staging, production)
+- This creates a mismatch when evaluating flags for a different environment than `UNLEASH_ENVIRONMENT`
+
+**What Works:**
+- ✅ **Enabled/disabled state**: Always correct (uses Admin API to check the requested environment)
+- ✅ **Simple flags**: Boolean flags without targeting work correctly (we override the SDK result)
+
+**What May Not Work:**
+-  **Targeting rules**: Percentage rollouts, user targeting, constraints may use the wrong environment's rules
+-  **Complex strategies**: If the SDK environment doesn't match the requested environment, targeting evaluation may be incorrect
+
+**Recommendations:**
+1. **Set `UNLEASH_ENVIRONMENT` to your PRIMARY/MOST-USED environment**
+2. **For production deployments**: Consider running separate service instances per environment, each with its own `UNLEASH_ENVIRONMENT`
+3. **For development/testing**: The current setup works fine - enabled/disabled state is always correct
+
+**Example:**
+```bash
+# If you mostly evaluate flags for "production"
+UNLEASH_ENVIRONMENT=production
+
+# If you mostly evaluate flags for "development"  
+UNLEASH_ENVIRONMENT=development
 
 # Redis Configuration
 REDIS_HOST=redis
