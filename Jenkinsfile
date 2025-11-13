@@ -29,7 +29,7 @@ tts-service
     GIT_REPO = 'https://github.com/COSS-India/ai4i-core.git'
     AWS_REGION = 'ap-south-1'        // change if needed
     AWS_ACCOUNT = '662074586476'     // change if needed
-    # Note: using existing Jenkins credential id 'aws-creds' (username/password)
+    // Note: using existing Jenkins credential id 'aws-creds' (username/password)
   }
 
   stages {
