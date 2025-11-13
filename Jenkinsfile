@@ -115,18 +115,19 @@ tts-service
               AWS_ACCOUNT="${AWS_ACCOUNT:-662074586476}"
               ECR_REGISTRY="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
-              # ECR mapping (adjust as needed)
-              declare -A ECR_REPO
-              ECR_REPO[api-gateway-service]="${ECR_REGISTRY}/ai4voice/api-gateway-service"
-              ECR_REPO[auth-service]="${ECR_REGISTRY}/ai4voice/auth-service"
-              ECR_REPO[asr-service]="${ECR_REGISTRY}/ai4voice/asr-service"
-              ECR_REPO[tts-service]="${ECR_REGISTRY}/ai4voice/tts-service"
-              ECR_REPO[nmt-service]="${ECR_REGISTRY}/ai4voice/nmt-service"
-              ECR_REPO[llm-service]="${ECR_REGISTRY}/ai4voice/llm-service"
-              ECR_REPO[pipeline-service]="${ECR_REGISTRY}/ai4voice/pipeline-service"
-              ECR_REPO[simple-ui-frontend]="${ECR_REGISTRY}/simple-ui-frontend"
+              # ECR mapping using POSIX-compatible case (works with /bin/sh)
+              case "$SERVICE" in
+                api-gateway-service) TARGET_REPO="${ECR_REGISTRY}/ai4voice/api-gateway-service" ;;
+                auth-service)        TARGET_REPO="${ECR_REGISTRY}/ai4voice/auth-service" ;;
+                asr-service)         TARGET_REPO="${ECR_REGISTRY}/ai4voice/asr-service" ;;
+                tts-service)         TARGET_REPO="${ECR_REGISTRY}/ai4voice/tts-service" ;;
+                nmt-service)         TARGET_REPO="${ECR_REGISTRY}/ai4voice/nmt-service" ;;
+                llm-service)         TARGET_REPO="${ECR_REGISTRY}/ai4voice/llm-service" ;;
+                pipeline-service)    TARGET_REPO="${ECR_REGISTRY}/ai4voice/pipeline-service" ;;
+                simple-ui-frontend)  TARGET_REPO="${ECR_REGISTRY}/simple-ui-frontend" ;;
+                *) TARGET_REPO="" ;;
+              esac
 
-              TARGET_REPO="${ECR_REPO[${SERVICE}]}"
               if [ -z "${TARGET_REPO}" ]; then
                 echo "ERROR: No ECR mapping for service ${SERVICE}"
                 exit 1
