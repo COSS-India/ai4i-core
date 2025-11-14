@@ -39,59 +39,21 @@ class NMTService:
         "mr": "Deva", "pa": "Guru", "or": "Orya", "as": "Beng"
     }
     
-    # Service registry mapping serviceId to (triton_endpoint, triton_model_name)
-    # Each entry: service_id -> (endpoint, model_name)
-    # Note: Triton HTTP client expects host:port format (without http://), and model names should not contain special characters
-    # Note: Both endpoints use "nmt" as the model name (verified via test_triton_models.py)
+    # Service registry mapping serviceId to triton model name
     SERVICE_REGISTRY = {
-        "ai4bharat/indictrans--gpu-t4": ("13.200.133.97:8000", "nmt"),
-        "indictrans-v2-all": ("13.200.133.97:8000", "nmt"),
-        "ai4bharat/indictrans-v2-all-gpu": ("13.200.133.97:8000", "nmt"),
-        "facebook/nllb-200-1.3B": ("3.110.118.163:8000", "nmt")  # NLLB model - uses "nmt" as model name
+        "ai4bharat/indictrans--gpu-t4": "nmt",
+        "indictrans-v2-all": "nmt",
+        "ai4bharat/indictrans-v2-all-gpu": "nmt"
     }
     
-    # Default Triton endpoint (from environment)
-    DEFAULT_TRITON_ENDPOINT = "13.200.133.97:8000"
-    DEFAULT_TRITON_API_KEY = "1b69e9a1a24466c85e4bbca3c5295f50"
-    
-    def __init__(self, repository: NMTRepository, text_service: TextService, 
-                 default_triton_client: TritonClient, 
-                 get_triton_client_func=None):
+    def __init__(self, repository: NMTRepository, text_service: TextService, triton_client: TritonClient):
         self.repository = repository
         self.text_service = text_service
-        self.default_triton_client = default_triton_client
-        self.get_triton_client_func = get_triton_client_func
-        self._triton_clients = {}  # Cache for Triton clients
-    
-    def get_triton_client(self, service_id: str) -> TritonClient:
-        """Get Triton client for the given service ID"""
-        # Check cache first
-        if service_id in self._triton_clients:
-            return self._triton_clients[service_id]
-        
-        # Get endpoint and model info from registry
-        service_info = self.SERVICE_REGISTRY.get(service_id)
-        if service_info:
-            endpoint, _ = service_info
-        else:
-            # Use default client if service not in registry
-            return self.default_triton_client
-        
-        # Create client using factory function if available
-        if self.get_triton_client_func:
-            client = self.get_triton_client_func(endpoint)
-            self._triton_clients[service_id] = client
-            return client
-        else:
-            # Fallback to default client
-            return self.default_triton_client
+        self.triton_client = triton_client
     
     def get_model_name(self, service_id: str) -> str:
         """Get Triton model name based on service ID"""
-        service_info = self.SERVICE_REGISTRY.get(service_id)
-        if service_info:
-            return service_info[1]  # Return model name
-        return "nmt"  # Default to "nmt" if not found
+        return self.SERVICE_REGISTRY.get(service_id, "nmt")  # Default to "nmt" if not found
     
     async def run_inference(
         self,
@@ -154,21 +116,13 @@ class NMTService:
                 batch = input_texts[i:i + max_batch_size]
                 
                 try:
-                    # Get appropriate Triton client for this service
-                    triton_client = self.get_triton_client(service_id)
-                    
-                    # Log the model name and endpoint for debugging
-                    service_info = self.SERVICE_REGISTRY.get(service_id)
-                    endpoint = service_info[0] if service_info else "default"
-                    logger.info(f"Using Triton endpoint: {endpoint}, model: {model_name} for service: {service_id}")
-                    
                     # Prepare Triton inputs
-                    inputs, outputs = triton_client.get_translation_io_for_triton(
+                    inputs, outputs = self.triton_client.get_translation_io_for_triton(
                         batch, source_lang, target_lang
                     )
                     
                     # Send Triton request
-                    response = triton_client.send_triton_request(
+                    response = self.triton_client.send_triton_request(
                         model_name=model_name,
                         inputs=inputs,
                         outputs=outputs
