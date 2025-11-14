@@ -7,7 +7,7 @@ A modern, responsive Next.js-based web interface for testing ASR, TTS, and NMT m
 - **Modern, Responsive UI** - Built with Chakra UI for consistent design and mobile-first approach
 - **Real-time ASR** - Microphone recording and file upload with waveform visualization
 - **TTS with Multiple Voices** - Text-to-speech with various voice options and audio formats
-- **NMT Translation** - Neural machine translation between 22+ Indic languages
+- **NMT Translation** - Neural machine translation between 22+ Indian languages
 - **WebSocket Streaming** - Real-time streaming support for ASR and TTS services
 - **API Key Management** - Secure API key storage and management
 - **Request/Response Visualization** - Detailed statistics and performance metrics
@@ -34,14 +34,12 @@ A modern, responsive Next.js-based web interface for testing ASR, TTS, and NMT m
 ## Installation
 
 1. **Clone the repository**
-
    ```bash
    git clone <repository-url>
    cd Ai4V-C/frontend/simple-ui
    ```
 
 2. **Install dependencies**
-
    ```bash
    npm install
    # or
@@ -49,7 +47,6 @@ A modern, responsive Next.js-based web interface for testing ASR, TTS, and NMT m
    ```
 
 3. **Configure environment**
-
    ```bash
    cp .env.template .env
    ```
@@ -63,7 +60,6 @@ A modern, responsive Next.js-based web interface for testing ASR, TTS, and NMT m
 ## Development
 
 1. **Start the development server**
-
    ```bash
    npm run dev
    # or
@@ -81,7 +77,6 @@ A modern, responsive Next.js-based web interface for testing ASR, TTS, and NMT m
 ## Production Build
 
 1. **Build the application**
-
    ```bash
    npm run build
    # or
@@ -98,13 +93,11 @@ A modern, responsive Next.js-based web interface for testing ASR, TTS, and NMT m
 ## Docker Deployment
 
 1. **Build the Docker image**
-
    ```bash
    docker build -t simple-ui:latest .
    ```
 
 2. **Run the container**
-
    ```bash
    docker run -p 3000:3000 \
      -e NEXT_PUBLIC_API_URL=http://api-gateway:8080 \
@@ -113,7 +106,7 @@ A modern, responsive Next.js-based web interface for testing ASR, TTS, and NMT m
 
 3. **Using Docker Compose**
    ```yaml
-   version: "3.8"
+   version: '3.8'
    services:
      simple-ui:
        build: .
@@ -216,7 +209,6 @@ The application connects to an API Gateway service that routes requests to indiv
 ### Authentication
 
 All API requests include an Authorization header:
-
 ```
 Authorization: Bearer <api_key>
 ```
@@ -224,12 +216,11 @@ Authorization: Bearer <api_key>
 ### Request/Response Format
 
 #### ASR Request
-
 ```json
 {
-  "audio": [{ "audioContent": "base64_encoded_audio" }],
+  "audio": [{"audioContent": "base64_encoded_audio"}],
   "config": {
-    "language": { "sourceLanguage": "en" },
+    "language": {"sourceLanguage": "en"},
     "serviceId": "ai4bharat/asr-wav2vec2-indian-english",
     "audioFormat": "wav",
     "encoding": "base64",
@@ -239,12 +230,11 @@ Authorization: Bearer <api_key>
 ```
 
 #### TTS Request
-
 ```json
 {
-  "input": [{ "source": "Hello world" }],
+  "input": [{"source": "Hello world"}],
   "config": {
-    "language": { "sourceLanguage": "en" },
+    "language": {"sourceLanguage": "en"},
     "serviceId": "ai4bharat/indic-tts",
     "gender": "female",
     "samplingRate": 22050,
@@ -254,10 +244,9 @@ Authorization: Bearer <api_key>
 ```
 
 #### NMT Request
-
 ```json
 {
-  "input": [{ "source": "Hello" }],
+  "input": [{"source": "Hello"}],
   "config": {
     "language": {
       "sourceLanguage": "en",
@@ -287,11 +276,11 @@ Authorization: Bearer <api_key>
 ### Using React Query Hooks
 
 ```typescript
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation } from '@tanstack/react-query';
 
 // Query hook
 const { data, isLoading, error } = useQuery({
-  queryKey: ["data-key"],
+  queryKey: ['data-key'],
   queryFn: fetchDataFunction,
   staleTime: 5 * 60 * 1000,
 });
@@ -311,7 +300,7 @@ const mutation = useMutation({
 ### Styling with Chakra UI
 
 ```typescript
-import { Box, Text, Button } from "@chakra-ui/react";
+import { Box, Text, Button } from '@chakra-ui/react';
 
 const MyComponent = () => (
   <Box p={4} bg="orange.100" borderRadius="md">
@@ -330,24 +319,20 @@ const MyComponent = () => (
 ### Common Issues
 
 1. **CORS Errors**
-
    - Ensure API Gateway is configured to allow requests from the frontend domain
    - Check CORS headers in the API Gateway configuration
 
 2. **API Connection Issues**
-
    - Verify API Gateway is running on the correct port
    - Check `NEXT_PUBLIC_API_URL` environment variable
    - Ensure API key is valid and properly set
 
 3. **Microphone Permission Denied**
-
    - Check browser permissions for microphone access
    - Ensure HTTPS is used in production (required for microphone access)
    - Try refreshing the page and granting permission again
 
 4. **Audio Playback Issues**
-
    - Check browser audio settings
    - Ensure audio format is supported by the browser
    - Try different audio formats in TTS settings
@@ -360,12 +345,10 @@ const MyComponent = () => (
 ### Performance Optimization
 
 1. **Image Optimization**
-
    - Use Next.js Image component for optimized images
    - Compress images before adding to public directory
 
 2. **Bundle Size**
-
    - Use dynamic imports for large components
    - Remove unused dependencies
    - Enable tree shaking
@@ -390,7 +373,6 @@ This project is licensed under the MIT License. See the LICENSE file for details
 ## Support
 
 For issues and questions:
-
 1. Check the troubleshooting section above
 2. Review the API documentation
 3. Check the browser console for error messages

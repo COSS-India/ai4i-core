@@ -103,46 +103,6 @@ COMMENT ON COLUMN tts_results.sample_rate IS 'Audio sample rate in Hz';
 COMMENT ON COLUMN tts_results.bit_rate IS 'Audio bit rate in kbps';
 COMMENT ON COLUMN tts_results.file_size IS 'Size of audio file in bytes';
 
--- LLM (Large Language Model) Tables
-
--- LLM Requests table - tracks LLM inference requests
-CREATE TABLE IF NOT EXISTS llm_requests (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
-    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
-    model_id VARCHAR(100) NOT NULL,
-    input_language VARCHAR(10),
-    output_language VARCHAR(10),
-    text_length INTEGER,
-    processing_time FLOAT,
-    status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
-    error_message TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-COMMENT ON TABLE llm_requests IS 'LLM requests table - tracks large language model inference requests';
-COMMENT ON COLUMN llm_requests.model_id IS 'Identifier for the LLM model used (e.g., llm, ai4bharat/llm)';
-COMMENT ON COLUMN llm_requests.input_language IS 'Input language code (e.g., en, hi, ta)';
-COMMENT ON COLUMN llm_requests.output_language IS 'Output language code (e.g., en, hi, ta)';
-COMMENT ON COLUMN llm_requests.text_length IS 'Length of input text in characters';
-COMMENT ON COLUMN llm_requests.processing_time IS 'Time taken to process the request in seconds';
-COMMENT ON COLUMN llm_requests.status IS 'Current status of the request: processing, completed, or failed';
-
--- LLM Results table - stores LLM inference results
-CREATE TABLE IF NOT EXISTS llm_results (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    request_id UUID REFERENCES llm_requests(id) ON DELETE CASCADE,
-    output_text TEXT NOT NULL,
-    source_text TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-COMMENT ON TABLE llm_results IS 'LLM results table - stores large language model inference results';
-COMMENT ON COLUMN llm_results.output_text IS 'The processed/translated/generated text output';
-COMMENT ON COLUMN llm_results.source_text IS 'Original source text for reference';
-
 -- NMT (Neural Machine Translation) Tables
 
 -- NMT Requests table - tracks NMT inference requests
@@ -236,21 +196,6 @@ CREATE INDEX IF NOT EXISTS idx_nmt_requests_language_pair ON nmt_requests(source
 CREATE INDEX IF NOT EXISTS idx_nmt_results_request_id ON nmt_results(request_id);
 CREATE INDEX IF NOT EXISTS idx_nmt_results_created_at ON nmt_results(created_at);
 
--- Indexes for LLM tables
-CREATE INDEX IF NOT EXISTS idx_llm_requests_user_id ON llm_requests(user_id);
-CREATE INDEX IF NOT EXISTS idx_llm_requests_api_key_id ON llm_requests(api_key_id);
-CREATE INDEX IF NOT EXISTS idx_llm_requests_session_id ON llm_requests(session_id);
-CREATE INDEX IF NOT EXISTS idx_llm_requests_status ON llm_requests(status);
-CREATE INDEX IF NOT EXISTS idx_llm_requests_input_language ON llm_requests(input_language);
-CREATE INDEX IF NOT EXISTS idx_llm_requests_output_language ON llm_requests(output_language);
-CREATE INDEX IF NOT EXISTS idx_llm_requests_model_id ON llm_requests(model_id);
-CREATE INDEX IF NOT EXISTS idx_llm_requests_created_at ON llm_requests(created_at);
-CREATE INDEX IF NOT EXISTS idx_llm_requests_user_created ON llm_requests(user_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_llm_requests_status_created ON llm_requests(status, created_at);
-
-CREATE INDEX IF NOT EXISTS idx_llm_results_request_id ON llm_results(request_id);
-CREATE INDEX IF NOT EXISTS idx_llm_results_created_at ON llm_results(created_at);
-
 -- Check if update_updated_at_column function exists, create if not
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -273,11 +218,6 @@ CREATE TRIGGER update_tts_requests_updated_at
 
 CREATE TRIGGER update_nmt_requests_updated_at
     BEFORE UPDATE ON nmt_requests
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_llm_requests_updated_at
-    BEFORE UPDATE ON llm_requests
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
@@ -306,13 +246,6 @@ BEGIN
     WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
     
     DELETE FROM nmt_requests 
-    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
-    
-    -- Delete old LLM data
-    DELETE FROM llm_results 
-    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
-    
-    DELETE FROM llm_requests 
     WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
     
     RAISE NOTICE 'Cleaned up AI service data older than % days', retention_days;

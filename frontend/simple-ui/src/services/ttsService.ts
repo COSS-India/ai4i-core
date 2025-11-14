@@ -14,12 +14,12 @@ import {
  * Perform TTS inference on text
  * @param text - Text to synthesize
  * @param config - TTS configuration
- * @returns Promise with TTS inference response and timing info
+ * @returns Promise with TTS inference response
  */
 export const performTTSInference = async (
   text: string,
   config: TTSInferenceRequest['config']
-): Promise<{ data: TTSInferenceResponse; responseTime: number }> => {
+): Promise<TTSInferenceResponse> => {
   try {
     const payload: TTSInferenceRequest = {
       input: [{ source: text }],
@@ -34,13 +34,7 @@ export const performTTSInference = async (
       payload
     );
 
-    // Extract response time from headers
-    const responseTime = parseInt(response.headers['request-duration'] || '0');
-
-    return {
-      data: response.data,
-      responseTime
-    };
+    return response.data;
   } catch (error) {
     console.error('TTS inference error:', error);
     throw new Error('Failed to perform TTS inference');

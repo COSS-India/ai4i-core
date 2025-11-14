@@ -6,7 +6,7 @@ Microservice for converting speech to text using Triton Inference Server.
 
 - Batch ASR inference
 - Real-time WebSocket streaming
-- Support for 22+ Indic languages
+- Support for 22+ Indian languages
 - Multiple audio format support (WAV, MP3, FLAC)
 - Audio preprocessing (VAD, denoising)
 - Post-processing (ITN, punctuation)
@@ -54,7 +54,6 @@ curl -X POST http://localhost:8087/api/v1/asr/inference \
 ```
 
 **Supported Header Formats:**
-
 - `Authorization: Bearer <api_key>`
 - `Authorization: ApiKey <api_key>`
 - `Authorization: <api_key>`
@@ -62,7 +61,6 @@ curl -X POST http://localhost:8087/api/v1/asr/inference \
 ### Rate Limiting
 
 API requests are rate-limited per API key:
-
 - **60 requests per minute**
 - **1000 requests per hour**
 - **10000 requests per day**
@@ -70,7 +68,6 @@ API requests are rate-limited per API key:
 When rate limit is exceeded, you'll receive a `429 Too Many Requests` response with a `Retry-After` header.
 
 **Rate Limit Headers:**
-
 - `X-RateLimit-Limit-Minute`: Maximum requests per minute
 - `X-RateLimit-Remaining-Minute`: Remaining requests in current minute
 - `X-RateLimit-Limit-Hour`: Maximum requests per hour
@@ -79,7 +76,6 @@ When rate limit is exceeded, you'll receive a `429 Too Many Requests` response w
 ### Error Responses
 
 **401 Unauthorized** - Missing or invalid API key:
-
 ```json
 {
   "detail": {
@@ -91,7 +87,6 @@ When rate limit is exceeded, you'll receive a `429 Too Many Requests` response w
 ```
 
 **403 Forbidden** - Insufficient permissions:
-
 ```json
 {
   "detail": {
@@ -103,7 +98,6 @@ When rate limit is exceeded, you'll receive a `429 Too Many Requests` response w
 ```
 
 **429 Too Many Requests** - Rate limit exceeded:
-
 ```json
 {
   "detail": {
@@ -119,21 +113,20 @@ When rate limit is exceeded, you'll receive a `429 Too Many Requests` response w
 For WebSocket streaming, include API key as query parameter:
 
 ```javascript
-const socket = io("http://localhost:8087/socket.io/asr", {
-  transports: ["websocket"],
+const socket = io('http://localhost:8087/socket.io/asr', {
+  transports: ['websocket'],
   query: {
-    serviceId: "vakyansh-asr-en",
-    language: "en",
+    serviceId: 'vakyansh-asr-en',
+    language: 'en',
     samplingRate: 16000,
-    apiKey: "YOUR_API_KEY", // Add API key here
-  },
+    apiKey: 'YOUR_API_KEY'  // Add API key here
+  }
 });
 ```
 
 ### Request Logging
 
 All authenticated requests are logged to the database with:
-
 - User ID
 - API key ID
 - Session ID (if applicable)
@@ -159,7 +152,6 @@ Start service: `uvicorn main:app --host 0.0.0.0 --port 8087`
 ## WebSocket Streaming
 
 ### Overview
-
 The ASR service supports real-time speech-to-text streaming via Socket.IO WebSocket protocol. This enables low-latency transcription for live audio streams.
 
 ### Connection
@@ -167,7 +159,6 @@ The ASR service supports real-time speech-to-text streaming via Socket.IO WebSoc
 **Endpoint**: `ws://localhost:8087/socket.io/asr`
 
 **Query Parameters**:
-
 - `serviceId` (required): ASR model identifier (e.g., 'vakyansh-asr-en')
 - `language` (required): Language code (e.g., 'en', 'hi', 'ta')
 - `samplingRate` (required): Audio sample rate in Hz (e.g., 16000)
@@ -176,7 +167,6 @@ The ASR service supports real-time speech-to-text streaming via Socket.IO WebSoc
 - `postProcessors` (optional): JSON array of postprocessors (e.g., '["itn","punctuation"]')
 
 **Example Connection URL**:
-
 ```
 ws://localhost:8087/socket.io/asr?serviceId=vakyansh-asr-en&language=en&samplingRate=16000
 ```
@@ -186,12 +176,10 @@ ws://localhost:8087/socket.io/asr?serviceId=vakyansh-asr-en&language=en&sampling
 #### Client → Server Events
 
 1. **`start`** - Initialize streaming session
-
    - Payload: `{config: {responseFrequencyInMs: 2000}}` (optional)
    - Response: Server emits `ready` event
 
 2. **`data`** - Send audio chunk
-
    - Payload: `{audioData: bytes, isSpeaking: bool, disconnectStream: bool}`
    - `audioData`: Raw PCM audio bytes (int16)
    - `isSpeaking`: Whether user is currently speaking (for VAD)
@@ -203,16 +191,13 @@ ws://localhost:8087/socket.io/asr?serviceId=vakyansh-asr-en&language=en&sampling
 #### Server → Client Events
 
 1. **`ready`** - Stream is ready to receive audio
-
    - Emitted after `start` event
 
 2. **`response`** - Partial or final transcript
-
    - Payload: `{transcript: str, isFinal: bool, confidence: float, timestamp: float, language: str}`
    - `isFinal`: True if this is the final transcript for current segment
 
 3. **`error`** - Error occurred
-
    - Payload: `{error: str, code: str, timestamp: float}`
 
 4. **`terminate`** - Stream terminated
@@ -273,51 +258,51 @@ sio.disconnect()
 ### Usage Example (JavaScript Client)
 
 ```javascript
-import io from "socket.io-client";
+import io from 'socket.io-client';
 
-const socket = io("http://localhost:8087/socket.io/asr", {
-  transports: ["websocket"],
+const socket = io('http://localhost:8087/socket.io/asr', {
+  transports: ['websocket'],
   query: {
-    serviceId: "vakyansh-asr-en",
-    language: "en",
-    samplingRate: 16000,
-  },
+    serviceId: 'vakyansh-asr-en',
+    language: 'en',
+    samplingRate: 16000
+  }
 });
 
-socket.on("connect", () => {
-  console.log("Connected to ASR streaming service");
-  socket.emit("start");
+socket.on('connect', () => {
+  console.log('Connected to ASR streaming service');
+  socket.emit('start');
 });
 
-socket.on("ready", () => {
-  console.log("Stream ready");
+socket.on('ready', () => {
+  console.log('Stream ready');
   // Start capturing audio from microphone
   startAudioCapture();
 });
 
-socket.on("response", (data) => {
+socket.on('response', (data) => {
   console.log(`Transcript: ${data.transcript} (final=${data.isFinal})`);
 });
 
-socket.on("error", (data) => {
+socket.on('error', (data) => {
   console.error(`Error: ${data.error}`);
 });
 
 // Send audio chunk
 function sendAudioChunk(audioData, isSpeaking) {
-  socket.emit("data", {
+  socket.emit('data', {
     audioData: audioData,
     isSpeaking: isSpeaking,
-    disconnectStream: false,
+    disconnectStream: false
   });
 }
 
 // Disconnect
 function disconnect() {
-  socket.emit("data", {
+  socket.emit('data', {
     audioData: new ArrayBuffer(0),
     isSpeaking: false,
-    disconnectStream: true,
+    disconnectStream: true
   });
 }
 ```
@@ -325,19 +310,16 @@ function disconnect() {
 ### Configuration
 
 **Response Frequency**: Control how often partial transcripts are emitted
-
 - Default: 2000ms (2 seconds)
 - Configurable via `STREAMING_RESPONSE_FREQUENCY_MS` environment variable
 - Can be updated per-session via `start` event payload
 
 **VAD (Voice Activity Detection)**:
-
 - Automatically detects speech segments
 - Triggers inference when silence is detected
 - Enable via `preProcessors=["vad"]` query parameter
 
 **Buffer Management**:
-
 - Audio chunks are accumulated in server-side buffer
 - Inference runs at configured frequency or when buffer is full
 - Buffer is cleared after silence detection or manual reset
@@ -352,19 +334,16 @@ function disconnect() {
 ### Troubleshooting
 
 **Connection Issues**:
-
 - Ensure Socket.IO client uses `websocket` transport
 - Check query parameters are properly URL-encoded
 - Verify Triton server is accessible
 
 **Audio Quality Issues**:
-
 - Use correct sample rate (16kHz recommended)
 - Ensure audio is mono (stereo will be converted)
 - Check audio format is PCM int16
 
 **Latency Issues**:
-
 - Reduce `responseFrequencyInMs` for faster updates
 - Enable VAD for better segmentation
 - Check network latency between client and server

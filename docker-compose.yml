@@ -421,34 +421,6 @@ services:
       # start_period: 30s
     restart: unless-stopped
 
-  llm-service:
-    build:
-      context: ./services/llm-service
-      dockerfile: Dockerfile
-    container_name: ai4v-llm-service
-    ports:
-      - "8093:8090"
-    environment:
-      - ENV_FILE=.env
-      - TRITON_ENDPOINT=http://13.220.11.146:8000
-      - TRITON_TIMEOUT=300
-    env_file:
-      - ./services/llm-service/.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - microservices-network
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/llm/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
-    restart: unless-stopped
-
   pipeline-service:
     build:
       context: ./services/pipeline-service
@@ -490,7 +462,6 @@ services:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://api-gateway-service:8080
-      - NEXT_PUBLIC_API_KEY=ak_xBy1d54a2F56_8lhh1kMPyab7jEUNzx4ot2FLy4pf4ks
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
       - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
     depends_on:
@@ -527,4 +498,4 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.31.0.0/16
+        - subnet: 172.30.0.0/16

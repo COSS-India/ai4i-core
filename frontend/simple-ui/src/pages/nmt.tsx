@@ -1,34 +1,31 @@
 // NMT service testing page with language pair selection and translation
 
+import React from 'react';
+import Head from 'next/head';
 import {
-  Box,
   Grid,
   GridItem,
   Heading,
-  Progress,
   Text,
-  useToast,
+  Progress,
   VStack,
-} from "@chakra-ui/react";
-import { useQuery } from "@tanstack/react-query";
-import Head from "next/head";
-import React from "react";
-import ContentLayout from "../components/common/ContentLayout";
-import LoadingSpinner from "../components/common/LoadingSpinner";
-import ModelLanguageSelector from "../components/nmt/ModelLanguageSelector";
-import TextTranslator from "../components/nmt/TextTranslator";
-import TranslationResults from "../components/nmt/TranslationResults";
-import { useNMT } from "../hooks/useNMT";
-import {
-  getSupportedLanguagePairsForService,
-  listNMTServices,
-} from "../services/nmtService";
+  Box,
+  useToast,
+} from '@chakra-ui/react';
+import { useQuery } from '@tanstack/react-query';
+import { useNMT } from '../hooks/useNMT';
+import { getSupportedLanguagePairs } from '../services/nmtService';
+import ContentLayout from '../components/common/ContentLayout';
+import ModelLanguageSelector from '../components/nmt/ModelLanguageSelector';
+import TextTranslator from '../components/nmt/TextTranslator';
+import TranslationResults from '../components/nmt/TranslationResults';
+import LoadingSpinner from '../components/common/LoadingSpinner';
 
 const NMTPage: React.FC = () => {
   const toast = useToast();
   const {
     languagePair,
-    selectedServiceId,
+    selectedModelId,
     inputText,
     translatedText,
     fetching,
@@ -40,33 +37,25 @@ const NMTPage: React.FC = () => {
     performInference,
     setInputText,
     setLanguagePair,
-    setSelectedServiceId,
+    setSelectedModelId,
     clearResults,
     swapLanguages,
   } = useNMT();
 
-  // Fetch available services
-  const { data: services, isLoading: servicesLoading } = useQuery({
-    queryKey: ["nmt-services"],
-    queryFn: listNMTServices,
-    staleTime: 10 * 60 * 1000, // 10 minutes
-  });
-
-  // Fetch available language pairs for selected service
+  // Fetch available language pairs for selected model
   const { data: languagePairs, isLoading: pairsLoading } = useQuery({
-    queryKey: ["nmt-language-pairs", selectedServiceId],
-    queryFn: () =>
-      getSupportedLanguagePairsForService(selectedServiceId, services || []),
-    enabled: !!selectedServiceId && !!services && services.length > 0,
+    queryKey: ['nmt-language-pairs', selectedModelId],
+    queryFn: () => getSupportedLanguagePairs(selectedModelId),
+    enabled: !!selectedModelId,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
   const handleTranslate = () => {
     if (!inputText.trim()) {
       toast({
-        title: "Input Required",
-        description: "Please enter text to translate.",
-        status: "warning",
+        title: 'Input Required',
+        description: 'Please enter text to translate.',
+        status: 'warning',
         duration: 3000,
         isClosable: true,
       });
@@ -82,11 +71,8 @@ const NMTPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>NMT - Neural Machine Translation | AI4Inclusion Console</title>
-        <meta
-          name="description"
-          content="Test Neural Machine Translation between 22+ Indic languages"
-        />
+        <title>NMT - Neural Machine Translation | Simple UI</title>
+        <meta name="description" content="Test Neural Machine Translation between 22+ Indian languages" />
       </Head>
 
       <ContentLayout>
@@ -102,7 +88,7 @@ const NMTPage: React.FC = () => {
           </Box>
 
           <Grid
-            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
+            templateColumns={{ base: '1fr', lg: '1fr 1fr' }}
             gap={8}
             w="full"
             maxW="1200px"
@@ -111,15 +97,15 @@ const NMTPage: React.FC = () => {
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
-                {/* Service and Language Selector */}
+                {/* Model and Language Selector */}
                 <Box>
                   <ModelLanguageSelector
                     languagePair={languagePair}
                     onLanguagePairChange={setLanguagePair}
                     availableLanguagePairs={languagePairs || []}
-                    loading={pairsLoading || servicesLoading}
-                    selectedServiceId={selectedServiceId}
-                    onServiceChange={setSelectedServiceId}
+                    loading={pairsLoading}
+                    selectedModelId={selectedModelId}
+                    onModelChange={setSelectedModelId}
                   />
                 </Box>
 
@@ -154,13 +140,7 @@ const NMTPage: React.FC = () => {
 
                 {/* Error Display */}
                 {error && (
-                  <Box
-                    p={4}
-                    bg="red.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="red.200"
-                  >
+                  <Box p={4} bg="red.50" borderRadius="md" border="1px" borderColor="red.200">
                     <Text color="red.600" fontSize="sm">
                       {error}
                     </Text>
@@ -185,13 +165,13 @@ const NMTPage: React.FC = () => {
                     <button
                       onClick={clearResults}
                       style={{
-                        padding: "8px 16px",
-                        backgroundColor: "#f7fafc",
-                        border: "1px solid #e2e8f0",
-                        borderRadius: "6px",
-                        cursor: "pointer",
-                        fontSize: "14px",
-                        color: "#4a5568",
+                        padding: '8px 16px',
+                        backgroundColor: '#f7fafc',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        color: '#4a5568',
                       }}
                     >
                       Clear Results
@@ -203,8 +183,8 @@ const NMTPage: React.FC = () => {
                 {!fetched && !fetching && (
                   <Box p={6} bg="gray.50" borderRadius="md" textAlign="center">
                     <Text color="gray.600" fontSize="sm">
-                      Select a language pair and enter text to translate. The
-                      system supports translation between multiple languages.
+                      Select a language pair and enter text to translate.
+                      The system supports translation between multiple languages.
                     </Text>
                   </Box>
                 )}
@@ -212,8 +192,8 @@ const NMTPage: React.FC = () => {
             </GridItem>
           </Grid>
 
-          {/* Language Pairs Loading Indicator - only when a model is selected */}
-          {selectedServiceId && pairsLoading && (
+          {/* Language Pairs Loading Indicator */}
+          {pairsLoading && (
             <Box textAlign="center">
               <LoadingSpinner label="Loading language pairs..." />
             </Box>
