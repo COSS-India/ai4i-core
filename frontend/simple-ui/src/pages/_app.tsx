@@ -6,13 +6,13 @@ import { ChakraProvider } from '@chakra-ui/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { useRouter } from 'next/router';
+import Script from 'next/script';
 import customTheme from '../theme';
 import Layout from '../components/common/Layout';
-import AuthGuard from '../components/auth/AuthGuard';
 import '../styles/globals.css';
 
 // Define routes that need the full layout
-const layoutRoutes = ['/', '/asr', '/tts', '/nmt', '/llm', '/pipeline', '/pipeline-builder'];
+const layoutRoutes = ['/', '/asr', '/tts', '/nmt', '/pipeline', '/pipeline-builder'];
 
 export default function App({ Component, pageProps }: AppProps) {
   const router = useRouter();
@@ -38,16 +38,20 @@ export default function App({ Component, pageProps }: AppProps) {
   return (
     <ChakraProvider theme={customTheme}>
       <QueryClientProvider client={queryClient}>
-        {/* Conditional Layout Rendering with Auth Guard */}
-        <AuthGuard>
-          {needsLayout ? (
-            <Layout>
-              <Component {...pageProps} />
-            </Layout>
-          ) : (
+        {/* Recorder.js Script */}
+        <Script
+          src="/recorder.js"
+          strategy="beforeInteractive"
+        />
+        
+        {/* Conditional Layout Rendering */}
+        {needsLayout ? (
+          <Layout>
             <Component {...pageProps} />
-          )}
-        </AuthGuard>
+          </Layout>
+        ) : (
+          <Component {...pageProps} />
+        )}
         
         {/* React Query DevTools */}
         <ReactQueryDevtools initialIsOpen={false} />

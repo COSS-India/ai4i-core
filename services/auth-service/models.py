@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 
 Base = declarative_base()
@@ -34,7 +34,7 @@ class User(Base):
     language = Column(String(10), default="en")
 
 class UserSession(Base):
-    __tablename__ = "user_sessions"
+    __tablename__ = "sessions"
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, nullable=False, index=True)
@@ -43,6 +43,7 @@ class UserSession(Base):
     device_info = Column(JSON, nullable=True)
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
+    token_type = Column(String(20), default="access")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False)
@@ -104,7 +105,6 @@ class LoginResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int
-    user: Optional[UserResponse] = None
 
 class TokenRefreshRequest(BaseModel):
     refresh_token: str

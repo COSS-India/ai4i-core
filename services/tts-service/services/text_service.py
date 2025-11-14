@@ -137,16 +137,9 @@ class TextService:
             if len(text) > 5000:
                 raise InvalidTextError("Text cannot exceed 5000 characters")
             
-            # Check if text contains at least one Unicode letter (works for any language script)
-            # This allows pure local language text (Hindi, Tamil, Telugu, etc.) without requiring English letters
-            has_letter = False
-            for char in text:
-                if unicodedata.category(char).startswith('L'):  # 'L' means Letter category
-                    has_letter = True
-                    break
-            
-            if not has_letter:
-                raise InvalidTextError("Text must contain at least one letter character")
+            # Check text doesn't contain only special characters
+            if not re.search(r'[a-zA-Z\u0900-\u097F\u0A80-\u0AFF\u0B00-\u0B7F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\u0D80-\u0DFF\u0E00-\u0E7F\u0E80-\u0EFF\u0F00-\u0FFF]', text):
+                raise InvalidTextError("Text must contain at least some alphabetic characters")
             
             return True
             

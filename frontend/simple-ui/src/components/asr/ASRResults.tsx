@@ -21,15 +21,11 @@ import { ASRResultsProps } from '../../types/asr';
 const ASRResults: React.FC<ASRResultsProps> = ({
   transcript,
   wordCount,
-  requestWordCount = 0,
-  responseWordCount,
   responseTime,
   confidence,
   onCopy,
   onDownload,
 }) => {
-  // For backward compatibility, use wordCount if responseWordCount is not provided
-  const finalResponseWordCount = responseWordCount ?? wordCount ?? 0;
   const toast = useToast();
 
   const handleCopy = () => {
@@ -129,10 +125,11 @@ const ASRResults: React.FC<ASRResultsProps> = ({
         bg="orange.100"
         borderRadius="15px"
       >
-        {/* Response Word Count Stat */}
+        {/* Word Count Stat */}
         <Stat textAlign="center">
-          <StatLabel>Response Word Count</StatLabel>
-          <StatNumber color="orange.600">{finalResponseWordCount}</StatNumber>
+          <StatLabel>Word Count</StatLabel>
+          <StatNumber color="orange.600">{wordCount}</StatNumber>
+          <StatHelpText>Response</StatHelpText>
         </Stat>
 
         {/* Response Time Stat */}
