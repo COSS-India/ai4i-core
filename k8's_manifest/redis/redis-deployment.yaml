@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: dev
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      initContainers:
+      - name: fix-permissions
+        image: busybox:latest
+        command: ['sh', '-c', 'mkdir -p /data/redis-data && chown -R 999:999 /data']
+        volumeMounts:
+        - name: redis-storage
+          mountPath: /data
+      tolerations:
+      - key: "node-type"
+        operator: Equal
+        value: cpu
+        effect: NoSchedule
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command: ["/usr/local/etc/redis/redis-entrypoint.sh"]
+        ports:
+        - containerPort: 6379
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-secret
+              key: REDIS_PASSWORD
+        volumeMounts:
+        - name: redis-storage
+          mountPath: /data
+        - name: redis-config
+          mountPath: /usr/local/etc/redis
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+      volumes:
+      - name: redis-storage
+        persistentVolumeClaim:
+          claimName: redis-data-pvc
+      - name: redis-config
+        configMap:
+          name: redis-config
+          defaultMode: 0755
+      restartPolicy: Always

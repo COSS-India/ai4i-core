@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: dev
+data:
+  redis.conf: |
+    # Redis configuration file
+    
+    # Network
+    bind 0.0.0.0
+    protected-mode yes
+    port 6379
+    
+    # Security - Password will be injected by entrypoint script from REDIS_PASSWORD env var
+    # The entrypoint script will add: requirepass <password>
+    
+    # Persistence
+    save 900 1
+    save 300 10
+    save 60 10000
+    dir /data
+    dbfilename dump.rdb
+    
+    # Logging
+    loglevel notice
+    
+    # Memory management
+    maxmemory-policy allkeys-lru
+    
+    # Append only file (AOF)
+    appendonly yes
+    appendfilename "appendonly.aof"
+    appendfsync everysec
+  redis-entrypoint.sh: |
+    #!/bin/sh
+    # Redis entrypoint script that injects password from environment variable
+    
+    # Copy config file to writable location
+    cp /usr/local/etc/redis/redis.conf /tmp/redis.conf
+    
+    # If REDIS_PASSWORD is set, add requirepass to redis.conf
+    if [ -n "$REDIS_PASSWORD" ]; then
+      # Check if requirepass already exists
+      if ! grep -q "^requirepass" /tmp/redis.conf; then
+        echo "requirepass $REDIS_PASSWORD" >> /tmp/redis.conf
+      else
+        # Replace existing requirepass
+        sed -i "s/^requirepass.*/requirepass $REDIS_PASSWORD/" /tmp/redis.conf
+      fi
+    fi
+    
+    # Execute redis-server with modified config file
+    exec redis-server /tmp/redis.conf
+

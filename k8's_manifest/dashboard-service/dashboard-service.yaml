@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard-service
+  namespace: dev
+  labels:
+    app: dashboard-service
+spec:
+  selector:
+    app: dashboard-service
+  ports:
+    - port: 8086
+      targetPort: 8086
+      protocol: TCP
+    - port: 8501
+      targetPort: 8501
+      protocol: TCP
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard-service
+  namespace: dev
+  labels:
+    app: dashboard-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dashboard-service
+  template:
+    metadata:
+      labels:
+        app: dashboard-service
+    spec:
+      nodeSelector:
+      tolerations:
+      - key: "node-type"
+        operator: Equal
+        value: cpu
+        effect: NoSchedule
+      containers:
+      - name: dashboard-service
+        image: ai4v/dashboard-service:latest
+        ports:
+        - containerPort: 8086
+        - containerPort: 8501
+        env:
+        - name: ENV_FILE
+          value: ".env"
+        envFrom:
+        - configMapRef:
+            name: dashboard-service-config
+        - secretRef:
+            name: dashboard-service-secret
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "300m"
+          limits:
+            memory: "1Gi"
+            cpu: "600m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8086
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8086
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      restartPolicy: Always

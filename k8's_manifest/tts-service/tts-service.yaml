@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tts-service
+  namespace: dev
+  labels:
+    app: tts-service
+spec:
+  selector:
+    app: tts-service
+  ports:
+    - port: 8088
+      targetPort: 8088
+      protocol: TCP
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tts-service
+  namespace: dev
+  labels:
+    app: tts-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tts-service
+  template:
+    metadata:
+      labels:
+        app: tts-service
+    spec:
+      nodeSelector:
+      tolerations:
+      - key: "node-type"
+        operator: Equal
+        value: cpu
+        effect: NoSchedule
+      containers:
+      - name: tts-service
+        image: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/tts-service:v1.0
+        ports:
+        - containerPort: 8088
+        env:
+        - name: ENV_FILE
+          value: ".env"
+        envFrom:
+        - configMapRef:
+            name: tts-service-config
+        - secretRef:
+            name: tts-service-secret
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "300m"
+          limits:
+            memory: "1Gi"
+            cpu: "600m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8088
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8088
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      restartPolicy: Always

@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipeline-config
+  namespace: dev
+data:
+  # Basic Configuration
+  SERVICE_NAME: "pipeline-service"
+  SERVICE_PORT: "8090"
+  LOG_LEVEL: "INFO"
+
+  # AI Service URLs
+  ASR_SERVICE_URL: "http://asr-service.dev.svc.cluster.local:8087"
+  NMT_SERVICE_URL: "http://nmt-service.dev.svc.cluster.local:8089"
+  TTS_SERVICE_URL: "http://tts-service.dev.svc.cluster.local:8088"
+  PIPELINE_SERVICE_URL: "http://pipeline-service.dev.svc.cluster.local:8090"
+
+  # Timeout and CORS
+  HTTP_CLIENT_TIMEOUT: "300"
+  CORS_ORIGINS: "*"
