@@ -1,0 +1,105 @@
+pipeline {
+  agent any
+
+  parameters {
+    choice(name: 'SERVICE_NAME', choices: """
+alerting-service
+api-gateway-service
+asr-service
+auth-service
+config-service
+dashboard-service
+metrics-service
+nmt-service
+pipeline-service
+telemetry-service
+tts-service
+""".trim().tokenize('\n'), description: 'Service to deploy')
+  }
+
+  environment {
+    AWS_REGION = 'ap-south-1'
+    AWS_ACCOUNT = '662074586476'
+    ECR_REGISTRY = "${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+    EKS_CLUSTER = 'dev-eks-cluster'      // <<-- EDIT if your cluster name differs
+    K8S_NAMESPACE = 'dev'
+
+    BASTION_HOST = '13.235.32.90'
+    BASTION_USER = 'ubuntu'
+  }
+
+  stages {
+
+    stage('Checkout (optional)') {
+      steps {
+        // optional: ensures k8s manifests in workspace if you use them later
+        checkout([$class:'GitSCM', branches:[[name:'*/master']], userRemoteConfigs:[[url:'https://github.com/COSS-India/ai4i-core.git']]])
+      }
+    }
+
+    stage('Find latest image tag from ECR') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+          sh '''
+            set -eux
+            SERVICE="${SERVICE_NAME}"
+            export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION="${AWS_REGION}"
+
+            echo "Finding latest image tag for ${SERVICE}"
+            LATEST_TAG=$(aws ecr describe-images --repository-name "${SERVICE}" --region "${AWS_REGION}" \
+              --query 'sort_by(imageDetails[?imageTags!=`null`], &imagePushedAt)[-1].imageTags[0]' \
+              --output text || true)
+
+            if [ -z "${LATEST_TAG}" ] || [ "${LATEST_TAG}" = "None" ]; then
+              echo "ERROR: No tags found for service ${SERVICE}"
+              exit 1
+            fi
+
+            FULL_IMAGE="${ECR_REGISTRY}/ai4voice/${SERVICE}:${LATEST_TAG}"
+            echo "LATEST_IMAGE_URI=${FULL_IMAGE}" > latest-image.properties
+            echo "Latest image found: ${FULL_IMAGE}"
+          '''
+          script {
+            env.LATEST_IMAGE_URI = readProperties(file: 'latest-image.properties').LATEST_IMAGE_URI
+          }
+        }
+      }
+    }
+
+    stage('Deploy to EKS via Bastion') {
+      steps {
+        sshagent (credentials: ['bastion-ssh']) {
+          sh """
+            ssh -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} << 'EOF'
+set -eux
+
+# On bastion: update kubeconfig and deploy (bastion already has AWS access)
+aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
+
+echo "Deploying image ${LATEST_IMAGE_URI} to service ${SERVICE_NAME}"
+
+kubectl -n ${K8S_NAMESPACE} set image deployment/${SERVICE_NAME} ${SERVICE_NAME}=${LATEST_IMAGE_URI} --record
+
+kubectl -n ${K8S_NAMESPACE} rollout status deployment/${SERVICE_NAME} --timeout=180s
+
+echo "Deployment successful on EKS"
+EOF
+"""
+        }
+      }
+    }
+
+    stage('Post-check') {
+      steps {
+        echo "Deployed image: ${env.LATEST_IMAGE_URI}"
+        sh "echo 'To verify: kubectl -n ${K8S_NAMESPACE} get deployment ${SERVICE_NAME} -o wide' || true"
+      }
+    }
+
+  }
+
+  post {
+    success { echo "✅ Successfully deployed ${params.SERVICE_NAME} → ${env.LATEST_IMAGE_URI}" }
+    failure { echo "❌ Deployment failed for service ${params.SERVICE_NAME}" }
+  }
+}
