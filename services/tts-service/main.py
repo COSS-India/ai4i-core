@@ -187,7 +187,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="TTS Service",
     version="1.0.0",
-    description="Text-to-Speech microservice for converting text to natural-sounding speech. Supports 22+ Indic Languages with multiple voice options and audio formats.",
+    description="Text-to-Speech microservice for converting text to natural-sounding speech. Supports 22+ Indian languages with multiple voice options and audio formats.",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",

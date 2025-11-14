@@ -54,9 +54,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         
         logger.log(log_level, log_message)
         
-        # Add processing time headers
+        # Add processing time header
         response.headers["X-Process-Time"] = f"{processing_time:.3f}"
-        # Add request-duration in milliseconds for frontend compatibility
-        response.headers["request-duration"] = str(int(processing_time * 1000))
         
         return response

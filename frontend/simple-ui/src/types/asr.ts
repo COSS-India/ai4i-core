@@ -79,7 +79,6 @@ export interface ASRModelsResponse {
 export interface ASRHookState {
   language: string;
   sampleRate: number;
-  serviceId: string;
   inferenceMode: 'rest' | 'streaming';
   recording: boolean;
   fetching: boolean;
@@ -101,7 +100,6 @@ export interface ASRHookMethods {
   performInference: (audioContent: string) => Promise<void>;
   setLanguage: (language: string) => void;
   setSampleRate: (sampleRate: number) => void;
-  setServiceId: (serviceId: string) => void;
   setInferenceMode: (mode: 'rest' | 'streaming') => void;
   clearResults: () => void;
   resetTimer: () => void;
@@ -130,9 +128,7 @@ export interface AudioPlayerProps {
 
 export interface ASRResultsProps {
   transcript: string;
-  wordCount?: number; // For backward compatibility
-  requestWordCount?: number;
-  responseWordCount?: number;
+  wordCount: number;
   responseTime: number;
   confidence?: number;
   onCopy?: () => void;
