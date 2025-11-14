@@ -34,16 +34,14 @@ RUN useradd --create-home --shell /bin/bash app
 # Copy Python packages from builder stage to app user's home
 COPY --from=builder /root/.local /home/app/.local
 
+# Make sure scripts in .local are usable
+ENV PATH=/home/app/.local/bin:$PATH
+
 # Copy application code
 COPY . .
 
 # Change ownership to app user
 RUN chown -R app:app /app /home/app/.local
-
-# Make sure scripts in .local are usable and executable
-RUN chmod +x /home/app/.local/bin/*
-ENV PATH=/home/app/.local/bin:$PATH
-
 USER app
 
 # Expose port

@@ -30,7 +30,7 @@ export interface LoginResponse {
   refresh_token: string;
   token_type: string;
   expires_in: number;
-  user?: User; // Optional since API might not include it
+  user: User;
 }
 
 export interface RegisterRequest {
@@ -38,6 +38,10 @@ export interface RegisterRequest {
   username: string;
   password: string;
   confirm_password: string;
+  full_name?: string;
+  phone_number?: string;
+  timezone?: string;
+  language?: string;
 }
 
 export interface TokenRefreshRequest {
