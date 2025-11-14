@@ -1,93 +1,88 @@
 // Header/navbar component for top navigation with authentication and API key management
 
-import { ArrowBackIcon, HamburgerIcon } from "@chakra-ui/icons";
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/router';
 import {
-  Badge,
   Box,
-  Button,
   HStack,
   Heading,
-  IconButton,
+  Badge,
   Menu,
   MenuButton,
-  MenuItem,
   MenuList,
+  MenuItem,
+  MenuDivider,
+  IconButton,
+  Button,
   useColorModeValue,
-} from "@chakra-ui/react";
-import { useRouter } from "next/router";
-import React, { useEffect, useState } from "react";
-import { useAuth } from "../../hooks/useAuth";
-import AuthModal from "../auth/AuthModal";
-import ApiKeyViewerModal from "./ApiKeyViewerModal";
+} from '@chakra-ui/react';
+import { HamburgerIcon } from '@chakra-ui/icons';
+import { useApiKey } from '../../hooks/useApiKey';
+import { useAuth } from '../../hooks/useAuth';
+import ApiKeyModal from './ApiKeyModal';
+import AuthModal from '../auth/AuthModal';
+import UserMenu from '../auth/UserMenu';
 
 const Header: React.FC = () => {
   const router = useRouter();
-  const {
-    isAuthenticated: isUserAuthenticated,
-    user,
-    isLoading: isAuthLoading,
-    logout,
-  } = useAuth();
-
-  const [isApiKeyViewerOpen, setIsApiKeyViewerOpen] = useState(false);
+  const { apiKey, isAuthenticated: hasApiKey, clearApiKey } = useApiKey();
+  const { isAuthenticated: isUserAuthenticated, user } = useAuth();
+  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [title, setTitle] = useState("Dashboard");
-
-  // Determine if we should show user menu or sign in button
-  const showUserMenu =
-    !isAuthLoading && isUserAuthenticated && user && user.username;
+  const [title, setTitle] = useState('Dashboard');
 
   // Update title based on route
   useEffect(() => {
     const pathname = router.pathname;
     switch (pathname) {
-      case "/asr":
-        setTitle("ASR – Automatic Speech Recognition");
+      case '/asr':
+        setTitle('Speech Recognition');
         break;
-      case "/tts":
-        setTitle("TTS – Text-to-Speech");
+      case '/tts':
+        setTitle('Text-to-Speech');
         break;
-      case "/nmt":
-        setTitle("Text Translation");
+      case '/nmt':
+        setTitle('Translation');
         break;
-      case "/llm":
-        setTitle("Large Language Model - GPT OSS 20B");
-        break;
-      case "/pipeline":
-        setTitle("Speech-to-Speech Pipeline");
-        break;
-      case "/pipeline-builder":
-        setTitle("Pipeline Builder");
-        break;
-      case "/":
-        setTitle("AI4Inclusion Console");
+      case '/':
+        setTitle('Dashboard');
         break;
       default:
-        setTitle("AI4Inclusion Console");
+        setTitle('Simple UI');
     }
   }, [router.pathname]);
 
-  const bgColor = useColorModeValue("white", "gray.800");
-  const borderColor = useColorModeValue("gray.200", "gray.700");
-  const showBackButton = router.pathname !== "/";
+  const handleManageApiKey = () => {
+    setIsApiKeyModalOpen(true);
+  };
 
-  const handleBack = () => {
-    if (router.pathname === "/pipeline-builder") {
-      router.push("/");
-    } else {
-      router.back();
+  const handleClearApiKey = () => {
+    clearApiKey();
+  };
+
+  const handleDocumentation = () => {
+    // Future: Navigate to documentation
+    console.log('Navigate to documentation');
+  };
+
+  const getApiKeyDisplay = () => {
+    if (hasApiKey && apiKey) {
+      const last4Chars = apiKey.slice(-4);
+      return `API Key: ****${last4Chars}`;
     }
+    return 'No API Key';
+  };
+
+  const getApiKeyColor = () => {
+    return hasApiKey ? 'green' : 'red';
   };
 
   const handleAuthClick = () => {
-    console.log("Header: Sign In button clicked, opening AuthModal");
     setIsAuthModalOpen(true);
   };
 
-  // Debug: Log AuthModal state
-  useEffect(() => {
-    console.log("Header: AuthModal state:", { isAuthModalOpen });
-  }, [isAuthModalOpen]);
+  const bgColor = useColorModeValue('white', 'gray.800');
+  const borderColor = useColorModeValue('gray.200', 'gray.700');
 
   return (
     <>
@@ -103,89 +98,74 @@ const Header: React.FC = () => {
         borderColor={borderColor}
       >
         <HStack justify="space-between" h="full">
-          {/* Left side - Back button, Logo and Page title */}
-          <HStack spacing={4}>
-            {showBackButton && (
-              <IconButton
-                aria-label="Go back"
-                icon={<ArrowBackIcon />}
-                variant="ghost"
-                size="md"
-                onClick={handleBack}
-                colorScheme="gray"
-                _hover={{ bg: "gray.100" }}
-              />
-            )}
-            <Heading size="lg" color="gray.800">
-              {title}
-            </Heading>
-          </HStack>
+          {/* Left side - Page title */}
+          <Heading size="lg" color="gray.800">
+            {title}
+          </Heading>
 
-          {/* Right side - Menu and Auth */}
+          {/* Right side - Authentication, API key status and menu */}
           <HStack spacing={4}>
-            {/* Authentication: Show username badge or Sign In button */}
-            {showUserMenu ? (
-              <Badge
-                colorScheme="gray"
-                fontSize="sm"
-                px={3}
-                py={1}
-                borderRadius="md"
-              >
-                {user.username}
-              </Badge>
+            {/* Authentication */}
+            {isUserAuthenticated && user ? (
+              <UserMenu user={user} />
             ) : (
               <Button
                 colorScheme="blue"
                 variant="outline"
                 size="sm"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  console.log("Header: Sign In button clicked");
-                  handleAuthClick();
-                }}
+                onClick={handleAuthClick}
               >
                 Sign In
               </Button>
             )}
 
+            {/* API Key Badge */}
+            <Badge
+              colorScheme={getApiKeyColor()}
+              px={3}
+              py={1}
+              borderRadius="full"
+              fontSize="sm"
+            >
+              {getApiKeyDisplay()}
+            </Badge>
+
             {/* Menu */}
-            {showUserMenu && (
-              <Menu>
-                <MenuButton
-                  as={IconButton}
-                  aria-label="Options"
-                  icon={<HamburgerIcon />}
-                  variant="ghost"
-                  size="sm"
-                />
-                <MenuList>
-                  <MenuItem onClick={() => setIsApiKeyViewerOpen(true)}>
-                    API Key
-                  </MenuItem>
-                  <MenuItem onClick={() => logout()}>Sign out</MenuItem>
-                </MenuList>
-              </Menu>
-            )}
+            <Menu>
+              <MenuButton
+                as={IconButton}
+                aria-label="Options"
+                icon={<HamburgerIcon />}
+                variant="ghost"
+                size="sm"
+              />
+              <MenuList>
+                <MenuItem onClick={handleManageApiKey}>
+                  Manage API Key
+                </MenuItem>
+                <MenuItem onClick={handleClearApiKey} isDisabled={!hasApiKey}>
+                  Clear API Key
+                </MenuItem>
+                <MenuDivider />
+                <MenuItem onClick={handleDocumentation}>
+                  Documentation
+                </MenuItem>
+              </MenuList>
+            </Menu>
           </HStack>
         </HStack>
       </Box>
 
-      {/* API Key Viewer Modal */}
-      <ApiKeyViewerModal
-        isOpen={isApiKeyViewerOpen}
-        onClose={() => setIsApiKeyViewerOpen(false)}
+      {/* API Key Modal */}
+      <ApiKeyModal
+        isOpen={isApiKeyModalOpen}
+        onClose={() => setIsApiKeyModalOpen(false)}
       />
 
-      {/* Auth Modal */}
+      {/* Authentication Modal */}
       <AuthModal
         isOpen={isAuthModalOpen}
-        onClose={() => {
-          console.log("Header: Closing AuthModal");
-          setIsAuthModalOpen(false);
-        }}
-        initialMode="login"
+        onClose={() => setIsAuthModalOpen(false)}
       />
     </>
   );
