@@ -79,29 +79,33 @@ tts-service
             ECR_REG="${ECR_BASE}"
             ACCOUNT="${AWS_ACCOUNT}"
 
-            # Candidate repo names to try (order = preference)
             candidates="ai4voice/${SERVICE} ${SERVICE}"
-
             FOUND_IMAGE=""
+
             for c in $candidates; do
               REPO="${ECR_REG}/${c}"
               echo "Trying repo: ${REPO}"
 
-              # call aws describe-images and parse via python to:
-              #  - pick tags matching DDMMYYYY-HHMMSS-IST
-              #  - pick the image with the latest pushedAt among those tags
-              RESP=$(aws ecr describe-images --registry-id "${ACCOUNT}" --repository-name "${c}" --region "${REGION}" --output json 2>/dev/null || true)
-              if [ -z "${RESP}" ]; then
+              # Query ECR and write to temp file
+              TMP_JSON=$(mktemp /tmp/ecr_resp.XXXXXX.json)
+              aws ecr describe-images --registry-id "${ACCOUNT}" --repository-name "${c}" --region "${REGION}" --output json > "${TMP_JSON}" 2>/dev/null || true
+
+              if [ ! -s "${TMP_JSON}" ]; then
                 echo "Repo ${c} missing or no images"
+                rm -f "${TMP_JSON}"
                 continue
               fi
 
-              LATEST_TAG=$(printf '%s' "$RESP" | python3 - <<'PY'
-import sys, json, re
-data = json.load(sys.stdin)
-# match tags like 14112025-101038-IST (DDMMYYYY-HHMMSS-IST)
+              # Python reads the saved JSON file and prints the latest timestamp-style tag (if any)
+              LATEST_TAG=$(python3 - <<'PY'
+import json, re, sys
+fn = sys.argv[1]
 pattern = re.compile(r'^[0-9]{8}-[0-9]{6}-IST$')
-best = None  # (pushedAt, tag)
+best = None
+try:
+    data = json.load(open(fn))
+except Exception as e:
+    sys.exit(0)
 for img in data.get("imageDetails", []):
     pushed = img.get("imagePushedAt")
     tags = img.get("imageTags") or []
@@ -112,13 +116,17 @@ for img in data.get("imageDetails", []):
 if best:
     print(best[1])
 PY
+ "${TMP_JSON}"
 )
+
+              rm -f "${TMP_JSON}"
+
               if [ -n "${LATEST_TAG}" ]; then
                 FOUND_IMAGE="${REPO}:${LATEST_TAG}"
                 echo "Found timestamp-style tag in ${REPO}: ${LATEST_TAG}"
                 break
               else
-                echo "No timestamp-style tags in ${REPO} (or repo missing)."
+                echo "No timestamp-style tags in ${REPO}."
               fi
             done
 
@@ -148,7 +156,6 @@ PY
 
     stage('Pre-deploy bastion check') {
       steps {
-        // verify bastion reachable from Jenkins agent
         sh """
           set -eux
           ssh -o BatchMode=yes -o ConnectTimeout=8 ${BASTION_USER}@${BASTION_HOST} 'echo OK' >/dev/null 2>&1 || { echo 'ERROR: Bastion unreachable from Jenkins agent'; exit 10; }
@@ -167,7 +174,6 @@ PY
             ssh -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} <<'EOF'
 set -eux
 
-# ensure bastion has AWS/kubectl access and kubeconfig for the cluster
 aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
 
 echo "Setting image for k8s deployment/${SERVICE_NAME} -> ${LATEST_IMAGE_URI}"
