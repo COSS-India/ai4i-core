@@ -74,6 +74,20 @@ tts-service
         withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
           sh '''
             set -eux
+
+            # If IMAGE_URI provided at job trigger, short-circuit discovery
+            if [ -n "${IMAGE_URI:-}" ]; then
+              echo "IMAGE_URI provided; skipping ECR discovery."
+              echo "LATEST_IMAGE_URI=${IMAGE_URI}" > latest-image.properties
+              exit 0
+            fi
+
+            # Fail early and clearly if SERVICE_NAME missing
+            if [ -z "${SERVICE_NAME:-}" ]; then
+              echo "ERROR: SERVICE_NAME parameter is empty. Provide SERVICE_NAME when running the job or set IMAGE_URI."
+              exit 1
+            fi
+
             SERVICE="${SERVICE_NAME}"
             REGION="${AWS_REGION}"
             ECR_REG="${ECR_BASE}"
@@ -95,33 +109,28 @@ tts-service
                 continue
               fi
 
-              # Python decides best identifier and prints one line:
-              #   tag:<tag>  OR  digest:<sha256>
+              # Python chooses timestamp-tag -> any-tag -> digest
               CHOICE=$(cat "${TMP_JSON}" | python3 - <<'PY'
 import sys, json, re
-data = None
 try:
     data = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
 pattern = re.compile(r'^[0-9]{8}-[0-9]{6}-IST$')
-best_ts = None    # (pushedAt, tag)
-best_other = None # (pushedAt, tag)
-best_digest = None # (pushedAt, digest)
+best_ts = None
+best_other = None
+best_digest = None
 for img in data.get("imageDetails", []):
     pushed = img.get("imagePushedAt") or ""
     tags = img.get("imageTags") or []
     digest = img.get("imageDigest")
-    # check timestamp-style tags first
     for t in tags:
         if pattern.match(t):
             if best_ts is None or pushed > best_ts[0]:
                 best_ts = (pushed, t)
-    # keep most recent tagged image as fallback
     for t in tags:
         if best_other is None or pushed > best_other[0]:
             best_other = (pushed, t)
-    # keep most recent digest as final fallback
     if digest:
         if best_digest is None or pushed > best_digest[0]:
             best_digest = (pushed, digest)
