@@ -99,7 +99,7 @@ tts-service
               LATEST_TAG=$(printf '%s' "$RESP" | python3 - <<'PY'
 import sys, json, re
 data = json.load(sys.stdin)
-# use [0-9] instead of \d to avoid Groovy parse issues in Jenkinsfile
+# match tags like 14112025-101038-IST (DDMMYYYY-HHMMSS-IST)
 pattern = re.compile(r'^[0-9]{8}-[0-9]{6}-IST$')
 best = None  # (pushedAt, tag)
 for img in data.get("imageDetails", []):
@@ -113,7 +113,6 @@ if best:
     print(best[1])
 PY
 )
-              # If python printed a tag, LATEST_TAG will be non-empty
               if [ -n "${LATEST_TAG}" ]; then
                 FOUND_IMAGE="${REPO}:${LATEST_TAG}"
                 echo "Found timestamp-style tag in ${REPO}: ${LATEST_TAG}"
