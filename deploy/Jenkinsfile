@@ -2,6 +2,7 @@ pipeline {
   agent any
 
   parameters {
+    string(name: 'BRANCH_NAME', defaultValue: 'devops', description: 'Git branch (for optional repo checkout)')
     choice(name: 'SERVICE_NAME', choices: """
 alerting-service
 api-gateway-service
@@ -14,75 +15,151 @@ nmt-service
 pipeline-service
 telemetry-service
 tts-service
-""".trim().tokenize('\n'), description: 'Service to deploy')
+""", description: 'Service directory under services/')
+    booleanParam(name: 'CLEAN_WORKSPACE', defaultValue: true, description: 'Delete workspace before checkout')
+    string(name: 'IMAGE_URI', defaultValue: '', description: 'Optional: full ECR image URI to deploy (overrides auto-discovery). Example: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/api-gateway-service:20251110-123000-IST')
+    string(name: 'ROLLOUT_TIMEOUT', defaultValue: '180s', description: 'kubectl rollout status timeout (e.g. 180s or 5m)')
   }
 
   environment {
-    AWS_REGION = 'ap-south-1'
-    AWS_ACCOUNT = '662074586476'
-    ECR_REGISTRY = "${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-    EKS_CLUSTER = 'dev-eks-cluster'      // <<-- EDIT if your cluster name differs
+    GIT_REPO      = 'https://github.com/COSS-India/ai4i-core.git'
+    AWS_REGION    = 'ap-south-1'
+    AWS_ACCOUNT   = '662074586476'
+    ECR_BASE      = "${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+    EKS_CLUSTER   = 'AI4Voice-core'
     K8S_NAMESPACE = 'dev'
-
-    BASTION_HOST = '13.235.32.90'
-    BASTION_USER = 'ubuntu'
+    BASTION_HOST  = '13.235.32.90'
+    BASTION_USER  = 'ubuntu'
   }
 
   stages {
-
-    stage('Checkout (optional)') {
+    stage('Prepare (optional clean)') {
       steps {
-        // optional: ensures k8s manifests in workspace if you use them later
-        checkout([$class:'GitSCM', branches:[[name:'*/master']], userRemoteConfigs:[[url:'https://github.com/COSS-India/ai4i-core.git']]])
-      }
-    }
-
-    stage('Find latest image tag from ECR') {
-      steps {
-        withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
-          sh '''
-            set -eux
-            SERVICE="${SERVICE_NAME}"
-            export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION="${AWS_REGION}"
-
-            echo "Finding latest image tag for ${SERVICE}"
-            LATEST_TAG=$(aws ecr describe-images --repository-name "${SERVICE}" --region "${AWS_REGION}" \
-              --query 'sort_by(imageDetails[?imageTags!=`null`], &imagePushedAt)[-1].imageTags[0]' \
-              --output text || true)
-
-            if [ -z "${LATEST_TAG}" ] || [ "${LATEST_TAG}" = "None" ]; then
-              echo "ERROR: No tags found for service ${SERVICE}"
-              exit 1
-            fi
-
-            FULL_IMAGE="${ECR_REGISTRY}/ai4voice/${SERVICE}:${LATEST_TAG}"
-            echo "LATEST_IMAGE_URI=${FULL_IMAGE}" > latest-image.properties
-            echo "Latest image found: ${FULL_IMAGE}"
-          '''
-          script {
-            env.LATEST_IMAGE_URI = readProperties(file: 'latest-image.properties').LATEST_IMAGE_URI
+        script {
+          if (params.CLEAN_WORKSPACE) {
+            echo "Cleaning workspace..."
+            deleteDir()
+          } else {
+            echo "Skipping workspace cleanup"
           }
         }
       }
     }
 
+    stage('Checkout (optional)') {
+      steps {
+        echo "Cloning ${env.GIT_REPO} branch ${params.BRANCH_NAME}"
+        checkout([$class: 'GitSCM',
+          branches: [[name: "*/${params.BRANCH_NAME}"]],
+          userRemoteConfigs: [[url: "${env.GIT_REPO}"]]
+        ])
+      }
+    }
+
+    stage('Validate service path') {
+      steps {
+        script {
+          def svcPath = "services/${params.SERVICE_NAME}"
+          echo "Verifying: ${svcPath}"
+          if (!fileExists(svcPath)) {
+            echo "Warning: ${svcPath} not present in repo workspace. This is OK when IMAGE_URI is provided or ECR discovery is used."
+          }
+        }
+      }
+    }
+
+    stage('Resolve image to deploy') {
+      when { expression { return params.IMAGE_URI == '' } }
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+          sh '''
+            set -eux
+            SERVICE="${SERVICE_NAME}"
+            REGION="${AWS_REGION}"
+            ECR_REG="${ECR_BASE}"
+            ACCOUNT="${AWS_ACCOUNT}"
+
+            # Explicit candidate repositories (order = preference)
+            candidates=(
+              "ai4voice/${SERVICE}"
+              "${SERVICE}"
+              # include explicit special cases if needed (kept generic here)
+            )
+
+            FOUND_IMAGE=""
+            for c in "${candidates[@]}"; do
+              REPO="${ECR_REG}/${c}"
+              REPO_BASENAME=$(basename "${c}")
+              echo "Trying repo: ${REPO}"
+
+              # use registry-id to be explicit
+              LATEST_TAG=$(aws ecr describe-images --registry-id "${ACCOUNT}" --repository-name "${REPO_BASENAME}" --region "${REGION}" \
+                --query 'sort_by(imageDetails[?imageTags!=`null`], &imagePushedAt)[-1].imageTags[0]' --output text 2>/dev/null || true)
+
+              if [ -n "${LATEST_TAG}" ] && [ "${LATEST_TAG}" != "None" ]; then
+                FOUND_IMAGE="${REPO}:${LATEST_TAG}"
+                echo "Found latest tag in ${REPO}: ${LATEST_TAG}"
+                break
+              else
+                echo "No tagged images in ${REPO} (or repo missing)."
+              fi
+            done
+
+            if [ -z "${FOUND_IMAGE}" ]; then
+              echo "ERROR: Could not find latest image for service ${SERVICE} in candidate repos."
+              exit 2
+            fi
+
+            echo "LATEST_IMAGE_URI=${FOUND_IMAGE}" > latest-image.properties
+            echo "Resolved: ${FOUND_IMAGE}"
+          '''
+          script { env.LATEST_IMAGE_URI = readProperties(file: 'latest-image.properties').LATEST_IMAGE_URI }
+        }
+      }
+      post { failure { error "Failed to discover image from ECR. Provide IMAGE_URI parameter or confirm ECR repo / aws-creds." } }
+    }
+
+    stage('Use provided image (if any)') {
+      when { expression { return params.IMAGE_URI != '' } }
+      steps {
+        script {
+          env.LATEST_IMAGE_URI = params.IMAGE_URI.trim()
+          echo "Using IMAGE_URI provided: ${env.LATEST_IMAGE_URI}"
+        }
+      }
+    }
+
+    stage('Pre-deploy bastion check') {
+      steps {
+        // quick verify that bastion is reachable from Jenkins before attempting ssh deploy
+        sh """
+          set -eux
+          ssh -o BatchMode=yes -o ConnectTimeout=8 ${BASTION_USER}@${BASTION_HOST} 'echo OK' >/dev/null 2>&1 || { echo 'ERROR: Bastion unreachable from Jenkins agent'; exit 10; }
+          echo 'Bastion reachable'
+        """
+      }
+    }
+
     stage('Deploy to EKS via Bastion') {
       steps {
+        script {
+          if (!env.LATEST_IMAGE_URI) { error "No image URI available. Either set IMAGE_URI or ensure auto-discovery succeeds." }
+        }
         sshagent (credentials: ['bastion-ssh']) {
           sh """
-            ssh -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} << 'EOF'
+            ssh -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} <<'EOF'
 set -eux
 
-# On bastion: update kubeconfig and deploy (bastion already has AWS access)
+# ensure bastion has AWS/kubectl access and kubeconfig for the cluster
 aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
 
-echo "Deploying image ${LATEST_IMAGE_URI} to service ${SERVICE_NAME}"
-
+echo "Setting image for k8s deployment/${SERVICE_NAME} -> ${LATEST_IMAGE_URI}"
 kubectl -n ${K8S_NAMESPACE} set image deployment/${SERVICE_NAME} ${SERVICE_NAME}=${LATEST_IMAGE_URI} --record
 
-kubectl -n ${K8S_NAMESPACE} rollout status deployment/${SERVICE_NAME} --timeout=180s
+echo "Waiting for rollout status..."
+kubectl -n ${K8S_NAMESPACE} rollout status deployment/${SERVICE_NAME} --timeout=${ROLLOUT_TIMEOUT}
 
-echo "Deployment successful on EKS"
+echo "Deployment complete for ${SERVICE_NAME} -> ${LATEST_IMAGE_URI}"
 EOF
 """
         }
@@ -92,14 +169,13 @@ EOF
     stage('Post-check') {
       steps {
         echo "Deployed image: ${env.LATEST_IMAGE_URI}"
-        sh "echo 'To verify: kubectl -n ${K8S_NAMESPACE} get deployment ${SERVICE_NAME} -o wide' || true"
+        sh "echo 'Run on bastion to inspect: kubectl -n ${K8S_NAMESPACE} get deployment ${params.SERVICE_NAME} -o wide' || true"
       }
     }
-
   }
 
   post {
-    success { echo "✅ Successfully deployed ${params.SERVICE_NAME} → ${env.LATEST_IMAGE_URI}" }
-    failure { echo "❌ Deployment failed for service ${params.SERVICE_NAME}" }
+    success { echo "✅ Deploy succeeded: ${params.SERVICE_NAME} -> ${env.LATEST_IMAGE_URI}" }
+    failure { echo "❌ Deploy failed for ${params.SERVICE_NAME}" }
   }
 }
