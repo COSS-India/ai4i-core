@@ -95,40 +95,75 @@ tts-service
                 continue
               fi
 
-              # Read JSON from stdin in Python (robust, will not rely on argv)
-              LATEST_TAG=$(cat "${TMP_JSON}" | python3 - <<'PY'
+              # Python decides best identifier and prints one line:
+              #   tag:<tag>  OR  digest:<sha256>
+              CHOICE=$(cat "${TMP_JSON}" | python3 - <<'PY'
 import sys, json, re
-pattern = re.compile(r'^[0-9]{8}-[0-9]{6}-IST$')
+data = None
 try:
     data = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
-best = None
+pattern = re.compile(r'^[0-9]{8}-[0-9]{6}-IST$')
+best_ts = None    # (pushedAt, tag)
+best_other = None # (pushedAt, tag)
+best_digest = None # (pushedAt, digest)
 for img in data.get("imageDetails", []):
-    pushed = img.get("imagePushedAt")
+    pushed = img.get("imagePushedAt") or ""
     tags = img.get("imageTags") or []
+    digest = img.get("imageDigest")
+    # check timestamp-style tags first
     for t in tags:
         if pattern.match(t):
-            if best is None or (pushed and pushed > best[0]):
-                best = (pushed, t)
-if best:
-    print(best[1])
+            if best_ts is None or pushed > best_ts[0]:
+                best_ts = (pushed, t)
+    # keep most recent tagged image as fallback
+    for t in tags:
+        if best_other is None or pushed > best_other[0]:
+            best_other = (pushed, t)
+    # keep most recent digest as final fallback
+    if digest:
+        if best_digest is None or pushed > best_digest[0]:
+            best_digest = (pushed, digest)
+if best_ts:
+    print("tag:" + best_ts[1])
+elif best_other:
+    print("tag:" + best_other[1])
+elif best_digest:
+    print("digest:" + best_digest[1])
 PY
 )
 
               rm -f "${TMP_JSON}"
 
-              if [ -n "${LATEST_TAG}" ]; then
-                FOUND_IMAGE="${REPO}:${LATEST_TAG}"
-                echo "Found timestamp-style tag in ${REPO}: ${LATEST_TAG}"
+              if [ -z "${CHOICE}" ]; then
+                echo "No usable tag or digest found in ${REPO}"
+                continue
+              fi
+
+              case "${CHOICE}" in
+                tag:*)
+                  T=${CHOICE#tag:}
+                  FOUND_IMAGE="${REPO}:${T}"
+                  echo "Selected tag image -> ${FOUND_IMAGE}"
+                  ;;
+                digest:*)
+                  D=${CHOICE#digest:}
+                  FOUND_IMAGE="${REPO}@${D}"
+                  echo "Selected digest image -> ${FOUND_IMAGE}"
+                  ;;
+                *)
+                  echo "Unexpected chooser output: ${CHOICE}"
+                  ;;
+              esac
+
+              if [ -n "${FOUND_IMAGE}" ]; then
                 break
-              else
-                echo "No timestamp-style tags in ${REPO}."
               fi
             done
 
             if [ -z "${FOUND_IMAGE}" ]; then
-              echo "ERROR: Could not find latest timestamp-style image for service ${SERVICE} in candidate repos."
+              echo "ERROR: Could not find any image (timestamp tag / any tag / digest) for service ${SERVICE} in candidate repos."
               exit 2
             fi
 
