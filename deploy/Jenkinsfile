@@ -99,14 +99,15 @@ tts-service
               LATEST_TAG=$(printf '%s' "$RESP" | python3 - <<'PY'
 import sys, json, re
 data = json.load(sys.stdin)
-pattern = re.compile(r'^\d{8}-\d{6}-IST$')
+# use [0-9] instead of \d to avoid Groovy parse issues in Jenkinsfile
+pattern = re.compile(r'^[0-9]{8}-[0-9]{6}-IST$')
 best = None  # (pushedAt, tag)
 for img in data.get("imageDetails", []):
     pushed = img.get("imagePushedAt")
     tags = img.get("imageTags") or []
     for t in tags:
         if pattern.match(t):
-            if best is None or pushed and pushed > best[0]:
+            if best is None or (pushed and pushed > best[0]):
                 best = (pushed, t)
 if best:
     print(best[1])
