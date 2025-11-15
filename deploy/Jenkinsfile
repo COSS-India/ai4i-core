@@ -197,11 +197,14 @@ PY
 
     stage('Pre-deploy bastion check') {
       steps {
-        sh """
-          set -eux
-          ssh -o BatchMode=yes -o ConnectTimeout=8 ${BASTION_USER}@${BASTION_HOST} 'echo OK' >/dev/null 2>&1 || { echo 'ERROR: Bastion unreachable from Jenkins agent'; exit 10; }
-          echo 'Bastion reachable'
-        """
+        sshagent (credentials: ['bastion-ssh']) {
+          sh """
+            set -eux
+            echo 'Checking bastion connectivity...'
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${BASTION_USER}@${BASTION_HOST} 'echo "Bastion connection successful"'
+            echo 'Bastion is reachable ✓'
+          """
+        }
       }
     }
 
@@ -215,15 +218,21 @@ PY
             ssh -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} <<'EOF'
 set -eux
 
+echo "Updating kubeconfig for EKS cluster..."
 aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
 
-echo "Setting image for k8s deployment/${SERVICE_NAME} -> ${LATEST_IMAGE_URI}"
+echo "Current deployment status:"
+kubectl -n ${K8S_NAMESPACE} get deployment ${SERVICE_NAME} -o wide || echo "Deployment not found yet"
+
+echo "Setting image for deployment/${SERVICE_NAME} -> ${LATEST_IMAGE_URI}"
 kubectl -n ${K8S_NAMESPACE} set image deployment/${SERVICE_NAME} ${SERVICE_NAME}=${LATEST_IMAGE_URI} --record
 
-echo "Waiting for rollout status..."
+echo "Waiting for rollout to complete (timeout: ${ROLLOUT_TIMEOUT})..."
 kubectl -n ${K8S_NAMESPACE} rollout status deployment/${SERVICE_NAME} --timeout=${ROLLOUT_TIMEOUT}
 
-echo "Deployment complete for ${SERVICE_NAME} -> ${LATEST_IMAGE_URI}"
+echo "✅ Deployment complete for ${SERVICE_NAME}"
+echo "Final deployment status:"
+kubectl -n ${K8S_NAMESPACE} get deployment ${SERVICE_NAME} -o wide
 EOF
 """
         }
@@ -232,14 +241,27 @@ EOF
 
     stage('Post-check') {
       steps {
-        echo "Deployed image: ${env.LATEST_IMAGE_URI}"
-        sh "echo 'Run on bastion to inspect: kubectl -n ${K8S_NAMESPACE} get deployment ${params.SERVICE_NAME} -o wide' || true"
+        echo "✅ Deployed image: ${env.LATEST_IMAGE_URI}"
+        echo "Service: ${params.SERVICE_NAME}"
+        echo "Namespace: ${env.K8S_NAMESPACE}"
+        sh "echo 'To inspect on bastion: kubectl -n ${K8S_NAMESPACE} get deployment ${params.SERVICE_NAME} -o wide' || true"
       }
     }
   }
 
   post {
-    success { echo "✅ Deploy succeeded: ${params.SERVICE_NAME} -> ${env.LATEST_IMAGE_URI}" }
-    failure { echo "❌ Deploy failed for ${params.SERVICE_NAME}" }
+    success { 
+      echo "✅ ========================================" 
+      echo "✅ Deploy succeeded!" 
+      echo "✅ Service: ${params.SERVICE_NAME}" 
+      echo "✅ Image: ${env.LATEST_IMAGE_URI}" 
+      echo "✅ ========================================" 
+    }
+    failure { 
+      echo "❌ ========================================" 
+      echo "❌ Deploy failed for ${params.SERVICE_NAME}" 
+      echo "❌ Check logs above for details" 
+      echo "❌ ========================================" 
+    }
   }
 }
