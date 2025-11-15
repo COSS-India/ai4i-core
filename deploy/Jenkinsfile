@@ -86,7 +86,6 @@ tts-service
               REPO="${ECR_REG}/${c}"
               echo "Trying repo: ${REPO}"
 
-              # Query ECR and write to temp file
               TMP_JSON=$(mktemp /tmp/ecr_resp.XXXXXX.json)
               aws ecr describe-images --registry-id "${ACCOUNT}" --repository-name "${c}" --region "${REGION}" --output json > "${TMP_JSON}" 2>/dev/null || true
 
@@ -96,16 +95,15 @@ tts-service
                 continue
               fi
 
-              # Python reads the saved JSON file and prints the latest timestamp-style tag (if any)
-              LATEST_TAG=$(python3 - <<'PY'
-import json, re, sys
-fn = sys.argv[1]
+              # Read JSON from stdin in Python (robust, will not rely on argv)
+              LATEST_TAG=$(cat "${TMP_JSON}" | python3 - <<'PY'
+import sys, json, re
 pattern = re.compile(r'^[0-9]{8}-[0-9]{6}-IST$')
-best = None
 try:
-    data = json.load(open(fn))
-except Exception as e:
+    data = json.load(sys.stdin)
+except Exception:
     sys.exit(0)
+best = None
 for img in data.get("imageDetails", []):
     pushed = img.get("imagePushedAt")
     tags = img.get("imageTags") or []
@@ -116,7 +114,6 @@ for img in data.get("imageDetails", []):
 if best:
     print(best[1])
 PY
- "${TMP_JSON}"
 )
 
               rm -f "${TMP_JSON}"
