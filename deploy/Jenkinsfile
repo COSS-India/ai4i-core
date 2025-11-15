@@ -79,20 +79,15 @@ tts-service
             ECR_REG="${ECR_BASE}"
             ACCOUNT="${AWS_ACCOUNT}"
 
-            # Explicit candidate repositories (order = preference)
-            candidates=(
-              "ai4voice/${SERVICE}"
-              "${SERVICE}"
-              # include explicit special cases if needed (kept generic here)
-            )
+            # Candidate repos (space-separated, order = preference)
+            candidates="ai4voice/${SERVICE} ${SERVICE}"
 
             FOUND_IMAGE=""
-            for c in "${candidates[@]}"; do
+            for c in $candidates; do
               REPO="${ECR_REG}/${c}"
-              REPO_BASENAME=$(basename "${c}")
+              REPO_BASENAME="${c##*/}"
               echo "Trying repo: ${REPO}"
 
-              # use registry-id to be explicit
               LATEST_TAG=$(aws ecr describe-images --registry-id "${ACCOUNT}" --repository-name "${REPO_BASENAME}" --region "${REGION}" \
                 --query 'sort_by(imageDetails[?imageTags!=`null`], &imagePushedAt)[-1].imageTags[0]' --output text 2>/dev/null || true)
 
@@ -131,7 +126,7 @@ tts-service
 
     stage('Pre-deploy bastion check') {
       steps {
-        // quick verify that bastion is reachable from Jenkins before attempting ssh deploy
+        // verify bastion reachable from Jenkins agent
         sh """
           set -eux
           ssh -o BatchMode=yes -o ConnectTimeout=8 ${BASTION_USER}@${BASTION_HOST} 'echo OK' >/dev/null 2>&1 || { echo 'ERROR: Bastion unreachable from Jenkins agent'; exit 10; }
