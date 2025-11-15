@@ -2,7 +2,7 @@ pipeline {
   agent any
 
   parameters {
-    string(name: 'BRANCH_NAME', defaultValue: 'devops', description: 'Git branch (for optional repo checkout)')
+    string(name: 'BRANCH_NAME', defaultValue: 'devops', description: 'Git branch')
     choice(name: 'SERVICE_NAME', choices: """
 alerting-service
 api-gateway-service
@@ -15,18 +15,14 @@ nmt-service
 pipeline-service
 telemetry-service
 tts-service
-""", description: 'Service directory under services/')
-    booleanParam(name: 'CLEAN_WORKSPACE', defaultValue: true, description: 'Delete workspace before checkout')
-    string(name: 'IMAGE_URI', defaultValue: '', description: 'Optional: full ECR image URI to deploy (overrides auto-discovery). Example: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/api-gateway-service:20251110-123000-IST')
-    string(name: 'ROLLOUT_TIMEOUT', defaultValue: '180s', description: 'kubectl rollout status timeout (e.g. 180s or 5m)')
-    booleanParam(name: 'DEBUG_MODE', defaultValue: false, description: 'Enable verbose debugging')
+""", description: 'Service to deploy')
+    string(name: 'IMAGE_URI', defaultValue: '', description: 'REQUIRED: Full ECR image URI. Example: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/nmt-service:14112025-101038-IST')
+    string(name: 'ROLLOUT_TIMEOUT', defaultValue: '180s', description: 'Rollout timeout (e.g. 180s or 5m)')
+    booleanParam(name: 'DEBUG_MODE', defaultValue: false, description: 'Enable verbose SSH debugging')
   }
 
   environment {
-    GIT_REPO      = 'https://github.com/COSS-India/ai4i-core.git'
     AWS_REGION    = 'ap-south-1'
-    AWS_ACCOUNT   = '662074586476'
-    ECR_BASE      = "${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
     EKS_CLUSTER   = 'AI4Voice-core'
     K8S_NAMESPACE = 'dev'
     BASTION_HOST  = '13.235.32.90'
@@ -34,236 +30,26 @@ tts-service
   }
 
   stages {
-    stage('Prepare (optional clean)') {
+    stage('Validate Parameters') {
       steps {
         script {
-          if (params.CLEAN_WORKSPACE) {
-            echo "Cleaning workspace..."
-            deleteDir()
-          } else {
-            echo "Skipping workspace cleanup"
+          if (!params.IMAGE_URI || params.IMAGE_URI.trim() == '') {
+            error "IMAGE_URI parameter is required! Please provide the full ECR image URI."
           }
-        }
-      }
-    }
-
-    stage('Checkout (optional)') {
-      steps {
-        echo "Cloning ${env.GIT_REPO} branch ${params.BRANCH_NAME}"
-        checkout([$class: 'GitSCM',
-          branches: [[name: "*/${params.BRANCH_NAME}"]],
-          userRemoteConfigs: [[url: "${env.GIT_REPO}"]]
-        ])
-      }
-    }
-
-    stage('Validate service path') {
-      steps {
-        script {
-          def svcPath = "services/${params.SERVICE_NAME}"
-          echo "Verifying: ${svcPath}"
-          if (!fileExists(svcPath)) {
-            echo "Warning: ${svcPath} not present in repo workspace. This is OK when IMAGE_URI is provided or ECR discovery is used."
-          }
-        }
-      }
-    }
-
-    stage('Resolve image to deploy') {
-      when { expression { return params.IMAGE_URI == '' } }
-      steps {
-        withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
-          script {
-            def debugFlag = params.DEBUG_MODE ? 'true' : 'false'
-            sh """
-              set -eu
-              if [ "${debugFlag}" = "true" ]; then
-                set -x
-              fi
-
-              # Fail early and clearly if SERVICE_NAME missing
-              if [ -z "\${SERVICE_NAME:-}" ]; then
-                echo "ERROR: SERVICE_NAME parameter is empty. Provide SERVICE_NAME when running the job or set IMAGE_URI."
-                exit 1
-              fi
-
-              SERVICE="\${SERVICE_NAME}"
-              REGION="\${AWS_REGION}"
-              ECR_REG="\${ECR_BASE}"
-              ACCOUNT="\${AWS_ACCOUNT}"
-
-              candidates="ai4voice/\${SERVICE} \${SERVICE}"
-              FOUND_IMAGE=""
-
-              for c in \${candidates}; do
-                REPO="\${ECR_REG}/\${c}"
-                echo "================================================"
-                echo "Trying ECR repo: \${REPO}"
-                echo "================================================"
-
-                TMP_JSON=\$(mktemp /tmp/ecr_resp.XXXXXX.json)
-                
-                # Try to fetch images from ECR
-                if ! aws ecr describe-images --registry-id "\${ACCOUNT}" --repository-name "\${c}" --region "\${REGION}" --output json > "\${TMP_JSON}" 2>&1; then
-                  echo "⚠ Repository \${c} not found or no access"
-                  rm -f "\${TMP_JSON}"
-                  continue
-                fi
-
-                if [ ! -s "\${TMP_JSON}" ]; then
-                  echo "⚠ No images found in repository \${c}"
-                  rm -f "\${TMP_JSON}"
-                  continue
-                fi
-
-                # Debug: Show raw JSON if DEBUG_MODE enabled
-                if [ "${debugFlag}" = "true" ]; then
-                  echo "DEBUG: ECR Response:"
-                  cat "\${TMP_JSON}"
-                fi
-
-                # Python script to choose the best image
-                CHOICE=\$(python3 - <<'PYSCRIPT'
-import sys, json, re, os
-
-debug_mode = os.environ.get('DEBUG_MODE', 'false') == 'true'
-
-try:
-    with open(os.environ['TMP_JSON'], 'r') as f:
-        data = json.load(f)
-except Exception as e:
-    if debug_mode:
-        print(f"ERROR: Failed to parse JSON: {e}", file=sys.stderr)
-    sys.exit(1)
-
-# Match tags like: 14112025-101038-IST or 20251110-123000-IST
-pattern = re.compile(r'^[0-9]{8}-[0-9]{6}-IST\$')
-
-best_ts = None
-best_other = None
-best_digest = None
-
-image_details = data.get("imageDetails", [])
-
-if debug_mode:
-    print(f"DEBUG: Found {len(image_details)} images", file=sys.stderr)
-
-for img in image_details:
-    pushed = img.get("imagePushedAt", "")
-    tags = img.get("imageTags", [])
-    digest = img.get("imageDigest", "")
-    
-    if debug_mode:
-        print(f"DEBUG: Image tags: {tags}, pushed: {pushed}", file=sys.stderr)
-    
-    # Look for timestamp tags
-    for t in tags:
-        if pattern.match(t):
-            if best_ts is None or pushed > best_ts[0]:
-                best_ts = (pushed, t)
-                if debug_mode:
-                    print(f"DEBUG: Found timestamp tag: {t}", file=sys.stderr)
-    
-    # Also keep track of any other tags
-    if tags:
-        for t in tags:
-            if best_other is None or pushed > best_other[0]:
-                best_other = (pushed, t)
-    
-    # Keep track of digest as fallback
-    if digest:
-        if best_digest is None or pushed > best_digest[0]:
-            best_digest = (pushed, digest)
-
-# Output the best match
-if best_ts:
-    print("tag:" + best_ts[1])
-elif best_other:
-    print("tag:" + best_other[1])
-elif best_digest:
-    print("digest:" + best_digest[1])
-else:
-    if debug_mode:
-        print("ERROR: No tags or digests found", file=sys.stderr)
-    sys.exit(1)
-PYSCRIPT
-)
-
-                CHOICE_EXIT=\$?
-                rm -f "\${TMP_JSON}"
-
-                if [ \${CHOICE_EXIT} -ne 0 ] || [ -z "\${CHOICE}" ]; then
-                  echo "⚠ No usable tag or digest found in \${REPO}"
-                  continue
-                fi
-
-                case "\${CHOICE}" in
-                  tag:*)
-                    T=\${CHOICE#tag:}
-                    FOUND_IMAGE="\${REPO}:\${T}"
-                    echo "✓ Selected tag image: \${FOUND_IMAGE}"
-                    ;;
-                  digest:*)
-                    D=\${CHOICE#digest:}
-                    FOUND_IMAGE="\${REPO}@\${D}"
-                    echo "✓ Selected digest image: \${FOUND_IMAGE}"
-                    ;;
-                  *)
-                    echo "⚠ Unexpected chooser output: \${CHOICE}"
-                    ;;
-                esac
-
-                if [ -n "\${FOUND_IMAGE}" ]; then
-                  break
-                fi
-              done
-
-              if [ -z "\${FOUND_IMAGE}" ]; then
-                echo "================================================"
-                echo "❌ ERROR: Could not find any image for service \${SERVICE}"
-                echo "================================================"
-                echo "Searched in repositories:"
-                for c in \${candidates}; do
-                  echo "  - \${ECR_REG}/\${c}"
-                done
-                echo ""
-                echo "Please either:"
-                echo "  1. Provide IMAGE_URI parameter when running the job"
-                echo "  2. Ensure the image exists in one of the above ECR repositories"
-                echo "  3. Verify AWS credentials have ECR read permissions"
-                echo "================================================"
-                exit 2
-              fi
-
-              echo "LATEST_IMAGE_URI=\${FOUND_IMAGE}" > latest-image.properties
-              echo "================================================"
-              echo "✅ Successfully resolved image: \${FOUND_IMAGE}"
-              echo "================================================"
-            """
-            env.LATEST_IMAGE_URI = readProperties(file: 'latest-image.properties').LATEST_IMAGE_URI
-          }
-        }
-      }
-      post { 
-        failure { 
-          error "Failed to discover image from ECR. Please provide IMAGE_URI parameter or verify ECR repository and AWS credentials." 
-        } 
-      }
-    }
-
-    stage('Use provided image (if any)') {
-      when { expression { return params.IMAGE_URI != '' } }
-      steps {
-        script {
-          env.LATEST_IMAGE_URI = params.IMAGE_URI.trim()
+          env.DEPLOY_IMAGE = params.IMAGE_URI.trim()
           echo "================================================"
-          echo "Using IMAGE_URI provided: ${env.LATEST_IMAGE_URI}"
+          echo "Deployment Configuration"
+          echo "================================================"
+          echo "Service: ${params.SERVICE_NAME}"
+          echo "Image: ${env.DEPLOY_IMAGE}"
+          echo "Namespace: ${env.K8S_NAMESPACE}"
+          echo "Cluster: ${env.EKS_CLUSTER}"
           echo "================================================"
         }
       }
     }
 
-    stage('Pre-deploy bastion check') {
+    stage('Pre-deploy Bastion Check') {
       steps {
         script {
           def sshOpts = params.DEBUG_MODE ? '-vvv' : '-v'
@@ -276,12 +62,11 @@ PYSCRIPT
               echo 'User: ${BASTION_USER}'
               echo '================================================'
               
-              ssh ${sshOpts} -o StrictHostKeyChecking=no -o ConnectTimeout=15 -o ServerAliveInterval=10 ${BASTION_USER}@${BASTION_HOST} 'echo "✓ SSH connection successful"; hostname; whoami'
+              ssh ${sshOpts} -o StrictHostKeyChecking=no -o ConnectTimeout=15 ${BASTION_USER}@${BASTION_HOST} 'echo "✓ Connected"; hostname; whoami'
               
-              ssh -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} 'which aws && which kubectl && echo "✓ Required tools present"'
+              ssh -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} 'which aws && which kubectl && echo "✓ Tools available"'
               
-              echo '================================================'
-              echo '✅ Bastion is ready for deployment'
+              echo '✅ Bastion ready'
               echo '================================================'
             """
           }
@@ -289,76 +74,55 @@ PYSCRIPT
       }
     }
 
-    stage('Deploy to EKS via Bastion') {
+    stage('Deploy to EKS') {
       steps {
-        script {
-          if (!env.LATEST_IMAGE_URI) { 
-            error "No image URI available. Either set IMAGE_URI or ensure auto-discovery succeeds." 
-          }
-          echo "================================================"
-          echo "Deploying: ${env.LATEST_IMAGE_URI}"
-          echo "Service: ${params.SERVICE_NAME}"
-          echo "Namespace: ${env.K8S_NAMESPACE}"
-          echo "================================================"
-        }
         sshagent(credentials: ['bastion-ssh']) {
           sh """
             ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 ${BASTION_USER}@${BASTION_HOST} bash -s <<'ENDSSH'
 set -eu
 
 echo "================================================"
-echo "EKS Deployment Process"
+echo "Starting EKS Deployment"
 echo "================================================"
 echo "Cluster: ${EKS_CLUSTER}"
-echo "Region: ${AWS_REGION}"
 echo "Namespace: ${K8S_NAMESPACE}"
 echo "Service: ${SERVICE_NAME}"
-echo "Image: ${LATEST_IMAGE_URI}"
+echo "Image: ${DEPLOY_IMAGE}"
 echo "================================================"
 
 # Update kubeconfig
 echo ""
-echo "Step 1/5: Updating kubeconfig..."
-aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER} --kubeconfig ~/.kube/config
+echo "[1/4] Updating kubeconfig..."
+aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
 
-# Verify cluster connection
+# Verify cluster
 echo ""
-echo "Step 2/5: Verifying cluster connectivity..."
+echo "[2/4] Verifying cluster..."
 kubectl cluster-info | head -1
-kubectl get nodes --no-headers | wc -l | xargs echo "Cluster nodes:"
 
-# Check current deployment
+# Update deployment
 echo ""
-echo "Step 3/5: Current deployment status..."
-kubectl -n ${K8S_NAMESPACE} get deployment ${SERVICE_NAME} -o wide 2>/dev/null || echo "⚠ Deployment ${SERVICE_NAME} not found (may be first deployment)"
-
-# Update deployment image
-echo ""
-echo "Step 4/5: Updating deployment image..."
-kubectl -n ${K8S_NAMESPACE} set image deployment/${SERVICE_NAME} ${SERVICE_NAME}=${LATEST_IMAGE_URI} --record
-echo "✓ Image updated"
+echo "[3/4] Updating deployment..."
+kubectl -n ${K8S_NAMESPACE} set image deployment/${SERVICE_NAME} ${SERVICE_NAME}=${DEPLOY_IMAGE} --record
 
 # Wait for rollout
 echo ""
-echo "Step 5/5: Waiting for rollout (timeout: ${ROLLOUT_TIMEOUT})..."
+echo "[4/4] Waiting for rollout..."
 if kubectl -n ${K8S_NAMESPACE} rollout status deployment/${SERVICE_NAME} --timeout=${ROLLOUT_TIMEOUT}; then
-  echo "✅ Rollout completed successfully"
+  echo "✅ Rollout successful"
 else
-  echo "❌ Rollout failed or timed out"
-  echo "Current pod status:"
+  echo "❌ Rollout failed"
   kubectl -n ${K8S_NAMESPACE} get pods -l app=${SERVICE_NAME}
   exit 1
 fi
 
-# Show final status
+# Final status
 echo ""
 echo "================================================"
-echo "✅ Deployment Summary"
+echo "✅ Deployment Complete"
 echo "================================================"
 kubectl -n ${K8S_NAMESPACE} get deployment ${SERVICE_NAME} -o wide
-echo ""
-echo "Pods:"
-kubectl -n ${K8S_NAMESPACE} get pods -l app=${SERVICE_NAME} -o wide
+kubectl -n ${K8S_NAMESPACE} get pods -l app=${SERVICE_NAME}
 echo "================================================"
 
 ENDSSH
@@ -366,68 +130,33 @@ ENDSSH
         }
       }
     }
-
-    stage('Post-check') {
-      steps {
-        echo ""
-        echo "================================================"
-        echo "✅ Deployment Completed Successfully!"
-        echo "================================================"
-        echo "Service: ${params.SERVICE_NAME}"
-        echo "Namespace: ${env.K8S_NAMESPACE}"
-        echo "Image: ${env.LATEST_IMAGE_URI}"
-        echo "Cluster: ${env.EKS_CLUSTER}"
-        echo "================================================"
-        echo ""
-        echo "Manual inspection commands (run on bastion):"
-        echo "  ssh ${env.BASTION_USER}@${env.BASTION_HOST}"
-        echo "  kubectl -n ${env.K8S_NAMESPACE} get deployment ${params.SERVICE_NAME} -o wide"
-        echo "  kubectl -n ${env.K8S_NAMESPACE} get pods -l app=${params.SERVICE_NAME}"
-        echo "  kubectl -n ${env.K8S_NAMESPACE} logs -l app=${params.SERVICE_NAME} --tail=50"
-        echo "  kubectl -n ${env.K8S_NAMESPACE} describe deployment ${params.SERVICE_NAME}"
-        echo "================================================"
-      }
-    }
   }
 
   post {
     success { 
       echo ""
-      echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
-      echo "✅          DEPLOYMENT SUCCESSFUL           ✅"
-      echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
+      echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
+      echo "✅     DEPLOYMENT SUCCESSFUL      ✅"
+      echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
       echo ""
       echo "Service: ${params.SERVICE_NAME}"
-      echo "Image: ${env.LATEST_IMAGE_URI}"
-      echo "Namespace: ${env.K8S_NAMESPACE}"
+      echo "Image: ${env.DEPLOY_IMAGE}"
       echo "Time: ${new Date()}"
-      echo ""
-      echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
       echo ""
     }
     failure { 
       echo ""
-      echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
-      echo "❌          DEPLOYMENT FAILED              ❌"
-      echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
+      echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
+      echo "❌     DEPLOYMENT FAILED         ❌"
+      echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
       echo ""
       echo "Service: ${params.SERVICE_NAME}"
-      echo "Image: ${env.LATEST_IMAGE_URI ?: 'Not resolved'}"
       echo ""
-      echo "Troubleshooting checklist:"
-      echo "  □ Run with DEBUG_MODE=true for verbose logs"
-      echo "  □ Verify IMAGE_URI exists in ECR"
-      echo "  □ Check AWS credentials: 'aws-creds' in Jenkins"
-      echo "  □ Verify bastion SSH access: 'bastion-ssh' credential"
-      echo "  □ Check bastion connectivity: ssh ${env.BASTION_USER}@${env.BASTION_HOST}"
-      echo "  □ Verify EKS cluster access from bastion"
-      echo "  □ Check deployment exists: kubectl get deployment -n ${env.K8S_NAMESPACE}"
+      echo "Debug on bastion:"
+      echo "  ssh ${env.BASTION_USER}@${env.BASTION_HOST}"
+      echo "  kubectl -n ${env.K8S_NAMESPACE} describe deployment ${params.SERVICE_NAME}"
+      echo "  kubectl -n ${env.K8S_NAMESPACE} get pods -l app=${params.SERVICE_NAME}"
       echo ""
-      echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
-      echo ""
-    }
-    always {
-      echo "Pipeline completed at: ${new Date()}"
     }
   }
 }
