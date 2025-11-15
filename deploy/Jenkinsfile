@@ -79,29 +79,51 @@ tts-service
             ECR_REG="${ECR_BASE}"
             ACCOUNT="${AWS_ACCOUNT}"
 
-            # Candidate repos (space-separated, order = preference)
+            # Candidate repo names to try (order = preference)
             candidates="ai4voice/${SERVICE} ${SERVICE}"
 
             FOUND_IMAGE=""
             for c in $candidates; do
               REPO="${ECR_REG}/${c}"
-              REPO_BASENAME="${c##*/}"
               echo "Trying repo: ${REPO}"
 
-              LATEST_TAG=$(aws ecr describe-images --registry-id "${ACCOUNT}" --repository-name "${REPO_BASENAME}" --region "${REGION}" \
-                --query 'sort_by(imageDetails[?imageTags!=`null`], &imagePushedAt)[-1].imageTags[0]' --output text 2>/dev/null || true)
+              # call aws describe-images and parse via python to:
+              #  - pick tags matching DDMMYYYY-HHMMSS-IST
+              #  - pick the image with the latest pushedAt among those tags
+              RESP=$(aws ecr describe-images --registry-id "${ACCOUNT}" --repository-name "${c}" --region "${REGION}" --output json 2>/dev/null || true)
+              if [ -z "${RESP}" ]; then
+                echo "Repo ${c} missing or no images"
+                continue
+              fi
 
-              if [ -n "${LATEST_TAG}" ] && [ "${LATEST_TAG}" != "None" ]; then
+              LATEST_TAG=$(printf '%s' "$RESP" | python3 - <<'PY'
+import sys, json, re
+data = json.load(sys.stdin)
+pattern = re.compile(r'^\d{8}-\d{6}-IST$')
+best = None  # (pushedAt, tag)
+for img in data.get("imageDetails", []):
+    pushed = img.get("imagePushedAt")
+    tags = img.get("imageTags") or []
+    for t in tags:
+        if pattern.match(t):
+            if best is None or pushed and pushed > best[0]:
+                best = (pushed, t)
+if best:
+    print(best[1])
+PY
+)
+              # If python printed a tag, LATEST_TAG will be non-empty
+              if [ -n "${LATEST_TAG}" ]; then
                 FOUND_IMAGE="${REPO}:${LATEST_TAG}"
-                echo "Found latest tag in ${REPO}: ${LATEST_TAG}"
+                echo "Found timestamp-style tag in ${REPO}: ${LATEST_TAG}"
                 break
               else
-                echo "No tagged images in ${REPO} (or repo missing)."
+                echo "No timestamp-style tags in ${REPO} (or repo missing)."
               fi
             done
 
             if [ -z "${FOUND_IMAGE}" ]; then
-              echo "ERROR: Could not find latest image for service ${SERVICE} in candidate repos."
+              echo "ERROR: Could not find latest timestamp-style image for service ${SERVICE} in candidate repos."
               exit 2
             fi
 
