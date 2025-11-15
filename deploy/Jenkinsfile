@@ -51,9 +51,9 @@ tts-service
 
     stage('Pre-deploy Bastion Check') {
       steps {
-        script {
-          def sshOpts = params.DEBUG_MODE ? '-vvv' : '-v'
-          sshagent(credentials: ['bastion-ssh']) {
+        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+          script {
+            def sshOpts = params.DEBUG_MODE ? '-vvv' : '-v'
             sh """
               set -eu
               echo '================================================'
@@ -62,11 +62,13 @@ tts-service
               echo 'User: ${BASTION_USER}'
               echo '================================================'
               
-              ssh ${sshOpts} -o StrictHostKeyChecking=no -o ConnectTimeout=15 ${BASTION_USER}@${BASTION_HOST} 'echo "✓ Connected"; hostname; whoami'
+              # Test SSH connection
+              ssh ${sshOpts} -i "\${SSH_KEY}" -o StrictHostKeyChecking=no -o ConnectTimeout=15 ${BASTION_USER}@${BASTION_HOST} 'echo "✓ Connected"; hostname; whoami'
               
-              ssh -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} 'which aws && which kubectl && echo "✓ Tools available"'
+              # Verify required tools
+              ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} 'which aws && which kubectl && echo "✓ Tools available"'
               
-              echo '✅ Bastion ready'
+              echo '✅ Bastion ready for deployment'
               echo '================================================'
             """
           }
@@ -76,9 +78,9 @@ tts-service
 
     stage('Deploy to EKS') {
       steps {
-        sshagent(credentials: ['bastion-ssh']) {
+        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
           sh """
-            ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 ${BASTION_USER}@${BASTION_HOST} bash -s <<'ENDSSH'
+            ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no -o ServerAliveInterval=30 ${BASTION_USER}@${BASTION_HOST} bash -s <<'ENDSSH'
 set -eu
 
 echo "================================================"
@@ -97,22 +99,29 @@ aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
 
 # Verify cluster
 echo ""
-echo "[2/4] Verifying cluster..."
+echo "[2/4] Verifying cluster connectivity..."
 kubectl cluster-info | head -1
+kubectl get nodes --no-headers | wc -l | xargs -I {} echo "Connected to cluster with {} nodes"
 
 # Update deployment
 echo ""
-echo "[3/4] Updating deployment..."
+echo "[3/4] Updating deployment image..."
 kubectl -n ${K8S_NAMESPACE} set image deployment/${SERVICE_NAME} ${SERVICE_NAME}=${DEPLOY_IMAGE} --record
+echo "✓ Image updated to: ${DEPLOY_IMAGE}"
 
 # Wait for rollout
 echo ""
-echo "[4/4] Waiting for rollout..."
+echo "[4/4] Waiting for rollout (timeout: ${ROLLOUT_TIMEOUT})..."
 if kubectl -n ${K8S_NAMESPACE} rollout status deployment/${SERVICE_NAME} --timeout=${ROLLOUT_TIMEOUT}; then
-  echo "✅ Rollout successful"
+  echo "✅ Rollout completed successfully"
 else
-  echo "❌ Rollout failed"
-  kubectl -n ${K8S_NAMESPACE} get pods -l app=${SERVICE_NAME}
+  echo "❌ Rollout failed or timed out"
+  echo ""
+  echo "Current pod status:"
+  kubectl -n ${K8S_NAMESPACE} get pods -l app=${SERVICE_NAME} -o wide
+  echo ""
+  echo "Recent events:"
+  kubectl -n ${K8S_NAMESPACE} get events --sort-by='.lastTimestamp' | tail -10
   exit 1
 fi
 
@@ -121,8 +130,13 @@ echo ""
 echo "================================================"
 echo "✅ Deployment Complete"
 echo "================================================"
+echo ""
+echo "Deployment Status:"
 kubectl -n ${K8S_NAMESPACE} get deployment ${SERVICE_NAME} -o wide
-kubectl -n ${K8S_NAMESPACE} get pods -l app=${SERVICE_NAME}
+echo ""
+echo "Pod Status:"
+kubectl -n ${K8S_NAMESPACE} get pods -l app=${SERVICE_NAME} -o wide
+echo ""
 echo "================================================"
 
 ENDSSH
@@ -130,33 +144,84 @@ ENDSSH
         }
       }
     }
+
+    stage('Verification') {
+      steps {
+        echo ""
+        echo "================================================"
+        echo "✅ Deployment Verification"
+        echo "================================================"
+        echo "Service: ${params.SERVICE_NAME}"
+        echo "Image: ${env.DEPLOY_IMAGE}"
+        echo "Namespace: ${env.K8S_NAMESPACE}"
+        echo "Cluster: ${env.EKS_CLUSTER}"
+        echo "================================================"
+        echo ""
+        echo "Manual inspection commands (run on bastion):"
+        echo "  ssh -i <key> ${env.BASTION_USER}@${env.BASTION_HOST}"
+        echo ""
+        echo "  # Check deployment"
+        echo "  kubectl -n ${env.K8S_NAMESPACE} get deployment ${params.SERVICE_NAME} -o wide"
+        echo ""
+        echo "  # Check pods"
+        echo "  kubectl -n ${env.K8S_NAMESPACE} get pods -l app=${params.SERVICE_NAME}"
+        echo ""
+        echo "  # View logs"
+        echo "  kubectl -n ${env.K8S_NAMESPACE} logs -l app=${params.SERVICE_NAME} --tail=50 -f"
+        echo ""
+        echo "  # Describe deployment (for troubleshooting)"
+        echo "  kubectl -n ${env.K8S_NAMESPACE} describe deployment ${params.SERVICE_NAME}"
+        echo "================================================"
+      }
+    }
   }
 
   post {
     success { 
       echo ""
-      echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
-      echo "✅     DEPLOYMENT SUCCESSFUL      ✅"
-      echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
+      echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
+      echo "✅                                              ✅"
+      echo "✅          DEPLOYMENT SUCCESSFUL               ✅"
+      echo "✅                                              ✅"
+      echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
       echo ""
-      echo "Service: ${params.SERVICE_NAME}"
-      echo "Image: ${env.DEPLOY_IMAGE}"
-      echo "Time: ${new Date()}"
+      echo "  Service:   ${params.SERVICE_NAME}"
+      echo "  Image:     ${env.DEPLOY_IMAGE}"
+      echo "  Namespace: ${env.K8S_NAMESPACE}"
+      echo "  Cluster:   ${env.EKS_CLUSTER}"
+      echo "  Time:      ${new Date()}"
+      echo ""
+      echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
       echo ""
     }
     failure { 
       echo ""
-      echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
-      echo "❌     DEPLOYMENT FAILED         ❌"
-      echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
+      echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
+      echo "❌                                              ❌"
+      echo "❌          DEPLOYMENT FAILED                   ❌"
+      echo "❌                                              ❌"
+      echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
       echo ""
-      echo "Service: ${params.SERVICE_NAME}"
+      echo "  Service: ${params.SERVICE_NAME}"
+      echo "  Image:   ${env.DEPLOY_IMAGE ?: 'Not set'}"
       echo ""
-      echo "Debug on bastion:"
-      echo "  ssh ${env.BASTION_USER}@${env.BASTION_HOST}"
-      echo "  kubectl -n ${env.K8S_NAMESPACE} describe deployment ${params.SERVICE_NAME}"
-      echo "  kubectl -n ${env.K8S_NAMESPACE} get pods -l app=${params.SERVICE_NAME}"
+      echo "Troubleshooting Steps:"
+      echo "  1. Run with DEBUG_MODE=true for verbose SSH logs"
+      echo "  2. Verify IMAGE_URI exists in ECR repository"
+      echo "  3. Check SSH credential 'bastion-ssh' in Jenkins"
+      echo "  4. Verify bastion connectivity:"
+      echo "     ssh -i <key> ${env.BASTION_USER}@${env.BASTION_HOST}"
+      echo "  5. Check EKS cluster access from bastion:"
+      echo "     aws eks update-kubeconfig --region ${env.AWS_REGION} --name ${env.EKS_CLUSTER}"
+      echo "     kubectl get nodes"
+      echo "  6. Verify deployment exists:"
+      echo "     kubectl -n ${env.K8S_NAMESPACE} get deployment ${params.SERVICE_NAME}"
       echo ""
+      echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
+      echo ""
+    }
+    always {
+      echo "Pipeline execution completed at: ${new Date()}"
     }
   }
 }
