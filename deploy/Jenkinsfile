@@ -2,7 +2,7 @@ pipeline {
   agent any
 
   parameters {
-    string(name: 'BRANCH_NAME', defaultValue: 'devops', description: 'Git branch')
+    string(name: 'BRANCH_NAME', defaultValue: 'devops', description: 'Git branch to deploy from')
     choice(name: 'SERVICE_NAME', choices: """
 alerting-service
 api-gateway-service
@@ -18,10 +18,12 @@ tts-service
 """, description: 'Service to deploy')
     string(name: 'IMAGE_URI', defaultValue: '', description: 'REQUIRED: Full ECR image URI. Example: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/nmt-service:14112025-101038-IST')
     string(name: 'ROLLOUT_TIMEOUT', defaultValue: '180s', description: 'Rollout timeout (e.g. 180s or 5m)')
+    booleanParam(name: 'APPLY_MANIFESTS', defaultValue: true, description: 'Apply ConfigMap/Secret/Deployment from Git repository')
     booleanParam(name: 'DEBUG_MODE', defaultValue: false, description: 'Enable verbose SSH debugging')
   }
 
   environment {
+    GIT_REPO      = 'https://github.com/COSS-India/ai4i-core.git'
     AWS_REGION    = 'ap-south-1'
     EKS_CLUSTER   = 'AI4Voice-core'
     K8S_NAMESPACE = 'dev'
@@ -40,10 +42,40 @@ tts-service
           echo "================================================"
           echo "Deployment Configuration"
           echo "================================================"
-          echo "Service: ${params.SERVICE_NAME}"
-          echo "Image: ${env.DEPLOY_IMAGE}"
-          echo "Namespace: ${env.K8S_NAMESPACE}"
-          echo "Cluster: ${env.EKS_CLUSTER}"
+          echo "Service:          ${params.SERVICE_NAME}"
+          echo "Image:            ${env.DEPLOY_IMAGE}"
+          echo "Namespace:        ${env.K8S_NAMESPACE}"
+          echo "Cluster:          ${env.EKS_CLUSTER}"
+          echo "Branch:           ${params.BRANCH_NAME}"
+          echo "Apply Manifests:  ${params.APPLY_MANIFESTS}"
+          echo "Debug Mode:       ${params.DEBUG_MODE}"
+          echo "================================================"
+        }
+      }
+    }
+
+    stage('Checkout Repository') {
+      when { expression { return params.APPLY_MANIFESTS } }
+      steps {
+        echo "================================================"
+        echo "Checking out Git repository..."
+        echo "Repository: ${env.GIT_REPO}"
+        echo "Branch:     ${params.BRANCH_NAME}"
+        echo "================================================"
+        checkout([
+          $class: 'GitSCM',
+          branches: [[name: "*/${params.BRANCH_NAME}"]],
+          userRemoteConfigs: [[url: "${env.GIT_REPO}"]]
+        ])
+        script {
+          def manifestPath = "k8's_manifest/${params.SERVICE_NAME}"
+          if (!fileExists(manifestPath)) {
+            error "❌ Kubernetes manifests not found at ${manifestPath}"
+          }
+          echo "✓ Found Kubernetes manifests at ${manifestPath}"
+          echo ""
+          echo "Manifest files available:"
+          sh "ls -lh ${manifestPath}/"
           echo "================================================"
         }
       }
@@ -63,15 +95,115 @@ tts-service
               echo '================================================'
               
               # Test SSH connection
-              ssh ${sshOpts} -i "\${SSH_KEY}" -o StrictHostKeyChecking=no -o ConnectTimeout=15 ${BASTION_USER}@${BASTION_HOST} 'echo "✓ Connected"; hostname; whoami'
+              ssh ${sshOpts} -i "\${SSH_KEY}" -o StrictHostKeyChecking=no -o ConnectTimeout=15 ${BASTION_USER}@${BASTION_HOST} 'echo "✓ SSH Connected"; hostname; whoami'
               
               # Verify required tools
-              ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} 'which aws && which kubectl && echo "✓ Tools available"'
+              ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} 'which aws && which kubectl && echo "✓ Required tools available"'
               
-              echo '✅ Bastion ready for deployment'
+              echo '================================================'
+              echo '✅ Bastion is ready for deployment'
               echo '================================================'
             """
           }
+        }
+      }
+    }
+
+    stage('Apply Kubernetes Manifests') {
+      when { expression { return params.APPLY_MANIFESTS } }
+      steps {
+        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+          sh """
+            set -eu
+            
+            echo "================================================"
+            echo "Applying Kubernetes Manifests from Git"
+            echo "================================================"
+            echo "Source: k8's_manifest/${SERVICE_NAME}/"
+            echo "Target: EKS Cluster (${EKS_CLUSTER})"
+            echo "Namespace: ${K8S_NAMESPACE}"
+            echo "================================================"
+            
+            # Create temp directory on bastion
+            echo ""
+            echo "Step 1: Creating temporary directory on bastion..."
+            TEMP_DIR=\$(ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} 'mktemp -d /tmp/k8s-manifests.XXXXXX')
+            echo "✓ Created temp directory: \${TEMP_DIR}"
+            
+            # Copy manifests to bastion
+            echo ""
+            echo "Step 2: Copying manifests to bastion..."
+            scp -i "\${SSH_KEY}" -o StrictHostKeyChecking=no -r k8\\'s_manifest/${SERVICE_NAME}/* ${BASTION_USER}@${BASTION_HOST}:\${TEMP_DIR}/
+            echo "✓ Manifests copied successfully"
+            
+            # Apply manifests on bastion
+            echo ""
+            echo "Step 3: Applying manifests to EKS cluster..."
+            ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} bash -s <<'ENDSSH'
+set -eu
+
+echo "================================================"
+echo "Applying Kubernetes Manifests"
+echo "================================================"
+
+# Update kubeconfig
+aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER} --kubeconfig ~/.kube/config
+
+cd \${TEMP_DIR}
+
+echo ""
+echo "Manifest files in temporary directory:"
+ls -lh
+echo ""
+
+# Apply ConfigMap if exists
+if [ -f "${SERVICE_NAME}-configmap.yaml" ]; then
+  echo "→ Applying ConfigMap: ${SERVICE_NAME}-configmap.yaml"
+  kubectl apply -f ${SERVICE_NAME}-configmap.yaml -n ${K8S_NAMESPACE}
+  echo "  ✓ ConfigMap applied"
+else
+  echo "  ⚠ No ConfigMap file found (${SERVICE_NAME}-configmap.yaml)"
+fi
+
+echo ""
+
+# Apply Secret if exists
+if [ -f "${SERVICE_NAME}-secret.yaml" ]; then
+  echo "→ Applying Secret: ${SERVICE_NAME}-secret.yaml"
+  kubectl apply -f ${SERVICE_NAME}-secret.yaml -n ${K8S_NAMESPACE}
+  echo "  ✓ Secret applied"
+else
+  echo "  ⚠ No Secret file found (${SERVICE_NAME}-secret.yaml)"
+fi
+
+echo ""
+
+# Apply Deployment/Service manifests
+if [ -f "${SERVICE_NAME}.yaml" ]; then
+  echo "→ Applying Deployment/Service: ${SERVICE_NAME}.yaml"
+  kubectl apply -f ${SERVICE_NAME}.yaml -n ${K8S_NAMESPACE}
+  echo "  ✓ Deployment/Service applied"
+else
+  echo "  ⚠ No deployment file found (${SERVICE_NAME}.yaml)"
+fi
+
+echo ""
+echo "================================================"
+echo "✅ All manifests applied successfully"
+echo "================================================"
+
+# Cleanup temp directory
+cd /tmp
+rm -rf \${TEMP_DIR}
+echo "✓ Temporary directory cleaned up"
+
+ENDSSH
+            
+            echo ""
+            echo "================================================"
+            echo "✅ Kubernetes manifests applied from Git"
+            echo "================================================"
+          """
         }
       }
     }
@@ -83,27 +215,30 @@ tts-service
             ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no -o ServerAliveInterval=30 ${BASTION_USER}@${BASTION_HOST} bash -s <<'ENDSSH'
 set -eu
 
+echo ""
 echo "================================================"
 echo "Starting EKS Deployment"
 echo "================================================"
-echo "Cluster: ${EKS_CLUSTER}"
+echo "Cluster:   ${EKS_CLUSTER}"
 echo "Namespace: ${K8S_NAMESPACE}"
-echo "Service: ${SERVICE_NAME}"
-echo "Image: ${DEPLOY_IMAGE}"
+echo "Service:   ${SERVICE_NAME}"
+echo "Image:     ${DEPLOY_IMAGE}"
 echo "================================================"
 
 # Update kubeconfig
 echo ""
 echo "[1/4] Updating kubeconfig..."
-aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
+aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER} --kubeconfig ~/.kube/config
+echo "✓ Kubeconfig updated"
 
-# Verify cluster
+# Verify cluster connectivity
 echo ""
 echo "[2/4] Verifying cluster connectivity..."
 kubectl cluster-info | head -1
-kubectl get nodes --no-headers | wc -l | xargs -I {} echo "Connected to cluster with {} nodes"
+NODE_COUNT=\$(kubectl get nodes --no-headers | wc -l)
+echo "✓ Connected to cluster with \${NODE_COUNT} nodes"
 
-# Update deployment
+# Update deployment image
 echo ""
 echo "[3/4] Updating deployment image..."
 kubectl -n ${K8S_NAMESPACE} set image deployment/${SERVICE_NAME} ${SERVICE_NAME}=${DEPLOY_IMAGE} --record
@@ -117,15 +252,37 @@ if kubectl -n ${K8S_NAMESPACE} rollout status deployment/${SERVICE_NAME} --timeo
 else
   echo "❌ Rollout failed or timed out"
   echo ""
-  echo "Current pod status:"
-  kubectl -n ${K8S_NAMESPACE} get pods -l app=${SERVICE_NAME} -o wide
+  echo "════════════════════════════════════════════════"
+  echo "TROUBLESHOOTING INFORMATION"
+  echo "════════════════════════════════════════════════"
+  
   echo ""
-  echo "Recent events:"
-  kubectl -n ${K8S_NAMESPACE} get events --sort-by='.lastTimestamp' | tail -10
+  echo "Current Pod Status:"
+  kubectl -n ${K8S_NAMESPACE} get pods -l app=${SERVICE_NAME} -o wide
+  
+  echo ""
+  echo "Recent Events:"
+  kubectl -n ${K8S_NAMESPACE} get events --sort-by='.lastTimestamp' --field-selector involvedObject.name=${SERVICE_NAME} | tail -15
+  
+  echo ""
+  echo "Pod Logs (last 50 lines):"
+  echo "────────────────────────────────────────────────"
+  NEW_POD=\$(kubectl -n ${K8S_NAMESPACE} get pods -l app=${SERVICE_NAME} --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null || echo "")
+  if [ -n "\$NEW_POD" ]; then
+    echo "Logs from pod: \$NEW_POD"
+    kubectl -n ${K8S_NAMESPACE} logs \$NEW_POD --tail=50 2>/dev/null || \
+    kubectl -n ${K8S_NAMESPACE} logs \$NEW_POD --previous --tail=50 2>/dev/null || \
+    echo "Could not retrieve logs (pod may not have started)"
+  else
+    echo "No pods found for service ${SERVICE_NAME}"
+  fi
+  
+  echo ""
+  echo "════════════════════════════════════════════════"
   exit 1
 fi
 
-# Final status
+# Show final deployment status
 echo ""
 echo "================================================"
 echo "✅ Deployment Complete"
@@ -136,6 +293,9 @@ kubectl -n ${K8S_NAMESPACE} get deployment ${SERVICE_NAME} -o wide
 echo ""
 echo "Pod Status:"
 kubectl -n ${K8S_NAMESPACE} get pods -l app=${SERVICE_NAME} -o wide
+echo ""
+echo "Service Status:"
+kubectl -n ${K8S_NAMESPACE} get service ${SERVICE_NAME} 2>/dev/null || echo "No service found"
 echo ""
 echo "================================================"
 
@@ -149,28 +309,41 @@ ENDSSH
       steps {
         echo ""
         echo "================================================"
-        echo "✅ Deployment Verification"
+        echo "✅ Deployment Verification Complete"
         echo "================================================"
-        echo "Service: ${params.SERVICE_NAME}"
-        echo "Image: ${env.DEPLOY_IMAGE}"
-        echo "Namespace: ${env.K8S_NAMESPACE}"
-        echo "Cluster: ${env.EKS_CLUSTER}"
+        echo "Service:          ${params.SERVICE_NAME}"
+        echo "Image:            ${env.DEPLOY_IMAGE}"
+        echo "Namespace:        ${env.K8S_NAMESPACE}"
+        echo "Cluster:          ${env.EKS_CLUSTER}"
+        echo "Manifests Applied: ${params.APPLY_MANIFESTS}"
         echo "================================================"
         echo ""
-        echo "Manual inspection commands (run on bastion):"
-        echo "  ssh -i <key> ${env.BASTION_USER}@${env.BASTION_HOST}"
+        echo "Useful Commands for Manual Inspection:"
         echo ""
-        echo "  # Check deployment"
-        echo "  kubectl -n ${env.K8S_NAMESPACE} get deployment ${params.SERVICE_NAME} -o wide"
+        echo "1. SSH to bastion:"
+        echo "   ssh -i <key> ${env.BASTION_USER}@${env.BASTION_HOST}"
         echo ""
-        echo "  # Check pods"
-        echo "  kubectl -n ${env.K8S_NAMESPACE} get pods -l app=${params.SERVICE_NAME}"
+        echo "2. View deployment details:"
+        echo "   kubectl -n ${env.K8S_NAMESPACE} get deployment ${params.SERVICE_NAME} -o wide"
         echo ""
-        echo "  # View logs"
-        echo "  kubectl -n ${env.K8S_NAMESPACE} logs -l app=${params.SERVICE_NAME} --tail=50 -f"
+        echo "3. View pods:"
+        echo "   kubectl -n ${env.K8S_NAMESPACE} get pods -l app=${params.SERVICE_NAME}"
         echo ""
-        echo "  # Describe deployment (for troubleshooting)"
-        echo "  kubectl -n ${env.K8S_NAMESPACE} describe deployment ${params.SERVICE_NAME}"
+        echo "4. View real-time logs:"
+        echo "   kubectl -n ${env.K8S_NAMESPACE} logs -l app=${params.SERVICE_NAME} --tail=50 -f"
+        echo ""
+        echo "5. Check ConfigMap:"
+        echo "   kubectl -n ${env.K8S_NAMESPACE} get configmap ${params.SERVICE_NAME}-config -o yaml"
+        echo ""
+        echo "6. Check Secret:"
+        echo "   kubectl -n ${env.K8S_NAMESPACE} get secret ${params.SERVICE_NAME}-secret -o yaml"
+        echo ""
+        echo "7. Describe deployment (troubleshooting):"
+        echo "   kubectl -n ${env.K8S_NAMESPACE} describe deployment ${params.SERVICE_NAME}"
+        echo ""
+        echo "8. View events:"
+        echo "   kubectl -n ${env.K8S_NAMESPACE} get events --sort-by='.lastTimestamp' | tail -20"
+        echo ""
         echo "================================================"
       }
     }
@@ -185,11 +358,13 @@ ENDSSH
       echo "✅                                              ✅"
       echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
       echo ""
-      echo "  Service:   ${params.SERVICE_NAME}"
-      echo "  Image:     ${env.DEPLOY_IMAGE}"
-      echo "  Namespace: ${env.K8S_NAMESPACE}"
-      echo "  Cluster:   ${env.EKS_CLUSTER}"
-      echo "  Time:      ${new Date()}"
+      echo "  Service:          ${params.SERVICE_NAME}"
+      echo "  Image:            ${env.DEPLOY_IMAGE}"
+      echo "  Namespace:        ${env.K8S_NAMESPACE}"
+      echo "  Cluster:          ${env.EKS_CLUSTER}"
+      echo "  Manifests Applied: ${params.APPLY_MANIFESTS}"
+      echo "  Branch:           ${params.BRANCH_NAME}"
+      echo "  Completed At:     ${new Date()}"
       echo ""
       echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
       echo ""
@@ -202,26 +377,44 @@ ENDSSH
       echo "❌                                              ❌"
       echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
       echo ""
-      echo "  Service: ${params.SERVICE_NAME}"
-      echo "  Image:   ${env.DEPLOY_IMAGE ?: 'Not set'}"
+      echo "  Service:  ${params.SERVICE_NAME}"
+      echo "  Image:    ${env.DEPLOY_IMAGE ?: 'Not set'}"
+      echo "  Failed At: ${new Date()}"
       echo ""
-      echo "Troubleshooting Steps:"
-      echo "  1. Run with DEBUG_MODE=true for verbose SSH logs"
-      echo "  2. Verify IMAGE_URI exists in ECR repository"
-      echo "  3. Check SSH credential 'bastion-ssh' in Jenkins"
-      echo "  4. Verify bastion connectivity:"
-      echo "     ssh -i <key> ${env.BASTION_USER}@${env.BASTION_HOST}"
-      echo "  5. Check EKS cluster access from bastion:"
-      echo "     aws eks update-kubeconfig --region ${env.AWS_REGION} --name ${env.EKS_CLUSTER}"
-      echo "     kubectl get nodes"
-      echo "  6. Verify deployment exists:"
-      echo "     kubectl -n ${env.K8S_NAMESPACE} get deployment ${params.SERVICE_NAME}"
+      echo "Troubleshooting Guide:"
+      echo "═══════════════════════════════════════════════"
+      echo ""
+      echo "1. Check pod logs in the output above"
+      echo ""
+      echo "2. Run with DEBUG_MODE=true for verbose SSH logs"
+      echo ""
+      echo "3. Verify manifests in Git repository:"
+      echo "   - Check k8's_manifest/${params.SERVICE_NAME}/nmt-service-configmap.yaml"
+      echo "   - Ensure REDIS_PORT (not REDIS_PORT_NUMBER)"
+      echo ""
+      echo "4. Verify on bastion host:"
+      echo "   ssh -i <key> ${env.BASTION_USER}@${env.BASTION_HOST}"
+      echo "   kubectl -n ${env.K8S_NAMESPACE} get pods -l app=${params.SERVICE_NAME}"
+      echo "   kubectl -n ${env.K8S_NAMESPACE} logs <pod-name>"
+      echo ""
+      echo "5. Check ConfigMap was applied correctly:"
+      echo "   kubectl -n ${env.K8S_NAMESPACE} get configmap ${params.SERVICE_NAME}-config -o yaml"
+      echo ""
+      echo "6. Verify IMAGE_URI exists in ECR:"
+      echo "   aws ecr describe-images --repository-name ai4voice/${params.SERVICE_NAME}"
+      echo ""
+      echo "7. Check deployment status:"
+      echo "   kubectl -n ${env.K8S_NAMESPACE} describe deployment ${params.SERVICE_NAME}"
+      echo ""
+      echo "═══════════════════════════════════════════════"
       echo ""
       echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
       echo ""
     }
     always {
+      echo "════════════════════════════════════════════════"
       echo "Pipeline execution completed at: ${new Date()}"
+      echo "════════════════════════════════════════════════"
     }
   }
 }
