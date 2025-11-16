@@ -10,15 +10,16 @@ data:
   LOG_LEVEL: "INFO"
   
   # PostgreSQL Configuration
-  # Using simple service name - will work if postgres is in same namespace
+  # Using simple service name - postgres service exists in dev namespace
   DATABASE_URL: "postgresql+asyncpg://ai4v_user:password123@postgres:5432/ai4v_db"
   DB_POOL_SIZE: "20"
   DB_MAX_OVERFLOW: "10"
   
   # Redis Configuration
-  # Using simple service name - will work if redis is in same namespace
-  REDIS_HOST: "redis"
-  REDIS_PORT_NUMBER: "6379"
+  # IMPORTANT: New code expects REDIS_PORT (not REDIS_PORT_NUMBER)
+  REDIS_HOST: "redis.dev.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: "redis_secure_password_2024"
   REDIS_TIMEOUT: "5"
   
   # Triton Inference Server Configuration
