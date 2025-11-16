@@ -136,8 +136,10 @@ tts-service
             # Apply manifests on bastion
             echo ""
             echo "Step 3: Applying manifests to EKS cluster..."
-            ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} bash -s <<'ENDSSH'
+            ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} "bash -s \${TEMP_DIR}" <<'ENDSSH'
 set -eu
+
+TEMP_DIR="\$1"
 
 echo "================================================"
 echo "Applying Kubernetes Manifests"
@@ -146,7 +148,7 @@ echo "================================================"
 # Update kubeconfig
 aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER} --kubeconfig ~/.kube/config
 
-cd \${TEMP_DIR}
+cd "\${TEMP_DIR}"
 
 echo ""
 echo "Manifest files in temporary directory:"
@@ -191,7 +193,7 @@ echo "================================================"
 
 # Cleanup temp directory
 cd /tmp
-rm -rf \${TEMP_DIR}
+rm -rf "\${TEMP_DIR}"
 echo "✓ Temporary directory cleaned up"
 
 ENDSSH
