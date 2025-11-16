@@ -73,11 +73,6 @@ tts-service
             error "❌ Kubernetes manifests not found at ${manifestPath}"
           }
           echo "✓ Found Kubernetes manifests at ${manifestPath}"
-          echo ""
-          echo "Manifest files available:"
-          sh """
-            ls -lh '${manifestPath}/'
-          """
           echo "================================================"
         }
       }
@@ -135,7 +130,7 @@ tts-service
             # Copy manifests to bastion
             echo ""
             echo "Step 2: Copying manifests to bastion..."
-            scp -i "\${SSH_KEY}" -o StrictHostKeyChecking=no -r k8\\'s_manifest/${SERVICE_NAME}/* ${BASTION_USER}@${BASTION_HOST}:\${TEMP_DIR}/
+            scp -i "\${SSH_KEY}" -o StrictHostKeyChecking=no -r "k8's_manifest/${SERVICE_NAME}/"* ${BASTION_USER}@${BASTION_HOST}:\${TEMP_DIR}/
             echo "✓ Manifests copied successfully"
             
             # Apply manifests on bastion
