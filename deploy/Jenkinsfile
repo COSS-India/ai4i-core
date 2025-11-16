@@ -19,6 +19,7 @@ tts-service
     string(name: 'IMAGE_URI', defaultValue: '', description: 'REQUIRED: Full ECR image URI. Example: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/nmt-service:14112025-101038-IST')
     string(name: 'ROLLOUT_TIMEOUT', defaultValue: '180s', description: 'Rollout timeout (e.g. 180s or 5m)')
     booleanParam(name: 'APPLY_MANIFESTS', defaultValue: true, description: 'Apply ConfigMap/Secret/Deployment from Git repository')
+    booleanParam(name: 'FIX_DNS_HOSTNAMES', defaultValue: true, description: 'Automatically fix DNS hostnames in ConfigMap (recommended)')
     booleanParam(name: 'DEBUG_MODE', defaultValue: false, description: 'Enable verbose SSH debugging')
   }
 
@@ -48,6 +49,7 @@ tts-service
           echo "Cluster:          ${env.EKS_CLUSTER}"
           echo "Branch:           ${params.BRANCH_NAME}"
           echo "Apply Manifests:  ${params.APPLY_MANIFESTS}"
+          echo "Fix DNS Hostnames: ${params.FIX_DNS_HOSTNAMES}"
           echo "Debug Mode:       ${params.DEBUG_MODE}"
           echo "================================================"
         }
@@ -207,6 +209,89 @@ ENDSSH
       }
     }
 
+    stage('Fix DNS Hostnames in ConfigMap') {
+      when { expression { return params.FIX_DNS_HOSTNAMES } }
+      steps {
+        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+          sh """
+            ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} bash -s <<'ENDSSH'
+set -eu
+
+echo ""
+echo "================================================"
+echo "Fixing DNS Hostnames in ConfigMap"
+echo "================================================"
+echo "Service:   ${SERVICE_NAME}"
+echo "Namespace: ${K8S_NAMESPACE}"
+echo "================================================"
+
+# Update kubeconfig
+aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER} --kubeconfig ~/.kube/config
+
+# Check if ConfigMap exists
+if ! kubectl get configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} >/dev/null 2>&1; then
+  echo "⚠ ConfigMap ${SERVICE_NAME}-config does not exist, skipping DNS fix"
+  exit 0
+fi
+
+echo ""
+echo "Current ConfigMap values:"
+echo "────────────────────────────────────────────────"
+kubectl get configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} -o json | jq -r '.data | to_entries[] | select(.key | test("REDIS|POSTGRES|DATABASE")) | "  \\(.key): \\(.value)"' || true
+
+echo ""
+echo "Applying DNS fixes..."
+echo "────────────────────────────────────────────────"
+
+# Patch ConfigMap with correct FQDN hostnames
+kubectl patch configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} --type merge -p '{
+  "data": {
+    "REDIS_HOST": "redis.dev.svc.cluster.local"
+  }
+}' 2>/dev/null && echo "  ✓ Fixed REDIS_HOST" || echo "  ⚠ REDIS_HOST not present or already correct"
+
+# Fix DATABASE_URL if it exists and uses short hostname
+CURRENT_DB_URL=\$(kubectl get configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} -o jsonpath='{.data.DATABASE_URL}' 2>/dev/null || echo "")
+
+if [ -n "\${CURRENT_DB_URL}" ]; then
+  # Check if DATABASE_URL uses short hostname (e.g., @postgres:)
+  if echo "\${CURRENT_DB_URL}" | grep -q "@postgres:"; then
+    echo "  → Fixing DATABASE_URL with short hostname..."
+    FIXED_DB_URL=\$(echo "\${CURRENT_DB_URL}" | sed 's/@postgres:/@postgres.dev.svc.cluster.local:/')
+    kubectl patch configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} --type merge -p "{
+      \"data\": {
+        \"DATABASE_URL\": \"\${FIXED_DB_URL}\"
+      }
+    }"
+    echo "  ✓ Fixed DATABASE_URL"
+  else
+    echo "  ⚠ DATABASE_URL already uses FQDN or not present"
+  fi
+fi
+
+# Fix POSTGRES_HOST if it exists
+kubectl patch configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} --type merge -p '{
+  "data": {
+    "POSTGRES_HOST": "postgres.dev.svc.cluster.local"
+  }
+}' 2>/dev/null && echo "  ✓ Fixed POSTGRES_HOST" || echo "  ⚠ POSTGRES_HOST not present or already correct"
+
+echo ""
+echo "Updated ConfigMap values:"
+echo "────────────────────────────────────────────────"
+kubectl get configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} -o json | jq -r '.data | to_entries[] | select(.key | test("REDIS|POSTGRES|DATABASE")) | "  \\(.key): \\(.value)"' || true
+
+echo ""
+echo "================================================"
+echo "✅ DNS hostnames fixed in ConfigMap"
+echo "================================================"
+
+ENDSSH
+"""
+        }
+      }
+    }
+
     stage('Deploy to EKS') {
       steps {
         withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
@@ -277,6 +362,11 @@ else
   fi
   
   echo ""
+  echo "ConfigMap DNS Configuration:"
+  echo "────────────────────────────────────────────────"
+  kubectl get configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} -o json 2>/dev/null | jq -r '.data | to_entries[] | select(.key | test("REDIS|POSTGRES|DATABASE")) | "  \\(.key): \\(.value)"' || echo "  ConfigMap not found or no database config"
+  
+  echo ""
   echo "════════════════════════════════════════════════"
   exit 1
 fi
@@ -296,6 +386,10 @@ echo ""
 echo "Service Status:"
 kubectl -n ${K8S_NAMESPACE} get service ${SERVICE_NAME} 2>/dev/null || echo "No service found"
 echo ""
+echo "Final DNS Configuration Check:"
+echo "────────────────────────────────────────────────"
+kubectl get configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} -o json 2>/dev/null | jq -r '.data | to_entries[] | select(.key | test("REDIS|POSTGRES|DATABASE")) | "  \\(.key): \\(.value)"' || echo "  No database configuration found"
+echo ""
 echo "================================================"
 
 ENDSSH
@@ -310,11 +404,12 @@ ENDSSH
         echo "================================================"
         echo "✅ Deployment Verification Complete"
         echo "================================================"
-        echo "Service:          ${params.SERVICE_NAME}"
-        echo "Image:            ${env.DEPLOY_IMAGE}"
-        echo "Namespace:        ${env.K8S_NAMESPACE}"
-        echo "Cluster:          ${env.EKS_CLUSTER}"
+        echo "Service:           ${params.SERVICE_NAME}"
+        echo "Image:             ${env.DEPLOY_IMAGE}"
+        echo "Namespace:         ${env.K8S_NAMESPACE}"
+        echo "Cluster:           ${env.EKS_CLUSTER}"
         echo "Manifests Applied: ${params.APPLY_MANIFESTS}"
+        echo "DNS Hostnames Fixed: ${params.FIX_DNS_HOSTNAMES}"
         echo "================================================"
         echo ""
         echo "Useful Commands for Manual Inspection:"
@@ -331,17 +426,26 @@ ENDSSH
         echo "4. View real-time logs:"
         echo "   kubectl -n ${env.K8S_NAMESPACE} logs -l app=${params.SERVICE_NAME} --tail=50 -f"
         echo ""
-        echo "5. Check ConfigMap:"
+        echo "5. Check ConfigMap (verify DNS hostnames):"
         echo "   kubectl -n ${env.K8S_NAMESPACE} get configmap ${params.SERVICE_NAME}-config -o yaml"
         echo ""
-        echo "6. Check Secret:"
+        echo "6. Verify DNS resolution from pod:"
+        echo "   POD=\$(kubectl get pods -n ${env.K8S_NAMESPACE} -l app=${params.SERVICE_NAME} -o jsonpath='{.items[0].metadata.name}')"
+        echo "   kubectl exec -n ${env.K8S_NAMESPACE} \$POD -- nslookup redis.dev.svc.cluster.local"
+        echo ""
+        echo "7. Check Secret:"
         echo "   kubectl -n ${env.K8S_NAMESPACE} get secret ${params.SERVICE_NAME}-secret -o yaml"
         echo ""
-        echo "7. Describe deployment (troubleshooting):"
+        echo "8. Describe deployment (troubleshooting):"
         echo "   kubectl -n ${env.K8S_NAMESPACE} describe deployment ${params.SERVICE_NAME}"
         echo ""
-        echo "8. View events:"
+        echo "9. View events:"
         echo "   kubectl -n ${env.K8S_NAMESPACE} get events --sort-by='.lastTimestamp' | tail -20"
+        echo ""
+        echo "10. Test database connectivity from pod:"
+        echo "    POD=\$(kubectl get pods -n ${env.K8S_NAMESPACE} -l app=${params.SERVICE_NAME} -o jsonpath='{.items[0].metadata.name}')"
+        echo "    kubectl exec -n ${env.K8S_NAMESPACE} \$POD -- nc -zv redis.dev.svc.cluster.local 6379"
+        echo "    kubectl exec -n ${env.K8S_NAMESPACE} \$POD -- nc -zv postgres.dev.svc.cluster.local 5432"
         echo ""
         echo "================================================"
       }
@@ -357,13 +461,14 @@ ENDSSH
       echo "✅                                              ✅"
       echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
       echo ""
-      echo "  Service:          ${params.SERVICE_NAME}"
-      echo "  Image:            ${env.DEPLOY_IMAGE}"
-      echo "  Namespace:        ${env.K8S_NAMESPACE}"
-      echo "  Cluster:          ${env.EKS_CLUSTER}"
+      echo "  Service:           ${params.SERVICE_NAME}"
+      echo "  Image:             ${env.DEPLOY_IMAGE}"
+      echo "  Namespace:         ${env.K8S_NAMESPACE}"
+      echo "  Cluster:           ${env.EKS_CLUSTER}"
       echo "  Manifests Applied: ${params.APPLY_MANIFESTS}"
-      echo "  Branch:           ${params.BRANCH_NAME}"
-      echo "  Completed At:     ${new Date()}"
+      echo "  DNS Hostnames Fixed: ${params.FIX_DNS_HOSTNAMES}"
+      echo "  Branch:            ${params.BRANCH_NAME}"
+      echo "  Completed At:      ${new Date()}"
       echo ""
       echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
       echo ""
@@ -387,23 +492,36 @@ ENDSSH
       echo ""
       echo "2. Run with DEBUG_MODE=true for verbose SSH logs"
       echo ""
-      echo "3. Verify manifests in Git repository:"
-      echo "   - Check k8's_manifest/${params.SERVICE_NAME}/nmt-service-configmap.yaml"
-      echo "   - Ensure REDIS_PORT (not REDIS_PORT_NUMBER)"
+      echo "3. Verify DNS configuration in ConfigMap:"
+      echo "   ssh ${env.BASTION_USER}@${env.BASTION_HOST}"
+      echo "   kubectl -n ${env.K8S_NAMESPACE} get configmap ${params.SERVICE_NAME}-config -o yaml | grep -E 'REDIS|POSTGRES|DATABASE'"
       echo ""
-      echo "4. Verify on bastion host:"
-      echo "   ssh -i <key> ${env.BASTION_USER}@${env.BASTION_HOST}"
-      echo "   kubectl -n ${env.K8S_NAMESPACE} get pods -l app=${params.SERVICE_NAME}"
-      echo "   kubectl -n ${env.K8S_NAMESPACE} logs <pod-name>"
+      echo "4. Verify DNS resolution from pod:"
+      echo "   POD=\$(kubectl get pods -n ${env.K8S_NAMESPACE} -l app=${params.SERVICE_NAME} -o jsonpath='{.items[0].metadata.name}')"
+      echo "   kubectl exec -n ${env.K8S_NAMESPACE} \$POD -- nslookup redis.dev.svc.cluster.local"
+      echo "   kubectl exec -n ${env.K8S_NAMESPACE} \$POD -- nslookup postgres.dev.svc.cluster.local"
       echo ""
-      echo "5. Check ConfigMap was applied correctly:"
-      echo "   kubectl -n ${env.K8S_NAMESPACE} get configmap ${params.SERVICE_NAME}-config -o yaml"
+      echo "5. Check if ConfigMap has short hostnames:"
+      echo "   If you see 'REDIS_HOST: redis' instead of 'REDIS_HOST: redis.dev.svc.cluster.local'"
+      echo "   Re-run with FIX_DNS_HOSTNAMES=true"
       echo ""
       echo "6. Verify IMAGE_URI exists in ECR:"
-      echo "   aws ecr describe-images --repository-name ai4voice/${params.SERVICE_NAME}"
+      echo "   aws ecr describe-images --repository-name ai4voice/${params.SERVICE_NAME} --region ${env.AWS_REGION}"
       echo ""
       echo "7. Check deployment status:"
       echo "   kubectl -n ${env.K8S_NAMESPACE} describe deployment ${params.SERVICE_NAME}"
+      echo ""
+      echo "8. View recent events:"
+      echo "   kubectl -n ${env.K8S_NAMESPACE} get events --sort-by='.lastTimestamp' | tail -30"
+      echo ""
+      echo "9. Manual ConfigMap fix if needed:"
+      echo "   kubectl patch configmap ${params.SERVICE_NAME}-config -n ${env.K8S_NAMESPACE} --type merge -p '{"
+      echo "     \"data\": {"
+      echo "       \"REDIS_HOST\": \"redis.dev.svc.cluster.local\","
+      echo "       \"POSTGRES_HOST\": \"postgres.dev.svc.cluster.local\""
+      echo "     }"
+      echo "   }'"
+      echo "   kubectl rollout restart deployment/${params.SERVICE_NAME} -n ${env.K8S_NAMESPACE}"
       echo ""
       echo "═══════════════════════════════════════════════"
       echo ""
