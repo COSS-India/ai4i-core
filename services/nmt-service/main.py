@@ -34,49 +34,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-def get_redis_port():
-    """
-    Get Redis port from environment, handling both ConfigMap and Kubernetes service injection.
-    
-    Kubernetes automatically injects environment variables for services in the same namespace.
-    For a service named 'redis', K8s injects: REDIS_PORT=tcp://10.100.116.40:6379
-    
-    This function handles multiple formats:
-    - REDIS_PORT_NUMBER="6379" (from ConfigMap, preferred to avoid conflicts)
-    - REDIS_PORT="6379" (plain number)
-    - REDIS_PORT="tcp://host:6379" (K8s service injection format)
-    
-    Returns:
-        int: Redis port number
-    """
-    # Try REDIS_PORT_NUMBER first (preferred to avoid K8s service injection conflicts)
-    port_str = os.getenv("REDIS_PORT_NUMBER")
-    
-    if port_str is None:
-        # Fallback to REDIS_PORT
-        port_str = os.getenv("REDIS_PORT", "6379")
-    
-    # Handle Kubernetes service injection format: tcp://host:port
-    if port_str.startswith("tcp://"):
-        # Extract port from tcp://10.100.116.40:6379
-        port = int(port_str.split(":")[-1])
-        logger.debug(f"Extracted Redis port {port} from K8s service injection format: {port_str}")
-        return port
-    else:
-        # Plain port number
-        return int(port_str)
-
-
 # Environment variables
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = get_redis_port()
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db")
 TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "13.200.133.97:8000")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "1b69e9a1a24466c85e4bbca3c5295f50")
-
-logger.info(f"Redis configuration: host={REDIS_HOST}, port={REDIS_PORT}")
 
 # Global variables
 redis_client: Optional[redis.Redis] = None
@@ -113,6 +77,7 @@ async def lifespan(app: FastAPI):
     
     try:
         # Use existing Redis client or initialize if needed
+        global redis_client
         if redis_client is None:
             logger.info("Connecting to Redis...")
             redis_client = redis.from_url(
@@ -254,6 +219,8 @@ async def root():
         "status": "running",
         "description": "Neural Machine Translation microservice"
     }
+
+
 
 
 if __name__ == "__main__":
