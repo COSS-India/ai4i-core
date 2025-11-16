@@ -17,7 +17,7 @@ data:
   
   # Redis Configuration
   # IMPORTANT: New code expects REDIS_PORT (not REDIS_PORT_NUMBER)
-  REDIS_HOST: "redis.dev.svc.cluster.local"
+  REDIS_HOST: "redis"
   REDIS_PORT: "6379"
   REDIS_PASSWORD: "redis_secure_password_2024"
   REDIS_TIMEOUT: "5"
