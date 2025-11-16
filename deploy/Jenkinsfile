@@ -75,7 +75,9 @@ tts-service
           echo "✓ Found Kubernetes manifests at ${manifestPath}"
           echo ""
           echo "Manifest files available:"
-          sh "ls -lh ${manifestPath}/"
+          sh """
+            ls -lh '${manifestPath}/'
+          """
           echo "================================================"
         }
       }
