@@ -23,19 +23,39 @@ class TritonClient:
     """Triton Inference Server client for NMT"""
     
     def __init__(self, triton_url: str, api_key: Optional[str] = None):
-        self.triton_url = triton_url
+        # Normalize URL - ensure it has http:// prefix if it's just host:port
+        self.triton_url = self._normalize_url(triton_url)
         self.api_key = api_key
         self._client = None
+    
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        """Normalize Triton URL to ensure proper format
+        
+        Triton HTTP client expects host:port format, NOT http://host:port
+        """
+        url = url.strip()
+        # Remove http:// or https:// prefix if present
+        # Triton HTTP client expects just host:port
+        if url.startswith("http://"):
+            url = url[7:]  # Remove "http://"
+        elif url.startswith("https://"):
+            url = url[8:]  # Remove "https://"
+        return url
     
     @property
     def client(self):
         """Lazy initialization of Triton client"""
         if self._client is None:
             logger.info(f"Initializing Triton client with URL: {self.triton_url}")
-            self._client = http_client.InferenceServerClient(
-                url=self.triton_url,
-                verbose=False
-            )
+            try:
+                self._client = http_client.InferenceServerClient(
+                    url=self.triton_url,
+                    verbose=False
+                )
+            except Exception as e:
+                logger.error(f"Failed to initialize Triton client with URL '{self.triton_url}': {e}", exc_info=True)
+                raise
         return self._client
     
     def get_translation_io_for_triton(
@@ -82,15 +102,21 @@ class TritonClient:
     ):
         """Send inference request to Triton server"""
         try:
-            # Check server health
+            # Check server health (non-blocking - log warning but try anyway)
             if not self.is_server_ready():
-                raise TritonInferenceError("Triton server is not ready")
+                logger.warning(
+                    f"Triton server health check failed for '{self.triton_url}', "
+                    f"but attempting inference request anyway for model '{model_name}'"
+                )
+                # Don't raise error here - let the actual request fail with better error message
             
             # Prepare headers
             if headers is None:
                 headers = {}
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
+            
+            logger.debug(f"Sending inference request to model '{model_name}' at '{self.triton_url}'")
             
             # Send async inference request
             response = self.client.async_infer(
@@ -106,16 +132,64 @@ class TritonClient:
             return result
             
         except Exception as e:
-            logger.error(f"Triton inference request failed: {e}")
+            error_msg = str(e)
+            logger.error(
+                f"Triton inference request failed for model '{model_name}' at '{self.triton_url}': {e}",
+                exc_info=True
+            )
+            # Provide more helpful error messages
+            if "404" in error_msg or "Not Found" in error_msg:
+                # Try to list available models to provide helpful error message
+                try:
+                    available_models = self.list_models()
+                    if available_models:
+                        raise TritonInferenceError(
+                            f"Triton model '{model_name}' not found at '{self.triton_url}'. "
+                            f"Available models: {', '.join(available_models)}. "
+                            f"Please verify the model name is correct."
+                        )
+                    else:
+                        raise TritonInferenceError(
+                            f"Triton model '{model_name}' not found at '{self.triton_url}'. "
+                            f"Could not retrieve available models. Please verify the model name and endpoint are correct."
+                        )
+                except Exception:
+                    # If listing models fails, just provide the basic error
+                    raise TritonInferenceError(
+                        f"Triton model '{model_name}' not found at '{self.triton_url}'. "
+                        f"Please verify the model name and endpoint are correct."
+                    )
+            elif "Connection" in error_msg or "connect" in error_msg.lower():
+                raise TritonInferenceError(
+                    f"Cannot connect to Triton server at '{self.triton_url}'. "
+                    f"Please verify the endpoint is correct and the server is running."
+                )
             raise TritonInferenceError(f"Triton inference request failed: {e}")
     
     def is_server_ready(self) -> bool:
         """Check if Triton server is ready"""
         try:
-            return self.client.is_server_ready()
+            ready = self.client.is_server_ready()
+            if not ready:
+                logger.warning(f"Triton server at '{self.triton_url}' is not ready")
+            return ready
         except Exception as e:
-            logger.error(f"Failed to check Triton server status: {e}")
+            logger.error(f"Failed to check Triton server status at '{self.triton_url}': {e}", exc_info=True)
             return False
+    
+    def list_models(self) -> List[str]:
+        """List all available models on the Triton server"""
+        try:
+            models = self.client.get_model_repository_index()
+            model_names = []
+            if models:
+                for model in models:
+                    model_names.append(model.get('name', ''))
+            logger.info(f"Found {len(model_names)} models at '{self.triton_url}': {model_names}")
+            return model_names
+        except Exception as e:
+            logger.error(f"Failed to list models from Triton server at '{self.triton_url}': {e}", exc_info=True)
+            return []
     
     def _get_string_tensor(self, string_values: List[str], tensor_name: str) -> InferInput:
         """Create string tensor for Triton input"""
