@@ -24,7 +24,7 @@ nmt-service
 pipeline-service
 telemetry-service
 tts-service
-simple-ui-frontend
+simple-ui
 """
     )
     booleanParam(name: 'CLEAN_WORKSPACE', defaultValue: true)
