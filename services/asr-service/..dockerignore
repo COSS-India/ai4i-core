@@ -45,5 +45,16 @@ Dockerfile.*.local
 k8s-manifests/
 k8s-manifests-simplified/
 
+models/
+checkpoints/
+weights/
+*.pt
+*.pth
+*.onnx
+*.npz
+*.npy
+audio_samples/
+
+
 # Tests (if you don’t want them in the runtime image)
 # tests/
