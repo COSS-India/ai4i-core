@@ -279,6 +279,14 @@ class APIKeyCreateBody(BaseModel):
     permissions: Optional[List[str]] = Field(default_factory=list, description="List of permissions for the API key (e.g., ['read:profile', 'update:profile'])")
     expires_days: Optional[int] = Field(None, ge=1, le=365, description="Number of days until the API key expires (1-365 days, optional)")
 
+class AssignRoleBody(BaseModel):
+    user_id: int = Field(..., description="ID of the user to assign role to")
+    role_name: str = Field(..., description="Name of the role to assign (e.g., 'USER', 'ADMIN', 'MODERATOR', 'GUEST')")
+
+class RemoveRoleBody(BaseModel):
+    user_id: int = Field(..., description="ID of the user to remove role from")
+    role_name: str = Field(..., description="Name of the role to remove")
+
 class ServiceRegistry:
     """Redis-based service instance management"""
     
@@ -437,8 +445,16 @@ class RouteManager:
 # OpenAPI Tags Metadata for organizing endpoints by service
 tags_metadata = [
     {
+        "name": "Role Management",
+        "description": "Endpoints for managing user roles and permissions. Admin-only operations for assigning/removing roles and viewing role assignments."
+    },
+    {
         "name": "Authentication",
         "description": "Authentication and authorization endpoints. Requires authentication headers for protected routes.",
+    },
+    {
+        "name": "OAuth2",
+        "description": "OAuth 2.0 authentication endpoints. Sign in with Google and other OAuth providers.",
     },
     {
         "name": "ASR",
@@ -601,6 +617,8 @@ def custom_openapi():
         "/api/v1/auth/request-password-reset",
         "/api/v1/auth/oauth2/providers",
         "/api/v1/auth/oauth2/callback",
+        "/api/v1/auth/oauth2/google/authorize",
+        "/api/v1/auth/oauth2/google/callback",
     ])
 
     # Auto-tag operations by path prefix for better grouping in Swagger and inject header where applicable
@@ -1163,7 +1181,7 @@ async def revoke_api_key(
     """Revoke API key"""
     return await proxy_to_auth_service(request, f"/api/v1/auth/api-keys/{key_id}")
 
-@app.get("/api/v1/auth/oauth2/providers", tags=["Authentication"])
+@app.get("/api/v1/auth/oauth2/providers", tags=["OAuth2"])
 async def get_oauth2_providers(
     request: Request,
     authorization: Optional[str] = Header(None, description="Optional authorization header")
@@ -1175,7 +1193,26 @@ async def get_oauth2_providers(
     """
     return await proxy_to_auth_service(request, "/api/v1/auth/oauth2/providers")
 
-@app.post("/api/v1/auth/oauth2/callback", tags=["Authentication"])
+@app.get("/api/v1/auth/oauth2/google/authorize", tags=["OAuth2"])
+async def google_oauth_authorize(request: Request):
+    """
+    Initiate Google OAuth flow - redirects to Google for authentication.
+    
+    **Flow:** User is redirected to Google, authenticates, and Google redirects back to callback endpoint.
+    """
+    return await proxy_to_auth_service(request, "/api/v1/auth/oauth2/google/authorize")
+
+@app.get("/api/v1/auth/oauth2/google/callback", tags=["OAuth2"])
+async def google_oauth_callback(request: Request):
+    """
+    Handle Google OAuth callback - exchange authorization code for tokens and create/login user.
+    
+    **Flow:** Google redirects here after user authentication. The service exchanges the code for tokens,
+    creates or links the user account, and redirects to frontend with JWT tokens.
+    """
+    return await proxy_to_auth_service(request, "/api/v1/auth/oauth2/google/callback")
+
+@app.post("/api/v1/auth/oauth2/callback", tags=["OAuth2"])
 async def oauth2_callback(
     body: OAuth2CallbackBody,
     request: Request
@@ -1200,6 +1237,69 @@ async def oauth2_callback(
         body=payload,
         headers=headers
     )
+
+# Role Management Endpoints (Proxy to Auth Service)
+
+@app.post("/api/v1/auth/roles/assign", tags=["Role Management"])
+async def assign_role(
+    body: AssignRoleBody,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Assign a role to a user (Admin only)"""
+    import json
+    headers = {k: v for k, v in request.headers.items() 
+               if k.lower() not in ['content-length', 'host']}
+    headers['Content-Type'] = 'application/json'
+    
+    payload = json.dumps(body.dict()).encode()
+    return await proxy_to_service(
+        None,
+        "/api/v1/auth/roles/assign",
+        "auth-service",
+        method="POST",
+        body=payload,
+        headers=headers
+    )
+
+@app.post("/api/v1/auth/roles/remove", tags=["Role Management"])
+async def remove_role(
+    body: RemoveRoleBody,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Remove a role from a user (Admin only)"""
+    import json
+    headers = {k: v for k, v in request.headers.items() 
+               if k.lower() not in ['content-length', 'host']}
+    headers['Content-Type'] = 'application/json'
+    
+    payload = json.dumps(body.dict()).encode()
+    return await proxy_to_service(
+        None,
+        "/api/v1/auth/roles/remove",
+        "auth-service",
+        method="POST",
+        body=payload,
+        headers=headers
+    )
+
+@app.get("/api/v1/auth/roles/user/{user_id}", tags=["Role Management"])
+async def get_user_roles(
+    user_id: int,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Get roles for a user (Admin or self)"""
+    return await proxy_to_auth_service(request, f"/api/v1/auth/roles/user/{user_id}")
+
+@app.get("/api/v1/auth/roles/list", tags=["Role Management"])
+async def list_roles(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """List all available roles (Admin only)"""
+    return await proxy_to_auth_service(request, "/api/v1/auth/roles/list")
 
     # ASR Service Endpoints (Proxy to ASR Service)
 

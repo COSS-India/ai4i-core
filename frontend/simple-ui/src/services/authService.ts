@@ -73,7 +73,7 @@ class AuthService {
     return localStorage.getItem('access_token');
   }
 
-  private setAccessToken(token: string): void {
+  public setAccessToken(token: string): void {
     if (typeof window === 'undefined') return;
     localStorage.setItem('access_token', token);
   }
@@ -83,7 +83,7 @@ class AuthService {
     return localStorage.getItem('refresh_token');
   }
 
-  private setRefreshToken(token: string): void {
+  public setRefreshToken(token: string): void {
     if (typeof window === 'undefined') return;
     localStorage.setItem('refresh_token', token);
   }
