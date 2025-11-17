@@ -2,7 +2,7 @@
 
 ## System Overview
 
-The Dhruva AI/ML Microservices Platform is a distributed system built on microservices architecture, implementing the 6-layer Frontend-Backend Communication Flow pattern.
+The Dhruva AI/ML Microservices Platform is a distributed system built on microservices architecture, implementing the 6-layer Frontend-Backend Communication Flow pattern. The platform includes feature flag management with Unleash and OpenFeature for progressive delivery and experimentation.
 
 ## Architecture Layers
 
@@ -112,6 +112,12 @@ sequenceDiagram
 - **nmt_requests**: NMT request logging
 - **nmt_results**: NMT translation results
 
+### Feature Flags Schema (config_db)
+- **feature_flags**: Flag definitions cached from Unleash
+- **feature_flag_evaluations**: Audit trail of all flag evaluations
+
+Unleash maintains its schema in the shared PostgreSQL instance (unleash database) as the source of truth for flag configurations, strategies, and variants. The config_db tables serve as a local cache and audit trail.
+
 ## Security Architecture
 
 ### Authentication Flow
@@ -175,6 +181,12 @@ sequenceDiagram
 - Dynamic batching for throughput
 - GPU acceleration support
 
+### Why Unleash + OpenFeature?
+- Unleash: Enterprise-grade feature flag management with UI
+- OpenFeature: Vendor-neutral SDK prevents lock-in
+- Separation of concerns: Unleash for management, OpenFeature for evaluation
+- Gradual rollouts, targeting, and A/B testing capabilities
+
 ## Design Patterns
 
 ### Repository Pattern
@@ -192,3 +204,9 @@ sequenceDiagram
 - Cross-cutting concerns (auth, logging, rate limiting)
 - Reusable across services
 - Ordered execution pipeline
+
+### Provider Pattern (OpenFeature)
+- Abstracts feature flag backend (Unleash, LaunchDarkly, etc.)
+- Enables testing with mock providers
+- Consistent evaluation API across services
+- Supports multiple providers via domains
