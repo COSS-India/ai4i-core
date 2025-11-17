@@ -4,7 +4,7 @@ Create database tables for auth service
 import asyncio
 import os
 from sqlalchemy.ext.asyncio import create_async_engine
-from models import Base
+from models import Base, Role, Permission, UserRole, RolePermission
 
 async def create_tables():
     """Create all database tables"""
@@ -20,6 +20,7 @@ async def create_tables():
     
     await engine.dispose()
     print("Database tables created successfully!")
+    print("RBAC tables (roles, permissions, user_roles, role_permissions) created successfully!")
 
 if __name__ == "__main__":
     asyncio.run(create_tables())
