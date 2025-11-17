@@ -1,6 +1,13 @@
 pipeline {
   agent any
 
+  environment {
+    DOCKER_BUILDKIT = "1"
+    GIT_REPO        = 'https://github.com/COSS-India/ai4i-core.git'
+    AWS_REGION      = 'ap-south-1'
+    AWS_ACCOUNT     = '662074586476'
+  }
+
   parameters {
     string(name: 'BRANCH_NAME', defaultValue: 'master', description: 'Git branch to clone and build')
 
@@ -25,27 +32,30 @@ tts-service
     booleanParam(name: 'CLEAN_WORKSPACE', defaultValue: true, description: 'Delete workspace before checkout')
   }
 
-  environment {
-    GIT_REPO = 'https://github.com/COSS-India/ai4i-core.git'
-    AWS_REGION = 'ap-south-1'        // change if needed
-    AWS_ACCOUNT = '662074586476'     // change if needed
-    // Note: using existing Jenkins credential id 'aws-creds' (username/password)
-  }
-
   stages {
-    stage('Prepare') {
+
+    /* -----------------------------------------------------------
+     *  PREPARE WORKSPACE
+     * -----------------------------------------------------------
+     */
+    stage('Prepare Workspace') {
       steps {
         script {
           if (params.CLEAN_WORKSPACE) {
+            echo "Cleaning workspace..."
             deleteDir()
           }
         }
       }
     }
 
+    /* -----------------------------------------------------------
+     *  CHECKOUT SOURCE CODE
+     * -----------------------------------------------------------
+     */
     stage('Checkout') {
       steps {
-        echo "Checking out '${params.BRANCH_NAME}' from ${env.GIT_REPO}"
+        echo "Cloning ${params.BRANCH_NAME}..."
         checkout([$class: 'GitSCM',
           branches: [[name: "*/${params.BRANCH_NAME}"]],
           userRemoteConfigs: [[url: "${env.GIT_REPO}"]]
@@ -53,130 +63,108 @@ tts-service
       }
     }
 
+    /* -----------------------------------------------------------
+     *  VALIDATE SERVICE DIRECTORY
+     * -----------------------------------------------------------
+     */
     stage('Validate Service') {
       steps {
         script {
           def path = "services/${params.SERVICE_NAME}"
-          echo "Selected service path: ${path}"
           if (!fileExists(path)) {
-            error "Service '${params.SERVICE_NAME}' not found at ${path}"
+            error "❌ Service '${params.SERVICE_NAME}' not found at ${path}"
           }
+          echo "Service found: ${path}"
         }
       }
     }
 
-    stage('Build Service') {
+    /* -----------------------------------------------------------
+     *  DOCKER BUILD WITH FULL CACHE SUPPORT
+     * -----------------------------------------------------------
+     */
+    stage('Docker Build (Cached)') {
       steps {
         dir("services/${params.SERVICE_NAME}") {
-          echo "Building service: ${params.SERVICE_NAME}"
-          sh '''
-            set -eux
-
-            if [ -f "requirements.txt" ]; then
-              echo "[python] Detected Python project"
-              python3 -m venv venv
-              . venv/bin/activate
-              pip install -r requirements.txt
-              echo "Python dependencies installed."
-            fi
-
-            if [ -f "Dockerfile" ]; then
-              echo "[docker] Detected Dockerfile"
-              IMAGE_NAME="$SERVICE_NAME:build-$BUILD_NUMBER"
-              echo "Building Docker image: $IMAGE_NAME"
-              docker build -t "$IMAGE_NAME" .
-              echo "Built $IMAGE_NAME"
-              exit 0
-            fi
-
-            echo "No build files found — skipping build."
-            exit 0
-          '''
-        }
-      }
-    }
-
-    stage('Tag & Push to ECR') {
-      when {
-        expression { fileExists("services/${params.SERVICE_NAME}/Dockerfile") }
-      }
-      steps {
-        // Bind existing aws credentials (username/password) -> AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
-        withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
-          dir("services/${params.SERVICE_NAME}") {
-            sh '''
+          script {
+            sh """
               set -eux
 
               SERVICE="${SERVICE_NAME}"
-              BUILT_TAG="build-${BUILD_NUMBER}"
-              BUILT_IMAGE="${SERVICE}:${BUILT_TAG}"
+              BUILD_TAG="build-${BUILD_NUMBER}"
+              LOCAL_IMAGE="${SERVICE}:${BUILD_TAG}"
 
-              AWS_REGION="${AWS_REGION:-ap-south-1}"
-              AWS_ACCOUNT="${AWS_ACCOUNT:-662074586476}"
               ECR_REGISTRY="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+              CACHE_IMAGE="\${ECR_REGISTRY}/ai4voice/\${SERVICE}:cache"
 
-              # ECR mapping using POSIX-compatible case (works with /bin/sh)
-              case "$SERVICE" in
-                api-gateway-service) TARGET_REPO="${ECR_REGISTRY}/ai4voice/api-gateway-service" ;;
-                auth-service)        TARGET_REPO="${ECR_REGISTRY}/ai4voice/auth-service" ;;
-                asr-service)         TARGET_REPO="${ECR_REGISTRY}/ai4voice/asr-service" ;;
-                tts-service)         TARGET_REPO="${ECR_REGISTRY}/ai4voice/tts-service" ;;
-                nmt-service)         TARGET_REPO="${ECR_REGISTRY}/ai4voice/nmt-service" ;;
-                llm-service)         TARGET_REPO="${ECR_REGISTRY}/ai4voice/llm-service" ;;
-                pipeline-service)    TARGET_REPO="${ECR_REGISTRY}/ai4voice/pipeline-service" ;;
-                simple-ui-frontend)  TARGET_REPO="${ECR_REGISTRY}/simple-ui-frontend" ;;
-                *) TARGET_REPO="" ;;
-              esac
+              echo "🚀 Pulling cache image (if exists)..."
+              docker pull "\${CACHE_IMAGE}" || true
 
-              if [ -z "${TARGET_REPO}" ]; then
-                echo "ERROR: No ECR mapping for service ${SERVICE}"
-                exit 1
-              fi
+              echo "🚀 Building Docker image with cache..."
+              docker build \
+                --cache-from="\${CACHE_IMAGE}" \
+                --tag "\${LOCAL_IMAGE}" \
+                .
 
-              # Timestamp in IST ddmmyyyy-HHMMSS-IST
-              TIMESTAMP=$(TZ="Asia/Kolkata" date +'%d%m%Y-%H%M%S')
-              TARGET_TAG="${TIMESTAMP}-IST"
-              ECR_IMAGE="${TARGET_REPO}:${TARGET_TAG}"
-
-              echo "Built image expected: ${BUILT_IMAGE}"
-              if ! docker image inspect "${BUILT_IMAGE}" >/dev/null 2>&1; then
-                echo "ERROR: Built image ${BUILT_IMAGE} not found. Aborting."
-                exit 1
-              fi
-
-              # export aws creds for aws CLI
-              export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-              export AWS_DEFAULT_REGION="${AWS_REGION}"
-
-              echo "Logging into ECR registry ${ECR_REGISTRY}"
-              aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
-
-              # create repo if missing (repo name is basename)
-              REPO_NAME=$(basename "${TARGET_REPO}")
-              if ! aws ecr describe-repositories --repository-names "${REPO_NAME}" --region "${AWS_REGION}" >/dev/null 2>&1; then
-                echo "Creating ECR repo ${REPO_NAME}"
-                aws ecr create-repository --repository-name "${REPO_NAME}" --region "${AWS_REGION}" >/dev/null
-              else
-                echo "ECR repo ${REPO_NAME} exists"
-              fi
-
-              echo "Tagging ${BUILT_IMAGE} -> ${ECR_IMAGE}"
-              docker tag "${BUILT_IMAGE}" "${ECR_IMAGE}"
-
-              echo "Pushing ${ECR_IMAGE}"
-              docker push "${ECR_IMAGE}"
-
-              echo "Pushed ${ECR_IMAGE}"
-            '''
+              echo "🎉 Build completed: \${LOCAL_IMAGE}"
+            """
           }
         }
       }
-      post {
-        success {
-          echo "✅ Pushed ${params.SERVICE_NAME} to ECR with timestamp tag."
-        }
-        failure {
-          echo "❌ Push to ECR failed for ${params.SERVICE_NAME}"
+    }
+
+    /* -----------------------------------------------------------
+     *  LOGIN, TAG & PUSH TO ECR
+     * -----------------------------------------------------------
+     */
+    stage('Push to ECR') {
+      when { expression { fileExists("services/${params.SERVICE_NAME}/Dockerfile") } }
+
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+
+          dir("services/${params.SERVICE_NAME}") {
+            sh """
+              set -eux
+
+              SERVICE="${SERVICE_NAME}"
+              BUILD_TAG="build-${BUILD_NUMBER}"
+              LOCAL_IMAGE="\${SERVICE}:${BUILD_TAG}"
+
+              AWS_REGION="${AWS_REGION}"
+              AWS_ACCOUNT="${AWS_ACCOUNT}"
+              ECR_REGISTRY="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+              # Service mapping
+              TARGET_REPO="\${ECR_REGISTRY}/ai4voice/\${SERVICE}"
+
+              # Timestamp (IST)
+              TAG="\$(TZ='Asia/Kolkata' date +'%d%m%Y-%H%M%S')-IST"
+              FINAL_IMAGE="\${TARGET_REPO}:\${TAG}"
+              CACHE_IMAGE="\${TARGET_REPO}:cache"
+
+              export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION="${AWS_REGION}"
+
+              echo "🔐 Logging into ECR..."
+              aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+
+              echo "📦 Ensuring ECR repo exists..."
+              aws ecr describe-repositories --repository-names "ai4voice/\${SERVICE}" || \
+                  aws ecr create-repository --repository-name "ai4voice/\${SERVICE}"
+
+              echo "🔖 Tagging image..."
+              docker tag "\${LOCAL_IMAGE}" "\${FINAL_IMAGE}"
+
+              echo "📤 Pushing \${FINAL_IMAGE}..."
+              docker push "\${FINAL_IMAGE}"
+
+              echo "⚡ Updating cache image..."
+              docker tag "\${LOCAL_IMAGE}" "\${CACHE_IMAGE}"
+              docker push "\${CACHE_IMAGE}"
+
+              echo "🎉 Successfully pushed and updated cache."
+            """
+          }
         }
       }
     }
@@ -184,10 +172,10 @@ tts-service
 
   post {
     success {
-      echo "✅ Build ok: branch='${params.BRANCH_NAME}', service='${params.SERVICE_NAME}'"
+      echo "✅ BUILD SUCCESS — Service: ${params.SERVICE_NAME}, Branch: ${params.BRANCH_NAME}"
     }
     failure {
-      echo "❌ Build failed: branch='${params.BRANCH_NAME}', service='${params.SERVICE_NAME}'"
+      echo "❌ BUILD FAILED — Service: ${params.SERVICE_NAME}"
     }
   }
 }
