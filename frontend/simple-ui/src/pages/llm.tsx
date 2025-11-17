@@ -1,27 +1,26 @@
 // LLM service testing page with language selection and text processing
 
-import React from 'react';
-import Head from 'next/head';
 import {
+  Box,
   Grid,
   GridItem,
   Heading,
-  Text,
   Progress,
-  VStack,
-  Box,
+  Text,
   useToast,
-} from '@chakra-ui/react';
-import { useQuery } from '@tanstack/react-query';
-import { useLLM } from '../hooks/useLLM';
-import { listLLMModels } from '../services/llmService';
-import { SUPPORTED_LANGUAGES } from '../config/constants';
-import ContentLayout from '../components/common/ContentLayout';
-import LanguageSelector from '../components/llm/LanguageSelector';
-import TextInput from '../components/llm/TextInput';
-import LLMResults from '../components/llm/LLMResults';
-import DualComparison from '../components/llm/DualComparison';
-import LoadingSpinner from '../components/common/LoadingSpinner';
+  VStack,
+} from "@chakra-ui/react";
+import { useQuery } from "@tanstack/react-query";
+import Head from "next/head";
+import React from "react";
+import ContentLayout from "../components/common/ContentLayout";
+import LoadingSpinner from "../components/common/LoadingSpinner";
+import DualComparison from "../components/llm/DualComparison";
+import LanguageSelector from "../components/llm/LanguageSelector";
+import TextInput from "../components/llm/TextInput";
+import { LLM_SUPPORTED_LANGUAGES } from "../config/constants";
+import { useLLM } from "../hooks/useLLM";
+import { listLLMModels } from "../services/llmService";
 
 const LLMPage: React.FC = () => {
   const toast = useToast();
@@ -52,19 +51,19 @@ const LLMPage: React.FC = () => {
 
   // Fetch available LLM models
   const { data: models, isLoading: modelsLoading } = useQuery({
-    queryKey: ['llm-models'],
+    queryKey: ["llm-models"],
     queryFn: listLLMModels,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  const availableLanguages = SUPPORTED_LANGUAGES.map(lang => lang.code);
+  const availableLanguages = LLM_SUPPORTED_LANGUAGES.map((lang) => lang.code);
 
   const handleProcess = () => {
     if (!inputText.trim()) {
       toast({
-        title: 'Input Required',
-        description: 'Please enter text to process.',
-        status: 'warning',
+        title: "Input Required",
+        description: "Please enter text to process.",
+        status: "warning",
         duration: 3000,
         isClosable: true,
       });
@@ -82,7 +81,10 @@ const LLMPage: React.FC = () => {
     <>
       <Head>
         <title>LLM - GPT OSS 20B | AI4Inclusion Console</title>
-        <meta name="description" content="Test GPT OSS 20B Large Language Model for text processing, translation, and generation" />
+        <meta
+          name="description"
+          content="Test GPT OSS 20B Large Language Model for text processing, translation, and generation"
+        />
       </Head>
 
       <ContentLayout>
@@ -98,7 +100,7 @@ const LLMPage: React.FC = () => {
           </Box>
 
           <Grid
-            templateColumns={{ base: '1fr', lg: '1fr 1fr' }}
+            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
             gap={8}
             w="full"
             maxW="1200px"
@@ -148,7 +150,13 @@ const LLMPage: React.FC = () => {
 
                 {/* Error Display */}
                 {error && (
-                  <Box p={4} bg="red.50" borderRadius="md" border="1px" borderColor="red.200">
+                  <Box
+                    p={4}
+                    bg="red.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="red.200"
+                  >
                     <Text color="red.600" fontSize="sm">
                       {error}
                     </Text>
@@ -173,8 +181,9 @@ const LLMPage: React.FC = () => {
                 {!fetched && !fetching && (
                   <Box p={6} bg="gray.50" borderRadius="md" textAlign="center">
                     <Text color="gray.600" fontSize="sm">
-                      Select input and output languages, then enter text to process.
-                      The LLM will translate or generate text based on your configuration.
+                      Select input and output languages, then enter text to
+                      process. The LLM will translate or generate text based on
+                      your configuration.
                     </Text>
                   </Box>
                 )}
@@ -195,4 +204,3 @@ const LLMPage: React.FC = () => {
 };
 
 export default LLMPage;
-
