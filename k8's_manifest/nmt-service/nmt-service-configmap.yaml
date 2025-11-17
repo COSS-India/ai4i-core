@@ -7,7 +7,6 @@ data:
   ALLOW_ANONYMOUS_ACCESS: "false"
   API_KEY_CACHE_TTL: "300"
   AUTH_ENABLED: "true"
-  # Fixed: Use FQDN for postgres
   DATABASE_URL: postgresql+asyncpg://ai4v_user:password123@postgres.dev.svc.cluster.local:5432/ai4v_db
   DB_MAX_OVERFLOW: "10"
   DB_POOL_SIZE: "20"
@@ -24,9 +23,9 @@ data:
   RATE_LIMIT_PER_DAY: "10000"
   RATE_LIMIT_PER_HOUR: "1000"
   RATE_LIMIT_PER_MINUTE: "60"
-  # Fixed: Use FQDN for redis
   REDIS_HOST: redis.dev.svc.cluster.local
   REDIS_PASSWORD: redis_secure_password_2024
+  REDIS_PORT: "6379"
   REDIS_PORT_NUMBER: "6379"
   REDIS_TIMEOUT: "5"
   REQUIRE_API_KEY: "true"
