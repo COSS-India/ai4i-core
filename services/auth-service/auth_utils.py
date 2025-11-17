@@ -4,15 +4,18 @@ Authentication utilities and JWT handling
 import os
 import secrets
 import hashlib
+import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from passlib.hash import argon2
 import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from models import User, UserSession, APIKey
+from models import User, UserSession, APIKey, Role, Permission, UserRole, RolePermission, OAuthProvider
+
+logger = logging.getLogger(__name__)
 
 # Password hashing context
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
@@ -38,7 +41,7 @@ class AuthUtils:
         return pwd_context.hash(password)
     
     @staticmethod
-    def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+    def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None, roles: Optional[List[str]] = None) -> str:
         """Create a JWT access token"""
         to_encode = data.copy()
         if expires_delta:
@@ -47,11 +50,13 @@ class AuthUtils:
             expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         
         to_encode.update({"exp": expire, "type": "access"})
+        if roles:
+            to_encode.update({"roles": roles})
         encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
         return encoded_jwt
     
     @staticmethod
-    def create_refresh_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+    def create_refresh_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None, roles: Optional[List[str]] = None) -> str:
         """Create a JWT refresh token"""
         to_encode = data.copy()
         if expires_delta:
@@ -60,6 +65,8 @@ class AuthUtils:
             expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
         
         to_encode.update({"exp": expire, "type": "refresh"})
+        if roles:
+            to_encode.update({"roles": roles})
         encoded_jwt = jwt.encode(to_encode, JWT_REFRESH_SECRET_KEY, algorithm=JWT_ALGORITHM)
         return encoded_jwt
     
@@ -245,6 +252,17 @@ class AuthUtils:
                 "read:all", "write:all", "delete:all"
             ])
         
+        # Role-based permissions: Query permissions through user roles
+        result = await db.execute(
+            select(Permission.name)
+            .join(RolePermission, Permission.id == RolePermission.permission_id)
+            .join(Role, RolePermission.role_id == Role.id)
+            .join(UserRole, Role.id == UserRole.role_id)
+            .where(UserRole.user_id == user_id)
+        )
+        role_permissions = result.scalars().all()
+        permissions.extend(role_permissions)
+        
         # API key permissions
         result = await db.execute(
             select(APIKey).where(
@@ -259,6 +277,17 @@ class AuthUtils:
             permissions.extend(api_key.permissions or [])
         
         return list(set(permissions))  # Remove duplicates
+    
+    @staticmethod
+    async def get_user_roles(db: AsyncSession, user_id: int) -> list:
+        """Get user roles"""
+        result = await db.execute(
+            select(Role.name)
+            .join(UserRole, Role.id == UserRole.role_id)
+            .where(UserRole.user_id == user_id)
+        )
+        roles = result.scalars().all()
+        return list(roles)
     
     @staticmethod
     def validate_password_strength(password: str) -> tuple[bool, list[str]]:
@@ -281,3 +310,135 @@ class AuthUtils:
             errors.append("Password must contain at least one special character")
         
         return len(errors) == 0, errors
+    
+    @staticmethod
+    async def get_oauth_provider(
+        db: AsyncSession,
+        provider_name: str,
+        provider_user_id: str
+    ) -> Optional[OAuthProvider]:
+        """Get OAuth provider account by provider name and user ID"""
+        result = await db.execute(
+            select(OAuthProvider).where(
+                OAuthProvider.provider_name == provider_name,
+                OAuthProvider.provider_user_id == provider_user_id
+            )
+        )
+        return result.scalar_one_or_none()
+    
+    @staticmethod
+    async def get_user_oauth_providers(
+        db: AsyncSession,
+        user_id: int
+    ) -> List[OAuthProvider]:
+        """Get all OAuth providers linked to a user"""
+        result = await db.execute(
+            select(OAuthProvider).where(OAuthProvider.user_id == user_id)
+        )
+        return list(result.scalars().all())
+    
+    @staticmethod
+    async def create_user_from_oauth(
+        db: AsyncSession,
+        email: str,
+        full_name: Optional[str],
+        avatar_url: Optional[str],
+        provider_name: str,
+        provider_user_id: str,
+        oauth_tokens: Dict[str, Any],
+        username: Optional[str] = None
+    ) -> User:
+        """Create a new user from OAuth provider data"""
+        # Generate username from email if not provided
+        if not username:
+            username = email.split("@")[0]
+            # Ensure username is unique
+            base_username = username
+            counter = 1
+            while await AuthUtils.get_user_by_username(db, username):
+                username = f"{base_username}{counter}"
+                counter += 1
+        
+        # Check if user with this email already exists
+        existing_user = await AuthUtils.get_user_by_email(db, email)
+        if existing_user:
+            # User exists, link OAuth account
+            return await AuthUtils.link_oauth_to_user(
+                db, existing_user.id, provider_name, provider_user_id, oauth_tokens
+            )
+        
+        # Create new user (no password for OAuth users)
+        new_user = User(
+            email=email,
+            username=username,
+            hashed_password=None,  # OAuth users don't have passwords
+            full_name=full_name,
+            avatar_url=avatar_url,
+            is_verified=True,  # OAuth emails are pre-verified
+            is_active=True
+        )
+        
+        db.add(new_user)
+        await db.flush()  # Get user ID
+        
+        # Assign default USER role
+        result = await db.execute(select(Role).where(Role.name == 'USER'))
+        user_role_obj = result.scalar_one_or_none()
+        if user_role_obj:
+            user_role = UserRole(
+                user_id=new_user.id,
+                role_id=user_role_obj.id
+            )
+            db.add(user_role)
+        
+        # Create OAuth provider record
+        oauth_provider = OAuthProvider(
+            user_id=new_user.id,
+            provider_name=provider_name,
+            provider_user_id=provider_user_id,
+            access_token=oauth_tokens.get("access_token"),
+            refresh_token=oauth_tokens.get("refresh_token")
+        )
+        db.add(oauth_provider)
+        
+        await db.commit()
+        await db.refresh(new_user)
+        
+        logger.info(f"Created new user from OAuth: {email} via {provider_name}")
+        return new_user
+    
+    @staticmethod
+    async def link_oauth_to_user(
+        db: AsyncSession,
+        user_id: int,
+        provider_name: str,
+        provider_user_id: str,
+        oauth_tokens: Dict[str, Any]
+    ) -> User:
+        """Link OAuth account to existing user"""
+        # Check if OAuth account already linked
+        existing_oauth = await AuthUtils.get_oauth_provider(db, provider_name, provider_user_id)
+        if existing_oauth:
+            # Update tokens
+            existing_oauth.access_token = oauth_tokens.get("access_token")
+            existing_oauth.refresh_token = oauth_tokens.get("refresh_token")
+            await db.commit()
+            await db.refresh(existing_oauth)
+            user = await AuthUtils.get_user_by_id(db, user_id)
+            logger.info(f"Updated OAuth tokens for user {user_id} via {provider_name}")
+            return user
+        
+        # Create new OAuth provider link
+        oauth_provider = OAuthProvider(
+            user_id=user_id,
+            provider_name=provider_name,
+            provider_user_id=provider_user_id,
+            access_token=oauth_tokens.get("access_token"),
+            refresh_token=oauth_tokens.get("refresh_token")
+        )
+        db.add(oauth_provider)
+        await db.commit()
+        
+        user = await AuthUtils.get_user_by_id(db, user_id)
+        logger.info(f"Linked OAuth account {provider_name} to user {user_id}")
+        return user
