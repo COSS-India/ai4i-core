@@ -12,7 +12,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select, text, insert
+from sqlalchemy import select, text
 
 from models import (
     User, UserSession, APIKey, UserCreate, UserResponse, UserUpdate,
@@ -270,6 +270,7 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     )
     
     db.add(db_user)
+    await db.flush()  # Flush to ensure the user is added to the session
     await db.commit()
     await db.refresh(db_user)
     
@@ -323,7 +324,8 @@ async def login(
     
     # Insert session row (Core insert) and update last_login in same commit
     from sqlalchemy import insert as sa_insert
-    expires_at = datetime.utcnow() + refresh_token_expires
+    now = datetime.utcnow()
+    expires_at = now + refresh_token_expires
     await db.execute(
         sa_insert(UserSession.__table__).values(
             user_id=user.id,
@@ -332,12 +334,11 @@ async def login(
             device_info=device_info,
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("user-agent"),
-            token_type="access",
             is_active=True,
             expires_at=expires_at
         )
     )
-    user.last_login = datetime.utcnow()
+    user.last_login = now
     
     await db.commit()
     
@@ -346,6 +347,7 @@ async def login(
     return LoginResponse(
         access_token=access_token,
         refresh_token=refresh_token,
+        token_type="bearer",
         expires_in=int(access_token_expires.total_seconds())
     )
 
@@ -404,9 +406,8 @@ async def refresh_token(
         expires_delta=access_token_expires
     )
     
-    # Update session last accessed and mark type as refresh
+    # Update session last accessed
     session.last_accessed = datetime.utcnow()
-    session.token_type = "refresh"
     await db.commit()
     
     return TokenRefreshResponse(
