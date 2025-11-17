@@ -59,36 +59,48 @@ tts-service
       }
     }
 
+    /* -----------------------------------------------------------
+     *  DOCKER BUILD WITH SAFE ESCAPED VARIABLES
+     * -----------------------------------------------------------
+     */
     stage('Docker Build (Cached)') {
       steps {
         dir("services/${params.SERVICE_NAME}") {
+
           sh """
             set -eux
 
             SERVICE_NAME="${params.SERVICE_NAME}"
+            AWS_REGION="${env.AWS_REGION}"
+            AWS_ACCOUNT="${env.AWS_ACCOUNT}"
 
             BUILD_TAG="build-${BUILD_NUMBER}"
             LOCAL_IMAGE="\${SERVICE_NAME}:\${BUILD_TAG}"
 
-            ECR_REGISTRY="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            ECR_REGISTRY="\${AWS_ACCOUNT}.dkr.ecr.\${AWS_REGION}.amazonaws.com"
             CACHE_IMAGE="\${ECR_REGISTRY}/ai4voice/\${SERVICE_NAME}:cache"
 
-            echo "Pulling cache image..."
+            echo "Pulling cache image if exists..."
             docker pull "\${CACHE_IMAGE}" || true
 
-            echo "Building Docker image using cache..."
+            echo "Building using cache..."
             docker build --cache-from="\${CACHE_IMAGE}" -t "\${LOCAL_IMAGE}" .
 
-            echo "Build complete: \${LOCAL_IMAGE}"
+            echo "Build done: \${LOCAL_IMAGE}"
           """
+
         }
       }
     }
 
+    /* -----------------------------------------------------------
+     *  PUSH TO ECR (SAFE VERSION)
+     * -----------------------------------------------------------
+     */
     stage('Push to ECR') {
-      when {
-        expression { fileExists("services/${params.SERVICE_NAME}/Dockerfile") }
-      }
+
+      when { expression { fileExists("services/${params.SERVICE_NAME}/Dockerfile") } }
+
       steps {
         withCredentials([usernamePassword(credentialsId: 'aws-creds',
                         usernameVariable: 'AWS_ACCESS_KEY_ID',
@@ -100,39 +112,42 @@ tts-service
               set -eux
 
               SERVICE_NAME="${params.SERVICE_NAME}"
+              AWS_REGION="${env.AWS_REGION}"
+              AWS_ACCOUNT="${env.AWS_ACCOUNT}"
 
               BUILD_TAG="build-${BUILD_NUMBER}"
               LOCAL_IMAGE="\${SERVICE_NAME}:\${BUILD_TAG}"
 
-              ECR_REGISTRY="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+              ECR_REGISTRY="\${AWS_ACCOUNT}.dkr.ecr.\${AWS_REGION}.amazonaws.com"
               TARGET_REPO="\${ECR_REGISTRY}/ai4voice/\${SERVICE_NAME}"
 
               TAG="\$(TZ='Asia/Kolkata' date +'%d%m%Y-%H%M%S')-IST"
               FINAL_IMAGE="\${TARGET_REPO}:\${TAG}"
               CACHE_IMAGE="\${TARGET_REPO}:cache"
 
-              export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION="${AWS_REGION}"
+              export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION="\${AWS_REGION}"
 
-              echo "Logging into ECR..."
-              aws ecr get-login-password --region "${AWS_REGION}" \
-                | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+              echo "Login ECR..."
+              aws ecr get-login-password --region "\${AWS_REGION}" \
+                | docker login --username AWS --password-stdin "\${ECR_REGISTRY}"
 
-              echo "Ensuring ECR repo exists..."
+              echo "Verify/Create repo..."
               aws ecr describe-repositories --repository-names "ai4voice/\${SERVICE_NAME}" || \
                 aws ecr create-repository --repository-name "ai4voice/\${SERVICE_NAME}"
 
-              echo "Tagging image..."
+              echo "Tagging final image..."
               docker tag "\${LOCAL_IMAGE}" "\${FINAL_IMAGE}"
 
-              echo "Pushing image..."
+              echo "Pushing main tag..."
               docker push "\${FINAL_IMAGE}"
 
-              echo "Updating cache image..."
+              echo "Updating cache..."
               docker tag "\${LOCAL_IMAGE}" "\${CACHE_IMAGE}"
               docker push "\${CACHE_IMAGE}"
 
-              echo "Push complete!"
+              echo "Done!"
             """
+
           }
         }
       }
