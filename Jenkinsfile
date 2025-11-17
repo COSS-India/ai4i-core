@@ -9,8 +9,7 @@ pipeline {
   }
 
   parameters {
-    string(name: 'BRANCH_NAME', defaultValue: 'master', description: 'Git branch to clone and build')
-
+    string(name: 'BRANCH_NAME', defaultValue: 'master')
     choice(
       name: 'SERVICE_NAME',
       choices: """
@@ -25,144 +24,114 @@ nmt-service
 pipeline-service
 telemetry-service
 tts-service
-""",
-      description: 'Service directory under services/'
+"""
     )
-
-    booleanParam(name: 'CLEAN_WORKSPACE', defaultValue: true, description: 'Delete workspace before checkout')
+    booleanParam(name: 'CLEAN_WORKSPACE', defaultValue: true)
   }
 
   stages {
 
-    /* -----------------------------------------------------------
-     *  PREPARE WORKSPACE
-     * -----------------------------------------------------------
-     */
     stage('Prepare Workspace') {
       steps {
         script {
-          if (params.CLEAN_WORKSPACE) {
-            echo "Cleaning workspace..."
-            deleteDir()
-          }
+          if (params.CLEAN_WORKSPACE) deleteDir()
         }
       }
     }
 
-    /* -----------------------------------------------------------
-     *  CHECKOUT SOURCE CODE
-     * -----------------------------------------------------------
-     */
     stage('Checkout') {
       steps {
-        echo "Cloning ${params.BRANCH_NAME}..."
-        checkout([$class: 'GitSCM',
+        checkout([
+          $class: 'GitSCM',
           branches: [[name: "*/${params.BRANCH_NAME}"]],
           userRemoteConfigs: [[url: "${env.GIT_REPO}"]]
         ])
       }
     }
 
-    /* -----------------------------------------------------------
-     *  VALIDATE SERVICE DIRECTORY
-     * -----------------------------------------------------------
-     */
     stage('Validate Service') {
       steps {
         script {
-          def path = "services/${params.SERVICE_NAME}"
-          if (!fileExists(path)) {
-            error "❌ Service '${params.SERVICE_NAME}' not found at ${path}"
+          if (!fileExists("services/${params.SERVICE_NAME}")) {
+            error "Service directory not found: services/${params.SERVICE_NAME}"
           }
-          echo "Service found: ${path}"
         }
       }
     }
 
-    /* -----------------------------------------------------------
-     *  DOCKER BUILD WITH FULL CACHE SUPPORT
-     * -----------------------------------------------------------
-     */
     stage('Docker Build (Cached)') {
       steps {
         dir("services/${params.SERVICE_NAME}") {
-          script {
-            sh """
-              set -eux
+          sh """
+            set -eux
 
-              SERVICE="${SERVICE_NAME}"
-              BUILD_TAG="build-${BUILD_NUMBER}"
-              LOCAL_IMAGE="${SERVICE}:${BUILD_TAG}"
+            SERVICE_NAME="${params.SERVICE_NAME}"
 
-              ECR_REGISTRY="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-              CACHE_IMAGE="\${ECR_REGISTRY}/ai4voice/\${SERVICE}:cache"
+            BUILD_TAG="build-${BUILD_NUMBER}"
+            LOCAL_IMAGE="\${SERVICE_NAME}:\${BUILD_TAG}"
 
-              echo "🚀 Pulling cache image (if exists)..."
-              docker pull "\${CACHE_IMAGE}" || true
+            ECR_REGISTRY="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            CACHE_IMAGE="\${ECR_REGISTRY}/ai4voice/\${SERVICE_NAME}:cache"
 
-              echo "🚀 Building Docker image with cache..."
-              docker build \
-                --cache-from="\${CACHE_IMAGE}" \
-                --tag "\${LOCAL_IMAGE}" \
-                .
+            echo "Pulling cache image..."
+            docker pull "\${CACHE_IMAGE}" || true
 
-              echo "🎉 Build completed: \${LOCAL_IMAGE}"
-            """
-          }
+            echo "Building Docker image using cache..."
+            docker build --cache-from="\${CACHE_IMAGE}" -t "\${LOCAL_IMAGE}" .
+
+            echo "Build complete: \${LOCAL_IMAGE}"
+          """
         }
       }
     }
 
-    /* -----------------------------------------------------------
-     *  LOGIN, TAG & PUSH TO ECR
-     * -----------------------------------------------------------
-     */
     stage('Push to ECR') {
-      when { expression { fileExists("services/${params.SERVICE_NAME}/Dockerfile") } }
-
+      when {
+        expression { fileExists("services/${params.SERVICE_NAME}/Dockerfile") }
+      }
       steps {
-        withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+        withCredentials([usernamePassword(credentialsId: 'aws-creds',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
 
           dir("services/${params.SERVICE_NAME}") {
+
             sh """
               set -eux
 
-              SERVICE="${SERVICE_NAME}"
+              SERVICE_NAME="${params.SERVICE_NAME}"
+
               BUILD_TAG="build-${BUILD_NUMBER}"
-              LOCAL_IMAGE="\${SERVICE}:${BUILD_TAG}"
+              LOCAL_IMAGE="\${SERVICE_NAME}:\${BUILD_TAG}"
 
-              AWS_REGION="${AWS_REGION}"
-              AWS_ACCOUNT="${AWS_ACCOUNT}"
               ECR_REGISTRY="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+              TARGET_REPO="\${ECR_REGISTRY}/ai4voice/\${SERVICE_NAME}"
 
-              # Service mapping
-              TARGET_REPO="\${ECR_REGISTRY}/ai4voice/\${SERVICE}"
-
-              # Timestamp (IST)
               TAG="\$(TZ='Asia/Kolkata' date +'%d%m%Y-%H%M%S')-IST"
               FINAL_IMAGE="\${TARGET_REPO}:\${TAG}"
               CACHE_IMAGE="\${TARGET_REPO}:cache"
 
               export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION="${AWS_REGION}"
 
-              echo "🔐 Logging into ECR..."
-              aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+              echo "Logging into ECR..."
+              aws ecr get-login-password --region "${AWS_REGION}" \
+                | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
 
-              echo "📦 Ensuring ECR repo exists..."
-              aws ecr describe-repositories --repository-names "ai4voice/\${SERVICE}" || \
-                  aws ecr create-repository --repository-name "ai4voice/\${SERVICE}"
+              echo "Ensuring ECR repo exists..."
+              aws ecr describe-repositories --repository-names "ai4voice/\${SERVICE_NAME}" || \
+                aws ecr create-repository --repository-name "ai4voice/\${SERVICE_NAME}"
 
-              echo "🔖 Tagging image..."
+              echo "Tagging image..."
               docker tag "\${LOCAL_IMAGE}" "\${FINAL_IMAGE}"
 
-              echo "📤 Pushing \${FINAL_IMAGE}..."
+              echo "Pushing image..."
               docker push "\${FINAL_IMAGE}"
 
-              echo "⚡ Updating cache image..."
+              echo "Updating cache image..."
               docker tag "\${LOCAL_IMAGE}" "\${CACHE_IMAGE}"
               docker push "\${CACHE_IMAGE}"
 
-              echo "🎉 Successfully pushed and updated cache."
+              echo "Push complete!"
             """
           }
         }
@@ -172,10 +141,10 @@ tts-service
 
   post {
     success {
-      echo "✅ BUILD SUCCESS — Service: ${params.SERVICE_NAME}, Branch: ${params.BRANCH_NAME}"
+      echo "✅ Build Success — ${params.SERVICE_NAME}"
     }
     failure {
-      echo "❌ BUILD FAILED — Service: ${params.SERVICE_NAME}"
+      echo "❌ Build Failed — ${params.SERVICE_NAME}"
     }
   }
 }
