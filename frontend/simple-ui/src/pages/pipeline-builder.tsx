@@ -30,14 +30,14 @@ import { ArrowBackIcon } from '@chakra-ui/icons';
 import ContentLayout from '../components/common/ContentLayout';
 import { PipelineInferenceRequest } from '../types/pipeline';
 import { runPipelineInference } from '../services/pipelineService';
-import { SUPPORTED_LANGUAGES } from '../config/constants';
+import { ASR_SUPPORTED_LANGUAGES, TTS_SUPPORTED_LANGUAGES } from '../config/constants';
 
 const PipelineBuilderPage: React.FC = () => {
   const toast = useToast();
   const router = useRouter();
   
   // Pipeline configuration
-  const [sourceLanguage, setSourceLanguage] = useState('en');
+  const [sourceLanguage, setSourceLanguage] = useState('hi');
   const [targetLanguage, setTargetLanguage] = useState('hi'); // Start with 'hi' (Hindi) which is TTS-supported
   const [nmtServiceId, setNmtServiceId] = useState('ai4bharat/indictrans-v2-all-gpu--tensorrt');
   const [ttsServiceId, setTtsServiceId] = useState('ai4bharat/indic-tts-coqui-indo-aryan-gpu');
@@ -159,7 +159,7 @@ const PipelineBuilderPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Pipeline Builder - Custom | Simple UI</title>
+        <title>Customize Pipeline - Custom | AI4Inclusion Console</title>
         <meta name="description" content="Build and test custom AI pipelines" />
       </Head>
 
@@ -178,7 +178,7 @@ const PipelineBuilderPage: React.FC = () => {
             </Button>
             <Box textAlign="center">
               <Heading size="xl" color="gray.800" mb={2}>
-                Pipeline Builder
+                Customize Pipeline
               </Heading>
               <Text color="gray.600" fontSize="lg">
                 Configure and test custom AI pipelines
@@ -219,7 +219,7 @@ const PipelineBuilderPage: React.FC = () => {
                 <FormControl>
                   <FormLabel>Source Language</FormLabel>
                   <Select value={sourceLanguage} onChange={(e) => setSourceLanguage(e.target.value)}>
-                    {SUPPORTED_LANGUAGES.map((lang) => (
+                    {ASR_SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
                         {lang.label}
                       </option>
@@ -231,7 +231,7 @@ const PipelineBuilderPage: React.FC = () => {
                 <FormControl>
                   <FormLabel>Target Language</FormLabel>
                   <Select value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)}>
-                    {SUPPORTED_LANGUAGES.map((lang) => (
+                    {TTS_SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
                         {lang.label}
                       </option>

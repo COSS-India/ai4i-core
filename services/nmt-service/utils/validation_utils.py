@@ -35,11 +35,15 @@ class InvalidTextInputError(Exception):
     pass
 
 
-# Supported languages
+# Supported languages (Indian + African languages)
 SUPPORTED_LANGUAGES = [
+    # Indic Languages
     "en", "hi", "ta", "te", "kn", "ml", "bn", "gu", "mr", "pa", 
     "or", "as", "ur", "sa", "ks", "ne", "sd", "kok", "doi", 
-    "mai", "brx", "mni", "sat", "gom"
+    "mai", "brx", "mni", "sat", "gom",
+    # African languages (from NLLB-200 model)
+    "sw", "yo", "ha", "so", "am", "ti", "ig", "zu", "xh", 
+    "sn", "rw", "om", "lg", "wo", "ts", "tn", "af", "fr", "ar"
 ]
 
 
@@ -72,12 +76,13 @@ def validate_service_id(service_id: str) -> bool:
     if not service_id or not service_id.strip():
         raise InvalidServiceIdError("Service ID cannot be empty")
     
-    # Basic format validation (e.g., "ai4bharat/model-name--gpu--t4")
+    # Basic format validation (e.g., "ai4bharat/model-name--gpu--t4", "nllb-200-1.3B")
     if len(service_id) < 3:
         raise InvalidServiceIdError(f"Service ID too short: {service_id}")
     
-    # Check for valid characters (alphanumeric, hyphens, underscores, slashes)
-    if not re.match(r'^[a-zA-Z0-9\-_/]+$', service_id):
+    # Check for valid characters (alphanumeric, hyphens, underscores, slashes, dots)
+    # Allows formats like: "ai4bharat/model-name", "nllb-200-1.3B"
+    if not re.match(r'^[a-zA-Z0-9\-_/.]+$', service_id):
         raise InvalidServiceIdError(f"Service ID contains invalid characters: {service_id}")
     
     return True

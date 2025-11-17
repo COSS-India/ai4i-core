@@ -1,22 +1,21 @@
 // Voice selector component for TTS with gender, format, and sample rate options
 
-import React from 'react';
 import {
-  Stack,
   FormControl,
   FormLabel,
   Select,
-  NumberInput,
-  NumberInputField,
-  NumberInputStepper,
-  NumberIncrementStepper,
-  NumberDecrementStepper,
-  useMediaQuery,
   Spinner,
+  Stack,
   Text,
-} from '@chakra-ui/react';
-import { VoiceSelectorProps } from '../../types/tts';
-import { LANG_CODE_TO_LABEL, AUDIO_FORMATS, TTS_SAMPLE_RATES, GENDER_OPTIONS } from '../../config/constants';
+  useMediaQuery,
+} from "@chakra-ui/react";
+import React from "react";
+import {
+  AUDIO_FORMATS,
+  GENDER_OPTIONS,
+  LANG_CODE_TO_LABEL,
+} from "../../config/constants";
+import { VoiceSelectorProps } from "../../types/tts";
 
 const VoiceSelector: React.FC<VoiceSelectorProps> = ({
   language,
@@ -31,23 +30,23 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
   availableVoices,
   loading = false,
 }) => {
-  const [isMobile] = useMediaQuery('(max-width: 768px)');
+  const [isMobile] = useMediaQuery("(max-width: 768px)");
 
-  const handleLanguageChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+  const handleLanguageChange = (
+    event: React.ChangeEvent<HTMLSelectElement>
+  ) => {
     onLanguageChange(event.target.value);
   };
 
   const handleGenderChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    onGenderChange(event.target.value as 'male' | 'female');
+    onGenderChange(event.target.value as "male" | "female");
   };
 
   const handleFormatChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     onFormatChange(event.target.value as any);
   };
 
-  const handleSampleRateChange = (valueString: string, valueNumber: number) => {
-    onSampleRateChange(valueNumber as any);
-  };
+  // Sampling rate selection removed from UI
 
   if (loading) {
     return (
@@ -59,16 +58,17 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
   }
 
   return (
-    <Stack spacing={4} direction={isMobile ? 'column' : 'row'}>
+    <Stack spacing={4} direction={isMobile ? "column" : "row"}>
       {/* Language Selection */}
       <FormControl flex={1}>
         <FormLabel className="dview-service-try-option-title">
-          Select Language:
+          Select Language
         </FormLabel>
         <Select
           value={language}
           onChange={handleLanguageChange}
           placeholder="Choose language"
+          disabled={availableLanguages.length === 0}
         >
           {availableLanguages.map((lang) => (
             <option key={lang} value={lang}>
@@ -80,9 +80,7 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
 
       {/* Gender Selection */}
       <FormControl flex={1}>
-        <FormLabel className="dview-service-try-option-title">
-          Voice:
-        </FormLabel>
+        <FormLabel className="dview-service-try-option-title">Voice</FormLabel>
         <Select
           value={gender}
           onChange={handleGenderChange}
@@ -99,7 +97,7 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
       {/* Audio Format Selection */}
       <FormControl flex={1}>
         <FormLabel className="dview-service-try-option-title">
-          Audio Format:
+          Audio Format
         </FormLabel>
         <Select
           value={audioFormat}
@@ -114,25 +112,7 @@ const VoiceSelector: React.FC<VoiceSelectorProps> = ({
         </Select>
       </FormControl>
 
-      {/* Sample Rate Selection */}
-      <FormControl flex={1}>
-        <FormLabel className="dview-service-try-option-title">
-          Sampling Rate:
-        </FormLabel>
-        <NumberInput
-          value={samplingRate}
-          onChange={handleSampleRateChange}
-          min={8000}
-          max={48000}
-          step={1000}
-        >
-          <NumberInputField />
-          <NumberInputStepper>
-            <NumberIncrementStepper />
-            <NumberDecrementStepper />
-          </NumberInputStepper>
-        </NumberInput>
-      </FormControl>
+      {/* Sampling Rate control removed per requirements */}
     </Stack>
   );
 };
