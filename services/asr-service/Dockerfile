@@ -1,59 +1,70 @@
-# Multi-stage Dockerfile for ASR Service
-# Stage 1: Builder
-FROM python:3.11-slim as builder
+# ================================
+# Stage 1 — Build dependencies
+# ================================
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# System build deps
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    curl \
-    libpq-dev \
+# Install build tools only here (not in final image)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     libsndfile1-dev \
-    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps to user site
+# Install Python dependencies in a clean user space
 COPY requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Stage 2: Final
+# Clean unnecessary cache files
+RUN rm -rf /root/.cache/pip
+RUN rm -rf /root/.cache
+
+
+# ================================
+# Stage 2 — Final runtime image
+# ================================
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Runtime deps
-RUN apt-get update && apt-get install -y \
-    curl \
-    libpq5 \
+# Runtime audio libraries only
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
-    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Python runtime safety
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PATH=/home/app/.local/bin:$PATH
+# Install FFmpeg (static binary — MUCH smaller than Debian ffmpeg)
+RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+    curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
+        -o /tmp/ffmpeg.tar.xz && \
+    tar -xf /tmp/ffmpeg.tar.xz -C /tmp && \
+    mv /tmp/ffmpeg-*/ffmpeg /usr/local/bin/ && \
+    mv /tmp/ffmpeg-*/ffprobe /usr/local/bin/ && \
+    chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe && \
+    rm -rf /tmp/* && \
+    apt-get purge -y curl
 
-# Non-root user
-RUN useradd --create-home --shell /bin/bash app
-
-# Python packages from builder
+# Copy Python deps from builder
 COPY --from=builder /root/.local /home/app/.local
 
-# Copy application code (no .env will be copied with proper .dockerignore)
+# Add final app code
 COPY . .
 
-# Permissions
-RUN chown -R app:app /app /home/app/.local && \
-    chmod +x /home/app/.local/bin/*
+# Env setup
+ENV PATH="/home/app/.local/bin:${PATH}"
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash app && \
+    chown -R app:app /app /home/app
 USER app
 
+# Expose ASR port
 EXPOSE 8087
 
+# Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8087/health || exit 1
 
+# Start FastAPI app
 ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8087"]
