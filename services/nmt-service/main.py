@@ -34,21 +34,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Environment variables
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-# Handle REDIS_PORT - it might be a URL from Kubernetes service discovery
-# Try REDIS_PORT_NUMBER first (from ConfigMap), then REDIS_PORT
-redis_port_str = os.getenv("REDIS_PORT_NUMBER") or os.getenv("REDIS_PORT", "6379")
-# If it's a URL format (tcp://host:port), extract the port
-if "://" in redis_port_str:
-    # Extract port from URL format
-    try:
-        redis_port_str = redis_port_str.split(":")[-1]
-    except:
-        redis_port_str = "6379"
-REDIS_PORT = int(redis_port_str)
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db")
+# Environment variables - Support both REDIS_PORT and REDIS_PORT_NUMBER for backward compatibility
+REDIS_HOST = os.getenv("REDIS_HOST", "redis.dev.svc.cluster.local")
+REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres.dev.svc.cluster.local:5432/auth_db")
 TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "13.200.133.97:8000")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "1b69e9a1a24466c85e4bbca3c5295f50")
 
@@ -57,29 +48,8 @@ redis_client: Optional[redis.Redis] = None
 db_engine: Optional[AsyncEngine] = None
 db_session_factory: Optional[async_sessionmaker] = None
 
-# Initialize Redis client early for middleware
-try:
-    # Only pass password if it's set and not empty
-    redis_kwargs = {
-        "host": REDIS_HOST,
-        "port": REDIS_PORT,
-        "decode_responses": True,
-        "socket_connect_timeout": 5,
-        "socket_timeout": 5,
-        "retry_on_timeout": True
-    }
-    
-    if REDIS_PASSWORD:
-        redis_kwargs["password"] = REDIS_PASSWORD
-    
-    redis_client = redis.Redis(**redis_kwargs)
-    
-    # Note: ping() is async and will be tested in lifespan function
-    # We can't use asyncio.run() here at module level, so skip the ping test
-    logger.info("Redis client initialized for middleware (connection will be tested in lifespan)")
-except Exception as e:
-    logger.warning(f"Redis connection failed for middleware: {e}")
-    redis_client = None
+# Log configuration on startup
+logger.info(f"Configuration loaded: REDIS_HOST={REDIS_HOST}, REDIS_PORT={REDIS_PORT}")
 
 
 @asynccontextmanager
@@ -90,108 +60,104 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting NMT Service...")
     
-    try:
-        # Use existing Redis client or initialize if needed
-        global redis_client
-        if redis_client is None:
-            logger.info("Connecting to Redis...")
-            # Build Redis URL - only include password if it's set
-            if REDIS_PASSWORD:
-                redis_url = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}"
-            else:
-                redis_url = f"redis://{REDIS_HOST}:{REDIS_PORT}"
+    # Initialize Redis with retry logic
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Attempting to connect to Redis at {REDIS_HOST}:{REDIS_PORT} (attempt {attempt + 1}/{max_retries})...")
             
-            redis_client = redis.from_url(
-                redis_url,
+            redis_client = redis.Redis(
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+                password=REDIS_PASSWORD,
                 decode_responses=True,
-                socket_connect_timeout=5,
-                socket_timeout=5,
-                retry_on_timeout=True
+                socket_connect_timeout=REDIS_TIMEOUT,
+                socket_timeout=REDIS_TIMEOUT,
+                retry_on_timeout=True,
+                health_check_interval=30
             )
-            # Try to connect with retries
-            max_retries = 3
-            for attempt in range(max_retries):
+            
+            # Test Redis connection
+            await redis_client.ping()
+            logger.info("✓ Redis connection established successfully")
+            
+            # Add rate limiting middleware after successful Redis connection
+            rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+            rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+            app.add_middleware(
+                RateLimitMiddleware,
+                redis_client=redis_client,
+                requests_per_minute=rate_limit_per_minute,
+                requests_per_hour=rate_limit_per_hour
+            )
+            logger.info("Rate limiting middleware added")
+            break
+            
+        except Exception as e:
+            logger.warning(f"Redis connection attempt {attempt + 1}/{max_retries} failed: {e}")
+            
+            if redis_client:
                 try:
-                    await redis_client.ping()
-                    logger.info("Redis connection established")
-                    break
-                except Exception as e:
-                    if attempt < max_retries - 1:
-                        logger.warning(f"Redis ping attempt {attempt + 1}/{max_retries} failed: {e}, retrying...")
-                        await asyncio.sleep(2)
-                    else:
-                        logger.warning(f"Redis connection failed after {max_retries} attempts: {e}")
-                        logger.warning("Proceeding without Redis (rate limiting disabled)")
-                        redis_client = None
-                        break
-        else:
-            # Test the existing connection
-            try:
-                await redis_client.ping()
-                logger.info("Using existing Redis connection")
-            except Exception as e:
-                logger.warning(f"Existing Redis connection failed, reinitializing: {e}")
-                # Reinitialize if existing connection fails
-                if REDIS_PASSWORD:
-                    redis_url = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}"
-                else:
-                    redis_url = f"redis://{REDIS_HOST}:{REDIS_PORT}"
-                
-                redis_client = redis.from_url(
-                    redis_url,
-                    decode_responses=True,
-                    socket_connect_timeout=5,
-                    socket_timeout=5,
-                    retry_on_timeout=True
-                )
-                # Try to reconnect with retries
-                max_retries = 3
-                for attempt in range(max_retries):
-                    try:
-                        await redis_client.ping()
-                        logger.info("Redis connection reestablished successfully")
-                        break
-                    except Exception as e:
-                        if attempt < max_retries - 1:
-                            logger.warning(f"Redis reconnection attempt {attempt + 1}/{max_retries} failed: {e}, retrying...")
-                            await asyncio.sleep(2)
-                        else:
-                            logger.warning(f"Redis reconnection failed after {max_retries} attempts: {e}")
-                            logger.warning("Proceeding without Redis (rate limiting disabled)")
-                            redis_client = None
-                            break
-        
-        # Initialize PostgreSQL
-        logger.info("Connecting to PostgreSQL...")
+                    await redis_client.close()
+                except:
+                    pass
+                redis_client = None
+            
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                logger.warning("⚠ Redis connection failed after all retries. Proceeding without Redis (rate limiting disabled)")
+                redis_client = None
+    
+    # Initialize PostgreSQL
+    try:
+        logger.info(f"Connecting to PostgreSQL...")
         db_engine = create_async_engine(
             DATABASE_URL,
             pool_size=20,
             max_overflow=10,
-            echo=False
+            pool_pre_ping=True,  # Test connections before using them
+            pool_recycle=3600,   # Recycle connections after 1 hour
+            echo=False,
+            connect_args={
+                "timeout": 30,
+                "command_timeout": 30,
+            }
         )
+        
         db_session_factory = async_sessionmaker(
             db_engine,
             class_=AsyncSession,
             expire_on_commit=False
         )
         
-        # Test database connection
-        async with db_engine.begin() as conn:
-            await conn.execute(text("SELECT 1"))
-        logger.info("PostgreSQL connection established")
+        # Test database connection with timeout
+        logger.info("Testing PostgreSQL connection...")
+        try:
+            async with asyncio.timeout(15):
+                async with db_engine.begin() as conn:
+                    await conn.execute(text("SELECT 1"))
+        except asyncio.TimeoutError:
+            raise Exception("PostgreSQL connection timeout after 15 seconds")
         
-        # Store in app state for middleware access
-        app.state.redis_client = redis_client
-        app.state.db_engine = db_engine
-        app.state.db_session_factory = db_session_factory
-        app.state.triton_endpoint = TRITON_ENDPOINT
-        app.state.triton_api_key = TRITON_API_KEY
-        
-        logger.info("NMT Service started successfully")
+        logger.info("✓ PostgreSQL connection established successfully")
         
     except Exception as e:
-        logger.error(f"Failed to start NMT Service: {e}")
+        logger.error(f"❌ Failed to connect to PostgreSQL: {e}")
         raise
+    
+    # Store in app state for middleware access
+    app.state.redis_client = redis_client
+    app.state.db_engine = db_engine
+    app.state.db_session_factory = db_session_factory
+    app.state.triton_endpoint = TRITON_ENDPOINT
+    app.state.triton_api_key = TRITON_API_KEY
+    
+    logger.info("✅ NMT Service started successfully")
     
     yield
     
@@ -216,8 +182,8 @@ async def lifespan(app: FastAPI):
 # Create FastAPI app
 app = FastAPI(
     title="NMT Service",
-    version="1.0.0",
-    description="Neural Machine Translation microservice for translating text between 22+ Indian languages. Supports bidirectional translation with script code handling and batch processing.",
+    version="1.0.1",
+    description="Neural Machine Translation microservice for translating text between 22+ Indic languages. Supports bidirectional translation with script code handling and batch processing.",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -259,19 +225,7 @@ app.add_middleware(
 # Add request logging middleware
 app.add_middleware(RequestLoggingMiddleware)
 
-# Add rate limiting middleware (if Redis is available)
-if redis_client:
-    rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-    rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-    app.add_middleware(
-        RateLimitMiddleware,
-        redis_client=redis_client,
-        requests_per_minute=rate_limit_per_minute,
-        requests_per_hour=rate_limit_per_hour
-    )
-    logger.info("Rate limiting middleware added")
-else:
-    logger.warning("Rate limiting middleware skipped - Redis not available")
+# Note: Rate limiting middleware is now added dynamically in lifespan after Redis connects
 
 # Register error handlers
 add_error_handlers(app)
@@ -286,24 +240,12 @@ async def root():
     """Root endpoint"""
     return {
         "service": "nmt-service",
-        "version": "1.0.0",
+        "version": "1.0.1",
         "status": "running",
-        "description": "Neural Machine Translation microservice"
+        "description": "Neural Machine Translation microservice",
+        "redis_available": app.state.redis_client is not None if hasattr(app.state, 'redis_client') else False
     }
-
-
-@app.get("/health")
-async def health():
-    """Simple health check endpoint for Kubernetes probes"""
-    return {
-        "status": "healthy",
-        "service": "nmt-service",
-        "version": "1.0.0"
-    }
-
-
 
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8089)
-
