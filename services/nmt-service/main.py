@@ -175,7 +175,7 @@ async def lifespan(app: FastAPI):
         # Test database connection with timeout
         logger.info("Testing PostgreSQL connection...")
         try:
-            async with asyncio.timeout(15):
+            async with asyncio.timeout(60):
                 async with db_engine.begin() as conn:
                     await conn.execute(text("SELECT 1"))
         except asyncio.TimeoutError:
