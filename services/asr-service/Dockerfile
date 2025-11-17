@@ -1,70 +1,91 @@
-# ================================
-# Stage 1 — Build dependencies
-# ================================
-FROM python:3.11-slim AS builder
+# ===========================================================
+# Stage 1: Builder
+# ===========================================================
+FROM python:3.11-slim as builder
 
 WORKDIR /app
 
-# Install build tools only here (not in final image)
+# Install system build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libsndfile1-dev \
+        gcc \
+        g++ \
+        make \
+        libpq-dev \
+        curl \
+        xz-utils \
+        libsndfile1-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies in a clean user space
+# Copy requirements
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Clean unnecessary cache files
-RUN rm -rf /root/.cache/pip
-RUN rm -rf /root/.cache
+# Install Python packages to user site (keeps final image clean)
+RUN pip install --upgrade pip \
+    && pip install --no-cache-dir --user -r requirements.txt
 
 
-# ================================
-# Stage 2 — Final runtime image
-# ================================
+# ===========================================================
+# Stage 2: Final Runtime Image
+# ===========================================================
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Runtime audio libraries only
+# Install runtime OS dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsndfile1 \
+        libpq5 \
+        libsndfile1 \
+        curl \
+        xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Install FFmpeg (static binary — MUCH smaller than Debian ffmpeg)
-RUN apt-get update && apt-get install -y --no-install-recommends curl && \
-    curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
-        -o /tmp/ffmpeg.tar.xz && \
-    tar -xf /tmp/ffmpeg.tar.xz -C /tmp && \
-    mv /tmp/ffmpeg-*/ffmpeg /usr/local/bin/ && \
-    mv /tmp/ffmpeg-*/ffprobe /usr/local/bin/ && \
-    chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe && \
-    rm -rf /tmp/* && \
-    apt-get purge -y curl
+# -----------------------------------------------------------
+# Install FFmpeg (static build = very small but powerful)
+# -----------------------------------------------------------
+RUN curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
+        -o /tmp/ffmpeg.tar.xz \
+    && tar -xf /tmp/ffmpeg.tar.xz -C /tmp \
+    && mv /tmp/ffmpeg-*/ffmpeg /usr/local/bin/ \
+    && mv /tmp/ffmpeg-*/ffprobe /usr/local/bin/ \
+    && chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe \
+    && rm -rf /tmp/* \
+    && apt-get purge -y curl xz-utils \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy Python deps from builder
-COPY --from=builder /root/.local /home/app/.local
 
-# Add final app code
-COPY . .
+# ===========================================================
+# Python Runtime Environment
+# ===========================================================
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH=/home/app/.local/bin:$PATH
 
-# Env setup
-ENV PATH="/home/app/.local/bin:${PATH}"
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
 
 # Create non-root user
-RUN useradd --create-home --shell /bin/bash app && \
-    chown -R app:app /app /home/app
+RUN useradd --create-home --shell /bin/bash app
+
+# Copy Python packages from builder stage
+COPY --from=builder /root/.local /home/app/.local
+
+# Copy application code (respects .dockerignore)
+COPY . .
+
+# Fix permissions
+RUN chown -R app:app /app /home/app/.local \
+    && chmod +x /home/app/.local/bin/*
+
 USER app
 
-# Expose ASR port
+# ===========================================================
+# Networking & Healthcheck
+# ===========================================================
 EXPOSE 8087
 
-# Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8087/health || exit 1
 
-# Start FastAPI app
+# ===========================================================
+# Entrypoint
+# ===========================================================
 ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8087"]
