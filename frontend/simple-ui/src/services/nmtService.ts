@@ -9,6 +9,7 @@ import {
   NMTModelsResponse,
   NMTLanguagesResponse,
   NMTModelDetailsResponse,
+  NMTServiceDetailsResponse,
   LanguagePair
 } from '../types/nmt';
 
@@ -67,6 +68,23 @@ export const listNMTModels = async (): Promise<NMTModelDetailsResponse[]> => {
 };
 
 /**
+ * Get list of available NMT services
+ * @returns Promise with NMT services response
+ */
+export const listNMTServices = async (): Promise<NMTServiceDetailsResponse[]> => {
+  try {
+    const response = await apiClient.get<{ services: NMTServiceDetailsResponse[]; total_services: number }>(
+      apiEndpoints.nmt.services
+    );
+
+    return response.data.services;
+  } catch (error) {
+    console.error('Failed to fetch NMT services:', error);
+    throw new Error('Failed to fetch NMT services');
+  }
+};
+
+/**
  * Get supported languages for a specific NMT model
  * @param modelId - Model ID to get languages for
  * @returns Promise with NMT languages response
@@ -83,6 +101,25 @@ export const getNMTLanguages = async (modelId?: string): Promise<NMTLanguagesRes
   } catch (error) {
     console.error('Failed to fetch NMT languages:', error);
     throw new Error('Failed to fetch NMT languages');
+  }
+};
+
+/**
+ * Get supported languages for a specific NMT service
+ * @param serviceId - Service ID to get languages for
+ * @returns Promise with NMT languages response
+ */
+export const getNMTLanguagesForService = async (
+  serviceId: string
+): Promise<NMTLanguagesResponse | null> => {
+  try {
+    // Call /languages endpoint with service_id parameter
+    const url = `${apiEndpoints.nmt.languages}?service_id=${encodeURIComponent(serviceId)}`;
+    const response = await apiClient.get<NMTLanguagesResponse>(url);
+    return response.data;
+  } catch (error) {
+    console.error('Failed to fetch NMT languages for service:', error);
+    throw new Error('Failed to fetch NMT languages for service');
   }
 };
 
@@ -149,6 +186,40 @@ export const getSupportedLanguagePairs = async (modelId?: string): Promise<Langu
 };
 
 /**
+ * Get supported language pairs for a specific service
+ * @param serviceId - Service ID to get language pairs for
+ * @param services - List of services to look up
+ * @returns Promise with supported language pairs
+ */
+export const getSupportedLanguagePairsForService = async (
+  serviceId: string,
+  services: NMTServiceDetailsResponse[]
+): Promise<LanguagePair[]> => {
+  try {
+    const service = services.find(s => s.service_id === serviceId);
+    if (!service) {
+      return [];
+    }
+    
+    // If service has explicit language pairs, use those
+    if (service.supported_language_pairs && service.supported_language_pairs.length > 0) {
+      return service.supported_language_pairs.map(pair => ({
+        sourceLanguage: pair.sourceLanguage,
+        targetLanguage: pair.targetLanguage,
+        sourceScriptCode: pair.sourceScriptCode,
+        targetScriptCode: pair.targetScriptCode,
+      }));
+    }
+    
+    // Otherwise, get from model
+    return getSupportedLanguagePairs(service.model_id);
+  } catch (error) {
+    console.error('Failed to fetch supported language pairs for service:', error);
+    throw new Error('Failed to fetch supported language pairs for service');
+  }
+};
+
+/**
  * Validate NMT request before sending
  * @param text - Text to translate
  * @param config - NMT configuration
@@ -205,6 +276,29 @@ export const getModelByLanguagePair = async (
   } catch (error) {
     console.error('Failed to find model for language pair:', error);
     throw new Error('Failed to find model for language pair');
+  }
+};
+
+/**
+ * Get service by language pair
+ * @param languagePair - Source and target language pair
+ * @returns Promise with matching service
+ */
+export const getServiceByLanguagePair = async (
+  languagePair: LanguagePair
+): Promise<NMTServiceDetailsResponse | null> => {
+  try {
+    const services = await listNMTServices();
+    
+    const matchingService = services.find(service =>
+      service.supported_languages.includes(languagePair.sourceLanguage) &&
+      service.supported_languages.includes(languagePair.targetLanguage)
+    );
+    
+    return matchingService || null;
+  } catch (error) {
+    console.error('Failed to find service for language pair:', error);
+    throw new Error('Failed to find service for language pair');
   }
 };
 

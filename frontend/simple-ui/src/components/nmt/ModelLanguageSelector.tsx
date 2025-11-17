@@ -17,13 +17,12 @@ import {
 import { FaExchangeAlt, FaInfoCircle } from 'react-icons/fa';
 import { useQuery } from '@tanstack/react-query';
 import { LanguageSelectorProps } from '../../types/nmt';
-import { LANG_CODE_TO_LABEL } from '../../config/constants';
-import { listNMTModels, getNMTLanguages } from '../../services/nmtService';
-import { NMTModelDetailsResponse, NMTLanguagesResponse } from '../../types/nmt';
+import { listNMTServices, getNMTLanguagesForService } from '../../services/nmtService';
+import { NMTServiceDetailsResponse, NMTLanguagesResponse } from '../../types/nmt';
 
 interface ModelLanguageSelectorProps extends LanguageSelectorProps {
-  selectedModelId?: string;
-  onModelChange?: (modelId: string) => void;
+  selectedServiceId?: string;
+  onServiceChange?: (serviceId: string) => void;
 }
 
 const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
@@ -31,52 +30,50 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   onLanguagePairChange,
   availableLanguagePairs,
   loading = false,
-  selectedModelId,
-  onModelChange,
+  selectedServiceId,
+  onServiceChange,
 }) => {
-  const [currentModelId, setCurrentModelId] = useState<string>(selectedModelId || '');
+  const [currentServiceId, setCurrentServiceId] = useState<string>(selectedServiceId || '');
   const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
   const [languageDetails, setLanguageDetails] = useState<Array<{code: string; name: string}>>([]);
 
-  // Fetch available models
-  const { data: models, isLoading: modelsLoading } = useQuery({
-    queryKey: ['nmt-models'],
-    queryFn: listNMTModels,
+  // Fetch available services
+  const { data: services, isLoading: servicesLoading } = useQuery({
+    queryKey: ['nmt-services'],
+    queryFn: listNMTServices,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
 
-  // Fetch languages for selected model
+  // Find selected service
+  const selectedService = services?.find(s => s.service_id === currentServiceId);
+
+  // Fetch languages for selected service
   const { data: languagesData, isLoading: languagesLoading } = useQuery({
-    queryKey: ['nmt-languages', currentModelId],
-    queryFn: () => getNMTLanguages(currentModelId || undefined),
-    enabled: !!currentModelId,
+    queryKey: ['nmt-languages', currentServiceId],
+    queryFn: () => getNMTLanguagesForService(currentServiceId),
+    enabled: !!currentServiceId,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
   // Update available languages when languages data changes
   useEffect(() => {
     if (languagesData) {
-      setAvailableLanguages(languagesData.supported_languages);
-      setLanguageDetails(languagesData.language_details);
+      setAvailableLanguages(languagesData.supported_languages || []);
+      setLanguageDetails(languagesData.language_details || []);
     }
   }, [languagesData]);
 
-  // Set default model when models are loaded
+  // Do not auto-select a service; user must choose explicitly
   useEffect(() => {
-    if (models && models.length > 0 && !currentModelId) {
-      const defaultModel = models[0];
-      setCurrentModelId(defaultModel.model_id);
-      if (onModelChange) {
-        onModelChange(defaultModel.model_id);
-      }
-    }
-  }, [models, currentModelId, onModelChange]);
+    if (!services || services.length === 0) return;
+    // keep currentServiceId as-is until user selects
+  }, [services]);
 
-  const handleModelChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    const modelId = event.target.value;
-    setCurrentModelId(modelId);
-    if (onModelChange) {
-      onModelChange(modelId);
+  const handleServiceChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const serviceId = event.target.value;
+    setCurrentServiceId(serviceId);
+    if (onServiceChange) {
+      onServiceChange(serviceId);
     }
   };
 
@@ -115,67 +112,48 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
 
   const getLanguageLabel = (code: string) => {
     const detail = languageDetails.find(d => d.code === code);
-    return detail ? detail.name : (LANG_CODE_TO_LABEL[code] || code);
+    return detail ? detail.name : code;
   };
 
   const isSwapAvailable = availableLanguages.includes(languagePair.sourceLanguage) &&
                           availableLanguages.includes(languagePair.targetLanguage) &&
                           languagePair.sourceLanguage !== languagePair.targetLanguage;
 
-  const selectedModel = models?.find(m => m.model_id === currentModelId);
-
-  if (loading || modelsLoading) {
-    return (
-      <Stack spacing={4} align="center" py={8}>
-        <Spinner size="lg" color="orange.500" />
-        <Text color="gray.600">Loading models and languages...</Text>
-      </Stack>
-    );
-  }
+  // Do not block UI on loading; show controls with placeholders instead
 
   return (
     <Stack spacing={6}>
-      {/* Model Selection */}
+      {/* Service Selection */}
       <Box>
         <FormControl>
           <FormLabel className="dview-service-try-option-title">
-            Translation Model:
+            Translation Service:
           </FormLabel>
           <Select
-            value={currentModelId}
-            onChange={handleModelChange}
+            value={currentServiceId}
+            onChange={handleServiceChange}
             placeholder="Select a model"
-            disabled={modelsLoading}
+            disabled={servicesLoading}
           >
-            {models?.map((model) => (
-              <option key={model.model_id} value={model.model_id}>
-                {model.model_id} ({model.provider})
+            {services?.map((service) => (
+              <option key={service.service_id} value={service.service_id}>
+                {service.service_id} ({service.provider})
               </option>
             ))}
           </Select>
         </FormControl>
         
-        {selectedModel && (
+        {selectedService && (
           <Box mt={2} p={3} bg="gray.50" borderRadius="md">
             <Text fontSize="sm" color="gray.600" mb={1}>
-              <strong>Provider:</strong> {selectedModel.provider}
+              <strong>Provider:</strong> {selectedService.provider}
             </Text>
             <Text fontSize="sm" color="gray.600" mb={1}>
-              <strong>Description:</strong> {selectedModel.description}
+              <strong>Supported Languages:</strong> {selectedService.supported_languages.length}
             </Text>
             <Text fontSize="sm" color="gray.600" mb={1}>
-              <strong>Max Batch Size:</strong> {selectedModel.max_batch_size}
+              <strong>Service ID:</strong> {selectedService.provider}/{selectedService.model_id}
             </Text>
-            <HStack spacing={2} wrap="wrap">
-              <Text fontSize="sm" color="gray.600">
-                <strong>Supported Scripts:</strong>
-              </Text>
-              {selectedModel.supported_scripts.map((script) => (
-                <Badge key={script} colorScheme="blue" size="sm">
-                  {script}
-                </Badge>
-              ))}
-            </HStack>
           </Box>
         )}
       </Box>
@@ -188,7 +166,11 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
           Language Configuration
         </Text>
         
-        {languagesLoading ? (
+        {!currentServiceId ? (
+          <Box p={4} bg="gray.50" borderRadius="md" textAlign="center">
+            <Text fontSize="sm" color="gray.600">No model selected</Text>
+          </Box>
+        ) : languagesLoading ? (
           <Stack spacing={2} align="center" py={4}>
             <Spinner size="md" color="orange.500" />
             <Text fontSize="sm" color="gray.600">Loading languages...</Text>
@@ -254,19 +236,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
               </Text>
             </Box>
 
-            {/* Language Count Info */}
-            <HStack justify="center" spacing={4}>
-              <HStack spacing={1}>
-                <FaInfoCircle size={12} color="#718096" />
-                <Text fontSize="xs" color="gray.500">
-                  {availableLanguages.length} languages supported
-                </Text>
-              </HStack>
-              <Text fontSize="xs" color="gray.400">•</Text>
-              <Text fontSize="xs" color="gray.500">
-                {availableLanguages.length * (availableLanguages.length - 1)} possible pairs
-              </Text>
-            </HStack>
+            {/* Language Count Info removed per requirements */}
           </Stack>
         )}
       </Box>
