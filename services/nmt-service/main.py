@@ -6,6 +6,7 @@ Main FastAPI application entry point
 import asyncio
 import logging
 import os
+import socket
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -35,11 +36,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Environment variables - Support both REDIS_PORT and REDIS_PORT_NUMBER for backward compatibility
-REDIS_HOST = os.getenv("REDIS_HOST", "redis.dev.svc.cluster.local")
+REDIS_HOST_ENV = os.getenv("REDIS_HOST", "redis.dev.svc.cluster.local")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
 REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres.dev.svc.cluster.local:5432/auth_db")
+DATABASE_URL_ENV = os.getenv("DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres.dev.svc.cluster.local:5432/auth_db")
 TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "13.200.133.97:8000")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "1b69e9a1a24466c85e4bbca3c5295f50")
 
@@ -48,8 +49,42 @@ redis_client: Optional[redis.Redis] = None
 db_engine: Optional[AsyncEngine] = None
 db_session_factory: Optional[async_sessionmaker] = None
 
-# Log configuration on startup
-logger.info(f"Configuration loaded: REDIS_HOST={REDIS_HOST}, REDIS_PORT={REDIS_PORT}")
+# Helper function to resolve hostname with fallback to environment service discovery
+def resolve_service_host(hostname: str, service_name: str) -> str:
+    """
+    Resolve hostname with fallback to Kubernetes environment variables
+    
+    Kubernetes automatically injects environment variables for services:
+    {SERVICE_NAME}_SERVICE_HOST = ClusterIP
+    """
+    try:
+        # Try DNS resolution first
+        resolved = socket.gethostbyname(hostname)
+        logger.info(f"✓ Resolved {hostname} to {resolved} via DNS")
+        return resolved
+    except socket.gaierror as e:
+        logger.warning(f"DNS resolution failed for {hostname}: {e}")
+        
+        # Fallback to Kubernetes environment variable
+        env_var = f"{service_name.upper().replace('-', '_')}_SERVICE_HOST"
+        cluster_ip = os.getenv(env_var)
+        
+        if cluster_ip:
+            logger.info(f"✓ Using ClusterIP from {env_var}: {cluster_ip}")
+            return cluster_ip
+        else:
+            logger.error(f"❌ No fallback ClusterIP found in {env_var}")
+            return hostname  # Return original hostname as last resort
+
+# Resolve service hosts with fallback
+REDIS_HOST = resolve_service_host(REDIS_HOST_ENV, "redis")
+logger.info(f"Configuration loaded: REDIS_HOST={REDIS_HOST} (from {REDIS_HOST_ENV}), REDIS_PORT={REDIS_PORT}")
+
+# For DATABASE_URL, we need to replace the hostname in the connection string
+POSTGRES_HOST_ENV = "postgres.dev.svc.cluster.local"
+POSTGRES_HOST = resolve_service_host(POSTGRES_HOST_ENV, "postgres")
+DATABASE_URL = DATABASE_URL_ENV.replace(POSTGRES_HOST_ENV, POSTGRES_HOST).replace("@postgres:", f"@{POSTGRES_HOST}:")
+logger.info(f"DATABASE_URL configured with host: {POSTGRES_HOST}")
 
 
 @asynccontextmanager
@@ -115,7 +150,9 @@ async def lifespan(app: FastAPI):
     
     # Initialize PostgreSQL
     try:
-        logger.info(f"Connecting to PostgreSQL...")
+        logger.info(f"Connecting to PostgreSQL at {POSTGRES_HOST}...")
+        logger.info(f"Using DATABASE_URL: {DATABASE_URL.replace(os.getenv('REDIS_PASSWORD', ''), '***')}")
+        
         db_engine = create_async_engine(
             DATABASE_URL,
             pool_size=20,
@@ -182,7 +219,7 @@ async def lifespan(app: FastAPI):
 # Create FastAPI app
 app = FastAPI(
     title="NMT Service",
-    version="1.0.1",
+    version="1.0.2",
     description="Neural Machine Translation microservice for translating text between 22+ Indic languages. Supports bidirectional translation with script code handling and batch processing.",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -240,10 +277,12 @@ async def root():
     """Root endpoint"""
     return {
         "service": "nmt-service",
-        "version": "1.0.1",
+        "version": "1.0.2",
         "status": "running",
         "description": "Neural Machine Translation microservice",
-        "redis_available": app.state.redis_client is not None if hasattr(app.state, 'redis_client') else False
+        "redis_available": app.state.redis_client is not None if hasattr(app.state, 'redis_client') else False,
+        "redis_host_resolved": REDIS_HOST,
+        "postgres_host_resolved": POSTGRES_HOST
     }
 
 
