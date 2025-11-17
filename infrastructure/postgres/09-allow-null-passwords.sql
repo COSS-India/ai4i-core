@@ -4,9 +4,9 @@
 \c auth_db;
 
 -- Alter users table to allow NULL passwords (for OAuth users)
-ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL;
 
 -- Add comment to document the change
-COMMENT ON COLUMN users.password_hash IS 'Password hash for traditional login. NULL for OAuth-only users.';
+COMMENT ON COLUMN users.hashed_password IS 'Password hash for traditional login. NULL for OAuth-only users.';
 
 
