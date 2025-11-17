@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS permissions (
 );
 
 -- User roles junction table
+-- Junction table linking users to their assigned roles (many-to-many)
 CREATE TABLE IF NOT EXISTS user_roles (
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
@@ -41,6 +42,8 @@ CREATE TABLE IF NOT EXISTS user_roles (
 );
 
 -- Role permissions junction table
+-- Junction table linking roles to their permissions (many-to-many)
+-- Permission names follow format: resource.action (e.g., 'asr.inference', 'users.read')
 CREATE TABLE IF NOT EXISTS role_permissions (
     role_id INTEGER REFERENCES roles(id) ON DELETE CASCADE,
     permission_id INTEGER REFERENCES permissions(id) ON DELETE CASCADE,
@@ -88,8 +91,10 @@ CREATE TABLE IF NOT EXISTS oauth_providers (
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active);
+-- Index for efficient user → roles lookup
 CREATE INDEX IF NOT EXISTS idx_user_roles_user_id ON user_roles(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_roles_role_id ON user_roles(role_id);
+-- Index for efficient role → permissions lookup
 CREATE INDEX IF NOT EXISTS idx_role_permissions_role_id ON role_permissions(role_id);
 CREATE INDEX IF NOT EXISTS idx_role_permissions_permission_id ON role_permissions(permission_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
