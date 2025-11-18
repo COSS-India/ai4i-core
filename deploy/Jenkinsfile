@@ -15,6 +15,7 @@ nmt-service
 pipeline-service
 telemetry-service
 tts-service
+simple-ui
 """, description: 'Service to deploy')
     string(name: 'IMAGE_URI', defaultValue: '', description: 'REQUIRED: Full ECR image URI. Example: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/nmt-service:14112025-101038-IST')
     string(name: 'ROLLOUT_TIMEOUT', defaultValue: '180s', description: 'Rollout timeout (e.g. 180s or 5m)')
