@@ -15,7 +15,7 @@ from fastapi import HTTPException, Request
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ---- Startup ----
-    logger.info("🚀 Starting FastAPI app initialization...")
+    logger.info("Starting FastAPI app initialization...")
     create_tables()
     logger.info("Database tables verified or created (if not existing).")
 
@@ -85,5 +85,5 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
 
 if __name__ == "__main__":
-    logger.info("🚀 Starting FastAPI server on http://0.0.0.0:8000 ...")
+    logger.info(" Starting FastAPI server on http://0.0.0.0:8000 ...")
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

@@ -81,3 +81,8 @@ class ModelCreateRequest(BaseModel):
     benchmarks: List[Benchmark]
     submitter: Submitter
 
+    model_config = {
+        "validate_by_name": True,   # replaces allow_population_by_field_name
+        "from_attributes": True     # replaces orm_mode
+    }
+
