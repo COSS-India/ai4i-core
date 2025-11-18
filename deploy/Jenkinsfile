@@ -17,11 +17,11 @@ telemetry-service
 tts-service
 simple-ui
 """, description: 'Service to deploy')
-    string(name: 'IMAGE_URI', defaultValue: '', description: 'Full ECR image URI to deploy')
-    string(name: 'ROLLOUT_TIMEOUT', defaultValue: '180s')
-    booleanParam(name: 'APPLY_MANIFESTS', defaultValue: true)
-    booleanParam(name: 'FIX_DNS_HOSTNAMES', defaultValue: true)
-    booleanParam(name: 'DEBUG_MODE', defaultValue: false)
+    string(name: 'IMAGE_URI', defaultValue: '', description: 'Full ECR URI to deploy')
+    string(name: 'ROLLOUT_TIMEOUT', defaultValue: '180s', description: 'Rollout timeout')
+    booleanParam(name: 'APPLY_MANIFESTS', defaultValue: true, description: 'Apply YAML manifests')
+    booleanParam(name: 'FIX_DNS_HOSTNAMES', defaultValue: true, description: 'Fix DNS hostnames in ConfigMap')
+    booleanParam(name: 'DEBUG_MODE', defaultValue: false, description: 'Enable SSH debug logs')
   }
 
   environment {
@@ -31,64 +31,59 @@ simple-ui
     K8S_NAMESPACE = 'dev'
     BASTION_HOST  = '13.235.32.90'
     BASTION_USER  = 'ubuntu'
+
+    // CLEAN SAFE PATH FOR MANIFESTS
+    MANIFEST_BASE = "k8\\'s_manifest"
   }
 
   stages {
 
-    /* -------------------------------
-     * VALIDATE PARAMETERS
-     * ------------------------------- */
+    /* ---------------------- PARAM VALIDATION ---------------------- */
     stage('Validate Parameters') {
       steps {
         script {
           if (!params.IMAGE_URI?.trim()) {
-            error "IMAGE_URI cannot be empty"
+            error "❌ IMAGE_URI is required!"
           }
           env.DEPLOY_IMAGE = params.IMAGE_URI.trim()
-        }
-
-        echo """
+          echo """
 ================================================
 Deployment Configuration
 ================================================
-Service:          ${params.SERVICE_NAME}
-Image:            ${env.DEPLOY_IMAGE}
-Namespace:        ${env.K8S_NAMESPACE}
-Cluster:          ${env.EKS_CLUSTER}
-Branch:           ${params.BRANCH_NAME}
-Apply Manifests:  ${params.APPLY_MANIFESTS}
-Fix DNS:          ${params.FIX_DNS_HOSTNAMES}
-Debug Mode:       ${params.DEBUG_MODE}
+Service:           ${params.SERVICE_NAME}
+Image:             ${env.DEPLOY_IMAGE}
+Namespace:         ${env.K8S_NAMESPACE}
+Cluster:           ${env.EKS_CLUSTER}
+Branch:            ${params.BRANCH_NAME}
+Manifests Apply:   ${params.APPLY_MANIFESTS}
+Fix DNS:           ${params.FIX_DNS_HOSTNAMES}
 ================================================
 """
+        }
       }
     }
 
-    /* -------------------------------
-     * CHECKOUT REPO
-     * ------------------------------- */
+    /* ---------------------- CHECKOUT ---------------------- */
     stage('Checkout Repository') {
       when { expression { params.APPLY_MANIFESTS } }
       steps {
+        echo "📥 Checking out repository..."
         checkout([
           $class: 'GitSCM',
           branches: [[name: "*/${params.BRANCH_NAME}"]],
           userRemoteConfigs: [[url: "${env.GIT_REPO}"]]
         ])
-
         script {
-          def manifestPath = "k8's_manifest/${params.SERVICE_NAME}"
-          if (!fileExists(manifestPath)) {
-            error "❌ Kubernetes manifests not found: ${manifestPath}"
+          env.MANIFEST_PATH = "${env.MANIFEST_BASE}/${params.SERVICE_NAME}"
+          if (!fileExists(env.MANIFEST_PATH)) {
+            error "❌ Kubernetes manifests not found at: ${env.MANIFEST_PATH}"
           }
-          echo "✓ Found manifests at ${manifestPath}"
+          echo "✓ Found manifests at ${env.MANIFEST_PATH}"
         }
       }
     }
 
-    /* -------------------------------
-     * CHECK SSH TO BASTION
-     * ------------------------------- */
+    /* ---------------------- BASTION CHECK ---------------------- */
     stage('Pre-deploy Bastion Check') {
       steps {
         withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh',
@@ -96,16 +91,14 @@ Debug Mode:       ${params.DEBUG_MODE}
                                            usernameVariable: 'SSH_USER')]) {
 
           sh """
-            ssh -o StrictHostKeyChecking=no -i "\${SSH_KEY}" ${BASTION_USER}@${BASTION_HOST} \
-              "echo 'SSH OK'; which aws; which kubectl"
+            ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" ${BASTION_USER}@${BASTION_HOST} \
+              "echo '✓ SSH OK'; which aws; which kubectl"
           """
         }
       }
     }
 
-    /* -------------------------------
-     * APPLY MANIFESTS
-     * ------------------------------- */
+    /* ---------------------- APPLY YAML MANIFESTS ---------------------- */
     stage('Apply Kubernetes Manifests') {
       when { expression { params.APPLY_MANIFESTS } }
       steps {
@@ -115,36 +108,41 @@ Debug Mode:       ${params.DEBUG_MODE}
 
           sh """
             set -eu
+            
+            echo "📦 Copying manifests to bastion..."
 
-            echo "Copying manifests to bastion..."
+            TEMP_DIR=\$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" ${BASTION_USER}@${BASTION_HOST} 'mktemp -d /tmp/k8s-manifest-XXXX')
 
-            TEMP_DIR=\$(ssh -o StrictHostKeyChecking=no -i "\${SSH_KEY}" ${BASTION_USER}@${BASTION_HOST} 'mktemp -d /tmp/k8s-manifest-XXXX')
+            scp -o StrictHostKeyChecking=no -i "$SSH_KEY" -r "${MANIFEST_PATH}/"* \
+              ${BASTION_USER}@${BASTION_HOST}:\${TEMP_DIR}/
 
-            scp -o StrictHostKeyChecking=no -i "\${SSH_KEY}" -r "k8's_manifest/${SERVICE_NAME}/"* \
-                ${BASTION_USER}@${BASTION_HOST}:\${TEMP_DIR}/
+            echo "🚀 Applying YAML manifests..."
 
-            ssh -o StrictHostKeyChecking=no -i "\${SSH_KEY}" ${BASTION_USER}@${BASTION_HOST} bash -s << 'EOF'
-TEMP_DIR="\$1"
+            ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" ${BASTION_USER}@${BASTION_HOST} bash <<EOF
 set -eu
 
 aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
 
 cd "\${TEMP_DIR}"
+echo "Files:"
+ls -lh
 
-echo "Applying manifests..."
-kubectl apply -f . -n ${K8S_NAMESPACE}
+echo "Applying only .yaml/.yml files..."
+for f in *.yaml *.yml 2>/dev/null; do
+  if [ -f "\$f" ]; then
+    echo "→ Applying: \$f"
+    kubectl apply -f "\$f" -n ${K8S_NAMESPACE}
+  fi
+done
 
 rm -rf "\${TEMP_DIR}"
 EOF
-            \${TEMP_DIR}
           """
         }
       }
     }
 
-    /* -------------------------------
-     * FIX DNS CONFIGMAP
-     * ------------------------------- */
+    /* ---------------------- DNS FIX ---------------------- */
     stage('Fix DNS Hostnames in ConfigMap') {
       when { expression { params.FIX_DNS_HOSTNAMES } }
       steps {
@@ -153,33 +151,28 @@ EOF
                                            usernameVariable: 'SSH_USER')]) {
 
           sh """
-            ssh -o StrictHostKeyChecking=no -i "\${SSH_KEY}" ${BASTION_USER}@${BASTION_HOST} bash -s << 'EOF'
+            ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" ${BASTION_USER}@${BASTION_HOST} bash <<EOF
 set -eu
 
 aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
 
-CM="${SERVICE_NAME}-config"
+echo "Fixing DNS entries..."
 
-if kubectl get configmap \${CM} -n ${K8S_NAMESPACE}; then
-  kubectl patch configmap \${CM} -n ${K8S_NAMESPACE} --type merge -p '{
-    "data": {
-      "REDIS_HOST": "redis.dev.svc.cluster.local",
-      "REDIS_PORT": "6379",
-      "POSTGRES_HOST": "postgres.dev.svc.cluster.local"
-    }
-  }'
-else
-  echo "ConfigMap not found, skipping patch"
-fi
+kubectl patch configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} --type merge -p '{
+  "data": {
+    "REDIS_HOST": "redis.dev.svc.cluster.local",
+    "REDIS_PORT": "6379",
+    "POSTGRES_HOST": "postgres.dev.svc.cluster.local"
+  }
+}' || true
+
 EOF
           """
         }
       }
     }
 
-    /* -------------------------------
-     * DEPLOY TO EKS
-     * ------------------------------- */
+    /* ---------------------- DEPLOYMENT ---------------------- */
     stage('Deploy to EKS') {
       steps {
         withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh',
@@ -187,27 +180,44 @@ EOF
                                            usernameVariable: 'SSH_USER')]) {
 
           sh """
-            ssh -o StrictHostKeyChecking=no -i "\${SSH_KEY}" ${BASTION_USER}@${BASTION_HOST} bash -s << 'EOF'
+            ssh -o StrictHostKeyChecking=no -i "$SSH_KEY" ${BASTION_USER}@${BASTION_HOST} bash <<EOF
 set -eu
 
 aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
 
-kubectl -n ${K8S_NAMESPACE} set image deployment/${SERVICE_NAME} ${SERVICE_NAME}=${DEPLOY_IMAGE} --record
+echo "Updating Deployment Image..."
+kubectl -n ${K8S_NAMESPACE} set image deployment/${SERVICE_NAME} \
+  ${SERVICE_NAME}=${DEPLOY_IMAGE} --record
 
+echo "Waiting for rollout..."
 kubectl -n ${K8S_NAMESPACE} rollout status deployment/${SERVICE_NAME} --timeout=${ROLLOUT_TIMEOUT}
+
 EOF
           """
         }
       }
     }
+
+    /* ---------------------- VERIFICATION ---------------------- */
+    stage('Verification') {
+      steps {
+        echo """
+================================================
+✅ Deployment Verification Complete
+================================================
+Service:       ${params.SERVICE_NAME}
+Image:         ${env.DEPLOY_IMAGE}
+Namespace:     ${env.K8S_NAMESPACE}
+Cluster:       ${env.EKS_CLUSTER}
+================================================
+"""
+      }
+    }
   }
 
-  /* -------------------------------
-   * POST ACTIONS
-   * ------------------------------- */
   post {
     success {
-      echo "✅ Deployment Succeeded: ${params.SERVICE_NAME}"
+      echo "🎉 Deployment Successful: ${params.SERVICE_NAME}"
     }
     failure {
       echo "❌ Deployment Failed: ${params.SERVICE_NAME}"
