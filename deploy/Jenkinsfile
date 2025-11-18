@@ -33,7 +33,7 @@ simple-ui
     BASTION_USER  = 'ubuntu'
 
     // CLEAN SAFE PATH FOR MANIFESTS
-    MANIFEST_BASE = "k8\\'s_manifest"
+    MANIFEST_BASE = """k8's_manifest"""
   }
 
   stages {
