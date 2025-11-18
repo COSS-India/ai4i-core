@@ -58,3 +58,14 @@ audio_samples/
 
 # Tests (if you don’t want them in the runtime image)
 # tests/
+
+
+.git
+__pycache__/
+*.pyc
+tests/
+docs/
+data/
+models/
+*.log
+
