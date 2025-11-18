@@ -1,16 +1,11 @@
 pipeline {
-  agent any
+    agent any
 
-  parameters {
-    string(
-      name: 'BRANCH_NAME',
-      defaultValue: 'devops',
-      description: 'Git branch to deploy from'
-    )
-
-    choice(
-      name: 'SERVICE_NAME',
-      choices: """
+    parameters {
+        string(name: 'BRANCH_NAME', defaultValue: 'devops', description: 'Branch to deploy from')
+        choice(
+            name: 'SERVICE_NAME',
+            choices: """
 alerting-service
 api-gateway-service
 asr-service
@@ -24,190 +19,154 @@ telemetry-service
 tts-service
 simple-ui
 """,
-      description: 'Service to deploy'
-    )
+            description: 'Select the service to deploy'
+        )
+        string(name: 'IMAGE_URI', defaultValue: '', description: 'Full ECR image URI to deploy')
+        string(name: 'ROLLOUT_TIMEOUT', defaultValue: '180s', description: 'Rollout timeout (e.g. 120s, 5m)')
+    }
 
-    string(
-      name: 'IMAGE_URI',
-      defaultValue: '',
-      description: 'Full ECR image URI (e.g. 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/simple-ui:17112025-183057-IST)'
-    )
+    environment {
+        GIT_REPO      = 'https://github.com/COSS-India/ai4i-core.git'
+        AWS_REGION    = 'ap-south-1'
+        EKS_CLUSTER   = 'AI4Voice-core'
+        K8S_NAMESPACE = 'dev'
+        BASTION_HOST  = '13.235.32.90'
+        BASTION_USER  = 'ubuntu'
+    }
 
-    booleanParam(
-      name: 'APPLY_MANIFESTS',
-      defaultValue: true,
-      description: 'Apply Kubernetes manifests from Git before deployment'
-    )
-  }
+    stages {
 
-  environment {
-    GIT_REPO      = 'https://github.com/COSS-India/ai4i-core.git'
-    AWS_REGION    = 'ap-south-1'
-    EKS_CLUSTER   = 'AI4Voice-core'
-    K8S_NAMESPACE = 'dev'
-    BASTION_HOST  = '13.235.32.90'
-    BASTION_USER  = 'ubuntu'
-  }
+        stage('Validate Parameters') {
+            steps {
+                script {
+                    if (!params.IMAGE_URI?.trim()) {
+                        error "IMAGE_URI is required!"
+                    }
 
-  stages {
+                    env.DEPLOY_IMAGE = params.IMAGE_URI.trim()
 
-    /* ------------------------------------------------------------------ */
-    /* 1. Validate Inputs                                                 */
-    /* ------------------------------------------------------------------ */
-    stage('Validate Inputs') {
-      steps {
-        script {
-          if (!params.IMAGE_URI?.trim()) {
-            error "IMAGE_URI is required! Example: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/simple-ui:17112025-183057-IST"
-          }
+                    // Handle special deployment name for simple-ui
+                    env.DEPLOYMENT_NAME =
+                        (params.SERVICE_NAME == "simple-ui")
+                        ? "simple-ui-frontend"
+                        : params.SERVICE_NAME
 
-          echo "================================================"
-          echo "Deploying service: ${params.SERVICE_NAME}"
-          echo "Image:            ${params.IMAGE_URI}"
-          echo "Namespace:        ${env.K8S_NAMESPACE}"
-          echo "Cluster:          ${env.EKS_CLUSTER}"
-          echo "Branch:           ${params.BRANCH_NAME}"
-          echo "Apply Manifests:  ${params.APPLY_MANIFESTS}"
-          echo "================================================"
+                    echo "------------------------------------------------"
+                    echo "Deploying service: ${params.SERVICE_NAME}"
+                    echo "Deployment name:   ${env.DEPLOYMENT_NAME}"
+                    echo "Image:             ${env.DEPLOY_IMAGE}"
+                    echo "------------------------------------------------"
+                }
+            }
         }
-      }
-    }
 
-    /* ------------------------------------------------------------------ */
-    /* 2. Checkout repo & verify manifest path                            */
-    /* ------------------------------------------------------------------ */
-    stage('Checkout Repository') {
-      when { expression { params.APPLY_MANIFESTS } }
-      steps {
-        echo "📥 Checking out repository..."
-        checkout([
-          $class: 'GitSCM',
-          branches: [[name: "*/${params.BRANCH_NAME}"]],
-          userRemoteConfigs: [[url: "${env.GIT_REPO}"]]
-        ])
+        stage('Checkout Repository') {
+            steps {
+                echo "📥 Checking out repository..."
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: "*/${params.BRANCH_NAME}"]],
+                    userRemoteConfigs: [[url: "${env.GIT_REPO}"]]
+                ])
 
-        script {
-          // IMPORTANT: use def to avoid Groovy field warning
-          def manifestPath = "k8's_manifest/${params.SERVICE_NAME}"
-          if (!fileExists(manifestPath)) {
-            error "❌ Kubernetes manifests not found at: ${manifestPath}"
-          }
-          echo "✓ Found manifests at ${manifestPath}"
+                script {
+                    env.MANIFEST_PATH = "k8's_manifest/${params.SERVICE_NAME}"
+
+                    if (!fileExists(env.MANIFEST_PATH)) {
+                        error "❌ Kubernetes manifests not found at: ${env.MANIFEST_PATH}"
+                    }
+
+                    echo "✓ Found manifests at ${env.MANIFEST_PATH}"
+                }
+            }
         }
-      }
-    }
 
-    /* ------------------------------------------------------------------ */
-    /* 3. Pre-deploy bastion connectivity check                           */
-    /* ------------------------------------------------------------------ */
-    stage('Pre-deploy Bastion Check') {
-      steps {
-        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY')]) {
-          // Use Groovy GString so ${BASTION_HOST} and ${BASTION_USER} get expanded,
-          // but escape $SSH_KEY so the secret is not interpolated in Groovy.
-          sh """#!/bin/bash
-            set -e
-            echo "🔐 Checking bastion connectivity..."
-
-            ssh -o StrictHostKeyChecking=no -i "\$SSH_KEY" ${BASTION_USER}@${BASTION_HOST} \\
-              "echo 'SSH OK'; hostname; which aws; which kubectl"
-
-            echo "✅ Bastion reachable and tools present"
-          """
+        stage('Pre-deploy Bastion Check') {
+            steps {
+                echo "🔐 Checking bastion connectivity..."
+                withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY')]) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no -i "${SSH_KEY}" ${BASTION_USER}@${BASTION_HOST} \
+                            "echo 'SSH OK'; which aws; which kubectl"
+                    """
+                }
+            }
         }
-      }
-    }
 
-    /* ------------------------------------------------------------------ */
-    /* 4. Copy & apply Kubernetes manifests from repo                     */
-    /* ------------------------------------------------------------------ */
-    stage('Apply Kubernetes Manifests') {
-      when { expression { params.APPLY_MANIFESTS } }
-      steps {
-        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY')]) {
-          sh """#!/bin/bash
-            set -e
+        stage('Apply Kubernetes Manifests') {
+            steps {
+                echo "📦 Copying manifests to bastion..."
+                withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY')]) {
 
-            echo "📦 Copying manifests to bastion..."
+                    sh '''
+                        set -eux
 
-            MANIFEST_DIR="k8's_manifest/${SERVICE_NAME}"
+                        TEMP_DIR=$(ssh -o StrictHostKeyChecking=no -i "${SSH_KEY}" '"${BASTION_USER}"'@'"${BASTION_HOST}"' \
+                            mktemp -d /tmp/k8s-manifest-XXXX)
 
-            # Create remote temp directory
-            TEMP_DIR=\$(ssh -o StrictHostKeyChecking=no -i "\$SSH_KEY" ${BASTION_USER}@${BASTION_HOST} \\
-              "mktemp -d /tmp/k8s-manifest-XXXX")
-            echo "✓ Created remote directory on bastion: \$TEMP_DIR"
+                        scp -o StrictHostKeyChecking=no -i "${SSH_KEY}" -r '"'"${MANIFEST_PATH}"'"'/* \
+                            '"${BASTION_USER}"'@'"${BASTION_HOST}"':"$TEMP_DIR"/
 
-            echo "📄 Local manifest files:"
-            ls -lh "\${MANIFEST_DIR}" || true
+                        echo "🚀 Applying YAML manifests..."
 
-            # Copy only YAMLs to bastion
-            scp -o StrictHostKeyChecking=no -i "\$SSH_KEY" \\
-              "\${MANIFEST_DIR}"/*.yaml \\
-              ${BASTION_USER}@${BASTION_HOST}:"\$TEMP_DIR"/
+                        ssh -o StrictHostKeyChecking=no -i "${SSH_KEY}" '"${BASTION_USER}"'@'"${BASTION_HOST}"' bash -s <<EOF
+                            set -eux
+                            export AWS_REGION=${AWS_REGION}
+                            export EKS_CLUSTER=${EKS_CLUSTER}
 
-            echo "🚀 Applying YAML manifests from \$TEMP_DIR on bastion..."
+                            aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER
 
-            ssh -o StrictHostKeyChecking=no -i "\$SSH_KEY" ${BASTION_USER}@${BASTION_HOST} \\
-              "set -e; \\
-               aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER} --kubeconfig ~/.kube/config; \\
-               echo 'Applying manifests in \$TEMP_DIR...'; \\
-               kubectl apply -f \$TEMP_DIR -n ${K8S_NAMESPACE}; \\
-               echo 'Cleaning up temp dir...'; \\
-               rm -rf \$TEMP_DIR; \\
-               echo '✅ Manifests applied successfully.'"
+                            kubectl apply -f "$TEMP_DIR" -n ${K8S_NAMESPACE}
 
-          """
+                            echo "✔ Manifests applied"
+                        EOF
+                    '''
+                }
+            }
         }
-      }
-    }
 
-    /* ------------------------------------------------------------------ */
-    /* 5. Update image & rollout on EKS                                   */
-    /* ------------------------------------------------------------------ */
-    stage('Deploy to EKS') {
-      steps {
-        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY')]) {
-          sh """#!/bin/bash
-            set -e
+        stage('Deploy to EKS') {
+            steps {
+                echo "🚀 Updating deployment ${env.DEPLOYMENT_NAME} with image ${env.DEPLOY_IMAGE}..."
+                withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY')]) {
 
-            SERVICE_NAME="${SERVICE_NAME}"
-            IMAGE_URI="${IMAGE_URI}"
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no -i "${SSH_KEY}" '"${BASTION_USER}"'@'"${BASTION_HOST}"' bash -s <<EOF
+                            set -eux
+                            export AWS_REGION=${AWS_REGION}
+                            export EKS_CLUSTER=${EKS_CLUSTER}
 
-            echo "🚀 Updating deployment \${SERVICE_NAME} with image \${IMAGE_URI}..."
+                            aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER
 
-            ssh -o StrictHostKeyChecking=no -i "\$SSH_KEY" ${BASTION_USER}@${BASTION_HOST} \\
-              "set -e; \\
-               aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER} --kubeconfig ~/.kube/config; \\
-               echo '🔄 Setting new image on deployment/${SERVICE_NAME}'; \\
-               kubectl -n ${K8S_NAMESPACE} set image deployment/${SERVICE_NAME} ${SERVICE_NAME}=\${IMAGE_URI} --record; \\
-               echo '⏳ Waiting for rollout...'; \\
-               kubectl -n ${K8S_NAMESPACE} rollout status deployment/${SERVICE_NAME} --timeout=180s; \\
-               echo '🎉 Rollout complete for ${SERVICE_NAME}!'"
-          """
+                            echo "🔄 Setting new image on deployment/${DEPLOYMENT_NAME}"
+
+                            if ! kubectl -n ${K8S_NAMESPACE} get deployment ${DEPLOYMENT_NAME}; then
+                                echo "❌ Deployment ${DEPLOYMENT_NAME} not found!"
+                                exit 1
+                            fi
+
+                            kubectl -n ${K8S_NAMESPACE} set image deployment/${DEPLOYMENT_NAME} \
+                                ${DEPLOYMENT_NAME}=${DEPLOY_IMAGE} --record
+
+                            kubectl -n ${K8S_NAMESPACE} rollout status deployment/${DEPLOYMENT_NAME} \
+                                --timeout=${ROLLOUT_TIMEOUT}
+                        EOF
+                    '''
+                }
+            }
         }
-      }
     }
 
-  }
-
-  /* -------------------------------------------------------------------- */
-  /* POST                                                                 */
-  /* -------------------------------------------------------------------- */
-
-  post {
-    success {
-      echo "✅ Deployment Successful: ${params.SERVICE_NAME}"
-      echo "   Image:     ${params.IMAGE_URI}"
-      echo "   Namespace: ${env.K8S_NAMESPACE}"
-      echo "   Cluster:   ${env.EKS_CLUSTER}"
+    post {
+        success {
+            echo "✅ Deployment Success: ${params.SERVICE_NAME}"
+        }
+        failure {
+            echo "❌ Deployment Failed: ${params.SERVICE_NAME}"
+            echo "   Image:     ${env.DEPLOY_IMAGE}"
+            echo "   Namespace: ${env.K8S_NAMESPACE}"
+            echo "   Cluster:   ${env.EKS_CLUSTER}"
+            echo "👉 Check console log for errors"
+        }
     }
-    failure {
-      echo "❌ Deployment Failed: ${params.SERVICE_NAME}"
-      echo "   Image:     ${params.IMAGE_URI}"
-      echo "   Namespace: ${env.K8S_NAMESPACE}"
-      echo "   Cluster:   ${env.EKS_CLUSTER}"
-      echo ""
-      echo "👉 Check console log above for SSH, kubectl, or manifest errors."
-    }
-  }
 }
