@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: simple-ui-frontend
+  name: simple-ui
   namespace: dev
   labels:
-    app: simple-ui-frontend
+    app: simple-ui
 spec:
   selector:
-    app: simple-ui-frontend
+    app: simple-ui
   ports:
     - port: 3000
       targetPort: 3000
@@ -17,19 +17,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: simple-ui-frontend
+  name: simple-ui
   namespace: dev
   labels:
-    app: simple-ui-frontend
+    app: simple-ui
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: simple-ui-frontend
+      app: simple-ui
   template:
     metadata:
       labels:
-        app: simple-ui-frontend
+        app: simple-ui
     spec:
       nodeSelector:
       tolerations:
@@ -38,8 +38,8 @@ spec:
         value: cpu
         effect: NoSchedule
       containers:
-      - name: simple-ui-frontend
-        image: ai4v/simple-ui-frontend:latest
+      - name: simple-ui
+        image: ai4v/simple-ui:latest
         ports:
         - containerPort: 3000
         env:
