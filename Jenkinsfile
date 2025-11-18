@@ -26,8 +26,7 @@ pipeline-service
 telemetry-service
 tts-service
 simple-ui
-""",
-      description: "Backend or Frontend service to build"
+"""
     )
 
     booleanParam(name: 'CLEAN_WORKSPACE', defaultValue: true)
@@ -35,10 +34,9 @@ simple-ui
 
   stages {
 
-    /* ---------------------------
-     * Cleanup
-     * ---------------------------
-     */
+    /* -----------------------------
+       CLEAN WORKSPACE
+    ------------------------------ */
     stage('Prepare Workspace') {
       steps {
         script {
@@ -47,10 +45,9 @@ simple-ui
       }
     }
 
-    /* ---------------------------
-     * Checkout Code
-     * ---------------------------
-     */
+    /* -----------------------------
+       CHECKOUT
+    ------------------------------ */
     stage('Checkout') {
       steps {
         checkout([
@@ -61,79 +58,61 @@ simple-ui
       }
     }
 
-    /* ---------------------------
-     * Auto Detect Service Path
-     * ---------------------------
-     */
-    stage('Validate Service Path') {
+    /* -----------------------------
+       DETECT CORRECT SERVICE PATH
+    ------------------------------ */
+    stage('Detect Service Path') {
       steps {
         script {
+          def backend = "services/${params.SERVICE_NAME}"
+          def frontend = "frontend/${params.SERVICE_NAME}"
 
-          def backendPath  = "services/${params.SERVICE_NAME}"
-          def frontendPath = "frontend/${params.SERVICE_NAME}"
-
-          if (fileExists(backendPath)) {
-            env.SERVICE_PATH = backendPath
-          } else if (fileExists(frontendPath)) {
-            env.SERVICE_PATH = frontendPath
+          if (fileExists(backend)) {
+            env.SERVICE_PATH = backend
+          } else if (fileExists(frontend)) {
+            env.SERVICE_PATH = frontend
           } else {
             error """
-❌ ERROR: Service folder not found!
+❌ ERROR: Service not found!
 
 Checked:
-  - ${backendPath}
-  - ${frontendPath}
+  - ${backend}
+  - ${frontend}
 
-Please verify SERVICE_NAME.
+Fix SERVICE_NAME.
 """
           }
 
-          echo "✓ Service path detected: ${env.SERVICE_PATH}"
+          echo "✓ Using service path: ${env.SERVICE_PATH}"
         }
       }
     }
 
-    /* ---------------------------
-     * Docker Build (with cache)
-     * ---------------------------
-     */
-    stage('Docker Build (Cached)') {
+    /* -----------------------------
+       DOCKER BUILD (NO CACHE)
+    ------------------------------ */
+    stage('Docker Build') {
       steps {
         dir("${env.SERVICE_PATH}") {
-
           sh '''
             set -eux
 
             SERVICE_NAME="${SERVICE_NAME}"
-            AWS_REGION="${AWS_REGION}"
-            AWS_ACCOUNT="${AWS_ACCOUNT}"
+            BUILD_IMAGE="${SERVICE_NAME}:latest"
 
-            BUILD_TAG="build-${BUILD_NUMBER}"
-            LOCAL_IMAGE="${SERVICE_NAME}:${BUILD_TAG}"
+            echo "Building Docker image..."
+            docker build -t "${BUILD_IMAGE}" .
 
-            ECR="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-            CACHE_IMAGE="${ECR}/ai4voice/${SERVICE_NAME}:cache"
-
-            echo "Attempting to pull cache..."
-            docker pull "${CACHE_IMAGE}" || true
-
-            echo "Building Docker image (with cache)..."
-            docker build \
-              --cache-from="${CACHE_IMAGE}" \
-              -t "${LOCAL_IMAGE}" .
-
-            echo "✔ Build complete: ${LOCAL_IMAGE}"
+            echo "✔ Build complete: ${BUILD_IMAGE}"
           '''
         }
       }
     }
 
-    /* ---------------------------
-     * Push to ECR
-     * ---------------------------
-     */
+    /* -----------------------------
+       PUSH TO ECR (ONLY FINAL TAG)
+    ------------------------------ */
     stage('Push to ECR') {
-
       when { expression { fileExists("${env.SERVICE_PATH}/Dockerfile") } }
 
       steps {
@@ -144,7 +123,6 @@ Please verify SERVICE_NAME.
         )]) {
 
           dir("${env.SERVICE_PATH}") {
-
             sh '''
               set -eux
 
@@ -152,39 +130,31 @@ Please verify SERVICE_NAME.
               AWS_REGION="${AWS_REGION}"
               AWS_ACCOUNT="${AWS_ACCOUNT}"
 
-              BUILD_TAG="build-${BUILD_NUMBER}"
-              LOCAL_IMAGE="${SERVICE_NAME}:${BUILD_TAG}"
+              FINAL_TAG="$(TZ='Asia/Kolkata' date +'%d%m%Y-%H%M%S')-IST"
 
               ECR="${AWS_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-              TARGET_REPO="${ECR}/ai4voice/${SERVICE_NAME}"
-
-              TIMESTAMP="$(TZ='Asia/Kolkata' date +'%d%m%Y-%H%M%S')-IST"
-              FINAL_IMAGE="${TARGET_REPO}:${TIMESTAMP}"
-              CACHE_IMAGE="${TARGET_REPO}:cache"
+              REPO="${ECR}/ai4voice/${SERVICE_NAME}"
+              FINAL_IMAGE="${REPO}:${FINAL_TAG}"
 
               export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION="${AWS_REGION}"
 
-              echo "Logging in to ECR..."
+              echo "Logging into ECR..."
               aws ecr get-login-password --region "${AWS_REGION}" \
                 | docker login --username AWS --password-stdin "${ECR}"
 
-              echo "Ensuring repository exists..."
-              aws ecr describe-repositories --repository-names "ai4voice/${SERVICE_NAME}" \
+              echo "Ensuring ECR repo exists..."
+              aws ecr describe-repositories \
+                --repository-names "ai4voice/${SERVICE_NAME}" \
                 || aws ecr create-repository --repository-name "ai4voice/${SERVICE_NAME}"
 
-              echo "Tagging image..."
-              docker tag "${LOCAL_IMAGE}" "${FINAL_IMAGE}"
+              echo "Tagging final image..."
+              docker tag "${SERVICE_NAME}:latest" "${FINAL_IMAGE}"
 
-              echo "Pushing production tag..."
+              echo "Pushing final timestamped image..."
               docker push "${FINAL_IMAGE}"
 
-              echo "Updating cache tag..."
-              docker tag "${LOCAL_IMAGE}" "${CACHE_IMAGE}"
-              docker push "${CACHE_IMAGE}"
-
-              echo "✔ Image pushed successfully:"
-              echo "  - ${FINAL_IMAGE}"
-              echo "  - ${CACHE_IMAGE}"
+              echo "✔ FINAL IMAGE PUSHED:"
+              echo "  ${FINAL_IMAGE}"
             '''
           }
         }
@@ -192,10 +162,6 @@ Please verify SERVICE_NAME.
     }
   }
 
-  /* ---------------------------
-   * Post Actions
-   * ---------------------------
-   */
   post {
     success {
       echo "✅ Build SUCCESS — ${params.SERVICE_NAME}"
