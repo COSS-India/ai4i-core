@@ -17,11 +17,11 @@ telemetry-service
 tts-service
 simple-ui
 """, description: 'Service to deploy')
-    string(name: 'IMAGE_URI', defaultValue: '', description: 'REQUIRED: Full ECR image URI.')
-    string(name: 'ROLLOUT_TIMEOUT', defaultValue: '180s', description: 'Rollout timeout')
-    booleanParam(name: 'APPLY_MANIFESTS', defaultValue: true, description: 'Apply manifests?')
-    booleanParam(name: 'FIX_DNS_HOSTNAMES', defaultValue: true, description: 'Fix DNS hostnames?')
-    booleanParam(name: 'DEBUG_MODE', defaultValue: false, description: 'Enable SSH debug')
+    string(name: 'IMAGE_URI', defaultValue: '', description: 'Full ECR image URI to deploy')
+    string(name: 'ROLLOUT_TIMEOUT', defaultValue: '180s')
+    booleanParam(name: 'APPLY_MANIFESTS', defaultValue: true)
+    booleanParam(name: 'FIX_DNS_HOSTNAMES', defaultValue: true)
+    booleanParam(name: 'DEBUG_MODE', defaultValue: false)
   }
 
   environment {
@@ -35,179 +35,182 @@ simple-ui
 
   stages {
 
-    /* ---------------------------------------------------
-     * VALIDATION
-     * --------------------------------------------------- */
+    /* -------------------------------
+     * VALIDATE PARAMETERS
+     * ------------------------------- */
     stage('Validate Parameters') {
       steps {
         script {
           if (!params.IMAGE_URI?.trim()) {
-            error "IMAGE_URI parameter is required!"
+            error "IMAGE_URI cannot be empty"
           }
           env.DEPLOY_IMAGE = params.IMAGE_URI.trim()
-          echo "================================================"
-          echo "Service: ${params.SERVICE_NAME}"
-          echo "Image:   ${env.DEPLOY_IMAGE}"
-          echo "Branch:  ${params.BRANCH_NAME}"
-          echo "================================================"
         }
+
+        echo """
+================================================
+Deployment Configuration
+================================================
+Service:          ${params.SERVICE_NAME}
+Image:            ${env.DEPLOY_IMAGE}
+Namespace:        ${env.K8S_NAMESPACE}
+Cluster:          ${env.EKS_CLUSTER}
+Branch:           ${params.BRANCH_NAME}
+Apply Manifests:  ${params.APPLY_MANIFESTS}
+Fix DNS:          ${params.FIX_DNS_HOSTNAMES}
+Debug Mode:       ${params.DEBUG_MODE}
+================================================
+"""
       }
     }
 
-    /* ---------------------------------------------------
-     * CHECKOUT
-     * --------------------------------------------------- */
+    /* -------------------------------
+     * CHECKOUT REPO
+     * ------------------------------- */
     stage('Checkout Repository') {
-      when { expression { return params.APPLY_MANIFESTS } }
+      when { expression { params.APPLY_MANIFESTS } }
       steps {
-        echo "Checking out ${params.BRANCH_NAME} ..."
         checkout([
           $class: 'GitSCM',
           branches: [[name: "*/${params.BRANCH_NAME}"]],
           userRemoteConfigs: [[url: "${env.GIT_REPO}"]]
         ])
 
-        /* FIXED MANIFEST LOOKUP */
         script {
           def manifestPath = "k8's_manifest/${params.SERVICE_NAME}"
-
-          // ⚠ Special mapping for simple-ui
-          if (params.SERVICE_NAME == "simple-ui") {
-            manifestPath = "k8's_manifest/simple-ui-frontend"
-          }
-
-          echo "Searching manifests at: ${manifestPath}"
-
           if (!fileExists(manifestPath)) {
-            error "❌ Kubernetes manifests not found at ${manifestPath}"
+            error "❌ Kubernetes manifests not found: ${manifestPath}"
           }
-
-          env.MANIFEST_PATH = manifestPath
-          echo "✓ Found manifest directory: ${env.MANIFEST_PATH}"
+          echo "✓ Found manifests at ${manifestPath}"
         }
       }
     }
 
-    /* ---------------------------------------------------
-     * BASTION CHECK
-     * --------------------------------------------------- */
+    /* -------------------------------
+     * CHECK SSH TO BASTION
+     * ------------------------------- */
     stage('Pre-deploy Bastion Check') {
       steps {
         withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh',
-            keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
-
-          def sshOpts = params.DEBUG_MODE ? "-vvv" : "-v"
+                                           keyFileVariable: 'SSH_KEY',
+                                           usernameVariable: 'SSH_USER')]) {
 
           sh """
-            echo "Testing bastion..."
-            ssh ${sshOpts} -i \$SSH_KEY -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} "echo Connected"
+            ssh -o StrictHostKeyChecking=no -i "\${SSH_KEY}" ${BASTION_USER}@${BASTION_HOST} \
+              "echo 'SSH OK'; which aws; which kubectl"
           """
         }
       }
     }
 
-    /* ---------------------------------------------------
+    /* -------------------------------
      * APPLY MANIFESTS
-     * --------------------------------------------------- */
+     * ------------------------------- */
     stage('Apply Kubernetes Manifests') {
-      when { expression { return params.APPLY_MANIFESTS } }
+      when { expression { params.APPLY_MANIFESTS } }
       steps {
         withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh',
-            keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+                                           keyFileVariable: 'SSH_KEY',
+                                           usernameVariable: 'SSH_USER')]) {
 
           sh """
             set -eu
-            echo "Copying manifests from: ${MANIFEST_PATH}"
 
-            TEMP_DIR=\$(ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} "mktemp -d /tmp/k8s.XXXX")
-            echo "Temp directory: \$TEMP_DIR"
+            echo "Copying manifests to bastion..."
 
-            scp -i "\$SSH_KEY" -o StrictHostKeyChecking=no -r "${MANIFEST_PATH}/"* ${BASTION_USER}@${BASTION_HOST}:\$TEMP_DIR/
+            TEMP_DIR=\$(ssh -o StrictHostKeyChecking=no -i "\${SSH_KEY}" ${BASTION_USER}@${BASTION_HOST} 'mktemp -d /tmp/k8s-manifest-XXXX')
 
-            ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} bash << 'ENDSSH'
+            scp -o StrictHostKeyChecking=no -i "\${SSH_KEY}" -r "k8's_manifest/${SERVICE_NAME}/"* \
+                ${BASTION_USER}@${BASTION_HOST}:\${TEMP_DIR}/
+
+            ssh -o StrictHostKeyChecking=no -i "\${SSH_KEY}" ${BASTION_USER}@${BASTION_HOST} bash -s << 'EOF'
+TEMP_DIR="\$1"
 set -eu
+
 aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
 
-cd "$1"
+cd "\${TEMP_DIR}"
 
-for f in *.yaml; do
-  echo "Applying: \$f"
-  kubectl apply -f \$f -n ${K8S_NAMESPACE}
-done
+echo "Applying manifests..."
+kubectl apply -f . -n ${K8S_NAMESPACE}
 
-ENDSSH
+rm -rf "\${TEMP_DIR}"
+EOF
+            \${TEMP_DIR}
           """
         }
       }
     }
 
-    /* ---------------------------------------------------
-     * DNS FIX
-     * --------------------------------------------------- */
+    /* -------------------------------
+     * FIX DNS CONFIGMAP
+     * ------------------------------- */
     stage('Fix DNS Hostnames in ConfigMap') {
-      when { expression { return params.FIX_DNS_HOSTNAMES } }
+      when { expression { params.FIX_DNS_HOSTNAMES } }
       steps {
         withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh',
-            keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+                                           keyFileVariable: 'SSH_KEY',
+                                           usernameVariable: 'SSH_USER')]) {
 
           sh """
-            ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} bash << 'ENDSSH'
+            ssh -o StrictHostKeyChecking=no -i "\${SSH_KEY}" ${BASTION_USER}@${BASTION_HOST} bash -s << 'EOF'
 set -eu
+
 aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
 
-kubectl patch configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} --type merge -p '{
-  "data": {
-    "REDIS_HOST": "redis.dev.svc.cluster.local",
-    "REDIS_PORT": "6379",
-    "POSTGRES_HOST": "postgres.dev.svc.cluster.local"
-  }
-}' || true
+CM="${SERVICE_NAME}-config"
 
-ENDSSH
+if kubectl get configmap \${CM} -n ${K8S_NAMESPACE}; then
+  kubectl patch configmap \${CM} -n ${K8S_NAMESPACE} --type merge -p '{
+    "data": {
+      "REDIS_HOST": "redis.dev.svc.cluster.local",
+      "REDIS_PORT": "6379",
+      "POSTGRES_HOST": "postgres.dev.svc.cluster.local"
+    }
+  }'
+else
+  echo "ConfigMap not found, skipping patch"
+fi
+EOF
           """
         }
       }
     }
 
-    /* ---------------------------------------------------
-     * DEPLOYMENT
-     * --------------------------------------------------- */
+    /* -------------------------------
+     * DEPLOY TO EKS
+     * ------------------------------- */
     stage('Deploy to EKS') {
       steps {
         withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh',
-            keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+                                           keyFileVariable: 'SSH_KEY',
+                                           usernameVariable: 'SSH_USER')]) {
 
           sh """
-            ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} bash << 'ENDSSH'
+            ssh -o StrictHostKeyChecking=no -i "\${SSH_KEY}" ${BASTION_USER}@${BASTION_HOST} bash -s << 'EOF'
 set -eu
-
-echo "Deploying ${SERVICE_NAME} with image ${DEPLOY_IMAGE}"
 
 aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
 
-kubectl -n ${K8S_NAMESPACE} set image deployment/${SERVICE_NAME} \
-    ${SERVICE_NAME}=${DEPLOY_IMAGE} --record
+kubectl -n ${K8S_NAMESPACE} set image deployment/${SERVICE_NAME} ${SERVICE_NAME}=${DEPLOY_IMAGE} --record
 
-kubectl -n ${K8S_NAMESPACE} rollout status deployment/${SERVICE_NAME} \
-    --timeout=${ROLLOUT_TIMEOUT}
-
-ENDSSH
+kubectl -n ${K8S_NAMESPACE} rollout status deployment/${SERVICE_NAME} --timeout=${ROLLOUT_TIMEOUT}
+EOF
           """
         }
       }
     }
+  }
 
-  }  // STAGES END
-
+  /* -------------------------------
+   * POST ACTIONS
+   * ------------------------------- */
   post {
     success {
-      echo "✅ Deployment Success — ${params.SERVICE_NAME}"
+      echo "✅ Deployment Succeeded: ${params.SERVICE_NAME}"
     }
     failure {
-      echo "❌ Deployment Failed — ${params.SERVICE_NAME}"
-    }
-    always {
-      echo "Pipeline completed at: ${new Date()}"
+      echo "❌ Deployment Failed: ${params.SERVICE_NAME}"
     }
   }
 }
