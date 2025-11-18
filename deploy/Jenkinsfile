@@ -17,11 +17,11 @@ telemetry-service
 tts-service
 simple-ui
 """, description: 'Service to deploy')
-    string(name: 'IMAGE_URI', defaultValue: '', description: 'REQUIRED: Full ECR image URI. Example: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/nmt-service:14112025-101038-IST')
-    string(name: 'ROLLOUT_TIMEOUT', defaultValue: '180s', description: 'Rollout timeout (e.g. 180s or 5m)')
-    booleanParam(name: 'APPLY_MANIFESTS', defaultValue: true, description: 'Apply ConfigMap/Secret/Deployment from Git repository')
-    booleanParam(name: 'FIX_DNS_HOSTNAMES', defaultValue: true, description: 'Automatically fix DNS hostnames in ConfigMap (recommended)')
-    booleanParam(name: 'DEBUG_MODE', defaultValue: false, description: 'Enable verbose SSH debugging')
+    string(name: 'IMAGE_URI', defaultValue: '', description: 'REQUIRED: Full ECR image URI.')
+    string(name: 'ROLLOUT_TIMEOUT', defaultValue: '180s', description: 'Rollout timeout')
+    booleanParam(name: 'APPLY_MANIFESTS', defaultValue: true, description: 'Apply manifests?')
+    booleanParam(name: 'FIX_DNS_HOSTNAMES', defaultValue: true, description: 'Fix DNS hostnames?')
+    booleanParam(name: 'DEBUG_MODE', defaultValue: false, description: 'Enable SSH debug')
   }
 
   environment {
@@ -34,511 +34,180 @@ simple-ui
   }
 
   stages {
+
+    /* ---------------------------------------------------
+     * VALIDATION
+     * --------------------------------------------------- */
     stage('Validate Parameters') {
       steps {
         script {
-          if (!params.IMAGE_URI || params.IMAGE_URI.trim() == '') {
-            error "IMAGE_URI parameter is required! Please provide the full ECR image URI."
+          if (!params.IMAGE_URI?.trim()) {
+            error "IMAGE_URI parameter is required!"
           }
           env.DEPLOY_IMAGE = params.IMAGE_URI.trim()
           echo "================================================"
-          echo "Deployment Configuration"
-          echo "================================================"
-          echo "Service:          ${params.SERVICE_NAME}"
-          echo "Image:            ${env.DEPLOY_IMAGE}"
-          echo "Namespace:        ${env.K8S_NAMESPACE}"
-          echo "Cluster:          ${env.EKS_CLUSTER}"
-          echo "Branch:           ${params.BRANCH_NAME}"
-          echo "Apply Manifests:  ${params.APPLY_MANIFESTS}"
-          echo "Fix DNS Hostnames: ${params.FIX_DNS_HOSTNAMES}"
-          echo "Debug Mode:       ${params.DEBUG_MODE}"
+          echo "Service: ${params.SERVICE_NAME}"
+          echo "Image:   ${env.DEPLOY_IMAGE}"
+          echo "Branch:  ${params.BRANCH_NAME}"
           echo "================================================"
         }
       }
     }
 
+    /* ---------------------------------------------------
+     * CHECKOUT
+     * --------------------------------------------------- */
     stage('Checkout Repository') {
       when { expression { return params.APPLY_MANIFESTS } }
       steps {
-        echo "================================================"
-        echo "Checking out Git repository..."
-        echo "Repository: ${env.GIT_REPO}"
-        echo "Branch:     ${params.BRANCH_NAME}"
-        echo "================================================"
+        echo "Checking out ${params.BRANCH_NAME} ..."
         checkout([
           $class: 'GitSCM',
           branches: [[name: "*/${params.BRANCH_NAME}"]],
           userRemoteConfigs: [[url: "${env.GIT_REPO}"]]
         ])
+
+        /* FIXED MANIFEST LOOKUP */
         script {
           def manifestPath = "k8's_manifest/${params.SERVICE_NAME}"
+
+          // ⚠ Special mapping for simple-ui
+          if (params.SERVICE_NAME == "simple-ui") {
+            manifestPath = "k8's_manifest/simple-ui-frontend"
+          }
+
+          echo "Searching manifests at: ${manifestPath}"
+
           if (!fileExists(manifestPath)) {
             error "❌ Kubernetes manifests not found at ${manifestPath}"
           }
-          echo "✓ Found Kubernetes manifests at ${manifestPath}"
-          echo "================================================"
+
+          env.MANIFEST_PATH = manifestPath
+          echo "✓ Found manifest directory: ${env.MANIFEST_PATH}"
         }
       }
     }
 
+    /* ---------------------------------------------------
+     * BASTION CHECK
+     * --------------------------------------------------- */
     stage('Pre-deploy Bastion Check') {
       steps {
-        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
-          script {
-            def sshOpts = params.DEBUG_MODE ? '-vvv' : '-v'
-            sh """
-              set -eu
-              echo '================================================'
-              echo 'Testing bastion connectivity...'
-              echo 'Host: ${BASTION_HOST}'
-              echo 'User: ${BASTION_USER}'
-              echo '================================================'
-              
-              # Test SSH connection
-              ssh ${sshOpts} -i "\${SSH_KEY}" -o StrictHostKeyChecking=no -o ConnectTimeout=15 ${BASTION_USER}@${BASTION_HOST} 'echo "✓ SSH Connected"; hostname; whoami'
-              
-              # Verify required tools
-              ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} 'which aws && which kubectl && echo "✓ Required tools available"'
-              
-              echo '================================================'
-              echo '✅ Bastion is ready for deployment'
-              echo '================================================'
-            """
-          }
-        }
-      }
-    }
+        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh',
+            keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
 
-    stage('Apply Kubernetes Manifests') {
-      when { expression { return params.APPLY_MANIFESTS } }
-      steps {
-        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+          def sshOpts = params.DEBUG_MODE ? "-vvv" : "-v"
+
           sh """
-            set -eu
-            
-            echo "================================================"
-            echo "Applying Kubernetes Manifests from Git"
-            echo "================================================"
-            echo "Source: k8's_manifest/${SERVICE_NAME}/"
-            echo "Target: EKS Cluster (${EKS_CLUSTER})"
-            echo "Namespace: ${K8S_NAMESPACE}"
-            echo "================================================"
-            
-            # Create temp directory on bastion
-            echo ""
-            echo "Step 1: Creating temporary directory on bastion..."
-            TEMP_DIR=\$(ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} 'mktemp -d /tmp/k8s-manifests.XXXXXX')
-            echo "✓ Created temp directory: \${TEMP_DIR}"
-            
-            # Copy manifests to bastion
-            echo ""
-            echo "Step 2: Copying manifests to bastion..."
-            scp -i "\${SSH_KEY}" -o StrictHostKeyChecking=no -r "k8's_manifest/${SERVICE_NAME}/"* ${BASTION_USER}@${BASTION_HOST}:\${TEMP_DIR}/
-            echo "✓ Manifests copied successfully"
-            
-            # Apply manifests on bastion
-            echo ""
-            echo "Step 3: Applying manifests to EKS cluster..."
-            ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} "bash -s \${TEMP_DIR}" <<'ENDSSH'
-set -eu
-
-TEMP_DIR="\$1"
-
-echo "================================================"
-echo "Applying Kubernetes Manifests"
-echo "================================================"
-
-# Update kubeconfig
-aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER} --kubeconfig ~/.kube/config
-
-cd "\${TEMP_DIR}"
-
-echo ""
-echo "Manifest files in temporary directory:"
-ls -lh
-echo ""
-
-# Apply ConfigMap if exists
-if [ -f "${SERVICE_NAME}-configmap.yaml" ]; then
-  echo "→ Applying ConfigMap: ${SERVICE_NAME}-configmap.yaml"
-  kubectl apply -f ${SERVICE_NAME}-configmap.yaml -n ${K8S_NAMESPACE}
-  echo "  ✓ ConfigMap applied"
-else
-  echo "  ⚠ No ConfigMap file found (${SERVICE_NAME}-configmap.yaml)"
-fi
-
-echo ""
-
-# Apply Secret if exists
-if [ -f "${SERVICE_NAME}-secret.yaml" ]; then
-  echo "→ Applying Secret: ${SERVICE_NAME}-secret.yaml"
-  kubectl apply -f ${SERVICE_NAME}-secret.yaml -n ${K8S_NAMESPACE}
-  echo "  ✓ Secret applied"
-else
-  echo "  ⚠ No Secret file found (${SERVICE_NAME}-secret.yaml)"
-fi
-
-echo ""
-
-# Apply Deployment/Service manifests
-if [ -f "${SERVICE_NAME}.yaml" ]; then
-  echo "→ Applying Deployment/Service: ${SERVICE_NAME}.yaml"
-  kubectl apply -f ${SERVICE_NAME}.yaml -n ${K8S_NAMESPACE}
-  echo "  ✓ Deployment/Service applied"
-else
-  echo "  ⚠ No deployment file found (${SERVICE_NAME}.yaml)"
-fi
-
-echo ""
-echo "================================================"
-echo "✅ All manifests applied successfully"
-echo "================================================"
-
-# Cleanup temp directory
-cd /tmp
-rm -rf "\${TEMP_DIR}"
-echo "✓ Temporary directory cleaned up"
-
-ENDSSH
-            
-            echo ""
-            echo "================================================"
-            echo "✅ Kubernetes manifests applied from Git"
-            echo "================================================"
+            echo "Testing bastion..."
+            ssh ${sshOpts} -i \$SSH_KEY -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} "echo Connected"
           """
         }
       }
     }
 
+    /* ---------------------------------------------------
+     * APPLY MANIFESTS
+     * --------------------------------------------------- */
+    stage('Apply Kubernetes Manifests') {
+      when { expression { return params.APPLY_MANIFESTS } }
+      steps {
+        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh',
+            keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+
+          sh """
+            set -eu
+            echo "Copying manifests from: ${MANIFEST_PATH}"
+
+            TEMP_DIR=\$(ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} "mktemp -d /tmp/k8s.XXXX")
+            echo "Temp directory: \$TEMP_DIR"
+
+            scp -i "\$SSH_KEY" -o StrictHostKeyChecking=no -r "${MANIFEST_PATH}/"* ${BASTION_USER}@${BASTION_HOST}:\$TEMP_DIR/
+
+            ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} bash << 'ENDSSH'
+set -eu
+aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
+
+cd "$1"
+
+for f in *.yaml; do
+  echo "Applying: \$f"
+  kubectl apply -f \$f -n ${K8S_NAMESPACE}
+done
+
+ENDSSH
+          """
+        }
+      }
+    }
+
+    /* ---------------------------------------------------
+     * DNS FIX
+     * --------------------------------------------------- */
     stage('Fix DNS Hostnames in ConfigMap') {
       when { expression { return params.FIX_DNS_HOSTNAMES } }
       steps {
-        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh',
+            keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+
           sh """
-            ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} bash -s <<'ENDSSH'
+            ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} bash << 'ENDSSH'
 set -eu
+aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
 
-echo ""
-echo "================================================"
-echo "Fixing DNS Hostnames in ConfigMap"
-echo "================================================"
-echo "Service:   ${SERVICE_NAME}"
-echo "Namespace: ${K8S_NAMESPACE}"
-echo "================================================"
-
-# Update kubeconfig
-aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER} --kubeconfig ~/.kube/config
-
-# Check if ConfigMap exists
-if ! kubectl get configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} >/dev/null 2>&1; then
-  echo "⚠ ConfigMap ${SERVICE_NAME}-config does not exist, skipping DNS fix"
-  exit 0
-fi
-
-echo ""
-echo "Current ConfigMap values:"
-echo "────────────────────────────────────────────────"
-kubectl get configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} -o json | jq -r '.data | to_entries[] | select(.key | test("REDIS|POSTGRES|DATABASE")) | "  \\(.key): \\(.value)"' || true
-
-echo ""
-echo "Applying DNS fixes..."
-echo "────────────────────────────────────────────────"
-
-# Patch ConfigMap with correct FQDN hostnames and add REDIS_PORT
 kubectl patch configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} --type merge -p '{
   "data": {
     "REDIS_HOST": "redis.dev.svc.cluster.local",
-    "REDIS_PORT": "6379"
-  }
-}' 2>/dev/null && echo "  ✓ Fixed REDIS_HOST and added REDIS_PORT" || echo "  ⚠ REDIS_HOST not present or already correct"
-
-# Fix DATABASE_URL if it exists and uses short hostname
-CURRENT_DB_URL=\$(kubectl get configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} -o jsonpath='{.data.DATABASE_URL}' 2>/dev/null || echo "")
-
-if [ -n "\${CURRENT_DB_URL}" ]; then
-  # Check if DATABASE_URL uses short hostname (e.g., @postgres:)
-  if echo "\${CURRENT_DB_URL}" | grep -q "@postgres:"; then
-    echo "  → Fixing DATABASE_URL with short hostname..."
-    FIXED_DB_URL=\$(echo "\${CURRENT_DB_URL}" | sed 's/@postgres:/@postgres.dev.svc.cluster.local:/')
-    kubectl patch configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} --type merge -p "{
-      \"data\": {
-        \"DATABASE_URL\": \"\${FIXED_DB_URL}\"
-      }
-    }"
-    echo "  ✓ Fixed DATABASE_URL"
-  else
-    echo "  ⚠ DATABASE_URL already uses FQDN or not present"
-  fi
-fi
-
-# Fix POSTGRES_HOST if it exists
-kubectl patch configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} --type merge -p '{
-  "data": {
+    "REDIS_PORT": "6379",
     "POSTGRES_HOST": "postgres.dev.svc.cluster.local"
   }
-}' 2>/dev/null && echo "  ✓ Fixed POSTGRES_HOST" || echo "  ⚠ POSTGRES_HOST not present or already correct"
-
-echo ""
-echo "Updated ConfigMap values:"
-echo "────────────────────────────────────────────────"
-kubectl get configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} -o json | jq -r '.data | to_entries[] | select(.key | test("REDIS|POSTGRES|DATABASE")) | "  \\(.key): \\(.value)"' || true
-
-echo ""
-echo "================================================"
-echo "✅ DNS hostnames fixed in ConfigMap"
-echo "================================================"
+}' || true
 
 ENDSSH
-"""
+          """
         }
       }
     }
 
+    /* ---------------------------------------------------
+     * DEPLOYMENT
+     * --------------------------------------------------- */
     stage('Deploy to EKS') {
       steps {
-        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+        withCredentials([sshUserPrivateKey(credentialsId: 'bastion-ssh',
+            keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+
           sh """
-            ssh -i "\${SSH_KEY}" -o StrictHostKeyChecking=no -o ServerAliveInterval=30 ${BASTION_USER}@${BASTION_HOST} bash -s <<'ENDSSH'
+            ssh -i "\$SSH_KEY" -o StrictHostKeyChecking=no ${BASTION_USER}@${BASTION_HOST} bash << 'ENDSSH'
 set -eu
 
-echo ""
-echo "================================================"
-echo "Starting EKS Deployment"
-echo "================================================"
-echo "Cluster:   ${EKS_CLUSTER}"
-echo "Namespace: ${K8S_NAMESPACE}"
-echo "Service:   ${SERVICE_NAME}"
-echo "Image:     ${DEPLOY_IMAGE}"
-echo "================================================"
+echo "Deploying ${SERVICE_NAME} with image ${DEPLOY_IMAGE}"
 
-# Update kubeconfig
-echo ""
-echo "[1/4] Updating kubeconfig..."
-aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER} --kubeconfig ~/.kube/config
-echo "✓ Kubeconfig updated"
+aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}
 
-# Verify cluster connectivity
-echo ""
-echo "[2/4] Verifying cluster connectivity..."
-kubectl cluster-info | head -1
-NODE_COUNT=\$(kubectl get nodes --no-headers | wc -l)
-echo "✓ Connected to cluster with \${NODE_COUNT} nodes"
+kubectl -n ${K8S_NAMESPACE} set image deployment/${SERVICE_NAME} \
+    ${SERVICE_NAME}=${DEPLOY_IMAGE} --record
 
-# Update deployment image
-echo ""
-echo "[3/4] Updating deployment image..."
-kubectl -n ${K8S_NAMESPACE} set image deployment/${SERVICE_NAME} ${SERVICE_NAME}=${DEPLOY_IMAGE} --record
-echo "✓ Image updated to: ${DEPLOY_IMAGE}"
-
-# Wait for rollout
-echo ""
-echo "[4/4] Waiting for rollout (timeout: ${ROLLOUT_TIMEOUT})..."
-if kubectl -n ${K8S_NAMESPACE} rollout status deployment/${SERVICE_NAME} --timeout=${ROLLOUT_TIMEOUT}; then
-  echo "✅ Rollout completed successfully"
-else
-  echo "❌ Rollout failed or timed out"
-  echo ""
-  echo "════════════════════════════════════════════════"
-  echo "TROUBLESHOOTING INFORMATION"
-  echo "════════════════════════════════════════════════"
-  
-  echo ""
-  echo "Current Pod Status:"
-  kubectl -n ${K8S_NAMESPACE} get pods -l app=${SERVICE_NAME} -o wide
-  
-  echo ""
-  echo "Recent Events:"
-  kubectl -n ${K8S_NAMESPACE} get events --sort-by='.lastTimestamp' --field-selector involvedObject.name=${SERVICE_NAME} | tail -15
-  
-  echo ""
-  echo "Pod Logs (last 50 lines):"
-  echo "────────────────────────────────────────────────"
-  NEW_POD=\$(kubectl -n ${K8S_NAMESPACE} get pods -l app=${SERVICE_NAME} --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null || echo "")
-  if [ -n "\$NEW_POD" ]; then
-    echo "Logs from pod: \$NEW_POD"
-    kubectl -n ${K8S_NAMESPACE} logs \$NEW_POD --tail=50 2>/dev/null || \
-    kubectl -n ${K8S_NAMESPACE} logs \$NEW_POD --previous --tail=50 2>/dev/null || \
-    echo "Could not retrieve logs (pod may not have started)"
-  else
-    echo "No pods found for service ${SERVICE_NAME}"
-  fi
-  
-  echo ""
-  echo "ConfigMap DNS Configuration:"
-  echo "────────────────────────────────────────────────"
-  kubectl get configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} -o json 2>/dev/null | jq -r '.data | to_entries[] | select(.key | test("REDIS|POSTGRES|DATABASE")) | "  \\(.key): \\(.value)"' || echo "  ConfigMap not found or no database config"
-  
-  echo ""
-  echo "════════════════════════════════════════════════"
-  exit 1
-fi
-
-# Show final deployment status
-echo ""
-echo "================================================"
-echo "✅ Deployment Complete"
-echo "================================================"
-echo ""
-echo "Deployment Status:"
-kubectl -n ${K8S_NAMESPACE} get deployment ${SERVICE_NAME} -o wide
-echo ""
-echo "Pod Status:"
-kubectl -n ${K8S_NAMESPACE} get pods -l app=${SERVICE_NAME} -o wide
-echo ""
-echo "Service Status:"
-kubectl -n ${K8S_NAMESPACE} get service ${SERVICE_NAME} 2>/dev/null || echo "No service found"
-echo ""
-echo "Final DNS Configuration Check:"
-echo "────────────────────────────────────────────────"
-kubectl get configmap ${SERVICE_NAME}-config -n ${K8S_NAMESPACE} -o json 2>/dev/null | jq -r '.data | to_entries[] | select(.key | test("REDIS|POSTGRES|DATABASE")) | "  \\(.key): \\(.value)"' || echo "  No database configuration found"
-echo ""
-echo "================================================"
+kubectl -n ${K8S_NAMESPACE} rollout status deployment/${SERVICE_NAME} \
+    --timeout=${ROLLOUT_TIMEOUT}
 
 ENDSSH
-"""
+          """
         }
       }
     }
 
-    stage('Verification') {
-      steps {
-        echo ""
-        echo "================================================"
-        echo "✅ Deployment Verification Complete"
-        echo "================================================"
-        echo "Service:           ${params.SERVICE_NAME}"
-        echo "Image:             ${env.DEPLOY_IMAGE}"
-        echo "Namespace:         ${env.K8S_NAMESPACE}"
-        echo "Cluster:           ${env.EKS_CLUSTER}"
-        echo "Manifests Applied: ${params.APPLY_MANIFESTS}"
-        echo "DNS Hostnames Fixed: ${params.FIX_DNS_HOSTNAMES}"
-        echo "================================================"
-        echo ""
-        echo "Useful Commands for Manual Inspection:"
-        echo ""
-        echo "1. SSH to bastion:"
-        echo "   ssh -i <key> ${env.BASTION_USER}@${env.BASTION_HOST}"
-        echo ""
-        echo "2. View deployment details:"
-        echo "   kubectl -n ${env.K8S_NAMESPACE} get deployment ${params.SERVICE_NAME} -o wide"
-        echo ""
-        echo "3. View pods:"
-        echo "   kubectl -n ${env.K8S_NAMESPACE} get pods -l app=${params.SERVICE_NAME}"
-        echo ""
-        echo "4. View real-time logs:"
-        echo "   kubectl -n ${env.K8S_NAMESPACE} logs -l app=${params.SERVICE_NAME} --tail=50 -f"
-        echo ""
-        echo "5. Check ConfigMap (verify DNS hostnames and REDIS_PORT):"
-        echo "   kubectl -n ${env.K8S_NAMESPACE} get configmap ${params.SERVICE_NAME}-config -o yaml | grep -E 'REDIS|POSTGRES|DATABASE'"
-        echo ""
-        echo "6. Verify DNS resolution from pod:"
-        echo "   POD=\$(kubectl get pods -n ${env.K8S_NAMESPACE} -l app=${params.SERVICE_NAME} -o jsonpath='{.items[0].metadata.name}')"
-        echo "   kubectl exec -n ${env.K8S_NAMESPACE} \$POD -- nslookup redis.dev.svc.cluster.local"
-        echo ""
-        echo "7. Check Secret:"
-        echo "   kubectl -n ${env.K8S_NAMESPACE} get secret ${params.SERVICE_NAME}-secret -o yaml"
-        echo ""
-        echo "8. Describe deployment (troubleshooting):"
-        echo "   kubectl -n ${env.K8S_NAMESPACE} describe deployment ${params.SERVICE_NAME}"
-        echo ""
-        echo "9. View events:"
-        echo "   kubectl -n ${env.K8S_NAMESPACE} get events --sort-by='.lastTimestamp' | tail -20"
-        echo ""
-        echo "10. Test database connectivity from pod:"
-        echo "    POD=\$(kubectl get pods -n ${env.K8S_NAMESPACE} -l app=${params.SERVICE_NAME} -o jsonpath='{.items[0].metadata.name}')"
-        echo "    kubectl exec -n ${env.K8S_NAMESPACE} \$POD -- nc -zv redis.dev.svc.cluster.local 6379"
-        echo "    kubectl exec -n ${env.K8S_NAMESPACE} \$POD -- nc -zv postgres.dev.svc.cluster.local 5432"
-        echo ""
-        echo "================================================"
-      }
-    }
-  }
+  }  // STAGES END
 
   post {
-    success { 
-      echo ""
-      echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
-      echo "✅                                              ✅"
-      echo "✅          DEPLOYMENT SUCCESSFUL               ✅"
-      echo "✅                                              ✅"
-      echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
-      echo ""
-      echo "  Service:           ${params.SERVICE_NAME}"
-      echo "  Image:             ${env.DEPLOY_IMAGE}"
-      echo "  Namespace:         ${env.K8S_NAMESPACE}"
-      echo "  Cluster:           ${env.EKS_CLUSTER}"
-      echo "  Manifests Applied: ${params.APPLY_MANIFESTS}"
-      echo "  DNS Hostnames Fixed: ${params.FIX_DNS_HOSTNAMES}"
-      echo "  Branch:            ${params.BRANCH_NAME}"
-      echo "  Completed At:      ${new Date()}"
-      echo ""
-      echo "✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅✅"
-      echo ""
+    success {
+      echo "✅ Deployment Success — ${params.SERVICE_NAME}"
     }
-    failure { 
-      echo ""
-      echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
-      echo "❌                                              ❌"
-      echo "❌          DEPLOYMENT FAILED                   ❌"
-      echo "❌                                              ❌"
-      echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
-      echo ""
-      echo "  Service:  ${params.SERVICE_NAME}"
-      echo "  Image:    ${env.DEPLOY_IMAGE ?: 'Not set'}"
-      echo "  Failed At: ${new Date()}"
-      echo ""
-      echo "Troubleshooting Guide:"
-      echo "═══════════════════════════════════════════════"
-      echo ""
-      echo "1. Check pod logs in the output above"
-      echo ""
-      echo "2. Run with DEBUG_MODE=true for verbose SSH logs"
-      echo ""
-      echo "3. Verify DNS configuration in ConfigMap:"
-      echo "   ssh ${env.BASTION_USER}@${env.BASTION_HOST}"
-      echo "   kubectl -n ${env.K8S_NAMESPACE} get configmap ${params.SERVICE_NAME}-config -o yaml | grep -E 'REDIS|POSTGRES|DATABASE'"
-      echo ""
-      echo "4. Verify REDIS_PORT is present (not just REDIS_PORT_NUMBER):"
-      echo "   kubectl -n ${env.K8S_NAMESPACE} get configmap ${params.SERVICE_NAME}-config -o yaml | grep REDIS_PORT"
-      echo ""
-      echo "5. Verify DNS resolution from pod:"
-      echo "   POD=\$(kubectl get pods -n ${env.K8S_NAMESPACE} -l app=${params.SERVICE_NAME} -o jsonpath='{.items[0].metadata.name}')"
-      echo "   kubectl exec -n ${env.K8S_NAMESPACE} \$POD -- nslookup redis.dev.svc.cluster.local"
-      echo "   kubectl exec -n ${env.K8S_NAMESPACE} \$POD -- nslookup postgres.dev.svc.cluster.local"
-      echo ""
-      echo "6. Check if ConfigMap has correct values:"
-      echo "   REDIS_HOST should be: redis.dev.svc.cluster.local"
-      echo "   REDIS_PORT should be: 6379"
-      echo "   DATABASE_URL should have: @postgres.dev.svc.cluster.local:"
-      echo ""
-      echo "7. Verify IMAGE_URI exists in ECR:"
-      echo "   aws ecr describe-images --repository-name ai4voice/${params.SERVICE_NAME} --region ${env.AWS_REGION}"
-      echo ""
-      echo "8. Check deployment status:"
-      echo "   kubectl -n ${env.K8S_NAMESPACE} describe deployment ${params.SERVICE_NAME}"
-      echo ""
-      echo "9. View recent events:"
-      echo "   kubectl -n ${env.K8S_NAMESPACE} get events --sort-by='.lastTimestamp' | tail -30"
-      echo ""
-      echo "10. Manual ConfigMap fix if needed:"
-      echo "    kubectl patch configmap ${params.SERVICE_NAME}-config -n ${env.K8S_NAMESPACE} --type merge -p '{"
-      echo "      \"data\": {"
-      echo "        \"REDIS_HOST\": \"redis.dev.svc.cluster.local\","
-      echo "        \"REDIS_PORT\": \"6379\","
-      echo "        \"POSTGRES_HOST\": \"postgres.dev.svc.cluster.local\""
-      echo "      }"
-      echo "    }'"
-      echo "    kubectl rollout restart deployment/${params.SERVICE_NAME} -n ${env.K8S_NAMESPACE}"
-      echo ""
-      echo "═══════════════════════════════════════════════"
-      echo ""
-      echo "❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌❌"
-      echo ""
+    failure {
+      echo "❌ Deployment Failed — ${params.SERVICE_NAME}"
     }
     always {
-      echo "════════════════════════════════════════════════"
-      echo "Pipeline execution completed at: ${new Date()}"
-      echo "════════════════════════════════════════════════"
+      echo "Pipeline completed at: ${new Date()}"
     }
   }
 }
