@@ -1,91 +1,38 @@
-# ===========================================================
-# Stage 1: Builder
-# ===========================================================
-FROM python:3.11-slim as builder
-
+# Stage 1: builder
+FROM python:3.8-slim AS builder
 WORKDIR /app
 
-# Install system build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        gcc \
-        g++ \
-        make \
-        libpq-dev \
-        curl \
-        xz-utils \
-        libsndfile1-dev \
+# Install only build-time OS deps
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ffmpeg \
+      libsndfile1 \
+      build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
+# Copy only dependency manifest(s)
 COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Install Python packages to user site (keeps final image clean)
-RUN pip install --upgrade pip \
-    && pip install --no-cache-dir --user -r requirements.txt
-
-
-# ===========================================================
-# Stage 2: Final Runtime Image
-# ===========================================================
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install runtime OS dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libpq5 \
-        libsndfile1 \
-        curl \
-        xz-utils \
-    && rm -rf /var/lib/apt/lists/*
-
-# -----------------------------------------------------------
-# Install FFmpeg (static build = very small but powerful)
-# -----------------------------------------------------------
-RUN curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
-        -o /tmp/ffmpeg.tar.xz \
-    && tar -xf /tmp/ffmpeg.tar.xz -C /tmp \
-    && mv /tmp/ffmpeg-*/ffmpeg /usr/local/bin/ \
-    && mv /tmp/ffmpeg-*/ffprobe /usr/local/bin/ \
-    && chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe \
-    && rm -rf /tmp/* \
-    && apt-get purge -y curl xz-utils \
-    && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
-
-
-# ===========================================================
-# Python Runtime Environment
-# ===========================================================
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PATH=/home/app/.local/bin:$PATH
-
-
-# Create non-root user
-RUN useradd --create-home --shell /bin/bash app
-
-# Copy Python packages from builder stage
-COPY --from=builder /root/.local /home/app/.local
-
-# Copy application code (respects .dockerignore)
+# Copy source code
 COPY . .
 
-# Fix permissions
-RUN chown -R app:app /app /home/app/.local \
-    && chmod +x /home/app/.local/bin/*
+# (Optional) Download model weights only if needed at build time
+# Better: consider moving model download to runtime or initialisation script
+RUN python download_model.py
 
-USER app
+# Stage 2: runtime
+FROM python:3.8-slim AS runtime
+WORKDIR /app
 
-# ===========================================================
-# Networking & Healthcheck
-# ===========================================================
-EXPOSE 8087
+# Copy installed dependencies from builder
+COPY --from=builder /usr/local/lib/python3.8/site-packages /usr/local/lib/python3.8/site-packages
+# Copy source code (without dev/test files if you prune)
+COPY --from=builder /app /app
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8087/health || exit 1
+# Remove test/dev artefacts if any
+RUN rm -rf /app/tests /app/.git
 
-# ===========================================================
-# Entrypoint
-# ===========================================================
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8087"]
+ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["python","main.py"]
