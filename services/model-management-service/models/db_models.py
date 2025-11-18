@@ -1,13 +1,9 @@
 import uuid
-from datetime import datetime
-from typing import Optional, List, Dict, Any
-
-from sqlalchemy import Column, String, Boolean, Integer, BigInteger, Text, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, String,BigInteger, Text, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-
-from db_connection import AppDBBase,DB_SCHEMA
+from db_connection import AppDBBase
 
 
 

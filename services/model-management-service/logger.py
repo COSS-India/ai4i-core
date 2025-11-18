@@ -12,10 +12,9 @@ def get_logger(name: str = __name__):
     Features:
       - Logs to stdout (so Docker/Kubernetes can capture logs)
       - Includes timestamp, log level, and module name
-      - Configured at INFO level by default
     """
     logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
 
     # Avoid duplicate handlers if re-imported
     if not logger.handlers:
