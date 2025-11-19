@@ -1,124 +1,267 @@
 /**
- * Login form component
+ * Login form component with Chakra UI
  */
-import React, { useState } from 'react';
-import { useAuth } from '../../hooks/useAuth';
-import { LoginRequest } from '../../types/auth';
-import LoadingSpinner from '../common/LoadingSpinner';
+import { ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
+import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
+  Box,
+  Button,
+  Checkbox,
+  FormControl,
+  FormLabel,
+  Heading,
+  IconButton,
+  Input,
+  InputGroup,
+  InputRightElement,
+  Link,
+  Text,
+  VStack,
+} from "@chakra-ui/react";
+import React, { useState } from "react";
+import { useAuth } from "../../hooks/useAuth";
+import { LoginRequest } from "../../types/auth";
+import LoadingSpinner from "../common/LoadingSpinner";
 
 interface LoginFormProps {
   onSuccess?: () => void;
   onSwitchToRegister?: () => void;
 }
 
-const LoginForm: React.FC<LoginFormProps> = ({ onSuccess, onSwitchToRegister }) => {
+const LoginForm: React.FC<LoginFormProps> = ({
+  onSuccess,
+  onSwitchToRegister,
+}) => {
   const { login, isLoading, error, clearError } = useAuth();
   const [formData, setFormData] = useState<LoginRequest>({
-    email: '',
-    password: '',
+    email: "",
+    password: "",
     remember_me: false,
   });
+  const [showPassword, setShowPassword] = useState(false);
+  const [loginAttempted, setLoginAttempted] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  // Clear any initialization errors when component mounts
+  React.useEffect(() => {
+    clearError();
+    setLoginAttempted(false);
+    setLoginError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Update loginError when error changes, but only after a login attempt
+  React.useEffect(() => {
+    if (loginAttempted && error) {
+      // Only show login-related errors, not initialization errors
+      if (error !== "Failed to initialize authentication") {
+        setLoginError(error);
+      } else {
+        setLoginError(null);
+      }
+    } else if (!error) {
+      setLoginError(null);
+    }
+  }, [error, loginAttempted]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
+    setLoginError(null);
+    setLoginAttempted(true);
 
     try {
       await login(formData);
+      // Login successful - close modal immediately via onSuccess callback
+      // This ensures the modal closes as soon as /me endpoint succeeds
+      console.log(
+        "LoginForm: Login successful, calling onSuccess to close modal"
+      );
       onSuccess?.();
+      setLoginAttempted(false);
+      setLoginError(null);
     } catch (error) {
       // Error is handled by the hook
-      console.error('Login failed:', error);
+      console.error("Login failed:", error);
     }
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value, type, checked } = e.target;
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
-      [name]: type === 'checkbox' ? checked : value,
+      [name]: type === "checkbox" ? checked : value,
     }));
+    // Clear error when user starts typing
+    if (loginError) {
+      setLoginError(null);
+      clearError();
+    }
   };
 
   return (
-    <div className="max-w-md mx-auto bg-white rounded-lg shadow-md p-6">
-      <h2 className="text-2xl font-bold text-center mb-6">Sign In</h2>
-      
-      {error && (
-        <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
-          {error}
-        </div>
-      )}
+    <Box maxW="md" mx="auto" p={6}>
+      <Heading size="lg" textAlign="center" mb={6} color="gray.800">
+        Sign In
+      </Heading>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-            Email
-          </label>
-          <input
-            type="email"
-            id="email"
-            name="email"
-            value={formData.email}
-            onChange={handleChange}
-            required
-            className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-            placeholder="Enter your email"
-          />
-        </div>
+      <form onSubmit={handleSubmit}>
+        <VStack spacing={4}>
+          {loginError && (
+            <Alert status="error" borderRadius="md" width="full">
+              <AlertIcon />
+              <Box flex="1">
+                <AlertTitle fontSize="sm">Login Failed</AlertTitle>
+                <AlertDescription fontSize="sm" display="block">
+                  {loginError}
+                </AlertDescription>
+              </Box>
+            </Alert>
+          )}
 
-        <div>
-          <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-            Password
-          </label>
-          <input
-            type="password"
-            id="password"
-            name="password"
-            value={formData.password}
-            onChange={handleChange}
-            required
-            className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-            placeholder="Enter your password"
-          />
-        </div>
+          <FormControl isRequired>
+            <FormLabel>Email</FormLabel>
+            <Input
+              type="email"
+              name="email"
+              value={formData.email}
+              onChange={handleChange}
+              placeholder="Enter your email"
+              size="md"
+            />
+          </FormControl>
 
-        <div className="flex items-center">
-          <input
-            type="checkbox"
-            id="remember_me"
-            name="remember_me"
-            checked={formData.remember_me}
-            onChange={handleChange}
-            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-          />
-          <label htmlFor="remember_me" className="ml-2 block text-sm text-gray-700">
-            Remember me
-          </label>
-        </div>
+          <FormControl isRequired>
+            <FormLabel>Password</FormLabel>
+            <InputGroup>
+              <Input
+                type={showPassword ? "text" : "password"}
+                name="password"
+                value={formData.password}
+                onChange={handleChange}
+                placeholder="Enter your password"
+                size="md"
+                pr="4.5rem"
+              />
+              <InputRightElement width="4.5rem">
+                <IconButton
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  icon={showPassword ? <ViewOffIcon /> : <ViewIcon />}
+                  h="1.75rem"
+                  size="sm"
+                  onClick={() => setShowPassword(!showPassword)}
+                  variant="ghost"
+                />
+              </InputRightElement>
+            </InputGroup>
+          </FormControl>
 
-        <button
-          type="submit"
-          disabled={isLoading}
-          className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isLoading ? <LoadingSpinner size="sm" /> : 'Sign In'}
-        </button>
+          <FormControl>
+            <Checkbox
+              name="remember_me"
+              checked={formData.remember_me}
+              onChange={handleChange}
+            >
+              Remember me
+            </Checkbox>
+          </FormControl>
+
+          <Button
+            type="submit"
+            colorScheme="blue"
+            size="md"
+            width="full"
+            isLoading={isLoading}
+            loadingText="Signing in..."
+            disabled={isLoading}
+          >
+            {isLoading ? <LoadingSpinner size="sm" /> : "Sign In"}
+          </Button>
+
+          <Box width="full" py={2}>
+            <Text
+              fontSize="sm"
+              color="gray.500"
+              textAlign="center"
+              position="relative"
+              _before={{
+                content: '""',
+                position: "absolute",
+                left: 0,
+                top: "50%",
+                width: "40%",
+                height: "1px",
+                bg: "gray.300",
+              }}
+              _after={{
+                content: '""',
+                position: "absolute",
+                right: 0,
+                top: "50%",
+                width: "40%",
+                height: "1px",
+                bg: "gray.300",
+              }}
+            >
+              OR
+            </Text>
+          </Box>
+
+          <Button
+            type="button"
+            colorScheme="red"
+            size="md"
+            width="full"
+            onClick={() => {
+              const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+              window.location.href = `${apiBaseUrl}/api/v1/auth/oauth2/google/authorize`;
+            }}
+            leftIcon={
+              <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+                <g fill="#000" fillRule="evenodd">
+                  <path
+                    d="M17.64 9.2045c0-.6381-.0573-1.2518-.1636-1.8409H9v3.4814h4.8436c-.2086 1.125-.8427 2.0782-1.7955 2.7164v2.2581h2.9087c1.7023-1.5668 2.6832-3.874 2.6832-6.615z"
+                    fill="#4285F4"
+                  />
+                  <path
+                    d="M9 18c2.43 0 4.4673-.806 5.9564-2.1805l-2.9087-2.2581c-.8059.54-1.8368.859-3.0477.859-2.344 0-4.3282-1.5831-5.036-3.7104H.9574v2.3318C2.4382 15.9832 5.4818 18 9 18z"
+                    fill="#34A853"
+                  />
+                  <path
+                    d="M3.964 10.71c-.18-.54-.2822-1.1168-.2822-1.71s.1023-1.17.2823-1.71V4.9582H.9573C.3477 6.1732 0 7.5477 0 9s.3477 2.8268.9573 4.0418L3.964 10.71z"
+                    fill="#FBBC05"
+                  />
+                  <path
+                    d="M9 3.5795c1.3214 0 2.5077.4541 3.4405 1.3459l2.5813-2.5814C13.4632.8918 11.426 0 9 0 5.4818 0 2.4382 2.0168.9574 4.9582L3.964 7.29C4.6718 5.1627 6.6559 3.5795 9 3.5795z"
+                    fill="#EA4335"
+                  />
+                </g>
+              </svg>
+            }
+          >
+            Sign in with Google
+          </Button>
+        </VStack>
       </form>
 
-      <div className="mt-4 text-center">
-        <p className="text-sm text-gray-600">
-          Don&apos;t have an account?{' '}
-          <button
-            type="button"
+      <Box mt={6} textAlign="center">
+        <Text fontSize="sm" color="gray.600">
+          Don&apos;t have an account?{" "}
+          <Link
+            color="blue.500"
+            fontWeight="medium"
             onClick={onSwitchToRegister}
-            className="text-blue-600 hover:text-blue-500 font-medium"
+            _hover={{ textDecoration: "underline" }}
+            cursor="pointer"
           >
             Sign up
-          </button>
-        </p>
-      </div>
-    </div>
+          </Link>
+        </Text>
+      </Box>
+    </Box>
   );
 };
 

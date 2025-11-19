@@ -1,75 +1,85 @@
 // Pipeline service page for Speech-to-Speech translation
 
-import React, { useState } from 'react';
-import Head from 'next/head';
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  Box,
+  Button,
+  FormControl,
+  FormLabel,
   Grid,
   GridItem,
   Heading,
-  Text,
-  Select,
-  FormControl,
-  FormLabel,
   Progress,
-  VStack,
-  Box,
-  Button,
-  Textarea,
+  Select,
+  SimpleGrid,
   Stat,
+  StatHelpText,
   StatLabel,
   StatNumber,
-  StatHelpText,
-  SimpleGrid,
+  Text,
+  Textarea,
   useToast,
-  Alert,
-  AlertIcon,
-  AlertDescription,
-} from '@chakra-ui/react';
-import { useQuery } from '@tanstack/react-query';
-import { FaMicrophone, FaMicrophoneSlash } from 'react-icons/fa';
-import { useRouter } from 'next/router';
-import ContentLayout from '../components/common/ContentLayout';
-import LoadingSpinner from '../components/common/LoadingSpinner';
-import { SUPPORTED_LANGUAGES, LANG_CODE_TO_LABEL } from '../config/constants';
-import { usePipeline } from '../hooks/usePipeline';
-import { listASRModels } from '../services/asrService';
-import { listNMTModels } from '../services/nmtService';
-import { listVoices } from '../services/ttsService';
+  VStack,
+} from "@chakra-ui/react";
+import { useQuery } from "@tanstack/react-query";
+import Head from "next/head";
+import { useRouter } from "next/router";
+import React, { useState } from "react";
+import { FaMicrophone, FaMicrophoneSlash } from "react-icons/fa";
+import ContentLayout from "../components/common/ContentLayout";
+import {
+  ASR_SUPPORTED_LANGUAGES,
+  formatDuration,
+  MAX_RECORDING_DURATION,
+  TTS_SUPPORTED_LANGUAGES,
+} from "../config/constants";
+import { usePipeline } from "../hooks/usePipeline";
+import { listASRModels } from "../services/asrService";
+import { listNMTServices } from "../services/nmtService";
+import { listVoices } from "../services/ttsService";
 
 const PipelinePage: React.FC = () => {
   const toast = useToast();
   const router = useRouter();
-  const [sourceLanguage, setSourceLanguage] = useState('en');
-  const [targetLanguage, setTargetLanguage] = useState('hi');
-  const [asrServiceId, setAsrServiceId] = useState('asr_am_ensemble');
-  const [nmtServiceId, setNmtServiceId] = useState('ai4bharat/indictrans-v2-all-gpu--t4');
-  const [ttsServiceId, setTtsServiceId] = useState('indic-tts-coqui-dravidian');
+  const [sourceLanguage, setSourceLanguage] = useState("hi");
+  const [targetLanguage, setTargetLanguage] = useState("mr");
+  const [asrServiceId, setAsrServiceId] = useState("asr_am_ensemble");
+  const [nmtServiceId, setNmtServiceId] = useState(
+    "ai4bharat/indictrans-v2-all-gpu"
+  );
+  const [ttsServiceId, setTtsServiceId] = useState(
+    "indic-tts-coqui-indo_aryan"
+  );
 
   const {
     isLoading,
     result,
     isRecording,
+    timer,
     startRecording,
     stopRecording,
     processRecordedAudio,
     processUploadedAudio,
+    setProcessRecordedAudioCallback,
   } = usePipeline();
 
   // Fetch available models
   const { data: asrModels } = useQuery({
-    queryKey: ['asr-models'],
+    queryKey: ["asr-models"],
     queryFn: listASRModels,
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data: nmtModels } = useQuery({
-    queryKey: ['nmt-models'],
-    queryFn: listNMTModels,
+  const { data: nmtServices } = useQuery({
+    queryKey: ["nmt-services"],
+    queryFn: listNMTServices,
     staleTime: 5 * 60 * 1000,
   });
 
   const { data: ttsVoices } = useQuery({
-    queryKey: ['tts-voices'],
+    queryKey: ["tts-voices"],
     queryFn: () => listVoices(),
     staleTime: 5 * 60 * 1000,
   });
@@ -77,26 +87,22 @@ const PipelinePage: React.FC = () => {
   const handleRecordClick = async () => {
     if (isRecording) {
       stopRecording();
-      // Process the recorded audio
-      setTimeout(async () => {
-        try {
-          await processRecordedAudio(
-            sourceLanguage,
-            targetLanguage,
-            asrServiceId,
-            nmtServiceId,
-            ttsServiceId
-          );
-        } catch (error) {
-          console.error('Pipeline processing error:', error);
-        }
-      }, 100);
     } else {
+      // Set the callback with current config before starting recording
+      setProcessRecordedAudioCallback(
+        sourceLanguage,
+        targetLanguage,
+        asrServiceId,
+        nmtServiceId,
+        ttsServiceId
+      );
       startRecording();
     }
   };
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -110,11 +116,11 @@ const PipelinePage: React.FC = () => {
         ttsServiceId
       );
     } catch (error) {
-      console.error('Pipeline upload error:', error);
+      console.error("Pipeline upload error:", error);
     }
 
     // Reset file input
-    event.target.value = '';
+    event.target.value = "";
   };
 
   // Get word count helper
@@ -125,7 +131,7 @@ const PipelinePage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Pipeline - Speech-to-Speech | Simple UI</title>
+        <title>Pipeline - Speech-to-Speech | AI4Inclusion Console</title>
         <meta
           name="description"
           content="Speech-to-Speech translation pipeline combining ASR, NMT, and TTS"
@@ -136,7 +142,12 @@ const PipelinePage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box w="full" maxW="1200px" mx="auto">
-            <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+            <Box
+              display="flex"
+              justifyContent="space-between"
+              alignItems="center"
+              mb={2}
+            >
               <Heading size="xl" color="gray.800">
                 Pipeline (Speech-to-Speech)
               </Heading>
@@ -144,13 +155,14 @@ const PipelinePage: React.FC = () => {
                 size="sm"
                 variant="outline"
                 colorScheme="gray"
-                onClick={() => router.push('/pipeline-builder')}
+                onClick={() => router.push("/pipeline-builder")}
               >
-                📝 Pipeline Builder
+                📝 Customize Pipeline
               </Button>
             </Box>
             <Text color="gray.600" fontSize="lg">
-              Chain ASR → Translation → TTS for complete speech-to-speech translation
+              Chain Speech, Translation, and Voice models for end-to-end speech
+              conversion.
             </Text>
           </Box>
 
@@ -158,14 +170,14 @@ const PipelinePage: React.FC = () => {
           <Alert status="info" borderRadius="md" maxW="800px">
             <AlertIcon />
             <AlertDescription>
-              The pipeline chains Automatic Speech Recognition (ASR), Neural Machine Translation
-              (NMT), and Text-to-Speech (TTS) services to convert speech from one language to
-              another.
+              The pipeline chains Automatic Speech Recognition (ASR), Neural
+              Machine Translation (NMT), and Text-to-Speech (TTS) services to
+              convert speech from one language to another.
             </AlertDescription>
           </Alert>
 
           <Grid
-            templateColumns={{ base: '1fr', lg: '1fr 1fr' }}
+            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
             gap={8}
             w="full"
             maxW="1200px"
@@ -183,7 +195,7 @@ const PipelinePage: React.FC = () => {
                     value={sourceLanguage}
                     onChange={(e) => setSourceLanguage(e.target.value)}
                   >
-                    {SUPPORTED_LANGUAGES.map((lang) => (
+                    {ASR_SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
                         {lang.label}
                       </option>
@@ -200,7 +212,7 @@ const PipelinePage: React.FC = () => {
                     value={targetLanguage}
                     onChange={(e) => setTargetLanguage(e.target.value)}
                   >
-                    {SUPPORTED_LANGUAGES.map((lang) => (
+                    {TTS_SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
                         {lang.label}
                       </option>
@@ -210,79 +222,114 @@ const PipelinePage: React.FC = () => {
 
                 {/* ASR Service */}
                 <FormControl>
-                  <FormLabel className="dview-service-try-option-title">ASR Service</FormLabel>
+                  <FormLabel className="dview-service-try-option-title">
+                    ASR Service
+                  </FormLabel>
                   <Select
                     value={asrServiceId}
                     onChange={(e) => setAsrServiceId(e.target.value)}
                   >
-                    <option value="asr_am_ensemble">asr_am_ensemble (Default)</option>
-                    {asrModels?.models?.map((model) => (
-                      <option key={model.model_id} value={model.model_id}>
-                        {model.model_id}
-                      </option>
-                    ))}
+                    {asrModels?.models
+                      ?.filter((model) =>
+                        model.model_id.toLowerCase().includes("conformer")
+                      )
+                      .map((model) => (
+                        <option key={model.model_id} value={model.model_id}>
+                          {model.model_id}
+                        </option>
+                      ))}
                   </Select>
                 </FormControl>
 
                 {/* NMT Service */}
                 <FormControl>
-                  <FormLabel className="dview-service-try-option-title">NMT Service</FormLabel>
+                  <FormLabel className="dview-service-try-option-title">
+                    NMT Service
+                  </FormLabel>
                   <Select
                     value={nmtServiceId}
                     onChange={(e) => setNmtServiceId(e.target.value)}
                   >
-                    <option value="ai4bharat/indictrans-v2-all-gpu--t4">ai4bharat/indictrans-v2-all-gpu--t4 (Default)</option>
-                    {nmtModels?.map((model) => (
-                      <option key={model.model_id} value={model.model_id}>
-                        {model.model_id}
-                      </option>
-                    ))}
+                    <option value="ai4bharat/indictrans-v2-all-gpu">
+                      ai4bharat/indictrans-v2-all-gpu (Default)
+                    </option>
+                    {nmtServices
+                      ?.filter(
+                        (service) =>
+                          !service.service_id.toLowerCase().includes("facebook")
+                      )
+                      .map((service) => (
+                        <option
+                          key={service.service_id}
+                          value={service.service_id}
+                        >
+                          {service.service_id}
+                        </option>
+                      ))}
                   </Select>
                 </FormControl>
 
                 {/* TTS Service */}
                 <FormControl>
-                  <FormLabel className="dview-service-try-option-title">TTS Service</FormLabel>
+                  <FormLabel className="dview-service-try-option-title">
+                    TTS Service
+                  </FormLabel>
                   <Select
                     value={ttsServiceId}
                     onChange={(e) => setTtsServiceId(e.target.value)}
                   >
-                    <option value="indic-tts-coqui-dravidian">indic-tts-coqui-dravidian (Default)</option>
-                    <option value="indic-tts-coqui-indo_aryan">indic-tts-coqui-indo_aryan</option>
-                    <option value="indic-tts-coqui-misc">indic-tts-coqui-misc</option>
-                    {ttsVoices?.voices?.slice(0, 10).map((voice) => (
-                      <option key={voice.voice_id} value={voice.voice_id}>
-                        {voice.voice_id}
-                      </option>
-                    ))}
+                    <option value="indic-tts-coqui-indo_aryan">
+                      indic-tts-coqui-indo_aryan
+                    </option>
                   </Select>
                 </FormControl>
 
+                {/* Recording Timer Display */}
+                {isRecording && (
+                  <Alert status="info" borderRadius="md">
+                    <AlertIcon />
+                    <AlertDescription>
+                      Recording Time: {formatDuration(timer)} /{" "}
+                      {formatDuration(MAX_RECORDING_DURATION)} seconds
+                    </AlertDescription>
+                  </Alert>
+                )}
+
                 {/* Recording Button */}
                 <Button
-                  leftIcon={isRecording ? <FaMicrophoneSlash /> : <FaMicrophone />}
-                  colorScheme={isRecording ? 'red' : 'orange'}
-                  variant={isRecording ? 'solid' : 'outline'}
+                  leftIcon={
+                    isRecording ? <FaMicrophoneSlash /> : <FaMicrophone />
+                  }
+                  colorScheme={isRecording ? "red" : "orange"}
+                  variant={isRecording ? "solid" : "outline"}
                   onClick={handleRecordClick}
                   disabled={isLoading}
                   w="full"
                   h="50px"
                 >
-                  {isRecording ? 'Stop Recording' : 'Start Recording'}
+                  {isRecording ? "Stop" : "Record"}
                 </Button>
 
                 {/* File Upload */}
-                <Button as="label" cursor="pointer" disabled={isLoading || isRecording}>
-                  Choose Audio File
+                <Button
+                  as="label"
+                  cursor="pointer"
+                  disabled={isLoading || isRecording}
+                >
+                  Upload
                   <input
                     type="file"
                     accept="audio/*"
                     onChange={handleFileUpload}
-                    style={{ display: 'none' }}
+                    style={{ display: "none" }}
                   />
                 </Button>
+              </VStack>
+            </GridItem>
 
-
+            {/* Results Panel */}
+            <GridItem>
+              <VStack spacing={6} align="stretch">
                 {/* Progress Indicator */}
                 {isLoading && (
                   <Box>
@@ -292,12 +339,7 @@ const PipelinePage: React.FC = () => {
                     <Progress size="xs" isIndeterminate colorScheme="orange" />
                   </Box>
                 )}
-              </VStack>
-            </GridItem>
 
-            {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
                 {/* Results Stats */}
                 {result && (
                   <SimpleGrid
@@ -325,12 +367,17 @@ const PipelinePage: React.FC = () => {
 
                 {/* Source Text */}
                 <Box>
-                  <FormLabel mb={2} fontSize="sm" fontWeight="semibold" color="gray.700">
+                  <FormLabel
+                    mb={2}
+                    fontSize="sm"
+                    fontWeight="semibold"
+                    color="gray.700"
+                  >
                     Transcribed Text (Source)
                   </FormLabel>
                   <Textarea
                     readOnly
-                    value={result?.sourceText || ''}
+                    value={result?.sourceText || ""}
                     placeholder="Transcribed text will appear here..."
                     rows={4}
                   />
@@ -338,12 +385,17 @@ const PipelinePage: React.FC = () => {
 
                 {/* Target Text */}
                 <Box>
-                  <FormLabel mb={2} fontSize="sm" fontWeight="semibold" color="gray.700">
+                  <FormLabel
+                    mb={2}
+                    fontSize="sm"
+                    fontWeight="semibold"
+                    color="gray.700"
+                  >
                     Translated Text (Target)
                   </FormLabel>
                   <Textarea
                     readOnly
-                    value={result?.targetText || ''}
+                    value={result?.targetText || ""}
                     placeholder="Translated text will appear here..."
                     rows={4}
                   />
@@ -352,13 +404,18 @@ const PipelinePage: React.FC = () => {
                 {/* Audio Player */}
                 {result?.audio && (
                   <Box>
-                    <FormLabel mb={2} fontSize="sm" fontWeight="semibold" color="gray.700">
+                    <FormLabel
+                      mb={2}
+                      fontSize="sm"
+                      fontWeight="semibold"
+                      color="gray.700"
+                    >
                       Synthesized Audio (Target)
                     </FormLabel>
                     <audio
                       controls
                       src={result.audio}
-                      style={{ width: '100%' }}
+                      style={{ width: "100%" }}
                     />
                   </Box>
                 )}

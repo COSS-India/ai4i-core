@@ -1,5 +1,5 @@
 """
-Configuration Management Service - Centralized configuration and feature flags
+Configuration Management Service - Centralized configuration
 """
 import os
 import asyncio
@@ -11,6 +11,12 @@ import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from aiokafka import AIOKafkaProducer
+from models.database_models import (
+    Base,
+    Configuration,
+    ServiceRegistry,
+    ConfigurationHistory,
+) 
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,16 +26,18 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Configuration Management Service",
     version="1.0.0",
-    description="Centralized configuration and feature flags for microservices"
+    description="Centralized configuration for microservices"
 )
 
 # Add CORS middleware
+# Note: allow_origins=["*"] cannot be used with allow_credentials=True
+# If you need credentials, specify exact origins instead of "*"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=False,  # Must be False when allow_origins=["*"]
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
 )
 
 # Global variables for connections
@@ -37,11 +45,138 @@ redis_client = None
 db_engine = None
 db_session = None
 kafka_producer = None
+registry_client = None
+health_monitor_service = None
+health_monitor_task = None
+flag_sync_task = None
+openfeature_client = None
+unleash_provider = None
+
+async def periodic_health_check():
+    """Background task for periodic health checks"""
+    global health_monitor_service, registry_client, db_session, redis_client
+    
+    if not health_monitor_service:
+        logger.warning("Health monitor service not initialized, skipping periodic checks")
+        return
+    
+    health_check_interval = int(os.getenv("SERVICE_HEALTH_CHECK_INTERVAL", "30"))
+    additional_endpoints = os.getenv("HEALTH_CHECK_ADDITIONAL_ENDPOINTS", "").split(",")
+    additional_endpoints = [e.strip() for e in additional_endpoints if e.strip()]
+    
+    logger.info(
+        f"Starting periodic health check monitor "
+        f"(interval: {health_check_interval}s, additional endpoints: {additional_endpoints})"
+    )
+    
+    while True:
+        try:
+            # Get function to retrieve service instances
+            async def get_service_instances(service_name: str):
+                from services.service_registry_service import ServiceRegistryService
+                from repositories.service_registry_repository import ServiceRegistryRepository
+                
+                repo = ServiceRegistryRepository(db_session)
+                service = ServiceRegistryService(
+                    registry_client, repo, redis_client, health_monitor=health_monitor_service
+                )
+                return await service.get_service_instances(service_name)
+            
+            # Monitor all services
+            results = await health_monitor_service.monitor_all_services(
+                get_service_instances,
+                additional_endpoints if additional_endpoints else None,
+            )
+            
+            logger.debug(f"Completed health check cycle for {len(results)} services")
+            
+        except Exception as e:
+            logger.error(f"Error in periodic health check: {e}", exc_info=True)
+        
+        # Wait for next cycle
+        await asyncio.sleep(health_check_interval)
+
+
+async def periodic_flag_sync():
+    """Background task to periodically sync feature flags from Unleash"""
+    global redis_client, kafka_producer, openfeature_client
+    
+    # Check if feature flag sync is enabled
+    sync_enabled = os.getenv("UNLEASH_AUTO_SYNC_ENABLED", "true").lower() == "true"
+    if not sync_enabled:
+        logger.info("Periodic flag sync is disabled")
+        return
+    
+    sync_interval = int(os.getenv("UNLEASH_SYNC_INTERVAL", "30"))  # Default: 30 seconds (more frequent)
+    
+    # Get environments to sync - support multiple environments
+    environments_str = os.getenv("UNLEASH_SYNC_ENVIRONMENTS", "")
+    if environments_str:
+        environments = [e.strip() for e in environments_str.split(",") if e.strip()]
+    else:
+        # Default to common environments
+        default_env = os.getenv("UNLEASH_ENVIRONMENT", "development")
+        environments = [default_env, "staging", "production"]
+        # Remove duplicates while preserving order
+        seen = set()
+        environments = [e for e in environments if not (e in seen or seen.add(e))]
+    
+    logger.info(
+        f"Starting periodic feature flag sync "
+        f"(interval: {sync_interval}s, environments: {', '.join(environments)})"
+    )
+    
+    # Wait a bit before first sync to let service fully start
+    await asyncio.sleep(5)
+    
+    while True:
+        try:
+            from services.feature_flag_service import FeatureFlagService
+            
+            unleash_url = os.getenv('UNLEASH_URL', 'http://unleash:4242/api')
+            unleash_api_token = os.getenv('UNLEASH_API_TOKEN', '*:*.unleash-insecure-api-token')
+            kafka_topic = os.getenv("FEATURE_FLAG_KAFKA_TOPIC", "feature-flag-events")
+            cache_ttl = int(os.getenv("FEATURE_FLAG_CACHE_TTL", "300"))
+            
+            feature_flag_service = FeatureFlagService(
+                redis_client=redis_client,
+                kafka_producer=kafka_producer,
+                openfeature_client=openfeature_client,
+                kafka_topic=kafka_topic,
+                cache_ttl=cache_ttl,
+                unleash_url=unleash_url,
+                unleash_api_token=unleash_api_token,
+            )
+            
+            # Sync flags for all environments
+            total_synced = 0
+            for env in environments:
+                try:
+                    synced_count = await feature_flag_service.sync_flags_from_unleash(env)
+                    total_synced += synced_count
+                    logger.debug(f"Synced {synced_count} flags for environment '{env}'")
+                except Exception as env_error:
+                    logger.warning(f"Failed to sync environment '{env}': {env_error}")
+            
+            if total_synced > 0:
+                logger.info(f"Periodic sync completed: {total_synced} total flags synced across {len(environments)} environment(s)")
+            
+            # Wait for next cycle
+            await asyncio.sleep(sync_interval)
+            
+        except asyncio.CancelledError:
+            logger.info("Periodic flag sync task cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error in periodic flag sync: {e}", exc_info=True)
+            # Wait before retrying
+            await asyncio.sleep(sync_interval)
+
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections on startup"""
-    global redis_client, db_engine, db_session, kafka_producer
+    global redis_client, db_engine, db_session, kafka_producer, health_monitor_service, health_monitor_task, flag_sync_task, openfeature_client, unleash_provider
     
     try:
         # Initialize Redis connection
@@ -69,24 +204,208 @@ async def startup_event():
             expire_on_commit=False
         )
         logger.info("Connected to PostgreSQL")
+
+        # Create tables if they do not exist
+        try:
+            async with db_engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+        except Exception as e:
+            logger.error(f"Failed to create database tables: {e}")
+            raise
         
-        # Initialize Kafka producer
-        kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
-        kafka_producer = AIOKafkaProducer(
-            bootstrap_servers=kafka_servers,
-            value_serializer=lambda v: str(v).encode('utf-8')
-        )
-        await kafka_producer.start()
-        logger.info("Connected to Kafka")
+        # Initialize Kafka producer (optional)
+        try:
+            kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
+            kafka_producer = AIOKafkaProducer(
+                bootstrap_servers=kafka_servers
+            )
+            await kafka_producer.start()
+            logger.info("Connected to Kafka")
+        except Exception as kafka_exc:
+            kafka_producer = None
+            logger.warning(f"Kafka unavailable: {kafka_exc}")
+        
+        # Initialize ZooKeeper registry client
+        from registry.zookeeper_client import ZooKeeperRegistryClient
+        global registry_client
+        registry_client = ZooKeeperRegistryClient()
+        try:
+            await registry_client.connect()
+            logger.info("Connected to ZooKeeper")
+            # Register this service
+            service_name = os.getenv('SERVICE_NAME', 'config-service')
+            service_port = os.getenv('SERVICE_PORT', '8082')
+            instance_id = os.getenv('SERVICE_INSTANCE_ID', f"{service_name}-1")
+            service_url = f"http://{service_name}:{service_port}"
+            health_url = f"{service_url}/health"
+            try:
+                await registry_client.register_service(service_name, service_url, {"instance_id": instance_id, "health_check_url": health_url, "status": "healthy"})
+            except Exception as e:
+                logger.warning(f"Failed to register service in ZooKeeper: {e}")
+        except Exception as e:
+            logger.warning(f"ZooKeeper connection failed: {e}")
+        
+        # Initialize health monitor service
+        try:
+            from services.health_monitor_service import HealthMonitorService
+            from repositories.service_registry_repository import ServiceRegistryRepository
+            
+            repo = ServiceRegistryRepository(db_session)
+            
+            # Configuration from environment variables
+            health_check_timeout = float(os.getenv("HEALTH_CHECK_TIMEOUT", "3.0"))
+            health_check_max_retries = int(os.getenv("HEALTH_CHECK_MAX_RETRIES", "3"))
+            health_check_initial_retry_delay = float(os.getenv("HEALTH_CHECK_INITIAL_RETRY_DELAY", "1.0"))
+            health_check_max_retry_delay = float(os.getenv("HEALTH_CHECK_MAX_RETRY_DELAY", "30.0"))
+            health_check_retry_backoff = float(os.getenv("HEALTH_CHECK_RETRY_BACKOFF", "2.0"))
+            
+            health_monitor_service = HealthMonitorService(
+                repository=repo,
+                redis_client=redis_client,
+                default_timeout=health_check_timeout,
+                max_retries=health_check_max_retries,
+                initial_retry_delay=health_check_initial_retry_delay,
+                max_retry_delay=health_check_max_retry_delay,
+                retry_backoff_multiplier=health_check_retry_backoff,
+            )
+            logger.info("Health monitor service initialized")
+            
+            # Start periodic health check task if enabled
+            health_check_enabled = os.getenv("SERVICE_HEALTH_CHECK_ENABLED", "true").lower() == "true"
+            if health_check_enabled:
+                health_monitor_task = asyncio.create_task(periodic_health_check())
+                logger.info("Periodic health check task started")
+            else:
+                logger.info("Periodic health check disabled")
+                
+        except Exception as e:
+            logger.warning(f"Failed to initialize health monitor service: {e}")
+            health_monitor_service = None
+        
+        # Initialize OpenFeature with Unleash provider
+        try:
+            from openfeature import api as openfeature_api
+            from providers.unleash_provider import UnleashFeatureProvider
+            from openfeature.evaluation_context import EvaluationContext
+            
+            unleash_url = os.getenv('UNLEASH_URL', 'http://unleash:4242/api')
+            unleash_app_name = os.getenv('UNLEASH_APP_NAME', 'config-service')
+            unleash_instance_id = os.getenv('UNLEASH_INSTANCE_ID', 'config-service-1')
+            unleash_api_token = os.getenv('UNLEASH_API_TOKEN', '*:*.unleash-insecure-api-token')
+            unleash_environment = os.getenv('UNLEASH_ENVIRONMENT')  # Optional - if not set, SDK won't be used
+            unleash_refresh_interval = int(os.getenv('UNLEASH_REFRESH_INTERVAL', '15'))
+            unleash_metrics_interval = int(os.getenv('UNLEASH_METRICS_INTERVAL', '60'))
+            unleash_disable_metrics = os.getenv('UNLEASH_DISABLE_METRICS', 'false').lower() == 'true'
+            
+            # Only initialize SDK if UNLEASH_ENVIRONMENT is set
+            if unleash_environment:
+                unleash_provider = UnleashFeatureProvider(
+                    url=unleash_url,
+                    app_name=unleash_app_name,
+                    instance_id=unleash_instance_id,
+                    api_token=unleash_api_token,
+                    environment=unleash_environment,
+                    refresh_interval=unleash_refresh_interval,
+                    metrics_interval=unleash_metrics_interval,
+                    disable_metrics=unleash_disable_metrics,
+                )
+                
+                # Initialize provider with empty context
+                unleash_provider.initialize(EvaluationContext())
+                
+                openfeature_api.set_provider(unleash_provider)
+                openfeature_client = openfeature_api.get_client()
+                
+                # Store in app state for access in routers
+                app.state.openfeature_client = openfeature_client
+                
+                logger.info(f"OpenFeature with Unleash provider initialized for environment: {unleash_environment}")
+                logger.info(
+                    f"Note: SDK is configured for '{unleash_environment}'. Evaluation will use Admin API "
+                    f"for all environments, with SDK as fallback for complex targeting."
+                )
+            else:
+                openfeature_client = None
+                app.state.openfeature_client = None
+                logger.info(
+                    "UNLEASH_ENVIRONMENT not set - SDK disabled. Evaluation will use Admin API only, "
+                    "which works correctly for all environments."
+                )
+            
+            # Optionally sync flags from Unleash on startup
+            auto_sync_enabled = os.getenv('UNLEASH_AUTO_SYNC_ON_STARTUP', 'false').lower() == 'true'
+            if auto_sync_enabled:
+                try:
+                    from services.feature_flag_service import FeatureFlagService
+                    
+                    kafka_topic = os.getenv("FEATURE_FLAG_KAFKA_TOPIC", "feature-flag-events")
+                    cache_ttl = int(os.getenv("FEATURE_FLAG_CACHE_TTL", "300"))
+                    
+                    feature_flag_service = FeatureFlagService(
+                        redis_client=redis_client,
+                        kafka_producer=kafka_producer,
+                        openfeature_client=openfeature_client,
+                        kafka_topic=kafka_topic,
+                        cache_ttl=cache_ttl,
+                        unleash_url=unleash_url,
+                        unleash_api_token=unleash_api_token,
+                    )
+                    
+                    synced_count = await feature_flag_service.sync_flags_from_unleash(unleash_environment)
+                    logger.info(f"Auto-synced {synced_count} feature flags from Unleash on startup")
+                except Exception as sync_error:
+                    logger.warning(f"Failed to auto-sync flags from Unleash on startup: {sync_error}")
+            
+            # Start periodic flag sync task if enabled
+            sync_enabled = os.getenv("UNLEASH_AUTO_SYNC_ENABLED", "true").lower() == "true"
+            if sync_enabled:
+                flag_sync_task = asyncio.create_task(periodic_flag_sync())
+                logger.info("Periodic feature flag sync task started")
+            else:
+                logger.info("Periodic feature flag sync disabled")
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenFeature/Unleash: {e}")
+            openfeature_client = None
         
     except Exception as e:
-        logger.error(f"Failed to initialize connections: {e}")
+        logger.error(f"Failed to initialize essential connections: {e}")
         raise
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up connections on shutdown"""
-    global redis_client, db_engine, kafka_producer
+    global redis_client, db_engine, kafka_producer, health_monitor_service, health_monitor_task, flag_sync_task, unleash_provider
+    
+    # Shutdown OpenFeature provider
+    if unleash_provider:
+        try:
+            unleash_provider.shutdown()
+            logger.info("OpenFeature provider shutdown complete")
+        except Exception as e:
+            logger.warning(f"Error shutting down OpenFeature provider: {e}")
+    
+    # Cancel health monitor task
+    if health_monitor_task:
+        health_monitor_task.cancel()
+        try:
+            await health_monitor_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Health monitor task cancelled")
+    
+    # Cancel flag sync task
+    if flag_sync_task:
+        flag_sync_task.cancel()
+        try:
+            await flag_sync_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Flag sync task cancelled")
+    
+    # Close health monitor service
+    if health_monitor_service:
+        await health_monitor_service.close()
+        logger.info("Health monitor service closed")
     
     if redis_client:
         await redis_client.close()
@@ -100,6 +419,18 @@ async def shutdown_event():
         await kafka_producer.stop()
         logger.info("Kafka producer closed")
 
+    if registry_client:
+        try:
+            service_name = os.getenv('SERVICE_NAME', 'config-service')
+            instance_id = os.getenv('SERVICE_INSTANCE_ID', f"{service_name}-1")
+            await registry_client.deregister_service(service_name, instance_id)
+        except Exception:
+            pass
+        try:
+            await registry_client.disconnect()
+        except Exception:
+            pass
+
 @app.get("/")
 async def root():
     """Root endpoint with service information"""
@@ -107,51 +438,14 @@ async def root():
         "service": "Configuration Management Service",
         "version": "1.0.0",
         "status": "running",
-        "description": "Centralized configuration and feature flags for microservices"
+        "description": "Centralized configuration for microservices"
     }
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint for Docker health checks"""
-    try:
-        # Check Redis connectivity
-        if redis_client:
-            await redis_client.ping()
-            redis_status = "healthy"
-        else:
-            redis_status = "unhealthy"
-        
-        # Check PostgreSQL connectivity
-        if db_engine:
-            async with db_engine.begin() as conn:
-                await conn.execute("SELECT 1")
-            postgres_status = "healthy"
-        else:
-            postgres_status = "unhealthy"
-        
-        # Check Kafka connectivity
-        if kafka_producer:
-            kafka_status = "healthy"
-        else:
-            kafka_status = "unhealthy"
-        
-        overall_status = "healthy" if all([
-            redis_status == "healthy", 
-            postgres_status == "healthy",
-            kafka_status == "healthy"
-        ]) else "unhealthy"
-        
-        return {
-            "status": overall_status,
-            "service": "config-service",
-            "redis": redis_status,
-            "postgres": postgres_status,
-            "kafka": kafka_status,
-            "timestamp": asyncio.get_event_loop().time()
-        }
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        raise HTTPException(status_code=503, detail="Service unhealthy")
+from routers import config_router, service_registry_router, health_router, feature_flag_router
+app.include_router(config_router)
+app.include_router(service_registry_router)
+app.include_router(health_router)
+app.include_router(feature_flag_router)
 
 @app.get("/api/v1/config/status")
 async def config_status():
@@ -162,32 +456,13 @@ async def config_status():
         "status": "operational",
         "features": [
             "Environment-specific configurations",
-            "Feature flags",
             "Service discovery",
             "Dynamic configuration updates",
-            "Configuration audit logging"
+            "Configuration audit logging",
+            "Feature flags with Unleash"
         ]
     }
 
-@app.get("/api/v1/config/{key}")
-async def get_config(key: str, environment: str = "development"):
-    """Get configuration value"""
-    return {"key": key, "environment": environment, "message": "Configuration retrieval - to be implemented"}
-
-@app.post("/api/v1/config")
-async def set_config():
-    """Set configuration value"""
-    return {"message": "Configuration setting - to be implemented"}
-
-@app.get("/api/v1/feature-flags")
-async def get_feature_flags():
-    """Get feature flags"""
-    return {"message": "Feature flags retrieval - to be implemented"}
-
-@app.post("/api/v1/feature-flags")
-async def set_feature_flag():
-    """Set feature flag"""
-    return {"message": "Feature flag setting - to be implemented"}
 
 if __name__ == "__main__":
     import uvicorn
