@@ -1,10 +1,8 @@
-# -----------------------------
-# STAGE 1 — BUILDER
-# -----------------------------
+# STAGE 1 – Builder
 FROM python:3.10-slim AS builder
 WORKDIR /app
 
-# Install OS-level dependencies required for audio, numpy, torch
+# Install OS-dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
@@ -14,44 +12,40 @@ RUN apt-get update && \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only requirements first (for pip caching)
+# Copy only requirements first
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install Python deps
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy source code
+# Copy all code (service root)
 COPY . .
 
-# (Optional) Download model files if needed at build time
+# (Optional) if you still need model download at build time
 # RUN python download_model.py
 
-
-# -----------------------------
-# STAGE 2 — RUNTIME
-# -----------------------------
+# STAGE 2 – Runtime
 FROM python:3.10-slim AS runtime
 WORKDIR /app
 
-# Install runtime-only OS deps
+# Install runtime-only libs
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         libsndfile1 \
-        libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy installed Python packages and application code
+# Copy installed dependencies and code from builder
 COPY --from=builder /usr/local /usr/local
 COPY --from=builder /app /app
 
-# Fix Python import paths (VERY IMPORTANT)
-ENV PYTHONPATH="/app"
+# Set environment
 ENV PYTHONUNBUFFERED=1
+# **Important**: Make sure Python can see 'models' and 'services' modules
+ENV PYTHONPATH="/app"
 
-# Expose service port (optional)
+# Expose port if needed
 EXPOSE 8087
 
-# Start the application
 ENTRYPOINT ["python", "main.py"]
