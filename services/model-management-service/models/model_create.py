@@ -1,14 +1,7 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 from datetime import datetime
-
-# class SerializableBaseModel(BaseModel):
-#     model_config = ConfigDict(
-#         json_encoders={
-#             datetime: lambda v: v.isoformat()
-#         }
-#     )
 
 class ModelProcessingType(BaseModel):
     type: str
