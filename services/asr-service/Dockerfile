@@ -1,8 +1,9 @@
-# STAGE 1 – Builder
+# -----------------------------
+# STAGE 1 — BUILDER
+# -----------------------------
 FROM python:3.10-slim AS builder
 WORKDIR /app
 
-# Install OS deps
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
@@ -12,15 +13,15 @@ RUN apt-get update && \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy ONLY this service code (because build context = asr-service)
 COPY . /app
 
-# Install deps
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 
-# STAGE 2 – Runtime
+# -----------------------------
+# STAGE 2 — RUNTIME
+# -----------------------------
 FROM python:3.10-slim AS runtime
 WORKDIR /app
 
@@ -34,8 +35,10 @@ RUN apt-get update && \
 COPY --from=builder /usr/local /usr/local
 COPY --from=builder /app /app
 
-ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH="/app"
 
 EXPOSE 8087
-ENTRYPOINT ["python", "main.py"]
+
+# 🚀 The FIX: Run uvicorn directly
+ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8087"]
