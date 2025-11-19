@@ -1,24 +1,62 @@
 -- Initialize all required databases for microservices
 -- This script is automatically executed when PostgreSQL container starts for the first time
 
--- Create databases for each microservice
-SELECT 'CREATE DATABASE auth_db'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'auth_db')\gexec
+-- Create databases for each microservice using DO blocks for better compatibility
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'auth_db') THEN
+        CREATE DATABASE auth_db;
+    END IF;
+END
+$$;
 
-SELECT 'CREATE DATABASE config_db'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'config_db')\gexec
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'config_db') THEN
+        CREATE DATABASE config_db;
+    END IF;
+END
+$$;
 
-SELECT 'CREATE DATABASE metrics_db'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'metrics_db')\gexec
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'metrics_db') THEN
+        CREATE DATABASE metrics_db;
+    END IF;
+END
+$$;
 
-SELECT 'CREATE DATABASE telemetry_db'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'telemetry_db')\gexec
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'telemetry_db') THEN
+        CREATE DATABASE telemetry_db;
+    END IF;
+END
+$$;
 
-SELECT 'CREATE DATABASE alerting_db'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'alerting_db')\gexec
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'alerting_db') THEN
+        CREATE DATABASE alerting_db;
+    END IF;
+END
+$$;
 
-SELECT 'CREATE DATABASE dashboard_db'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'dashboard_db')\gexec
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'dashboard_db') THEN
+        CREATE DATABASE dashboard_db;
+    END IF;
+END
+$$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'unleash') THEN
+        CREATE DATABASE unleash;
+    END IF;
+END
+$$;
 
 -- Grant all privileges on each database to the configured PostgreSQL user
 GRANT ALL PRIVILEGES ON DATABASE auth_db TO dhruva_user;
@@ -27,6 +65,7 @@ GRANT ALL PRIVILEGES ON DATABASE metrics_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE telemetry_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE alerting_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE dashboard_db TO dhruva_user;
+GRANT ALL PRIVILEGES ON DATABASE unleash TO dhruva_user;
 
 -- Add comments documenting which service uses each database
 COMMENT ON DATABASE auth_db IS 'Authentication & Authorization Service database';
@@ -35,3 +74,4 @@ COMMENT ON DATABASE metrics_db IS 'Metrics Collection Service database';
 COMMENT ON DATABASE telemetry_db IS 'Telemetry Service database';
 COMMENT ON DATABASE alerting_db IS 'Alerting Service database';
 COMMENT ON DATABASE dashboard_db IS 'Dashboard Service database';
+COMMENT ON DATABASE unleash IS 'Unleash feature flag management database';

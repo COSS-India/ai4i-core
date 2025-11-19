@@ -58,11 +58,15 @@ The pipeline service orchestrates the execution of multiple AI tasks:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SERVICE_PORT` | Service port | 8090 |
-| `ASR_SERVICE_URL` | ASR service URL | http://asr-service:8087 |
-| `NMT_SERVICE_URL` | NMT service URL | http://nmt-service:8089 |
-| `TTS_SERVICE_URL` | TTS service URL | http://tts-service:8088 |
+| `CONFIG_SERVICE_URL` | Config/registry base URL used for discovery | http://config-service:8082 |
+| `ASR_SERVICE_URL` | Override ASR URL (skips discovery if set) |  |
+| `NMT_SERVICE_URL` | Override NMT URL (skips discovery if set) |  |
+| `TTS_SERVICE_URL` | Override TTS URL (skips discovery if set) |  |
 | `HTTP_CLIENT_TIMEOUT` | HTTP client timeout in seconds | 300 |
 | `LOG_LEVEL` | Log level | INFO |
+
+Notes:
+- The pipeline now performs service discovery via the config service’s registry (e.g., backed by ZooKeeper). If an `*_SERVICE_URL` env var is provided, that value is used and discovery is skipped for that service.
 
 ## Usage
 

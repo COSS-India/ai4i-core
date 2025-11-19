@@ -4,8 +4,8 @@ Authentication models and schemas
 from datetime import datetime, timedelta
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, JSON, ForeignKey, PrimaryKeyConstraint
+from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 
 Base = declarative_base()
@@ -17,7 +17,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), unique=True, index=True, nullable=False)
     username = Column(String(100), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(255), nullable=False)
+    hashed_password = Column(String(255), nullable=True)  # Nullable for OAuth users
     full_name = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
@@ -32,9 +32,13 @@ class User(Base):
     phone_number = Column(String(20), nullable=True)
     timezone = Column(String(50), default="UTC")
     language = Column(String(10), default="en")
+    
+    # Relationships
+    user_roles = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
+    oauth_accounts = relationship("OAuthProvider", back_populates="user", cascade="all, delete-orphan")
 
 class UserSession(Base):
-    __tablename__ = "sessions"
+    __tablename__ = "user_sessions"
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, nullable=False, index=True)
@@ -43,7 +47,6 @@ class UserSession(Base):
     device_info = Column(JSON, nullable=True)
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
-    token_type = Column(String(20), default="access")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False)
@@ -61,6 +64,82 @@ class APIKey(Base):
     last_used = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=True)
+
+class Role(Base):
+    __tablename__ = "roles"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, index=True, nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    user_roles = relationship("UserRole", back_populates="role", cascade="all, delete-orphan")
+    role_permissions = relationship("RolePermission", back_populates="role", cascade="all, delete-orphan")
+
+class Permission(Base):
+    __tablename__ = "permissions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, index=True, nullable=False)
+    resource = Column(String(100), nullable=False)
+    action = Column(String(50), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    role_permissions = relationship("RolePermission", back_populates="permission", cascade="all, delete-orphan")
+
+class UserRole(Base):
+    __tablename__ = "user_roles"
+    
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, index=True)
+    assigned_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Composite primary key
+    __table_args__ = (
+        PrimaryKeyConstraint('user_id', 'role_id'),
+    )
+    
+    # Relationships
+    user = relationship("User", back_populates="user_roles")
+    role = relationship("Role", back_populates="user_roles")
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+    
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, index=True)
+    permission_id = Column(Integer, ForeignKey("permissions.id", ondelete="CASCADE"), nullable=False, index=True)
+    assigned_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Composite primary key
+    __table_args__ = (
+        PrimaryKeyConstraint('role_id', 'permission_id'),
+    )
+    
+    # Relationships
+    role = relationship("Role", back_populates="role_permissions")
+    permission = relationship("Permission", back_populates="role_permissions")
+
+class OAuthProvider(Base):
+    __tablename__ = "oauth_providers"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider_name = Column(String(50), nullable=False)
+    provider_user_id = Column(String(255), nullable=False)
+    access_token = Column(Text, nullable=True)
+    refresh_token = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Unique constraint on provider_name and provider_user_id
+    __table_args__ = (
+        PrimaryKeyConstraint('id'),
+    )
+    
+    # Relationships
+    user = relationship("User", back_populates="oauth_accounts")
 
 # Pydantic Models for API
 class UserBase(BaseModel):
@@ -91,6 +170,7 @@ class UserResponse(UserBase):
     updated_at: Optional[datetime]
     last_login: Optional[datetime]
     avatar_url: Optional[str]
+    roles: List[str] = []
     
     class Config:
         from_attributes = True
@@ -105,6 +185,8 @@ class LoginResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int
+    user: Optional[UserResponse] = None
+    roles: Optional[List[str]] = None
 
 class TokenRefreshRequest(BaseModel):
     refresh_token: str
@@ -119,6 +201,7 @@ class TokenValidationResponse(BaseModel):
     user_id: Optional[int] = None
     username: Optional[str] = None
     permissions: List[str] = []
+    roles: List[str] = []
 
 class PasswordChangeRequest(BaseModel):
     current_password: str

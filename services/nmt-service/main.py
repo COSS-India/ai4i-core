@@ -17,6 +17,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from routers import health_router, inference_router
+from utils.service_registry_client import ServiceRegistryHttpClient
 from utils.triton_client import TritonClient
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
@@ -46,6 +47,8 @@ TRITON_API_KEY = os.getenv("TRITON_API_KEY", "1b69e9a1a24466c85e4bbca3c5295f50")
 redis_client: Optional[redis.Redis] = None
 db_engine: Optional[AsyncEngine] = None
 db_session_factory: Optional[async_sessionmaker] = None
+registry_client: Optional[ServiceRegistryHttpClient] = None
+registered_instance_id: Optional[str] = None
 
 # Initialize Redis client early for middleware
 try:
@@ -70,7 +73,7 @@ except Exception as e:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager for startup and shutdown"""
-    global redis_client, db_engine, db_session_factory
+    global redis_client, db_engine, db_session_factory, registry_client, registered_instance_id
     
     # Startup
     logger.info("Starting NMT Service...")
@@ -115,6 +118,33 @@ async def lifespan(app: FastAPI):
         app.state.db_session_factory = db_session_factory
         app.state.triton_endpoint = TRITON_ENDPOINT
         app.state.triton_api_key = TRITON_API_KEY
+
+        # Register service into the central registry via config-service
+        try:
+            registry_client = ServiceRegistryHttpClient()
+            service_name = os.getenv("SERVICE_NAME", "nmt-service")
+            service_port = int(os.getenv("SERVICE_PORT", "8089"))
+            # Prefer explicit public base URL if provided
+            public_base_url = os.getenv("SERVICE_PUBLIC_URL")
+            if public_base_url:
+                service_url = public_base_url.rstrip("/")
+            else:
+                service_host = os.getenv("SERVICE_HOST", service_name)
+                service_url = f"http://{service_host}:{service_port}"
+            health_url = service_url + "/health"
+            instance_id = os.getenv("SERVICE_INSTANCE_ID", f"{service_name}-{os.getpid()}")
+            registered_instance_id = await registry_client.register(
+                service_name=service_name,
+                service_url=service_url,
+                health_check_url=health_url,
+                service_metadata={"instance_id": instance_id, "status": "healthy"},
+            )
+            if registered_instance_id:
+                logger.info("Registered %s with service registry as instance %s", service_name, registered_instance_id)
+            else:
+                logger.warning("Service registry registration skipped/failed for %s", service_name)
+        except Exception as e:
+            logger.warning("Service registry registration error: %s", e)
         
         logger.info("NMT Service started successfully")
         
@@ -128,6 +158,14 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down NMT Service...")
     
     try:
+        # Deregister from registry if previously registered
+        try:
+            if registry_client and registered_instance_id:
+                service_name = os.getenv("SERVICE_NAME", "nmt-service")
+                await registry_client.deregister(service_name, registered_instance_id)
+        except Exception as e:
+            logger.warning("Service registry deregistration error: %s", e)
+
         if redis_client:
             await redis_client.close()
             logger.info("Redis connection closed")
@@ -146,7 +184,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="NMT Service",
     version="1.0.0",
-    description="Neural Machine Translation microservice for translating text between 22+ Indian languages. Supports bidirectional translation with script code handling and batch processing.",
+    description="Neural Machine Translation microservice for translating text between 22+ Indic languages. Supports bidirectional translation with script code handling and batch processing.",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -219,6 +257,27 @@ async def root():
         "status": "running",
         "description": "Neural Machine Translation microservice"
     }
+
+
+@app.get("/health")
+async def health_check():
+    """Root health check endpoint - basic health check"""
+    try:
+        # Basic health check - just verify service is running
+        # The detailed health check is available at /api/v1/nmt/health
+        return {
+            "status": "healthy",
+            "service": "nmt-service",
+            "version": "1.0.0",
+            "message": "Service is running. For detailed health check, use /api/v1/nmt/health"
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "service": "nmt-service",
+            "error": str(e)
+        }
 
 
 
