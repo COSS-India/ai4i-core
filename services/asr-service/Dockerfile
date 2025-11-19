@@ -1,38 +1,46 @@
 # Stage 1: builder
-FROM python:3.8-slim AS builder
+FROM python:3.10-slim AS builder
 WORKDIR /app
 
-# Install only build-time OS deps
+# Install build-time deps (for librosa, soundfile, torch builds)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      ffmpeg \
-      libsndfile1 \
-      build-essential \
+        ffmpeg \
+        libsndfile1 \
+        build-essential \
+        git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only dependency manifest(s)
+# Copy requirements
 COPY requirements.txt .
-RUN pip install --upgrade pip && \
+
+# Install Python dependencies
+RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy source code
+# Copy full source code
 COPY . .
 
-# (Optional) Download model weights only if needed at build time
-# Better: consider moving model download to runtime or initialisation script
-RUN python download_model.py
+# (Optional) Download model if required
+# RUN python download_model.py
 
-# Stage 2: runtime
-FROM python:3.8-slim AS runtime
+# ---- Stage 2: Runtime Image ----
+FROM python:3.10-slim AS runtime
 WORKDIR /app
 
-# Copy installed dependencies from builder
-COPY --from=builder /usr/local/lib/python3.8/site-packages /usr/local/lib/python3.8/site-packages
-# Copy source code (without dev/test files if you prune)
+# OS deps required at runtime
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed libs
+COPY --from=builder /usr/local /usr/local
+
+# Copy application code
 COPY --from=builder /app /app
 
-# Remove test/dev artefacts if any
-RUN rm -rf /app/tests /app/.git
-
 ENV PYTHONUNBUFFERED=1
-ENTRYPOINT ["python","main.py"]
+
+ENTRYPOINT ["python", "main.py"]
