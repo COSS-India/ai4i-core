@@ -10,6 +10,7 @@ import json
 from models.model_update import ModelUpdateRequest
 from typing import Dict, Any
 from sqlalchemy.orm.attributes import flag_modified
+from uuid import UUID
 
 
 def _json_safe(value: Any) -> Any:
@@ -172,7 +173,7 @@ def update_by_filter(filters: Dict[str, Any], data: Dict[str, Any]) -> int:
             for field, value in data.items():
                 setattr(record, field, value)
 
-                # ⭐ MUST DO THIS for JSONB fields
+                # MUST DO THIS for JSONB fields
                 if field in json_fields:
                     flag_modified(record, field)
 
@@ -258,3 +259,50 @@ def update_model(request: ModelUpdateRequest):
 
     logger.info(f"Model {request.modelId} successfully updated.")
 
+
+
+
+
+def delete_model_by_uuid(id_str: str) -> int:
+    """Delete model by internal UUID (id). Follows Dhruva DPG logic."""
+    db: Session = AppDatabase()
+
+    # Convert to UUID
+    try:
+        uuid = UUID(id_str)
+    except ValueError:
+        logger.warning(f"Invalid UUID provided for delete: {uuid}")
+        return 0
+    
+    model = db.query(Model).filter(Model.id == uuid).first()
+
+    if not model:
+        logger.warning(f"Model with UUID {uuid} not found for delete.")
+        return 0
+    
+    model_id = model.model_id
+
+    # ---- Delete from Cache ----
+    try:
+        cache_entry = ModelCache.get(model_id)
+
+        if cache_entry:
+            ModelCache.delete(model_id)
+            logger.info(f"Cache deleted for modelId='{model_id}'")
+        else:
+            logger.info(f"Cache does NOT exist for modelId='{model_id}'")
+
+    except Exception as cache_err:
+        logger.warning(f"ModelCache delete failed for {uuid}: {cache_err}")
+
+
+    result = (
+        db.query(Model)
+          .filter(Model.id == uuid)
+          .delete()
+    )
+
+    db.commit()
+    logger.info(f"DB: Model with ID {uuid} deleted successfully.")
+
+    return result

@@ -4,7 +4,7 @@ from fastapi.exceptions import RequestValidationError
 
 from models.model_create import ModelCreateRequest
 from models.model_update import ModelUpdateRequest
-from db_operations import save_model_to_db , update_model
+from db_operations import save_model_to_db , update_model , delete_model_by_uuid
 from logger import logger
 
 model_router = APIRouter(prefix="/services/admin", tags=["Model Management"])
@@ -45,4 +45,27 @@ async def update_model_request(request: ModelUpdateRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"kind": "DBError", "message": "Model update not successful"}
+        )
+
+
+@model_router.delete("/delete/model", response_model=str)
+async def delete_model_request(id: str):
+    try:
+        result = delete_model_by_uuid(id)
+
+        if result == 0:
+            raise HTTPException(
+                status_code=404,
+                detail={"kind": "NotFound", "message": f"Model with id '{id}' not found"}
+            )
+
+        return f"Model '{id}' deleted successfully."
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error while deleting model from DB.")
+        raise HTTPException(
+            status_code=500,
+            detail={"kind": "DBError", "message": "Model delete not successful"}
         )
