@@ -52,11 +52,11 @@ spec:
             name: asr-service-secret
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "300m"
+            memory: "2Mi"
+            cpu: "500m"
           limits:
-            memory: "1Gi"
-            cpu: "600m"
+            memory: "3Gi"
+            cpu: "1"
         livenessProbe:
           httpGet:
             path: /health
