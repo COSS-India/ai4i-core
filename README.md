@@ -50,7 +50,9 @@ The current version of platform consists of 10 microservices, 1 frontend applica
 
 **Technology Stack**: Next.js 13, TypeScript, Chakra UI, TanStack React Query, Socket.IO Client
 
-Refer to the wiki section for the detailed setup instructions.
+## 🚀 Getting Started
+
+For setup instructions, refer to the [Setup Guide](docs/SETUP_GUIDE.md) or the wiki section for detailed setup instructions.
 
 ### Contributing
 
