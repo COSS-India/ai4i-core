@@ -8,7 +8,7 @@ from logger import logger
 import json
 
 from models.model_update import ModelUpdateRequest
-from typing import Dict, Any
+from typing import Dict, Any, List
 from sqlalchemy.orm.attributes import flag_modified
 from uuid import UUID
 
@@ -208,8 +208,10 @@ def update_model(request: ModelUpdateRequest):
     # 2. Patch cache (only simple fields)
     new_cache = cache.model_dump()
 
+    model_fields = cache.__class__.model_fields
+
     for key, value in request_dict.items():
-        if key in cache.model_fields and value is not None:
+        if key in model_fields and value is not None:
             new_cache[key] = value
 
     # Convert to Redis-safe format before saving
@@ -250,21 +252,17 @@ def update_model(request: ModelUpdateRequest):
     # 4. Repository update
     result = update_by_filter({"model_id": request.modelId}, postgres_data)
 
-    if result == 0:
-        logger.warning(f"No DB record found for model {request.modelId}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Model not found in database"
-        )
-
     logger.info(f"Model {request.modelId} successfully updated.")
+
+    return result
 
 
 
 
 
 def delete_model_by_uuid(id_str: str) -> int:
-    """Delete model by internal UUID (id). Follows Dhruva DPG logic."""
+    """Delete model by internal UUID (id)"""
+
     db: Session = AppDatabase()
 
     # Convert to UUID
@@ -289,8 +287,6 @@ def delete_model_by_uuid(id_str: str) -> int:
         if cache_entry:
             ModelCache.delete(model_id)
             logger.info(f"Cache deleted for modelId='{model_id}'")
-        else:
-            logger.info(f"Cache does NOT exist for modelId='{model_id}'")
 
     except Exception as cache_err:
         logger.warning(f"ModelCache delete failed for {uuid}: {cache_err}")
@@ -306,3 +302,60 @@ def delete_model_by_uuid(id_str: str) -> int:
     logger.info(f"DB: Model with ID {uuid} deleted successfully.")
 
     return result
+
+
+
+def get_model_details(model_id: str) -> Dict[str, Any]:
+     
+    db: Session = AppDatabase()
+    try:
+        model = db.query(Model).where(Model.model_id == model_id).one()
+
+        if not model:
+             return None
+        return {
+             "modelId": model.model_id,
+             "name": model.name,
+             "description": model.description,
+             "languages": model.languages or [],
+             "domain": model.domain,
+             "submitter": model.submitter,
+             "license": model.license,
+             "inferenceEndPoint": model.inference_endpoint,
+             "source": "",  ## ask value for this field
+             "task": model.task
+         }
+     
+    except Exception as e:
+         logger.error(f"[DB] Error fetching model details: {str(e)}")
+         raise
+    
+
+def list_all_models() -> List[Dict[str, Any]]:
+    """Fetch all model records from DB and convert to response format."""
+    db: Session = AppDatabase()
+
+    models = db.query(Model).all()
+
+    result = []
+    for item in models:
+        # Convert SQLAlchemy model → dict
+        data = item.__dict__.copy()
+        data.pop("_sa_instance_state", None)
+
+        # Build response object
+        result.append({
+            "modelId": str(data.get("model_id")),
+            "name": data.get("name"),
+            "description": data.get("description"),
+            "languages": data.get("languages") or [],
+            "domain": data.get("domain"),
+            "submitter": data.get("submitter"),
+            "license": data.get("license"),
+            "inferenceEndPoint": data.get("inference_endpoint"),
+            "source": data.get("ref_url"),
+            "task": data.get("task", {})
+        })
+
+    return result
+

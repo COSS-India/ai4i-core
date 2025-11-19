@@ -4,6 +4,8 @@ from pydantic import Field, model_validator , ConfigDict
 from redis_om import HashModel, Field as RedisField
 from redis_om.model.model import PrimaryKey
 from uuid import UUID as _UUID
+from pydantic import BaseModel
+import json
 
 from .app_cache import get_cache_connection
 
@@ -12,7 +14,7 @@ EXCLUDED_FIELDS = ["id", "key", "services"]
 
 # Allowed field types for Redis storage
 # (no mongo-specific types here)
-ACCEPTED_FIELD_TYPES = (str, int, float, bool, datetime, _UUID)
+ACCEPTED_FIELD_TYPES = (str, int, float, bool, datetime, _UUID,dict,list)
 
 
 class CacheBaseModel(HashModel):
@@ -49,7 +51,13 @@ def validate_fields(cls, values):
             # Handle special case for "task"
             if key == "task" and cls.__name__ == "ModelCache":
                 values["task_type"] = val.get("type")
-            values.pop(key, None)
+            # values.pop(key, None)
+            continue
+
+        if isinstance(val, (dict, list, BaseModel)):
+            values[key] = json.dumps(
+                val if not isinstance(val, BaseModel) else val.model_dump()
+            )
             continue
         # Normalize datatypes
         if isinstance(val, datetime):
@@ -57,6 +65,35 @@ def validate_fields(cls, values):
         elif isinstance(val, bool):
             values[key] = str(val)
     return values
+
+# @model_validator(mode="before")
+# def validate_fields(cls, values):
+#     """
+#     Convert all nested structures to JSON strings before writing to Redis.
+#     """
+#     if not isinstance(values, dict):
+#         return values
+
+#     values = dict(values)
+
+#     for key, val in list(values.items()):
+
+#         # Convert dict / list / BaseModel to JSON string
+#         if isinstance(val, (dict, list, BaseModel)):
+#             values[key] = json.dumps(
+#                 val if not isinstance(val, BaseModel) else val.model_dump()
+#             )
+#             continue
+
+#         # Normalize datatypes
+#         if isinstance(val, datetime):
+#             values[key] = val.isoformat()
+
+#         elif isinstance(val, bool):
+#             values[key] = str(val)
+
+#     return values
+
 
 def generate_cache_model(cls, primary_key_field: str):
     """
@@ -86,9 +123,18 @@ def generate_cache_model(cls, primary_key_field: str):
             continue
 
         # Handle lists → flatten into strings
-        if getattr(field_type, "__origin__", None) == list:
+        # if getattr(field_type, "__origin__", None) == list:
+        #     model_definition[key] = (str, RedisField(default=""))
+        #     continue
+
+        if field_type == list or field_type == dict or getattr(field_type, "__origin__", None) in (list, dict):
             model_definition[key] = (str, RedisField(default=""))
             continue
+        
+
+        # if issubclass(field_type, BaseModel):
+        #     model_definition[key] = (str, RedisField(default=""))
+        #     continue
 
     return model_definition
 
