@@ -42,9 +42,6 @@ spec:
         image: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/asr-service:v1.1
         ports:
         - containerPort: 8087
-        env:
-        - name: ENV_FILE
-          value: ".env"
         envFrom:
         - configMapRef:
             name: asr-service-config
