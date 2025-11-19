@@ -66,6 +66,5 @@ __pycache__/
 tests/
 docs/
 data/
-models/
 *.log
 
