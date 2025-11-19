@@ -12,7 +12,7 @@ The current version of platform consists of 10 microservices, 1 frontend applica
 
 - **API Gateway Service** (Port 8080) - Central entry point with routing, rate limiting, and authentication
 - **Authentication & Authorization Service** (Port 8081) - Identity management with JWT and OAuth2
-- **Configuration Management Service** (Port 8082) - Centralized configuration and feature flags
+- **Configuration Management Service** (Port 8082) - Centralized configuration, feature flags with Unleash, and service registry
 - **Metrics Collection Service** (Port 8083) - System and application metrics collection
 - **Telemetry Service** (Port 8084) - Log aggregation, distributed tracing, and event correlation
 - **Alerting Service** (Port 8085) - Proactive issue detection and notification
@@ -33,9 +33,12 @@ The current version of platform consists of 10 microservices, 1 frontend applica
 - **Elasticsearch** (Port 9200) - Log storage and search engine
 - **Kafka** (Port 9092) - Event streaming and message queuing
 - **Zookeeper** (Port 2181) - Kafka coordination service
+- **Unleash** (Port 4242) - Feature flag management and progressive delivery (uses shared PostgreSQL)
 
 **Features**:
 
+- Feature flags with Unleash and OpenFeature for progressive delivery
+- Boolean, variant, and gradual rollout support
 - Modern, responsive web interface built with Next.js 13 and Chakra UI
 - ASR testing with microphone recording and file upload
 - TTS testing with text input and voice selection
