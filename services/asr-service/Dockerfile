@@ -13,8 +13,10 @@ RUN apt-get update && \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy everything
 COPY . /app
 
+# Install Python dependencies
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
@@ -32,13 +34,18 @@ RUN apt-get update && \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy Python libraries
 COPY --from=builder /usr/local /usr/local
+
+# Copy application code
 COPY --from=builder /app /app
+
+# ❗ IMPORTANT FIX: REMOVE .env so ConfigMap overrides work
+RUN rm -f /app/.env || true
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH="/app"
 
 EXPOSE 8087
 
-# 🚀 The FIX: Run uvicorn directly
 ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8087"]
