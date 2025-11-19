@@ -12,12 +12,13 @@ RUN apt-get update && \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy ONLY this service code
-COPY services/asr-service /app
+# Copy ONLY this service code (because build context = asr-service)
+COPY . /app
 
 # Install deps
 RUN pip install --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
+
 
 # STAGE 2 – Runtime
 FROM python:3.10-slim AS runtime
