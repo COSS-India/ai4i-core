@@ -45,7 +45,7 @@ class Service(AppDBBase):
     service_description = Column(Text)
     hardware_description = Column(Text)
     published_on = Column(BigInteger, nullable=False)
-    model_id = Column(String(255), ForeignKey(f'models.model_id')) # ForeignKey(f'{DB_SCHEMA}.models.model_id')
+    model_id = Column(String(255), ForeignKey(f'models.model_id',ondelete="CASCADE")) # ForeignKey(f'{DB_SCHEMA}.models.model_id')
     endpoint = Column(String(500), nullable=False)
     api_key = Column(String(255))
     health_status = Column(JSONB)
