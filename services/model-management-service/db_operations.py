@@ -11,6 +11,7 @@ from models.model_update import ModelUpdateRequest
 from typing import Dict, Any, List
 from sqlalchemy.orm.attributes import flag_modified
 from uuid import UUID
+import time
 
 
 def _json_safe(value: Any) -> Any:
@@ -96,6 +97,11 @@ def save_model_to_db(payload: Model):
             )
         
         payload_dict = _json_safe(payload)
+
+        now_epoch = int(time.time())
+
+        payload_dict["submittedOn"] = now_epoch
+        payload_dict["updatedOn"] = now_epoch
 
         # Create new model record
         new_model = Model(
@@ -194,6 +200,7 @@ def update_model(request: ModelUpdateRequest):
     logger.info(f"Attempting to update model: {request.modelId}")
 
     request_dict = request.model_dump(exclude_none=True)
+    now_epoch = int(time.time())
 
     # 1. Check in cache (consistent behavior)
     try:
@@ -214,6 +221,7 @@ def update_model(request: ModelUpdateRequest):
         if key in model_fields and value is not None:
             new_cache[key] = value
 
+    new_cache["updatedOn"] = now_epoch
     # Convert to Redis-safe format before saving
     new_cache = redis_safe_payload(new_cache)
 
@@ -246,6 +254,7 @@ def update_model(request: ModelUpdateRequest):
         else:
             postgres_data[key] = value
 
+    postgres_data["updated_on"] = now_epoch
     logger.info(f"Updating DB for model {request.modelId} with fields: {list(postgres_data.keys())}")
     logger.debug(f"DB update data: {postgres_data}")
 
