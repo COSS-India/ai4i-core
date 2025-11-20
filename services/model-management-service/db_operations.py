@@ -105,20 +105,20 @@ def save_model_to_db(payload: Model):
 
         # Create new model record
         new_model = Model(
-            model_id=payload_dict["modelId"],
-            version=payload_dict["version"],
-            submitted_on=payload_dict["submittedOn"],
-            updated_on=payload_dict["updatedOn"],
-            name=payload_dict["name"],
-            description=payload_dict["description"],
-            ref_url=payload_dict["refUrl"],
-            task=payload_dict["task"],
-            languages=payload_dict["languages"],
-            license=payload_dict["license"],
-            domain=payload_dict["domain"],
-            inference_endpoint=payload_dict["inferenceEndPoint"],
-            benchmarks=payload_dict["benchmarks"],
-            submitter=payload_dict["submitter"],
+            model_id=payload_dict.get("modelId"),
+            version=payload_dict.get("version"),
+            submitted_on=payload_dict.get("submittedOn"),
+            updated_on=payload_dict.get("updatedOn"),
+            name=payload_dict.get("name"),
+            description=payload_dict.get("description"),
+            ref_url=payload_dict.get("refUrl"),
+            task=payload_dict.get("task",{}),
+            languages=payload_dict.get("languages",[]),
+            license=payload_dict.get("license"),
+            domain=payload_dict.get("domain",[]),
+            inference_endpoint=payload_dict.get("inferenceEndPoint",{}),
+            benchmarks=payload_dict.get("benchmarks",[]),
+            submitter=payload_dict.get("submitter",{}),
         )
 
         db.add(new_model)
