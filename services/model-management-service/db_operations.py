@@ -1,9 +1,11 @@
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
-from models.db_models import Model
+from models.db_models import Model , Service
+from models.model_create import ModelCreateRequest
+from models.service_create import ServiceCreateRequest
 from db_connection import AppDatabase
-from models.cache_models import ModelCache
+from models.cache_models_services import ModelCache , ServiceCache
 from logger import logger
 import json
 
@@ -30,7 +32,10 @@ def _json_safe(value: Any) -> Any:
         return json.loads(json.dumps(value))
     
 
-def redis_safe_payload(payload_dict: Dict[str, Any]) -> Dict[str, Any]:
+
+####################################################### Model Functions #######################################################
+
+def model_redis_safe_payload(payload_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
     Convert payload dictionary to Redis-safe format.
     Mutates the input dictionary in place and returns it.
@@ -75,7 +80,7 @@ def redis_safe_payload(payload_dict: Dict[str, Any]) -> Dict[str, Any]:
     return payload_dict
     
 
-def save_model_to_db(payload: Model):
+def save_model_to_db(payload: ModelCreateRequest):
     """
     Save a new model entry to the database.
     Includes:
@@ -128,7 +133,7 @@ def save_model_to_db(payload: Model):
 
         # Cache the model in Redis
         try:
-            payload_dict = redis_safe_payload(payload_dict)
+            payload_dict = model_redis_safe_payload(payload_dict)
             cache_entry = ModelCache(**payload_dict)
             cache_entry.save()
             logger.info(f"Model {new_model.model_id} cached in Redis.")
@@ -223,7 +228,7 @@ def update_model(request: ModelUpdateRequest):
 
     new_cache["updatedOn"] = now_epoch
     # Convert to Redis-safe format before saving
-    new_cache = redis_safe_payload(new_cache)
+    new_cache = model_redis_safe_payload(new_cache)
 
     # Save patched cache
     try:
@@ -368,3 +373,74 @@ def list_all_models() -> List[Dict[str, Any]]:
 
     return result
 
+
+
+####################################################### Service Functions #######################################################
+
+
+def save_service_to_db(payload: ServiceCreateRequest):
+    """
+    Save a new service entry to the database.
+    """
+    db: Session = AppDatabase()
+    try:
+        # Pre-check for duplicates service id
+        existing = db.query(Service).filter(Service.service_id == payload.serviceId).first()
+        if existing:
+            logger.warning(f"Duplicate model_id: {payload.modelId}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Model with ID {payload.modelId} already exists."
+            )
+        
+        # Check if associated model exists
+        model_exists = db.query(Model).filter(Model.model_id == payload.modelId).first()
+        if not model_exists:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model with ID {payload.modelId} does not exist, cannot create service."
+            )
+        
+        payload_dict = _json_safe(payload)
+
+        now_epoch = int(time.time())
+        payload_dict["publishedOn"] = now_epoch
+
+        # Create new service record
+        new_service = Service(
+            service_id=payload_dict.get("serviceId"),
+            name=payload_dict.get("name"),
+            service_description=payload_dict.get("serviceDescription"),
+            hardware_description=payload_dict.get("hardwareDescription"),
+            published_on=payload_dict.get("publishedOn"),
+            model_id=payload_dict.get("modelId"),
+            endpoint=payload_dict.get("endpoint"),
+            api_key=payload_dict.get("apiKey"),
+            health_status=payload_dict.get("healthStatus", {}),
+            benchmarks=payload_dict.get("benchmarks", []),
+        )
+        db.add(new_service)
+        db.commit()
+        db.refresh(new_service)
+        logger.info(f"Service {payload.serviceId} successfully saved to DB.")
+
+
+        # Cache the model in Redis
+        try:
+            # payload_dict = model_redis_safe_payload(payload_dict)
+            cache_entry = ServiceCache(**payload_dict)
+            cache_entry.save()
+            logger.info(f"Service {new_service.service_id} cached in Redis.")
+        except Exception as ce:
+            logger.warning(f"Could not cache service {new_service.service_id}: {ce}")
+
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("Error while saving service to DB.")
+        raise Exception("Insert failed due to internal DB error") from e
+    finally:
+        # Always close session
+        db.close()
