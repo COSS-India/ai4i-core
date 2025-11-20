@@ -2,8 +2,8 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from logger import logger
 from db_connection import create_tables
-from routers.model_router_admin import model_router_admin
-from routers.model_router_details import model_router_details
+from routers.router_admin import router_admin
+from routers.router_details import router_details
 import uvicorn
 
 from fastapi.responses import JSONResponse
@@ -35,8 +35,8 @@ app = FastAPI(
 )
 
 # Register routers
-app.include_router(model_router_admin)
-app.include_router(model_router_details)
+app.include_router(router_admin)
+app.include_router(router_details)
 
 
 

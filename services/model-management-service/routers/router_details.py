@@ -5,11 +5,11 @@ from logger import logger
 from typing import List
 
 
-model_router_details = APIRouter(prefix="/services/details", tags=["Model Management"])
+router_details = APIRouter(prefix="/services/details", tags=["Model Management"])
 
 
 
-@model_router_details.post("/view_model", response_model=ModelViewResponse)
+@router_details.post("/view_model", response_model=ModelViewResponse)
 async def view_model(payload: ModelViewRequest):
     
     try: 
@@ -30,7 +30,7 @@ async def view_model(payload: ModelViewRequest):
     
 
 
-@model_router_details.get("/list_models" , response_model=List[ModelViewResponse])
+@router_details.get("/list_models" , response_model=List[ModelViewResponse])
 async def list_models():
     try:
         data = list_all_models()
