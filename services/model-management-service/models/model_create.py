@@ -62,7 +62,7 @@ class ModelCreateRequest(BaseModel):
     modelId: str
     version: str
     submittedOn: int
-    updatedOn: int
+    updatedOn: int = None
     name: str
     description: str
     refUrl: str
