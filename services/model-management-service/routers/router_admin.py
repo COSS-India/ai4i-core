@@ -4,7 +4,14 @@ from fastapi.exceptions import RequestValidationError
 
 from models.model_create import ModelCreateRequest
 from models.model_update import ModelUpdateRequest
-from db_operations import save_model_to_db , update_model , delete_model_by_uuid , get_model_details
+from models.service_create import ServiceCreateRequest
+from db_operations import (
+    save_model_to_db , 
+    update_model , 
+    delete_model_by_uuid , 
+    save_service_to_db
+    )
+
 from logger import logger
 
 router_admin = APIRouter(prefix="/services/admin", tags=["Model Management"])
@@ -80,4 +87,23 @@ async def delete_model_request(id: str):
     
 
 #################################################### Service Routers ####################################################
+
+
+@router_admin.post("/create/service")
+async def create_service_request(payload: ServiceCreateRequest):
+
+    try:
+        save_service_to_db(payload)
+
+        logger.info(f"Service '{payload.name}' inserted successfully.")
+        return f"Service '{payload.name}' (ID: {payload.serviceId}) created successfully."
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error while saving service to DB.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"kind": "DBError", "message": "Service insert not successful"}
+        )
 
