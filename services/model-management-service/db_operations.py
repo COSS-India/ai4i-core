@@ -3,13 +3,16 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 from models.db_models import Model , Service
 from models.model_create import ModelCreateRequest
+from models.model_update import ModelUpdateRequest
 from models.service_create import ServiceCreateRequest
+from models.service_update import ServiceUpdateRequest
+from models.service_view import ServiceViewResponse
+from models.service_list import ServiceListResponse
 from db_connection import AppDatabase
 from models.cache_models_services import ModelCache , ServiceCache
 from logger import logger
 import json
 
-from models.model_update import ModelUpdateRequest
 from typing import Dict, Any, List
 from sqlalchemy.orm.attributes import flag_modified
 from uuid import UUID
@@ -200,18 +203,18 @@ def update_by_filter(filters: Dict[str, Any], data: Dict[str, Any]) -> int:
         db.close()
 
 
-def update_model(request: ModelUpdateRequest):
+def update_model(payload: ModelUpdateRequest):
 
-    logger.info(f"Attempting to update model: {request.modelId}")
+    logger.info(f"Attempting to update model: {payload.modelId}")
 
-    request_dict = request.model_dump(exclude_none=True)
+    request_dict = payload.model_dump(exclude_none=True)
     now_epoch = int(time.time())
 
     # 1. Check in cache (consistent behavior)
     try:
-        cache = ModelCache.get(request.modelId)
+        cache = ModelCache.get(payload.modelId)
     except Exception:
-        logger.warning(f"Model {request.modelId} not found in cache")
+        logger.warning(f"Model {payload.modelId} not found in cache")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Model not found in cache"
@@ -234,9 +237,9 @@ def update_model(request: ModelUpdateRequest):
     try:
         updated_cache = ModelCache(**new_cache)
         updated_cache.save()
-        logger.info(f"Cache updated for model {request.modelId}")
+        logger.info(f"Cache updated for model {payload.modelId}")
     except Exception as ce:
-        logger.warning(f"Failed to update cache for {request.modelId}: {ce}")
+        logger.warning(f"Failed to update cache for {payload.modelId}: {ce}")
 
     # 3. DB Patch Logic (CamelCase → snake_case)
     postgres_data = {}
@@ -260,13 +263,13 @@ def update_model(request: ModelUpdateRequest):
             postgres_data[key] = value
 
     postgres_data["updated_on"] = now_epoch
-    logger.info(f"Updating DB for model {request.modelId} with fields: {list(postgres_data.keys())}")
+    logger.info(f"Updating DB for model {payload.modelId} with fields: {list(postgres_data.keys())}")
     logger.debug(f"DB update data: {postgres_data}")
 
     # 4. Repository update
-    result = update_by_filter({"model_id": request.modelId}, postgres_data)
+    result = update_by_filter({"model_id": payload.modelId}, postgres_data)
 
-    logger.info(f"Model {request.modelId} successfully updated.")
+    logger.info(f"Model {payload.modelId} successfully updated.")
 
     return result
 
@@ -387,10 +390,10 @@ def save_service_to_db(payload: ServiceCreateRequest):
         # Pre-check for duplicates service id
         existing = db.query(Service).filter(Service.service_id == payload.serviceId).first()
         if existing:
-            logger.warning(f"Duplicate model_id: {payload.modelId}")
+            logger.warning(f"Duplicate service_id: {payload.serviceId}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Model with ID {payload.modelId} already exists."
+                detail=f"Model with ID {payload.serviceId} already exists."
             )
         
         # Check if associated model exists
@@ -427,7 +430,6 @@ def save_service_to_db(payload: ServiceCreateRequest):
 
         # Cache the model in Redis
         try:
-            # payload_dict = model_redis_safe_payload(payload_dict)
             cache_entry = ServiceCache(**payload_dict)
             cache_entry.save()
             logger.info(f"Service {new_service.service_id} cached in Redis.")
@@ -444,3 +446,289 @@ def save_service_to_db(payload: ServiceCreateRequest):
     finally:
         # Always close session
         db.close()
+
+def update_service(request: ServiceUpdateRequest):
+    """
+    Update an existing service record in PostgreSQL and refresh Redis cache.
+    """
+
+    db: Session = AppDatabase()
+
+    try:
+        if not request.serviceId:
+            logger.warning("Missing serviceId in update request")
+            return 0
+
+        try:
+            cache = ServiceCache.get(request.serviceId)
+        except Exception:
+            logger.warning(f"Service {request.serviceId} not found in cache")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Service not found in cache"
+            )
+
+        request_dict = request.model_dump(exclude_none=True)
+        new_cache = cache.model_dump()
+        cache_fields = cache.__class__.model_fields
+
+        # Patch only valid cache fields
+        for key, value in request_dict.items():
+            if key in cache_fields:
+                new_cache[key] = value
+
+        try:
+            updated_cache = ServiceCache(**new_cache)
+            updated_cache.save()
+            logger.info(f"Service {request.serviceId} cache refreshed")
+
+        except Exception as e:
+            logger.warning(f"Cache update failed for service {request.serviceId}: {e}")
+
+
+        # Build DB update dict
+        db_update = {}
+
+        if "name" in request_dict:
+            db_update["name"] = request_dict["name"]
+        if "serviceDescription" in request_dict:
+            db_update["service_description"] = request_dict["serviceDescription"]
+        if "hardwareDescription" in request_dict:
+            db_update["hardware_description"] = request_dict["hardwareDescription"]
+        if "endpoint" in request_dict:
+            db_update["endpoint"] = request_dict["endpoint"]
+        # languagePair is not persisted on services table; skip
+
+        if not db_update:
+            logger.warning("No valid update fields provided for service update")
+            return 0
+
+        # Update DB
+        db_service = db.query(Service).filter(Service.service_id == request.serviceId)
+
+        if db_service.first() is None:
+            logger.warning(f"No DB record found for service {request.serviceId}")
+            return 0
+
+        db_service.update(db_update)
+        db.commit()
+        logger.info(f"Service {request.serviceId} updated in DB: {db_update}")
+
+        return 1
+
+    except Exception as e:
+        db.rollback()
+        logger.exception("Error updating service")
+        raise e
+
+    finally:
+        db.close()
+
+def delete_service_by_uuid(id_str: str) -> int:
+    """Delete service by UUID (id)"""
+   
+    db: Session = AppDatabase()
+
+    # Convert to UUID
+    try:
+        uuid = UUID(id_str)
+    except ValueError:
+        logger.warning(f"Invalid UUID provided for delete: {uuid}")
+        return 0
+    
+    service = db.query(Service).filter(Service.id == uuid).first()
+
+    if not service:
+        logger.warning(f"Model with UUID {uuid} not found for delete.")
+        return 0
+    
+    service_id = service.service_id
+
+    try:
+        cache_entry = ServiceCache.get(service_id)
+
+        if cache_entry:
+            ModelCache.delete(service_id)
+            logger.info(f"Cache deleted for modelId='{service_id}'")
+
+    except Exception as cache_err:
+        logger.warning(f"ModelCache delete failed for {uuid}: {cache_err}")
+
+
+    result = (
+        db.query(Service)
+          .filter(Service.id == uuid)
+          .delete()
+    )
+
+    db.commit()
+    logger.info(f"DB: Service with ID {uuid} deleted successfully.")
+
+    return result
+
+
+def get_service_details(service_id: str) -> Dict[str, Any]:
+    """
+    Full service view API:
+    - Fetch Service from PostgreSQL
+    - Resolve modelId (supports UUID → model lookup)
+    - Fetch model details
+    - Fetch benchmarks (from service table)
+    - Build response using ServiceViewResponse
+    - Includes key usage + API key details (commented for now)
+    """
+
+    logger.info(f"Fetching service view for: {service_id}")
+
+    db: Session = AppDatabase()
+
+    try:
+
+        service = (db.query(Service).filter(Service.service_id == service_id).first())
+
+        if not service:
+            # Fallback: try to find by UUID if serviceId happens to be a UUID
+            try:
+                uuid = UUID(service_id)
+                service = (db.query(Service).filter(Service.id == uuid).first())
+            except Exception:
+                pass
+
+        if not service:
+            logger.warning(f"Service not found for ID: {service_id}")
+            raise HTTPException(status_code=404, detail="Service not found")
+
+        # Convert service SQLAlchemy → dict
+        service_dict = {
+            "serviceId": service.service_id,
+            "name": service.name,
+            "serviceDescription": service.service_description,
+            "hardwareDescription": service.hardware_description,
+            "publishedOn": service.published_on,
+            "modelId": service.model_id,
+            "endpoint": service.endpoint,
+            "api_key": service.api_key,
+            "healthStatus": service.health_status,
+            "benchmarks": service.benchmarks,
+        }
+
+        model = (db.query(Model).filter(Model.model_id == service.model_id).first())
+
+        if not model:
+            raise HTTPException(status_code=404, detail=f"Model with ID {service.model_id} does not exist")
+
+        # Convert model SQLAlchemy → request format
+        model_payload = ModelCreateRequest(
+            modelId=model.model_id,
+            version=model.version,
+            submittedOn=model.submitted_on,
+            updatedOn=model.updated_on,
+            name=model.name,
+            description=model.description,
+            refUrl=model.ref_url,
+            task=model.task,
+            languages=model.languages,
+            license=model.license,
+            domain=model.domain,
+            inferenceEndPoint=model.inference_endpoint,
+            benchmarks=model.benchmarks,
+            submitter=model.submitter,
+        )
+        # 3. API Key + Usage — COMMENTED OUT FOR NOW
+        # api_keys = []
+        # total_usage = 0
+        #
+        # # TODO: Uncomment once ApiKey, Usage models exist
+        # key_rows = db.query(ApiKey).all()
+        #
+        # for k in key_rows:
+        #     usage_entries = (
+        #         db.query(ServiceUsage)
+        #           .filter(ServiceUsage.key_id == k.id)
+        #           .all()
+        #     )
+        #
+        #     service_usage_list = [
+        #         {"service_id": u.service_id, "usage": u.usage}
+        #         for u in usage_entries
+        #     ]
+        #
+        #     total_usage += sum([u.usage for u in usage_entries])
+        #
+        #     api_keys.append(
+        #         _ApiKey(
+        #             id=str(k.id),
+        #             name=k.name,
+        #             masked_key=k.masked_key,
+        #             active=k.active,
+        #             type=k.key_type,
+        #             created_timestamp=k.created_timestamp,
+        #             services=service_usage_list,
+        #             data_tracking=k.data_tracking,
+        #         )
+        #     )
+
+        # Provide empty since API key system is not ready now
+        api_keys = []
+        total_usage = 0
+
+        # ------------------------------------------------------------------
+        # 4. Build Final Response
+        # ------------------------------------------------------------------
+        response = ServiceViewResponse(
+            **service_dict,
+            model=model_payload,
+            key_usage=api_keys,
+            total_usage=total_usage
+        )
+
+        return response
+
+    except Exception as e:
+        logger.exception(f"Error fetching service {service_id} details from DB.")
+        raise e
+
+    finally:
+        db.close()
+
+
+
+def list_all_services() -> List[Dict[str, Any]]:
+    """Fetch all service records from DB and convert to response format."""
+    db: Session = AppDatabase()
+
+    try:
+        services = db.query(Service).all()
+    except Exception as e:
+        logger.error(f"[DB] Error fetching service list: {str(e)}")
+        # raise BaseError(Errors.DHRUVA103.value, traceback.format_exc())
+        raise
+
+    result = []
+    for service in services:
+
+        try:
+            model = db.query(Model).filter(Model.model_id == service.model_id).first()
+        except Exception:
+            # raise BaseError(Errors.DHRUVA105.value, traceback.format_exc())
+            pass
+        
+        # Build response object
+        result.append(
+                ServiceListResponse(
+                    serviceId=str(service.service_id),
+                    name=service.name,
+                    serviceDescription=getattr(service, "service_description", None),
+                    hardwareDescription=getattr(service, "hardware_description", None),
+                    publishedOn=getattr(service, "published_on", None),
+                    modelId=service.model_id,
+                    healthStatus=getattr(service, "health_status", None),
+                    benchmarks=getattr(service, "benchmarks", None),
+
+                    # These two fields come from the MODEL table
+                    task=getattr(model, "task", {}) if model else {},
+                    languages=getattr(model, "languages", []) if model else [],
+                )
+            )
+
+    return result
