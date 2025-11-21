@@ -123,12 +123,40 @@ async def startup_event():
     
     try:
         # Initialize Redis connection
+        redis_host = os.getenv('REDIS_HOST', 'redis')
+        redis_port = os.getenv('REDIS_PORT', '6379')
+        redis_password = os.getenv('REDIS_PASSWORD', '')
+        
+        # Build Redis URL - only include password if it's set
+        if redis_password:
+            redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
+        else:
+            redis_url = f"redis://{redis_host}:{redis_port}"
+        
         redis_client = redis.from_url(
-            f"redis://:{os.getenv('REDIS_PASSWORD', 'redis_secure_password_2024')}@"
-            f"{os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', '6379')}"
+            redis_url,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True
         )
-        await redis_client.ping()
-        logger.info("Connected to Redis")
+        
+        # Try to connect with retries
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                await redis_client.ping()
+                logger.info("Connected to Redis")
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Redis ping attempt {attempt + 1}/{max_retries} failed: {e}, retrying...")
+                    await asyncio.sleep(2)
+                else:
+                    logger.warning(f"Redis connection failed after {max_retries} attempts: {e}")
+                    logger.warning("Proceeding without Redis (session management disabled)")
+                    redis_client = None
+                    break
         
         # Initialize PostgreSQL connection
         database_url = os.getenv(
@@ -208,6 +236,30 @@ async def health_check():
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail="Service unhealthy")
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness check endpoint for Kubernetes probes"""
+    try:
+        # Check PostgreSQL connectivity (required for readiness)
+        if db_engine:
+            try:
+                async with db_engine.begin() as conn:
+                    await conn.execute(text("SELECT 1"))
+                return {
+                    "status": "ready",
+                    "service": "auth-service"
+                }
+            except Exception as e:
+                logger.error(f"PostgreSQL readiness check failed: {e}")
+                raise HTTPException(status_code=503, detail="Service not ready")
+        else:
+            raise HTTPException(status_code=503, detail="Database not initialized")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        raise HTTPException(status_code=503, detail="Service not ready")
 
 @app.get("/api/v1/auth/status")
 async def auth_status():
@@ -1054,3 +1106,4 @@ async def list_roles(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8081)
+
