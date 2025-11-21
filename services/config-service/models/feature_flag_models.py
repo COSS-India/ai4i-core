@@ -11,11 +11,13 @@ class FeatureFlagEvaluationRequest(BaseModel):
     user_id: Optional[str] = Field(None, description="User identifier for targeting")
     context: Optional[Dict[str, Any]] = Field(None, description="Additional context attributes")
     default_value: Union[bool, str, int, float, dict] = Field(..., description="Fallback value if flag evaluation fails")
-    environment: str = Field(..., description="Environment name (development|staging|production)")
+    environment: Optional[str] = Field(None, description="Environment name (development|staging|production). Defaults to UNLEASH_ENVIRONMENT or 'development'")
 
     @field_validator("environment")
     @classmethod
-    def validate_environment(cls, v: str) -> str:
+    def validate_environment(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         allowed = {"development", "staging", "production"}
         if v not in allowed:
             raise ValueError("environment must be one of development, staging, production")
@@ -27,11 +29,13 @@ class BulkEvaluationRequest(BaseModel):
     flag_names: List[str] = Field(..., description="List of flag names to evaluate", min_length=1)
     user_id: Optional[str] = Field(None, description="User identifier for targeting")
     context: Optional[Dict[str, Any]] = Field(None, description="Additional context attributes")
-    environment: str = Field(..., description="Environment name (development|staging|production)")
+    environment: Optional[str] = Field(None, description="Environment name (development|staging|production). Defaults to UNLEASH_ENVIRONMENT or 'development'")
 
     @field_validator("environment")
     @classmethod
-    def validate_environment(cls, v: str) -> str:
+    def validate_environment(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         allowed = {"development", "staging", "production"}
         if v not in allowed:
             raise ValueError("environment must be one of development, staging, production")
