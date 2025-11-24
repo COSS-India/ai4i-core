@@ -3,41 +3,43 @@
 -- ============================================================================
 -- This script creates all databases, schemas, tables, and seed data
 -- Run this script once to set up the entire database structure
+--
+-- IMPORTANT: To run this script, use one of these methods:
+--
+-- Method 1 (Recommended - using wrapper script):
+--   ./infrastructure/postgres/init-all-databases.sh
+--
+-- Method 2 (Direct execution with error handling):
+--   docker compose exec postgres psql -U dhruva_user -d dhruva_platform -f /docker-entrypoint-initdb.d/init-all-databases.sql
 -- ============================================================================
+
+-- Continue execution even if some statements fail (e.g., if databases already exist)
+\set ON_ERROR_STOP off
 
 -- ============================================================================
 -- STEP 1: Create All Databases
 -- ============================================================================
 
--- Create databases for each microservice using DO blocks for better compatibility
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'auth_db') THEN
-        CREATE DATABASE auth_db;
-    END IF;
-END
-$$;
+-- Note: CREATE DATABASE cannot be executed from a function/DO block in PostgreSQL.
+-- These statements must be executed directly. If a database already exists,
+-- you'll get an error which will be ignored due to ON_ERROR_STOP being off.
 
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'config_db') THEN
-        CREATE DATABASE config_db;
-    END IF;
-END
-$$;
+-- Create auth_db
+-- (Error will be ignored if database already exists)
+CREATE DATABASE auth_db;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'unleash') THEN
-        CREATE DATABASE unleash
-            WITH ENCODING = 'UTF8'
-            LC_COLLATE = 'en_US.utf8'
-            LC_CTYPE = 'en_US.utf8'
-            TABLESPACE = pg_default
-            CONNECTION LIMIT = -1;
-    END IF;
-END
-$$;
+-- Create config_db
+-- (Error can be ignored if database already exists)
+CREATE DATABASE config_db;
+
+-- Create unleash database
+-- (Error can be ignored if database already exists)
+CREATE DATABASE unleash
+    WITH ENCODING = 'UTF8'
+    LC_COLLATE = 'en_US.utf8'
+    LC_CTYPE = 'en_US.utf8'
+    TABLESPACE = pg_default
+    CONNECTION LIMIT = -1;
 
 -- Grant all privileges on each database to the configured PostgreSQL user
 GRANT ALL PRIVILEGES ON DATABASE auth_db TO dhruva_user;
@@ -48,6 +50,9 @@ GRANT ALL PRIVILEGES ON DATABASE unleash TO dhruva_user;
 COMMENT ON DATABASE auth_db IS 'Authentication & Authorization Service database';
 COMMENT ON DATABASE config_db IS 'Configuration Management Service database';
 COMMENT ON DATABASE unleash IS 'Unleash feature flag management database';
+
+-- Re-enable error stopping for schema creation (we want to catch real errors)
+\set ON_ERROR_STOP on
 
 -- ============================================================================
 -- STEP 2: Auth Service Schema (auth_db)
