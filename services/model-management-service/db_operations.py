@@ -1,22 +1,25 @@
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
+from typing import Dict, Any, List
+
 from models.db_models import Model , Service
+from models.cache_models_services import ModelCache , ServiceCache
 from models.model_create import ModelCreateRequest
 from models.model_update import ModelUpdateRequest
 from models.service_create import ServiceCreateRequest
 from models.service_update import ServiceUpdateRequest
 from models.service_view import ServiceViewResponse
 from models.service_list import ServiceListResponse
+from models.service_health import ServiceHeartbeatRequest
+
 from db_connection import AppDatabase
-from models.cache_models_services import ModelCache , ServiceCache
+from uuid import UUID
 from logger import logger
 import json
-
-from typing import Dict, Any, List
-from sqlalchemy.orm.attributes import flag_modified
-from uuid import UUID
 import time
+from datetime import datetime
 
 
 def _json_safe(value: Any) -> Any:
@@ -732,3 +735,77 @@ def list_all_services() -> List[Dict[str, Any]]:
             )
 
     return result
+
+
+def update_service_health(payload: ServiceHeartbeatRequest):
+    """
+    Update service health status based on heartbeat request.
+    """
+
+    logger.info(f"Updating health status for service: {payload.serviceId}")
+
+    db: Session = AppDatabase()
+
+    try:
+        service = (db.query(Service).filter(Service.service_id == payload.serviceId).first())
+
+        if not service:
+            logger.warning(f"Service not found for ID: {payload.serviceId}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Service not found in database"
+            )
+
+        service_dict = {
+            "id": str(service.id),
+            "service_id": service.service_id,
+            "name": service.name,
+            "service_description": service.service_description,
+            "hardware_description": service.hardware_description,
+            "published_on": service.published_on,
+            "model_id": service.model_id,
+            "endpoint": service.endpoint,
+            "api_key": service.api_key,
+            "health_status": service.health_status,
+            "benchmarks": service.benchmarks,
+            "created_at": service.created_at.isoformat() if service.created_at else None,
+            "updated_at": service.updated_at.isoformat() if service.updated_at else None,
+        }
+
+        if not service_dict.get("health_status") or service_dict["health_status"] is None:
+            service_dict["health_status"] = {}
+
+        service_dict["health_status"]["status"] = payload.status
+        service_dict["health_status"]["lastUpdated"] = str(datetime.now())
+
+        update_data = {
+            "health_status": service_dict["health_status"]
+        }
+
+        service_id = service.id
+        if isinstance(service_id, str):
+            try:
+                service_id = UUID(service_id)
+            except ValueError:
+                logger.error("Invalid UUID in service.id")
+                return 0
+
+        # Step 7: Execute update (same style as reference update_one)
+        result = (db.query(Service).filter(Service.id == service_id).update(update_data))
+
+        db.commit()
+        logger.info(f"Service {payload.serviceId} health status updated to {payload.status}")
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("Error updating service health status.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"kind": "DBError", "message": "Service health update not successful"}
+        ) from e
+    finally:
+        db.close()
