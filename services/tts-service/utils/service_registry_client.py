@@ -3,7 +3,6 @@ import logging
 from typing import Optional, Dict, Any
 
 import httpx
-import asyncio
 
 
 logger = logging.getLogger(__name__)
@@ -29,9 +28,8 @@ class ServiceRegistryHttpClient:
             "service_metadata": service_metadata or {},
         }
         try:
-            async with httpx.AsyncClient() as client:
-                async with asyncio.timeout(request_timeout_s):
-                    resp = await client.post(f"{self._registry_base}/register", json=payload)
+            async with httpx.AsyncClient(timeout=request_timeout_s) as client:
+                resp = await client.post(f"{self._registry_base}/register", json=payload)
                 resp.raise_for_status()
                 data = resp.json() or {}
                 return data.get("instance_id")
@@ -41,9 +39,8 @@ class ServiceRegistryHttpClient:
 
     async def deregister(self, service_name: str, instance_id: str, request_timeout_s: float = 5.0) -> bool:
         try:
-            async with httpx.AsyncClient() as client:
-                async with asyncio.timeout(request_timeout_s):
-                    resp = await client.post(
+            async with httpx.AsyncClient(timeout=request_timeout_s) as client:
+                resp = await client.post(
                     f"{self._registry_base}/deregister",
                     params={"service_name": service_name, "instance_id": instance_id},
                 )
@@ -55,9 +52,8 @@ class ServiceRegistryHttpClient:
 
     async def discover_url(self, service_name: str, request_timeout_s: float = 3.0) -> Optional[str]:
         try:
-            async with httpx.AsyncClient() as client:
-                async with asyncio.timeout(request_timeout_s):
-                    resp = await client.get(f"{self._registry_base}/services/{service_name}/url")
+            async with httpx.AsyncClient(timeout=request_timeout_s) as client:
+                resp = await client.get(f"{self._registry_base}/services/{service_name}/url")
                 if resp.status_code == 404:
                     return None
                 resp.raise_for_status()
