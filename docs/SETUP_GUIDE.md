@@ -59,25 +59,33 @@ Wait for all services to be healthy (check with `docker compose ps`).
 
 ## Step 4: Initialize Database
 
-Run the database initialization script to create all databases and tables:
+Run the database initialization script to create all databases and tables. You can use any of these methods:
+
+**Method 1 (Recommended - using wrapper script):**
+
+```bash
+./infrastructure/postgres/init-all-databases.sh
+```
+
+**Method 2 (Direct SQL execution):**
 
 ```bash
 docker compose exec postgres psql -U dhruva_user -d dhruva_platform -f /docker-entrypoint-initdb.d/init-all-databases.sql
 ```
 
-**Alternative method** (if the above doesn't work):
+**Method 3 (Alternative - copy file first):**
 
-Copy the file into the container and run it:
+If Method 2 doesn't work, copy the file into the container and run it:
 
 ```bash
 docker compose cp infrastructure/postgres/init-all-databases.sql postgres:/tmp/init-all-databases.sql
 docker compose exec postgres psql -U dhruva_user -d dhruva_platform -f /tmp/init-all-databases.sql
 ```
 
-**Note:** The SQL file `infrastructure/postgres/init-all-databases.sql` contains everything needed to set up all databases, tables, and seed data in a single execution.
+**Note:** The SQL file `infrastructure/postgres/init-all-databases.sql` contains everything needed to set up all databases, tables, and seed data in a single execution. The script now handles existing databases gracefully (errors are ignored if databases already exist).
 
 This script will:
-- Create all required databases (auth_db, config_db, metrics_db, etc.)
+- Create all required databases (auth_db, config_db, unleash)
 - Create all tables and schemas
 - Set up indexes and triggers
 - Insert seed data (default admin user, roles, permissions, etc.)
