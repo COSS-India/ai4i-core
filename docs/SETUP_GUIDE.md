@@ -67,6 +67,11 @@ Run the database initialization script to create all databases and tables. You c
 ./infrastructure/postgres/init-all-databases.sh
 ```
 
+**Note:** If you get a "permission denied" error, you can run it with `bash`:
+```bash
+bash infrastructure/postgres/init-all-databases.sh
+```
+
 **Method 2 (Direct SQL execution):**
 
 ```bash
