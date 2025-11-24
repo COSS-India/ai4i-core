@@ -1,4 +1,3 @@
-cat > services/nmt-service/main.py << 'EOF'
 """
 NMT Service - Neural Machine Translation microservice
 Main FastAPI application entry point
@@ -7,16 +6,19 @@ Main FastAPI application entry point
 import asyncio
 import logging
 import os
-import socket
 from contextlib import asynccontextmanager
 from typing import Optional
 
+from dotenv import load_dotenv
 import redis.asyncio as redis
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+
+# Load environment variables from .env file if it exists
+load_dotenv()
 
 from routers import health_router, inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
@@ -38,13 +40,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Environment variables - Support both REDIS_PORT and REDIS_PORT_NUMBER for backward compatibility
-REDIS_HOST_ENV = os.getenv("REDIS_HOST", "redis.dev.svc.cluster.local")
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
 REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
-DATABASE_URL_ENV = os.getenv(
+DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres.dev.svc.cluster.local:5432/auth_db"
+    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db"
 )
 TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "13.200.133.97:8000")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "1b69e9a1a24466c85e4bbca3c5295f50")
@@ -56,46 +58,8 @@ db_session_factory: Optional[async_sessionmaker] = None
 registry_client: Optional[ServiceRegistryHttpClient] = None
 registered_instance_id: Optional[str] = None
 
-
-# Helper function to resolve hostname with fallback to environment service discovery
-def resolve_service_host(hostname: str, service_name: str) -> str:
-    """
-    Resolve hostname with fallback to Kubernetes environment variables
-
-    Kubernetes automatically injects environment variables for services:
-    {SERVICE_NAME}_SERVICE_HOST = ClusterIP
-    """
-    try:
-        # Try DNS resolution first
-        resolved = socket.gethostbyname(hostname)
-        logger.info(f"✓ Resolved {hostname} to {resolved} via DNS")
-        return resolved
-    except socket.gaierror as e:
-        logger.warning(f"DNS resolution failed for {hostname}: {e}")
-
-        # Fallback to Kubernetes environment variable
-        env_var = f"{service_name.upper().replace('-', '_')}_SERVICE_HOST"
-        cluster_ip = os.getenv(env_var)
-
-        if cluster_ip:
-            logger.info(f"✓ Using ClusterIP from {env_var}: {cluster_ip}")
-            return cluster_ip
-        else:
-            logger.error(f"❌ No fallback ClusterIP found in {env_var}")
-            return hostname  # Return original hostname as last resort
-
-
-# Resolve service hosts with fallback
-REDIS_HOST = resolve_service_host(REDIS_HOST_ENV, "redis")
-logger.info(f"Configuration loaded: REDIS_HOST={REDIS_HOST} (from {REDIS_HOST_ENV}), REDIS_PORT={REDIS_PORT}")
-
-# For DATABASE_URL, we need to replace the hostname in the connection string
-POSTGRES_HOST_ENV = "postgres.dev.svc.cluster.local"
-POSTGRES_HOST = resolve_service_host(POSTGRES_HOST_ENV, "postgres")
-DATABASE_URL = DATABASE_URL_ENV.replace(POSTGRES_HOST_ENV, POSTGRES_HOST).replace(
-    "@postgres:", f"@{POSTGRES_HOST}:"
-)
-logger.info(f"DATABASE_URL configured with host: {POSTGRES_HOST}")
+logger.info(f"Configuration loaded: REDIS_HOST={REDIS_HOST}, REDIS_PORT={REDIS_PORT}")
+logger.info(f"DATABASE_URL configured: {DATABASE_URL.split('@')[0]}@***")  # Mask password in logs
 
 
 @asynccontextmanager
@@ -131,20 +95,6 @@ async def lifespan(app: FastAPI):
             # Test Redis connection
             await redis_client.ping()
             logger.info("✓ Redis connection established successfully")
-
-            # Add rate limiting middleware after successful Redis connection
-            rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-            rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-
-            # NOTE: This will log a warning if called after app startup,
-            # but with lifespan it should run before serving traffic.
-            app.add_middleware(
-                RateLimitMiddleware,
-                redis_client=redis_client,
-                requests_per_minute=rate_limit_per_minute,
-                requests_per_hour=rate_limit_per_hour,
-            )
-            logger.info("Rate limiting middleware added")
             break
 
         except Exception as e:
@@ -170,8 +120,8 @@ async def lifespan(app: FastAPI):
 
     # Initialize PostgreSQL
     try:
-        logger.info(f"Connecting to PostgreSQL at {POSTGRES_HOST}...")
-        logger.info("Using DATABASE_URL with sensitive data masked for logs")
+        logger.info("Connecting to PostgreSQL...")
+        logger.info(f"Using DATABASE_URL: {DATABASE_URL.split('@')[0]}@***")  # Mask password in logs
 
         db_engine = create_async_engine(
             DATABASE_URL,
@@ -321,7 +271,15 @@ app.add_middleware(
 # Add request logging middleware
 app.add_middleware(RequestLoggingMiddleware)
 
-# Note: Rate limiting middleware is now added dynamically in lifespan after Redis connects
+# Add rate limiting middleware (will use app.state.redis_client when available)
+rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+app.add_middleware(
+    RateLimitMiddleware,
+    redis_client=None,  # Will use app.state.redis_client as fallback
+    requests_per_minute=rate_limit_per_minute,
+    requests_per_hour=rate_limit_per_hour,
+)
 
 # Register error handlers
 add_error_handlers(app)
@@ -340,8 +298,7 @@ async def root():
         "status": "running",
         "description": "Neural Machine Translation microservice",
         "redis_available": getattr(app.state, "redis_client", None) is not None,
-        "redis_host_resolved": REDIS_HOST,
-        "postgres_host_resolved": POSTGRES_HOST,
+        "redis_host": REDIS_HOST,
     }
 
 
