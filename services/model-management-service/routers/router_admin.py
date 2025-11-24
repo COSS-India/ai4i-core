@@ -3,13 +3,15 @@ from models.model_create import ModelCreateRequest
 from models.model_update import ModelUpdateRequest
 from models.service_create import ServiceCreateRequest
 from models.service_update import ServiceUpdateRequest
+from models.service_health import ServiceHeartbeatRequest
 from db_operations import (
     save_model_to_db , 
     update_model , 
     delete_model_by_uuid , 
     save_service_to_db,
     update_service,
-    delete_service_by_uuid
+    delete_service_by_uuid,
+    update_service_health
     )
 from logger import logger
 
@@ -154,3 +156,28 @@ async def delete_model_request(id: str):
             detail={"kind": "DBError", "message": "Service delete not successful"}
         )
     
+
+@router_admin.patch("/health")
+async def update_service_health_request(payload: ServiceHeartbeatRequest):
+    try:
+        result = update_service_health(payload)
+
+        if result == 0:
+            logger.warning(f"No DB record found for service {payload.serviceId}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Service not found in database"
+            )
+
+        return f"Service '{payload.serviceId}' health status updated successfully."
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error while updating health status")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"kind": "DBError", "message": "Service health status update not successful"}
+        )
+    
+
