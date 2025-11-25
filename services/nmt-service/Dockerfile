@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY ./services/nmt-service/requirements.txt .
 
 RUN pip install --no-cache-dir --user -r requirements.txt
 
@@ -41,8 +41,11 @@ RUN useradd --create-home --shell /bin/bash app
 COPY --from=builder /root/.local /home/app/.local
 ENV PATH=/home/app/.local/bin:$PATH
 
+# Copy common observability module
+COPY --chown=app:app ./common/observability /app/observability
+
 # Copy app code
-COPY . .
+COPY --chown=app:app ./services/nmt-service /app
 
 RUN chown -R app:app /app /home/app/.local \
     && chmod +x /home/app/.local/bin/*
