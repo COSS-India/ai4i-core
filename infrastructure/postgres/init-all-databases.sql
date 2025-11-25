@@ -365,17 +365,28 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
--- Create triggers for updated_at columns
+-- Create triggers for updated_at columns (idempotent: drop if exists, then create)
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
 CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_oauth_providers_updated_at ON oauth_providers;
 CREATE TRIGGER update_oauth_providers_updated_at BEFORE UPDATE ON oauth_providers
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_asr_requests_updated_at ON asr_requests;
 CREATE TRIGGER update_asr_requests_updated_at BEFORE UPDATE ON asr_requests
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_tts_requests_updated_at ON tts_requests;
 CREATE TRIGGER update_tts_requests_updated_at BEFORE UPDATE ON tts_requests
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_nmt_requests_updated_at ON nmt_requests;
 CREATE TRIGGER update_nmt_requests_updated_at BEFORE UPDATE ON nmt_requests
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_llm_requests_updated_at ON llm_requests;
 CREATE TRIGGER update_llm_requests_updated_at BEFORE UPDATE ON llm_requests
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -384,6 +395,15 @@ CREATE TRIGGER update_llm_requests_updated_at BEFORE UPDATE ON llm_requests
 -- ============================================================================
 
 \c config_db;
+
+-- Create updated_at trigger function (needed in config_db)
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
 
 -- Configurations table
 CREATE TABLE IF NOT EXISTS configurations (
@@ -464,11 +484,16 @@ CREATE INDEX IF NOT EXISTS idx_service_registry_service_name ON service_registry
 CREATE INDEX IF NOT EXISTS idx_configuration_history_config_id ON configuration_history(configuration_id);
 CREATE INDEX IF NOT EXISTS idx_feature_flag_evaluations_flag_name ON feature_flag_evaluations(flag_name);
 
--- Create triggers for config_db
+-- Create triggers for config_db (idempotent: drop if exists, then create)
+DROP TRIGGER IF EXISTS update_configurations_updated_at ON configurations;
 CREATE TRIGGER update_configurations_updated_at BEFORE UPDATE ON configurations
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_feature_flags_updated_at ON feature_flags;
 CREATE TRIGGER update_feature_flags_updated_at BEFORE UPDATE ON feature_flags
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_service_registry_updated_at ON service_registry;
 CREATE TRIGGER update_service_registry_updated_at BEFORE UPDATE ON service_registry
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -547,14 +572,14 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- Create default admin user (password: admin123)
 INSERT INTO users (email, username, hashed_password, is_active, is_verified) VALUES
-('admin@dhruva-platform.com', 'admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj4J/9QZQK2O', true, true)
+('admin@ai4i.com', 'admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj4J/9QZQK2O', true, true)
 ON CONFLICT (email) DO NOTHING;
 
 -- Assign ADMIN role to default admin user
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'admin@dhruva-platform.com' AND r.name = 'ADMIN'
+WHERE u.email = 'admin@ai4i.com' AND r.name = 'ADMIN'
 ON CONFLICT (user_id, role_id) DO NOTHING;
 
 \c config_db;
