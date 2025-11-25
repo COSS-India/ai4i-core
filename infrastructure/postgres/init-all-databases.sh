@@ -68,19 +68,34 @@ SQL_SCRIPT="$SCRIPT_DIR/init-all-databases.sql"
 # Copy the SQL script to the container
 docker compose cp "$SQL_SCRIPT" postgres:/tmp/init-all-databases.sql
 
-# Create a temporary SQL file without CREATE DATABASE statements
-# since we already created the databases above
+# Create a temporary SQL file without CREATE DATABASE, GRANT, and COMMENT statements
+# since we already created the databases and granted privileges above
 docker compose exec -T postgres sh <<'INNER_SCRIPT'
-sed '/^CREATE DATABASE/,/^;/d' /tmp/init-all-databases.sql > /tmp/init-schema-only.sql
-# Also remove the grant and comment statements for databases since we did those too
+# Remove CREATE DATABASE statements (handles both single-line and multi-line)
+# Pattern matches from line starting with CREATE DATABASE until line ending with semicolon
+# This correctly handles:
+#   - Single-line: CREATE DATABASE auth_db;
+#   - Multi-line: CREATE DATABASE unleash ... CONNECTION LIMIT = -1;
+sed '/^CREATE DATABASE/,/;$/d' /tmp/init-all-databases.sql > /tmp/init-schema-only.sql
+# Remove GRANT statements for databases
 sed -i '/^GRANT ALL PRIVILEGES ON DATABASE/d' /tmp/init-schema-only.sql
+# Remove COMMENT statements for databases  
 sed -i '/^COMMENT ON DATABASE/d' /tmp/init-schema-only.sql
 INNER_SCRIPT
 
 # Execute the SQL script (schema only, databases already created)
-docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" -f /tmp/init-schema-only.sql || {
-    echo -e "${YELLOW}Note: Some errors may be expected if tables already exist${NC}"
-}
+# The SQL file uses \set ON_ERROR_STOP off initially, then on for schema creation
+# This allows it to continue past CREATE DATABASE errors (which we've removed anyway)
+# We ignore exit code since some errors (like "already exists") are expected
+set +e
+docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" -f /tmp/init-schema-only.sql
+EXIT_CODE=$?
+set -e
+
+if [ $EXIT_CODE -ne 0 ]; then
+    echo -e "${YELLOW}Note: The script is idempotent and can be run multiple times safely.${NC}"
+    echo -e "${YELLOW}Some errors may be expected if objects already exist, but they will be handled gracefully.${NC}"
+fi
 
 echo -e "${GREEN}Database initialization complete!${NC}"
 

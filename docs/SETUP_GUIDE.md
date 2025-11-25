@@ -123,7 +123,7 @@ Once all services are running, you can access:
 
 ### Default Credentials
 
-- **Admin User**: `admin@dhruva-platform.com`
+- **Admin User**: `admin@ai4i.com`
 - **Password**: `admin123`
 
 ## Troubleshooting
