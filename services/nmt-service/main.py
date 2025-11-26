@@ -29,6 +29,9 @@ from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 
+# Observability integration
+from ai4i_observability import init_observability
+
 # Import models to ensure they are registered with SQLAlchemy
 from models import database_models, auth_models
 
@@ -258,6 +261,10 @@ app = FastAPI(
     },
     lifespan=lifespan,
 )
+
+# Initialize observability (mounts /metrics and /enterprise/metrics, adds request metrics middleware)
+init_observability(app, service_name="nmt", enable_enterprise=True)
+logger.info("✅ Observability initialized for NMT service")
 
 # Add CORS middleware
 app.add_middleware(

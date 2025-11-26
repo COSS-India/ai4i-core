@@ -23,6 +23,9 @@ from utils.validation_utils import (
 from middleware.auth_provider import AuthProvider
 from middleware.exceptions import AuthenticationError, AuthorizationError
 
+# Observability: Business metrics
+from ai4i_observability.metrics import record_translation
+
 logger = logging.getLogger(__name__)
 
 # Create router
@@ -97,6 +100,17 @@ async def run_inference(
         api_key_id = getattr(http_request.state, 'api_key_id', None)
         session_id = getattr(http_request.state, 'session_id', None)
         
+        # Extract tenant context (set by observability middleware)
+        tenant = getattr(http_request.state, 'ai4i_tenant', None)
+        if tenant is None:
+            # Fallback if tenant not set
+            from ai4i_observability.tenant import TenantContext
+            tenant = TenantContext(
+                organization="unknown",
+                user_id=user_id or "anonymous",
+                api_key_name=str(api_key_id) if api_key_id else "unknown",
+            )
+        
         # Log incoming request
         logger.info(f"Processing NMT inference request with {len(request.input)} texts")
         
@@ -107,6 +121,19 @@ async def run_inference(
             api_key_id=api_key_id,
             session_id=session_id
         )
+        
+        # Record business metric
+        try:
+            record_translation(
+                organization=tenant.organization,
+                api_key_name=tenant.api_key_name,
+                user_id=tenant.user_id,
+                source_language=request.config.language.sourceLanguage,
+                target_language=request.config.language.targetLanguage,
+                service="nmt",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record translation metric: {e}")
         
         logger.info(f"NMT inference completed successfully")
         return response
