@@ -23,6 +23,7 @@ import {
   IoVolumeHighOutline,
 } from "react-icons/io5";
 import { useAuth } from "../../hooks/useAuth";
+import { useFeatureFlag } from "../../hooks/useFeatureFlag";
 import AuthModal from "../auth/AuthModal";
 
 interface NavItem {
@@ -33,9 +34,11 @@ interface NavItem {
   iconSize: Number;
   iconColor: string;
   requiresAuth?: boolean;
+  featureFlag?: string; // Feature flag name to check
 }
 
-const navItems: NavItem[] = [
+// Base navigation items (without feature flag checks)
+const baseNavItems: NavItem[] = [
   {
     id: "home",
     label: "Home",
@@ -53,6 +56,7 @@ const navItems: NavItem[] = [
     iconSize: 10,
     iconColor: "orange.500",
     requiresAuth: true,
+    featureFlag: "asr-enabled",
   },
   {
     id: "tts",
@@ -62,6 +66,7 @@ const navItems: NavItem[] = [
     iconSize: 10,
     iconColor: "blue.500",
     requiresAuth: true,
+    featureFlag: "tts-enabled",
   },
   {
     id: "nmt",
@@ -71,6 +76,7 @@ const navItems: NavItem[] = [
     iconSize: 10,
     iconColor: "green.500",
     requiresAuth: true,
+    featureFlag: "nmt-enabled",
   },
   {
     id: "llm",
@@ -80,6 +86,7 @@ const navItems: NavItem[] = [
     iconSize: 10,
     iconColor: "pink.500",
     requiresAuth: true,
+    featureFlag: "llm-enabled",
   },
   {
     id: "pipeline",
@@ -89,6 +96,7 @@ const navItems: NavItem[] = [
     iconSize: 10,
     iconColor: "purple.500",
     requiresAuth: true,
+    featureFlag: "pipeline-enabled",
   },
 ];
 
@@ -101,6 +109,33 @@ const Sidebar: React.FC = () => {
     null
   );
   const [isMobile] = useMediaQuery("(max-width: 1080px)");
+
+  // Feature flags for each service
+  const asrEnabled = useFeatureFlag({ flagName: "asr-enabled" });
+  const ttsEnabled = useFeatureFlag({ flagName: "tts-enabled" });
+  const nmtEnabled = useFeatureFlag({ flagName: "nmt-enabled" });
+  const llmEnabled = useFeatureFlag({ flagName: "llm-enabled" });
+  const pipelineEnabled = useFeatureFlag({ flagName: "pipeline-enabled" });
+
+  // Map feature flags to service IDs
+  const featureFlagMap: Record<string, boolean> = {
+    "asr-enabled": asrEnabled.isEnabled,
+    "tts-enabled": ttsEnabled.isEnabled,
+    "nmt-enabled": nmtEnabled.isEnabled,
+    "llm-enabled": llmEnabled.isEnabled,
+    "pipeline-enabled": pipelineEnabled.isEnabled,
+  };
+
+  // Filter nav items based on feature flags
+  const navItems = baseNavItems.filter((item) => {
+    // Always show home
+    if (item.id === "home") return true;
+    // Show service if feature flag is enabled (or if no feature flag is set)
+    if (item.featureFlag) {
+      return featureFlagMap[item.featureFlag] ?? true; // Default to enabled if flag not found
+    }
+    return true; // Show items without feature flags
+  });
 
   // Navigate when authenticated and there's a pending navigation
   useEffect(() => {
