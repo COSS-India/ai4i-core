@@ -1,6 +1,6 @@
-# Quick Setup Guide
+# Setup Guide
 
-A simple, step-by-step guide to get the AI4I Core platform running on your machine.
+This guide provides step-by-step instructions for setting up and running the AI4I Core platform.
 
 ## Prerequisites
 
