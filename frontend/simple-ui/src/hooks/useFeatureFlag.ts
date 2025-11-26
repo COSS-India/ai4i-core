@@ -37,10 +37,15 @@ export interface UseFeatureFlagReturn {
  * ```
  */
 export const useFeatureFlag = (options: UseFeatureFlagOptions): UseFeatureFlagReturn => {
+  // Get environment from env var or use default
+  const defaultEnv = typeof window !== 'undefined' 
+    ? (process.env.NEXT_PUBLIC_FEATURE_FLAG_ENVIRONMENT || 'development')
+    : 'development';
+  
   const {
     flagName,
-    environment = 'development', // Default environment
-    defaultValue = false,
+    environment = defaultEnv, // Use env var or default to 'development'
+    defaultValue = true, // Changed default to true (enabled by default)
     enabled = true,
     context = {},
   } = options;
@@ -70,13 +75,17 @@ export const useFeatureFlag = (options: UseFeatureFlagOptions): UseFeatureFlagRe
     cacheTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
     refetchOnWindowFocus: true, // Refetch when window regains focus
     retry: 1,
+    // On error, return enabled (true) by default
+    retryOnMount: false,
   });
 
-  // If reason is DISABLED, the flag is disabled regardless of value
-  // The backend returns default_value when disabled, but we want false for boolean flags
-  const isEnabled = data?.reason === 'DISABLED' 
-    ? false 
-    : (data?.value ?? defaultValue);
+  // Default to enabled (true) if there's an error or no data
+  // Only disable if explicitly disabled by backend (reason === 'DISABLED')
+  const isEnabled = error 
+    ? true // Enabled by default on error
+    : (data?.reason === 'DISABLED' 
+      ? false 
+      : (data?.value ?? defaultValue));
 
   return {
     isEnabled,
@@ -109,9 +118,14 @@ export const useFeatureFlagValue = <T extends boolean | string | number | object
   variant?: string;
   refetch: () => void;
 } => {
+  // Get environment from env var or use default
+  const defaultEnv = typeof window !== 'undefined' 
+    ? (process.env.NEXT_PUBLIC_FEATURE_FLAG_ENVIRONMENT || 'development')
+    : 'development';
+  
   const {
     flagName,
-    environment = 'development',
+    environment = defaultEnv, // Use env var or default to 'development'
     defaultValue,
     enabled = true,
     context = {},
@@ -142,10 +156,17 @@ export const useFeatureFlagValue = <T extends boolean | string | number | object
     cacheTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
     refetchOnWindowFocus: true, // Refetch when window regains focus
     retry: 1,
+    retryOnMount: false,
   });
 
+  // For boolean flags, default to enabled (true) on error
+  // For other types, use the provided default value
+  const fallbackValue = error && typeof defaultValue === 'boolean' 
+    ? true as T  // Enabled by default for boolean flags on error
+    : defaultValue;
+
   return {
-    value: (data?.value ?? defaultValue) as T,
+    value: (data?.value ?? fallbackValue) as T,
     isLoading,
     error: error as Error | null,
     reason: data?.reason,

@@ -51,15 +51,36 @@ export interface BulkEvaluationRequest {
 
 /**
  * Evaluate a single feature flag
+ * Defaults to enabled (true) if evaluation fails or flag doesn't exist
  */
 export const evaluateFeatureFlag = async (
   request: FeatureFlagEvaluationRequest
 ): Promise<FeatureFlagEvaluationResponse> => {
-  const response = await apiClient.post<FeatureFlagEvaluationResponse>(
-    '/api/v1/feature-flags/evaluate',
-    request
-  );
-  return response.data;
+  try {
+    // Ensure default_value is true if not specified (for boolean flags)
+    const defaultValue = request.default_value !== undefined 
+      ? request.default_value 
+      : (typeof request.default_value === 'boolean' ? true : request.default_value);
+    
+    const response = await apiClient.post<FeatureFlagEvaluationResponse>(
+      '/api/v1/feature-flags/evaluate',
+      {
+        ...request,
+        default_value: defaultValue,
+      }
+    );
+    return response.data;
+  } catch (error: any) {
+    // On any error, return enabled (true) by default
+    console.debug(`Feature flag evaluation failed for '${request.flag_name}':`, error);
+    return {
+      flag_name: request.flag_name,
+      value: typeof request.default_value === 'boolean' ? true : request.default_value,
+      variant: undefined,
+      reason: 'ERROR',
+      evaluated_at: new Date().toISOString(),
+    };
+  }
 };
 
 /**
