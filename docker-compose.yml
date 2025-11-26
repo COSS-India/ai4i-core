@@ -262,13 +262,14 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/metrics-service/.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      influxdb:
-        condition: service_healthy
+    # Dependencies removed - service not fully implemented yet
+    # depends_on:
+    #   postgres:
+    #     condition: service_healthy
+    #   redis:
+    #     condition: service_healthy
+    #   influxdb:
+    #     condition: service_healthy
     networks:
       - microservices-network
     # healthcheck:
@@ -277,7 +278,9 @@ services:
       # timeout: 10s
       # retries: 3
       # start_period: 30s
-    restart: unless-stopped
+    restart: "no"  # Disabled - service not fully implemented yet
+    profiles:
+      - incomplete  # Only start with --profile incomplete
 
   telemetry-service:
     build:
@@ -290,15 +293,16 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/telemetry-service/.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      elasticsearch:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
+    # Dependencies removed - service not fully implemented yet
+    # depends_on:
+    #   postgres:
+    #     condition: service_healthy
+    #   redis:
+    #     condition: service_healthy
+    #   elasticsearch:
+    #     condition: service_healthy
+    #   kafka:
+    #     condition: service_healthy
     networks:
       - microservices-network
     # healthcheck:
@@ -307,7 +311,9 @@ services:
       # timeout: 10s
       # retries: 3
       # start_period: 30s
-    restart: unless-stopped
+    restart: "no"  # Disabled - service not fully implemented yet
+    profiles:
+      - incomplete  # Only start with --profile incomplete
 
   alerting-service:
     build:
@@ -320,13 +326,14 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/alerting-service/.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
+    # Dependencies removed - service not fully implemented yet
+    # depends_on:
+    #   postgres:
+    #     condition: service_healthy
+    #   redis:
+    #     condition: service_healthy
+    #   kafka:
+    #     condition: service_healthy
     networks:
       - microservices-network
     # healthcheck:
@@ -335,7 +342,9 @@ services:
       # timeout: 10s
       # retries: 3
       # start_period: 30s
-    restart: unless-stopped
+    restart: "no"  # Disabled - service not fully implemented yet
+    profiles:
+      - incomplete  # Only start with --profile incomplete
 
   dashboard-service:
     build:
@@ -349,13 +358,14 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/dashboard-service/.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      influxdb:
-        condition: service_healthy
+    # Dependencies removed - service not fully implemented yet
+    # depends_on:
+    #   postgres:
+    #     condition: service_healthy
+    #   redis:
+    #     condition: service_healthy
+    #   influxdb:
+    #     condition: service_healthy
     networks:
       - microservices-network
     # healthcheck:
@@ -364,7 +374,9 @@ services:
       # timeout: 10s
       # retries: 3
       # start_period: 30s
-    restart: unless-stopped
+    restart: "no"  # Disabled - service not fully implemented yet
+    profiles:
+      - incomplete  # Only start with --profile incomplete
 
   asr-service:
     build:
