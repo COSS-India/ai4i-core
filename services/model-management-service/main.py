@@ -1,9 +1,10 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from logger import logger
-from db_connection import create_tables , auth_db_engine, AuthDBSessionLocal
+from db_connection import create_tables , auth_db_engine, AuthDBSessionLocal , app_db_engine , AppDBSessionLocal
 from routers.router_admin import router_admin
 from routers.router_details import router_details
+from routers.router_health import router_health
 from cache.app_cache import get_cache_connection
 import uvicorn
 import os
@@ -37,7 +38,9 @@ async def lifespan(app: FastAPI):
 
 
     app.state.auth_db_engine = auth_db_engine
+    app.state.app_db_engine = app_db_engine
     app.state.auth_session_factory = AuthDBSessionLocal
+    app.state.app_session_factory = AppDBSessionLocal
     app.state.redis_client = redis_client
 
     yield   # everything before this runs at startup; everything after runs at shutdown
@@ -61,6 +64,16 @@ async def lifespan(app: FastAPI):
             logger.info("Auth DB engine disposed.")
     except Exception as e:
         logger.error(f"Error disposing Auth DB: {e}")
+
+    logger.info("Shutdown complete.")
+
+    # Dispose sync auth engine
+    try:
+        if app.state.app_db_engine:
+            app.state.app_db_engine.dispose()
+            logger.info("Model management DB engine disposed.")
+    except Exception as e:
+        logger.error(f"Error disposing Model management DB: {e}")
 
     logger.info("Shutdown complete.")
 
@@ -106,6 +119,7 @@ add_error_handlers(app)
 # Register routers
 app.include_router(router_admin)
 app.include_router(router_details)
+app.include_router(router_health)
 
 
 @app.get("/")
