@@ -23,9 +23,15 @@ COPY --from=deps /app/node_modules ./node_modules
 # Copy source code
 COPY . .
 
-# Set environment variables
-ENV NEXT_TELEMETRY_DISABLED 1
-ENV NODE_ENV production
+# Set environment variables for build
+# IMPORTANT:
+# - We hard-set NEXT_PUBLIC_API_URL to empty so the compiled bundle
+#   uses relative URLs (same origin) and does NOT bake in localhost.
+# - Runtime Kubernetes ConfigMaps/Secrets are used only by the Node
+#   server in the container, not by the browser bundle.
+ENV NEXT_PUBLIC_API_URL=""
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
 
 # Build the application
 RUN npm run build
