@@ -1,4 +1,6 @@
+# import redis.asyncio as redis
 import redis
+import asyncio
 import os
 from dotenv import load_dotenv
 from logger import logger
@@ -21,6 +23,7 @@ def get_cache_connection() -> redis.Redis:
         )
 
         # test connection
+        # asyncio.run(r.ping())
         r.ping()
         logger.info(f"Connected to Redis at {redis_host}:{redis_port}, DB={redis_db}")
         return r

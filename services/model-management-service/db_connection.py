@@ -3,37 +3,47 @@ from sqlalchemy import create_engine, inspect , text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from dotenv import load_dotenv
-
 from logger import logger
+
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 load_dotenv()
 
 
 
 DB_USER     = str(os.getenv("APP_DB_USER", "dhruva_user"))
-DB_PASSWORD = str(os.getenv("APP_DB_PASSWORD", "dhruva_secure_password_2024"))
+DB_PASSWORD = str(os.getenv("APP_DB_PASSWORD", "dhruva_password"))
 DB_HOST     = str(os.getenv("APP_DB_HOST", "localhost"))
 DB_PORT     = int(os.getenv("APP_DB_PORT",5434))
-DB_NAME     = str(os.getenv("APP_DB_NAME", "dhruva_platform"))
-DB_SCHEMA   = os.getenv("APP_DB_SCHEMA", "model_management_db")
+DB_NAME     = str(os.getenv("APP_DB_NAME", "model_management_db"))
 
+
+AUTH_DB_USER     = os.getenv("AUTH_DB_USER", "auth_user")
+AUTH_DB_PASSWORD = os.getenv("AUTH_DB_PASSWORD", "auth_pass")
+AUTH_DB_HOST     = os.getenv("AUTH_DB_HOST", "localhost")
+AUTH_DB_PORT     = os.getenv("AUTH_DB_PORT", 5433)
+AUTH_DB_NAME     = os.getenv("AUTH_DB_NAME", "auth_db")
 
 
 # PostgreSQL connection engines
 app_db_engine = None
+auth_db_engine = None
 
 # Session makers
 AppDBSessionLocal = None
+AuthDBSessionLocal = None
 
 # Base classes for SQLAlchemy models
 AppDBBase = declarative_base()
+AuthDBBase = declarative_base()
+
 
 def init_postgresql_connections():
     """Initialize PostgreSQL database connections"""
-    global app_db_engine, AppDBSessionLocal
+    global app_db_engine, auth_db_engine, AppDBSessionLocal , AuthDBSessionLocal
     
     try:
-        # App database connection
+        # Model management database connection
         app_db_connection_string = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
         app_db_engine = create_engine(
@@ -49,14 +59,30 @@ def init_postgresql_connections():
             bind=app_db_engine
         )
 
-        logger.info(f"Connected to PostgreSQL: {DB_NAME}@{DB_HOST}:{DB_PORT}")
+        auth_db_connection_string = f"postgresql+asyncpg://{AUTH_DB_USER}:{AUTH_DB_PASSWORD}@{AUTH_DB_HOST}:{AUTH_DB_PORT}/{AUTH_DB_NAME}"
+    
+        auth_db_engine = create_async_engine(
+            auth_db_connection_string,
+            pool_size=20,
+            max_overflow=10,
+            echo=False
+        )
+    
+        AuthDBSessionLocal = async_sessionmaker(
+            auth_db_engine,
+            class_=AsyncSession,
+            expire_on_commit=False
+        )
+
+        logger.info(f"Connected to PostgreSQL model_management_db: {DB_NAME}@{DB_HOST}:{DB_PORT}")
+        logger.info(f"Connected to PostgreSQL auth_db: {AUTH_DB_NAME}@{AUTH_DB_HOST}:{AUTH_DB_PORT}")
     except Exception as e:
         logger.exception(f"Error connecting to PostgreSQL: {e}")
         raise
     
 
 def get_app_db_session():
-    """Get a database session for the app database"""
+    """Get a database session for the model management database"""
     if AppDBSessionLocal is None:
         init_postgresql_connections()
     
@@ -66,21 +92,23 @@ def get_app_db_session():
     finally:
         db.close()
 
-
-# def check_or_create_schema():
-#     """Create the database schema if it doesn't already exist."""
-#     if app_db_engine is None:
+# def get_auth_db_session():
+#     """Get a database session for the auth database"""
+#     if AuthDBSessionLocal is None:
 #         init_postgresql_connections()
 
+#     db = AuthDBSessionLocal()
 #     try:
-#         with app_db_engine.connect() as conn:
-#             conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {DB_SCHEMA}"))
-#             conn.commit()
-#         logger.info(f"Verified schema: '{DB_SCHEMA}' exists or created.")
-#     except Exception as e:
-#         logger.exception(f"Error while verifying/creating schema '{DB_SCHEMA}': {e}")
-#         raise
+#         yield db
+#     finally:
+#         db.close()
 
+async def get_auth_db_session():
+    if AuthDBSessionLocal is None:
+        init_postgresql_connections()
+
+    async with AuthDBSessionLocal() as session:
+        yield session
 
 def create_tables():
     """Check existing tables and create missing ones"""
@@ -101,12 +129,18 @@ def create_tables():
     else:
         logger.info("All database tables already exist.")
 
-# Legacy compatibility function for existing code
+
 def AppDatabase() -> Session:
-    """Legacy compatibility function - returns app database session"""
+    """Legacy compatibility function - returns model management database session"""
     if AppDBSessionLocal is None:
         init_postgresql_connections()
     return AppDBSessionLocal()
+
+def AuthDatabase() -> Session:
+    """Legacy compatibility function - returns auth database session"""
+    if AuthDBSessionLocal is None:
+        init_postgresql_connections()
+    return AuthDBSessionLocal()
 
 # Initialize connections on module import
 init_postgresql_connections()
