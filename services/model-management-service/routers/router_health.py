@@ -46,8 +46,8 @@ async def health_check(request: Request) -> Dict[str, Any]:
 
     model_db_status = "healthy"
     try:
-        with request.app.state.app_session_factory() as session:
-            session.execute(text("SELECT 1"))
+        async with request.app.state.app_session_factory() as session:
+            await session.execute(text("SELECT 1"))
     except Exception as e:
         logger.error(f"Model Management DB health check failed: {e}")
         model_db_status = "unhealthy"
