@@ -15,11 +15,11 @@
       }
     ]
   },
-  "description": "Comprehensive operational metrics for DevOps teams monitoring system health, performance, and reliability",
+  "description": "Unified monitoring dashboard for all AI4I microservices: NMT (Neural Machine Translation), ASR (Automatic Speech Recognition), and TTS (Text-to-Speech). Real-time metrics for latency, errors, throughput, and system health.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 14,
+  "id": 1,
   "links": [],
   "panels": [
     {
@@ -79,7 +79,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_request_duration_seconds_bucket{\r\n      organization=~\"$organization\", \r\n      app=~\"$app\", \r\n      endpoint=~\"/services/inference/.*\"\r\n    }[1d])\r\n  ) by (le)\r\n)\r\n",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_request_duration_seconds_bucket{\r\n      job=~\".*-service-observability\", \r\n      endpoint=~\"/api/v1/.*/inference\"\r\n    }[1d])\r\n  ) by (le)\r\n)\r\n",
           "hide": false,
           "legendFormat": "Average Latency",
           "range": true,
@@ -175,7 +175,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_request_duration_seconds_bucket{\r\n      organization=~\"$organization\", \r\n      app=~\"$app\", \r\n      endpoint=~\"/services/inference/.*\"\r\n    }[1d])\r\n  ) by (le)\r\n)\r\n",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_request_duration_seconds_bucket{\r\n      job=~\".*-service-observability\", \r\n      endpoint=~\"/api/v1/.*/inference\"\r\n    }[1d])\r\n  ) by (le)\r\n)\r\n",
           "hide": false,
           "legendFormat": "Median Latency",
           "range": true,
@@ -246,7 +246,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/asr\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      job=\"asr-service-observability\", endpoint=\"/api/v1/asr/inference\"\n    }[1d])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -325,7 +325,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/tts\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      job=\"tts-service-observability\",\n      endpoint=\"/api/v1/tts/inference\"\n    }[1d])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -404,7 +404,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/translation\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      job=\"nmt-service-observability\",\n      endpoint=\"/api/v1/nmt/inference\"\n    }[1d])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -562,7 +562,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/pipeline/transliteration\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/transliteration\"\n    }[1d])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -664,85 +664,6 @@
         "type": "prometheus",
         "uid": "kdjfS_R7c"
       },
-      "description": "Median time taken by Audio Language Detection",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "max": 1,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "orange",
-                "value": 0.3
-              },
-              {
-                "color": "red",
-                "value": 0.7
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 25
-      },
-      "id": 103,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/pipeline/audio-lang-detection\"\n    }[1d])\n  ) by (le)\n)",
-          "hide": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))",
-          "hide": true,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Audio Language Detection Latency (Seconds)",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
       "description": "Median time taken by NER",
       "fieldConfig": {
         "defaults": {
@@ -776,7 +697,7 @@
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 8,
+        "x": 0,
         "y": 25
       },
       "id": 104,
@@ -822,243 +743,6 @@
         "type": "prometheus",
         "uid": "kdjfS_R7c"
       },
-      "description": "Median time taken by Speaker Verification",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "max": 2,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "orange",
-                "value": 1
-              },
-              {
-                "color": "red",
-                "value": 1.8
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 25
-      },
-      "id": 105,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/pipeline/speaker-verification\"\n    }[1d])\n  ) by (le)\n)",
-          "hide": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))",
-          "hide": true,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Speaker Verification Latency (Seconds)",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
-      "description": "Median time taken by Speaker Diarization",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "max": 3,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "orange",
-                "value": 1.5
-              },
-              {
-                "color": "red",
-                "value": 2.7
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 33
-      },
-      "id": 106,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/pipeline/speaker-diarization\"\n    }[1d])\n  ) by (le)\n)",
-          "hide": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))",
-          "hide": true,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Speaker Diarization Latency (Seconds)",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
-      "description": "Median time taken by Language Diarization",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "max": 2.5,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "orange",
-                "value": 1.25
-              },
-              {
-                "color": "red",
-                "value": 2.25
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 33
-      },
-      "id": 107,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=\"/services/inference/pipeline/language-diarization\"\n    }[1d])\n  ) by (le)\n)",
-          "hide": false,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "editorMode": "code",
-          "expr": "sum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_sum{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))\n/\nsum by (endpoint) (rate(telemetry_obsv_request_duration_seconds_count{organization=~\"$organization\", app=~\"$app\", endpoint!~\"/enterprise/metrics|/enterprise/health|/enterprise/config|/|/metrics-info\"}[5m]))",
-          "hide": true,
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Language Diarization Latency (Seconds)",
-      "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
       "description": "Median length of the input audio sent to the ASR service.",
       "fieldConfig": {
         "defaults": {
@@ -1086,8 +770,8 @@
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 0,
-        "y": 41
+        "x": 8,
+        "y": 25
       },
       "id": 26,
       "options": {
@@ -1111,7 +795,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_asr_audio_seconds_processed_bucket{\r\n      organization=~\"$organization\"\r\n    }[1d])\r\n  ) by (le)\r\n)",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_asr_audio_seconds_processed_bucket{\r\n      job=\"asr-service-observability\"\r\n    }[1d])\r\n  ) by (le)\r\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
@@ -1152,8 +836,8 @@
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 8,
-        "y": 41
+        "x": 16,
+        "y": 25
       },
       "id": 24,
       "options": {
@@ -1177,7 +861,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_tts_characters_synthesized_bucket{\r\n      organization=~\"$organization\"\r\n    }[1d])\r\n  ) by (le)\r\n)\r\n",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_tts_characters_synthesized_bucket{\r\n      job=\"tts-service-observability\"\r\n    }[1d])\r\n  ) by (le)\r\n)\r\n",
           "legendFormat": "Characters (24h)",
           "range": true,
           "refId": "A"
@@ -1188,7 +872,7 @@
             "uid": "kdjfS_R7c"
           },
           "editorMode": "code",
-          "expr": "telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/tts\"}",
+          "expr": "telemetry_obsv_requests_total{job=\"tts-service-observability\", endpoint=\"/api/v1/tts/inference\"}",
           "hide": true,
           "instant": false,
           "legendFormat": "__auto",
@@ -1231,8 +915,8 @@
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 16,
-        "y": 41
+        "x": 0,
+        "y": 33
       },
       "id": 25,
       "options": {
@@ -1256,7 +940,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_nmt_characters_translated_bucket{\r\n      organization=~\"$organization\"\r\n    }[1d])\r\n  ) by (le)\r\n)\r\n",
+          "expr": "histogram_quantile(\r\n  0.5,\r\n  sum(\r\n    rate(telemetry_obsv_nmt_characters_translated_bucket{\r\n      job=\"nmt-service-observability\"\r\n    }[1d])\r\n  ) by (le)\r\n)\r\n",
           "legendFormat": "Characters Translated (24h)",
           "range": true,
           "refId": "A"
@@ -1276,72 +960,6 @@
         }
       ],
       "title": "Translation Payload Size (Characters)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
-      "description": "Median number of characters processed by the OCR service.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 49
-      },
-      "id": 200,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_ocr_characters_processed_bucket{\n      organization=~\"$organization\"\n    }[1d])\n  ) by (le)\n)",
-          "legendFormat": "Data Units Processed (24h)",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "OCR Payload Size (Characters)",
       "type": "stat"
     },
     {
@@ -1377,7 +995,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 49
+        "y": 33
       },
       "id": 201,
       "options": {
@@ -1443,7 +1061,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 49
+        "y": 33
       },
       "id": 202,
       "options": {
@@ -1481,7 +1099,7 @@
         "type": "prometheus",
         "uid": "kdjfS_R7c"
       },
-      "description": "Median length of audio processed by the Audio Language Detection service.",
+      "description": "Median number of characters processed by the OCR service.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1501,7 +1119,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "short"
         },
         "overrides": []
       },
@@ -1509,9 +1127,9 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 57
+        "y": 41
       },
-      "id": 203,
+      "id": 200,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
@@ -1533,13 +1151,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_audio_lang_detection_seconds_processed_bucket{\n      organization=~\"$organization\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_ocr_characters_processed_bucket{\n      organization=~\"$organization\"\n    }[1d])\n  ) by (le)\n)",
           "legendFormat": "Data Units Processed (24h)",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Audio Language Detection Payload Size (Seconds)",
+      "title": "OCR Payload Size (Characters)",
       "type": "stat"
     },
     {
@@ -1575,7 +1193,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 57
+        "y": 41
       },
       "id": 204,
       "options": {
@@ -1613,204 +1231,6 @@
         "type": "prometheus",
         "uid": "kdjfS_R7c"
       },
-      "description": "Median length of audio processed by the Speaker Verification service.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 57
-      },
-      "id": 205,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_speaker_verification_seconds_processed_bucket{\n      organization=~\"$organization\"\n    }[1d])\n  ) by (le)\n)",
-          "legendFormat": "Data Units Processed (24h)",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Speaker Verification Payload Size (Seconds)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
-      "description": "Median length of audio processed by the Speaker Diarization service.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 65
-      },
-      "id": 206,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_speaker_diarization_seconds_processed_bucket{\n      organization=~\"$organization\"\n    }[1d])\n  ) by (le)\n)",
-          "legendFormat": "Data Units Processed (24h)",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Speaker Diarization Payload Size (Seconds)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
-      "description": "Median length of audio processed by the Language Diarization service.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 65
-      },
-      "id": 207,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_language_diarization_seconds_processed_bucket{\n      organization=~\"$organization\"\n    }[1d])\n  ) by (le)\n)",
-          "legendFormat": "Data Units Processed (24h)",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Language Diarization Payload Size (Seconds)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
       "description": "Average percentage of unsuccessful requests across all services.",
       "fieldConfig": {
         "defaults": {
@@ -1839,7 +1259,7 @@
         "h": 5,
         "w": 24,
         "x": 0,
-        "y": 73
+        "y": 49
       },
       "id": 21,
       "options": {
@@ -1867,7 +1287,7 @@
             "uid": "kdjfS_R7c"
           },
           "editorMode": "code",
-          "expr": "sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/services/inference/.*\"})\r\n/\r\nsum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=~\"/services/inference/.*\"})\r\n* 100",
+          "expr": "sum(telemetry_obsv_errors_total{job=~\".*-service-observability\", endpoint=~\"/api/v1/.*/inference\"})\r\n/\r\nsum(telemetry_obsv_requests_total{job=~\".*-service-observability\", endpoint=~\"/api/v1/.*/inference\"})\r\n* 100",
           "hide": false,
           "instant": false,
           "legendFormat": "__auto",
@@ -1880,7 +1300,7 @@
             "uid": "kdjfS_R7c"
           },
           "editorMode": "code",
-          "expr": "telemetry_obsv_errors_total{organization=~\"$organization\"}",
+          "expr": "telemetry_obsv_errors_total{job=~\".*-service-observability\"}",
           "hide": true,
           "instant": false,
           "legendFormat": "__auto",
@@ -1922,7 +1342,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 78
+        "y": 54
       },
       "id": 32,
       "options": {
@@ -1946,7 +1366,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/asr\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/asr\"})\r\n)",
+          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", job=\"asr-service-observability\", endpoint=\"/api/v1/asr/inference\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", job=\"asr-service-observability\", endpoint=\"/api/v1/asr/inference\"})\r\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -1983,7 +1403,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 78
+        "y": 54
       },
       "id": 27,
       "options": {
@@ -2018,7 +1438,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\r\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/asr\"}\r\n)\r\n/\r\nscalar(\r\n    sum(\r\n        telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/asr\"}\r\n    )\r\n)",
+          "expr": "100 * sum by(status_code) (\r\n    telemetry_obsv_errors_total{organization=~\"$organization\", job=\"asr-service-observability\", endpoint=\"/api/v1/asr/inference\"}\r\n)\r\n/\r\nscalar(\r\n    sum(\r\n        telemetry_obsv_errors_total{organization=~\"$organization\", job=\"asr-service-observability\", endpoint=\"/api/v1/asr/inference\"}\r\n    )\r\n)",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -2063,7 +1483,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 86
+        "y": 62
       },
       "id": 34,
       "options": {
@@ -2087,7 +1507,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/translation\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/translation\"})\r\n)",
+          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{job=\"nmt-service-observability\", endpoint=\"/api/v1/nmt/inference\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{job=\"nmt-service-observability\", endpoint=\"/api/v1/nmt/inference\"})\r\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -2124,7 +1544,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 86
+        "y": 62
       },
       "id": 28,
       "options": {
@@ -2159,7 +1579,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 *\r\nsum by(status_code) (\r\n  telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/translation\"}\r\n)\r\n/\r\nscalar(\r\n  sum(\r\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/translation\"}\r\n  )\r\n)\r\n",
+          "expr": "100 *\r\nsum by(status_code) (\r\n  telemetry_obsv_errors_total{job=\"nmt-service-observability\", endpoint=\"/api/v1/nmt/inference\"}\r\n)\r\n/\r\nscalar(\r\n  sum(\r\n    telemetry_obsv_errors_total{job=\"nmt-service-observability\", endpoint=\"/api/v1/nmt/inference\"}\r\n  )\r\n)\r\n",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -2204,7 +1624,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 94
+        "y": 70
       },
       "id": 33,
       "options": {
@@ -2228,7 +1648,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/tts\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/tts\"})\r\n)",
+          "expr": "100 * (\r\n  sum(telemetry_obsv_errors_total{job=\"tts-service-observability\", endpoint=\"/api/v1/tts/inference\"})\r\n  /\r\n  sum(telemetry_obsv_requests_total{job=\"tts-service-observability\", endpoint=\"/api/v1/tts/inference\"})\r\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -2264,7 +1684,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 94
+        "y": 70
       },
       "id": 11,
       "options": {
@@ -2299,7 +1719,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\r\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/tts\"}\r\n)\r\n/\r\nscalar(\r\n    sum(\r\n        telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/tts\"}\r\n    )\r\n)\r\n",
+          "expr": "100 * sum by(status_code) (\r\n    telemetry_obsv_errors_total{job=\"tts-service-observability\", endpoint=\"/api/v1/tts/inference\"}\r\n)\r\n/\r\nscalar(\r\n    sum(\r\n        telemetry_obsv_errors_total{job=\"tts-service-observability\", endpoint=\"/api/v1/tts/inference\"}\r\n    )\r\n)\r\n",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -2344,7 +1764,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 102
+        "y": 78
       },
       "id": 208,
       "options": {
@@ -2405,7 +1825,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 102
+        "y": 78
       },
       "id": 216,
       "options": {
@@ -2485,7 +1905,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 110
+        "y": 86
       },
       "id": 212,
       "options": {
@@ -2546,7 +1966,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 110
+        "y": 86
       },
       "id": 220,
       "options": {
@@ -2626,7 +2046,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 118
+        "y": 94
       },
       "id": 209,
       "options": {
@@ -2687,7 +2107,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 118
+        "y": 94
       },
       "id": 217,
       "options": {
@@ -2767,7 +2187,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 126
+        "y": 102
       },
       "id": 210,
       "options": {
@@ -2828,7 +2248,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 126
+        "y": 102
       },
       "id": 218,
       "options": {
@@ -2876,580 +2296,18 @@
       ],
       "title": "Text Language Detection Error Breakdown by Type",
       "type": "piechart"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
-      "description": "Average percentage of unsuccessful requests in the Audio Language Detection service.",
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [],
-          "noValue": "0%",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 10
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 134
-      },
-      "id": 211,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/audio-lang-detection\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/audio-lang-detection\"})\n)",
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Audio Language Detection Error Rate",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
-      "description": "Average distribution of Audio Language Detection errors grouped by error type.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            }
-          },
-          "mappings": [],
-          "noValue": "No Errors Reported",
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 134
-      },
-      "id": 219,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "values": [
-            "percent"
-          ]
-        },
-        "pieType": "donut",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "kdjfS_R7c"
-          },
-          "disableTextWrap": false,
-          "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/audio-lang-detection\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/audio-lang-detection\"}\n    )\n)",
-          "fullMetaSearch": false,
-          "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
-          "legendFormat": "{{status_code}}",
-          "range": true,
-          "refId": "B",
-          "useBackend": false
-        }
-      ],
-      "title": "Audio Language Detection Error Breakdown by Type",
-      "type": "piechart"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
-      "description": "Average percentage of unsuccessful requests in the Speaker Verification service.",
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [],
-          "noValue": "0%",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 10
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 142
-      },
-      "id": 213,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/speaker-verification\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/speaker-verification\"})\n)",
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Speaker Verification Error Rate",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
-      "description": "Average distribution of Speaker Verification errors grouped by error type.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            }
-          },
-          "mappings": [],
-          "noValue": "No Errors Reported",
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 142
-      },
-      "id": 221,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "values": [
-            "percent"
-          ]
-        },
-        "pieType": "donut",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "kdjfS_R7c"
-          },
-          "disableTextWrap": false,
-          "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/speaker-verification\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/speaker-verification\"}\n    )\n)",
-          "fullMetaSearch": false,
-          "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
-          "legendFormat": "{{status_code}}",
-          "range": true,
-          "refId": "B",
-          "useBackend": false
-        }
-      ],
-      "title": "Speaker Verification Error Breakdown by Type",
-      "type": "piechart"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
-      "description": "Average percentage of unsuccessful requests in the Language Diarization service.",
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [],
-          "noValue": "0%",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 10
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 150
-      },
-      "id": 215,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/language-diarization\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/language-diarization\"})\n)",
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Language Diarization Error Rate",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
-      "description": "Average distribution of Language Diarization errors grouped by error type.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            }
-          },
-          "mappings": [],
-          "noValue": "No Errors Reported",
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 150
-      },
-      "id": 223,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "values": [
-            "percent"
-          ]
-        },
-        "pieType": "donut",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "kdjfS_R7c"
-          },
-          "disableTextWrap": false,
-          "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/language-diarization\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/language-diarization\"}\n    )\n)",
-          "fullMetaSearch": false,
-          "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
-          "legendFormat": "{{status_code}}",
-          "range": true,
-          "refId": "B",
-          "useBackend": false
-        }
-      ],
-      "title": "Language Diarization Error Breakdown by Type",
-      "type": "piechart"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
-      "description": "Average percentage of unsuccessful requests in the Speaker Diarization service.",
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [],
-          "noValue": "0%",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 10
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 158
-      },
-      "id": 214,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "editorMode": "code",
-          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/speaker-diarization\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/speaker-diarization\"})\n)",
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Speaker Diarization Error Rate",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "kdjfS_R7c"
-      },
-      "description": "Average distribution of Speaker Diarization errors grouped by error type.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            }
-          },
-          "mappings": [],
-          "noValue": "No Errors Reported",
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 158
-      },
-      "id": 222,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true,
-          "values": [
-            "percent"
-          ]
-        },
-        "pieType": "donut",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.1.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "kdjfS_R7c"
-          },
-          "disableTextWrap": false,
-          "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/speaker-diarization\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/speaker-diarization\"}\n    )\n)",
-          "fullMetaSearch": false,
-          "hide": false,
-          "includeNullMetadata": true,
-          "instant": false,
-          "legendFormat": "{{status_code}}",
-          "range": true,
-          "refId": "B",
-          "useBackend": false
-        }
-      ],
-      "title": "Speaker Diarization Error Breakdown by Type",
-      "type": "piechart"
     }
   ],
   "preload": false,
   "refresh": "30s",
   "schemaVersion": 41,
   "tags": [
-    "dhruva",
-    "devops",
-    "operations",
-    "monitoring"
+    "ai4i",
+    "nmt",
+    "asr",
+    "tts",
+    "microservices",
+    "unified"
   ],
   "templating": {
     "list": [
@@ -3488,12 +2346,12 @@
     ]
   },
   "time": {
-    "from": "now-30m",
+    "from": "now-1h",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Dhruva DevOps Operations Dashboard-v3",
-  "uid": "dhruva-devops-operational-dashboard-v3",
-  "version": 14
+  "title": "AI4I Unified Services Dashboard - NMT | ASR | TTS",
+  "uid": "ai4i-unified-services-dashboard",
+  "version": 1
 }

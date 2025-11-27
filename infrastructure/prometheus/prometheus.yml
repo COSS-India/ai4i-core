@@ -46,3 +46,17 @@ scrape_configs:
     static_configs:
       - targets: ["nmt-service:8089"]
     metrics_path: "/enterprise/metrics"
+
+  # ASR Service Observability Metrics
+  - job_name: "asr-service-observability"
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["asr-service:8087"]
+    metrics_path: "/enterprise/metrics"
+
+  # TTS Service Observability Metrics
+  - job_name: "tts-service-observability"
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["tts-service:8088"]
+    metrics_path: "/enterprise/metrics"

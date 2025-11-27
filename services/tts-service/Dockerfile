@@ -14,8 +14,8 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
-COPY requirements.txt .
+# Copy requirements from service directory (build context is project root)
+COPY services/tts-service/requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Final stage
@@ -30,6 +30,7 @@ RUN apt-get update && apt-get install -y \
     libpq5 \
     libsndfile1 \
     ffmpeg \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user first
@@ -41,8 +42,11 @@ COPY --from=builder /root/.local /home/app/.local
 # Make sure scripts in .local are usable
 ENV PATH=/home/app/.local/bin:$PATH
 
-# Copy application code
-COPY . .
+# ⭐ Copy common observability module (SAME AS NMT & ASR SERVICE)
+COPY --chown=app:app common/observability /app/observability
+
+# Copy application code (relative to project root)
+COPY --chown=app:app services/tts-service/. .
 
 # Change ownership to app user and make uvicorn executable
 RUN chown -R app:app /app /home/app/.local && \

@@ -368,8 +368,8 @@ services:
 
   asr-service:
     build:
-      context: ./services/asr-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/asr-service/Dockerfile
     container_name: ai4v-asr-service
     ports:
       - "8087:8087"
@@ -380,6 +380,16 @@ services:
       - ALLOW_ANONYMOUS_ACCESS=true
       - TRITON_ENDPOINT=http://13.200.133.97:9000
       - TRITON_TIMEOUT=120
+      # Observability Configuration
+      - OBSERVE_UTIL_ENABLED=true
+      - OBSERVE_UTIL_DEBUG=true
+      - OBSERVE_UTIL_METRICS_PATH=/enterprise/metrics
+      - OBSERVE_UTIL_HEALTH_PATH=/enterprise/health
+      - OBSERVE_UTIL_COLLECT_SYSTEM_METRICS=true
+      - OBSERVE_UTIL_COLLECT_GPU_METRICS=false
+      - OBSERVE_UTIL_COLLECT_DB_METRICS=true
+    env_file:
+      - ./services/asr-service/.env
     depends_on:
       config-service:
         condition: service_healthy
@@ -399,14 +409,22 @@ services:
 
   tts-service:
     build:
-      context: ./services/tts-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/tts-service/Dockerfile
     container_name: ai4v-tts-service
     ports:
       - "8088:8088"
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=http://13.200.133.97:9000
+      # Observability Configuration
+      - OBSERVE_UTIL_ENABLED=true
+      - OBSERVE_UTIL_DEBUG=true
+      - OBSERVE_UTIL_METRICS_PATH=/enterprise/metrics
+      - OBSERVE_UTIL_HEALTH_PATH=/enterprise/health
+      - OBSERVE_UTIL_COLLECT_SYSTEM_METRICS=true
+      - OBSERVE_UTIL_COLLECT_GPU_METRICS=false
+      - OBSERVE_UTIL_COLLECT_DB_METRICS=true
     env_file:
       - ./services/tts-service/.env
     depends_on:

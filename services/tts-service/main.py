@@ -41,6 +41,17 @@ from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
 
+# Dhruva Observability Plugin Integration (Local Module)
+try:
+    from observability import ObservabilityPlugin
+    OBSERVABILITY_AVAILABLE = True
+    logger_init = logging.getLogger(__name__)
+    logger_init.info("✅ Using local observability module")
+except ImportError as e:
+    OBSERVABILITY_AVAILABLE = False
+    logger_init = logging.getLogger(__name__)
+    logger_init.warning(f"⚠️  Local observability module not available: {e}")
+
 # Configure logging
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -263,6 +274,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ⭐ Initialize Dhruva Observability Plugin
+if OBSERVABILITY_AVAILABLE:
+    try:
+        observability_plugin = ObservabilityPlugin()
+        observability_plugin.register_plugin(app)
+        logger.info("✅ Dhruva Observability Plugin initialized successfully for TTS Service")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Dhruva Observability Plugin: {e}")
+        OBSERVABILITY_AVAILABLE = False
+else:
+    logger.info("ℹ️  Dhruva Observability Plugin not available for TTS Service")
 
 # Add request logging middleware
 app.add_middleware(RequestLoggingMiddleware)
