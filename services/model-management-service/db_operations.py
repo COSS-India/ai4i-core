@@ -1,6 +1,7 @@
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy.orm import Session
+from sqlalchemy import select , delete , update
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 from typing import Dict, Any, List
 
@@ -20,6 +21,7 @@ from logger import logger
 import json
 import time
 from datetime import datetime
+
 
 
 def _json_safe(value: Any) -> Any:
@@ -86,7 +88,7 @@ def model_redis_safe_payload(payload_dict: Dict[str, Any]) -> Dict[str, Any]:
     return payload_dict
     
 
-def save_model_to_db(payload: ModelCreateRequest):
+async def save_model_to_db(payload: ModelCreateRequest):
     """
     Save a new model entry to the database.
     Includes:
@@ -95,11 +97,14 @@ def save_model_to_db(payload: ModelCreateRequest):
       - Commit / rollback
 
     """
-
-    db: Session = AppDatabase()
+    db: AsyncSession = AppDatabase()
     try:
         # Pre-check for duplicates
-        existing = db.query(Model).filter(Model.model_id == payload.modelId).first()
+
+        stmt = select(Model).where(Model.model_id == payload.modelId)
+        result = await db.execute(stmt)
+        existing = result.scalar()
+
         if existing:
             logger.warning(f"Duplicate model_id: {payload.modelId}")
             raise HTTPException(
@@ -133,8 +138,8 @@ def save_model_to_db(payload: ModelCreateRequest):
         )
 
         db.add(new_model)
-        db.commit()
-        db.refresh(new_model)
+        await db.commit()
+        await db.refresh(new_model)
         logger.info(f"Model {payload.modelId} successfully saved to DB.")
 
         # Cache the model in Redis
@@ -149,18 +154,20 @@ def save_model_to_db(payload: ModelCreateRequest):
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         logger.exception("Error while saving model to DB.")
         raise Exception("Insert failed due to internal DB error") from e
-    finally:
-        # Always close session
-        db.close()
+    
 
 
-def update_by_filter(filters: Dict[str, Any], data: Dict[str, Any]) -> int:
-    db: Session = AppDatabase()
+async def update_by_filter(filters: Dict[str, Any], data: Dict[str, Any]) -> int:
+    """
+    Update model records based on provided filters.
+    """
+    
+    db: AsyncSession = AppDatabase()
     try:
-        query = db.query(Model)
+        query = select(Model)
 
         if not filters:
             raise ValueError("Filters required to update records.")
@@ -168,11 +175,12 @@ def update_by_filter(filters: Dict[str, Any], data: Dict[str, Any]) -> int:
         # Apply filters
         for key, value in filters.items():
             if hasattr(Model, key):
-                query = query.filter(getattr(Model, key) == value)
+                query = query.where(getattr(Model, key) == value)
             else:
                 raise ValueError(f"Invalid filter field: {key}")
 
-        records = query.all()
+        result = await db.execute(query)
+        records = result.scalars().all()
 
         if not records:
             return 0
@@ -194,26 +202,25 @@ def update_by_filter(filters: Dict[str, Any], data: Dict[str, Any]) -> int:
                 if field in json_fields:
                     flag_modified(record, field)
 
-        db.commit()
+        await db.commit()
         return len(records)
 
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         logger.exception("Failed to update records.")
         raise ValueError(f"Failed to update records: {e}") from e
 
-    finally:
-        db.close()
 
-
-def update_model(payload: ModelUpdateRequest):
+async def update_model(payload: ModelUpdateRequest):
+    """
+    Update model record in PostgreSQL and refresh Redis cache.
+    """
 
     logger.info(f"Attempting to update model: {payload.modelId}")
 
     request_dict = payload.model_dump(exclude_none=True)
     now_epoch = int(time.time())
 
-    # 1. Check in cache (consistent behavior)
     try:
         cache = ModelCache.get(payload.modelId)
     except Exception:
@@ -223,7 +230,7 @@ def update_model(payload: ModelUpdateRequest):
             detail="Model not found in cache"
         )
 
-    # 2. Patch cache (only simple fields)
+    # 2. Patch cache
     new_cache = cache.model_dump()
 
     model_fields = cache.__class__.model_fields
@@ -233,6 +240,7 @@ def update_model(payload: ModelUpdateRequest):
             new_cache[key] = value
 
     new_cache["updatedOn"] = now_epoch
+
     # Convert to Redis-safe format before saving
     new_cache = model_redis_safe_payload(new_cache)
 
@@ -244,7 +252,7 @@ def update_model(payload: ModelUpdateRequest):
     except Exception as ce:
         logger.warning(f"Failed to update cache for {payload.modelId}: {ce}")
 
-    # 3. DB Patch Logic (CamelCase → snake_case)
+    # 3. DB Patch Logic
     postgres_data = {}
 
     for key, value in request_dict.items():
@@ -270,7 +278,7 @@ def update_model(payload: ModelUpdateRequest):
     logger.debug(f"DB update data: {postgres_data}")
 
     # 4. Repository update
-    result = update_by_filter({"model_id": payload.modelId}, postgres_data)
+    result = await update_by_filter({"model_id": payload.modelId}, postgres_data)
 
     logger.info(f"Model {payload.modelId} successfully updated.")
 
@@ -280,10 +288,10 @@ def update_model(payload: ModelUpdateRequest):
 
 
 
-def delete_model_by_uuid(id_str: str) -> int:
+async def delete_model_by_uuid(id_str: str) -> int:
     """Delete model by internal UUID (id)"""
 
-    db: Session = AppDatabase()
+    db: AsyncSession = AppDatabase()
 
     # Convert to UUID
     try:
@@ -292,7 +300,8 @@ def delete_model_by_uuid(id_str: str) -> int:
         logger.warning(f"Invalid UUID provided for delete: {uuid}")
         return 0
     
-    model = db.query(Model).filter(Model.id == uuid).first()
+    result = await db.execute(select(Model).filter(Model.id == uuid))
+    model = result.scalars().first()
 
     if not model:
         logger.warning(f"Model with UUID {uuid} not found for delete.")
@@ -312,27 +321,34 @@ def delete_model_by_uuid(id_str: str) -> int:
         logger.warning(f"ModelCache delete failed for {uuid}: {cache_err}")
 
 
-    result = (
-        db.query(Model)
-          .filter(Model.id == uuid)
-          .delete()
-    )
+    await db.execute(delete(Model).where(Model.id == uuid))
 
-    db.commit()
+    await db.commit()
     logger.info(f"DB: Model with ID {uuid} deleted successfully.")
 
-    return result
+    return 1
 
 
 
-def get_model_details(model_id: str) -> Dict[str, Any]:
+async def get_model_details(model_id: str) -> Dict[str, Any]:
      
-    db: Session = AppDatabase()
+    db: AsyncSession = AppDatabase()
     try:
-        model = db.query(Model).where(Model.model_id == model_id).one()
+        result = await db.execute(select(Model).where(Model.model_id == model_id))
+        model = result.scalars().first()  # Get the first matching model
 
         if not model:
-             return None
+            # Fallback:
+            try:
+                uuid = UUID(model_id)
+                model_result = await db.execute(select(Service).where(Service.id == uuid))
+                model = model_result.scalars().first()
+            except Exception:
+                pass
+
+        if not model:
+            return None
+
         return {
              "modelId": model.model_id,
              "name": model.name,
@@ -351,47 +367,53 @@ def get_model_details(model_id: str) -> Dict[str, Any]:
          raise
     
 
-def list_all_models() -> List[Dict[str, Any]]:
+async def list_all_models() -> List[Dict[str, Any]]:
     """Fetch all model records from DB and convert to response format."""
-    db: Session = AppDatabase()
 
-    models = db.query(Model).all()
+    db: AsyncSession = AppDatabase()
+    try:
+        result = await db.execute(select(Model))
+        models = result.scalars().all()
 
-    result = []
-    for item in models:
-        # Convert SQLAlchemy model → dict
-        data = item.__dict__.copy()
-        data.pop("_sa_instance_state", None)
+        result = []
+        for item in models:
+            # Convert SQLAlchemy model → dict
+            data = item.__dict__.copy()
+            data.pop("_sa_instance_state", None)
 
-        # Build response object
-        result.append({
-            "modelId": str(data.get("model_id")),
-            "name": data.get("name"),
-            "description": data.get("description"),
-            "languages": data.get("languages") or [],
-            "domain": data.get("domain"),
-            "submitter": data.get("submitter"),
-            "license": data.get("license"),
-            "inferenceEndPoint": data.get("inference_endpoint"),
-            "source": data.get("ref_url"),
-            "task": data.get("task", {})
-        })
+            # Build response object
+            result.append({
+                "modelId": str(data.get("model_id")),
+                "name": data.get("name"),
+                "description": data.get("description"),
+                "languages": data.get("languages") or [],
+                "domain": data.get("domain"),
+                "submitter": data.get("submitter"),
+                "license": data.get("license"),
+                "inferenceEndPoint": data.get("inference_endpoint"),
+                "source": data.get("ref_url"),
+                "task": data.get("task", {})
+            })
 
-    return result
+        return result
+    except Exception as e:
+        logger.error(f"[DB] Error fetching model list: {str(e)}")
+        raise
 
 
 
 ####################################################### Service Functions #######################################################
 
 
-def save_service_to_db(payload: ServiceCreateRequest):
+async def save_service_to_db(payload: ServiceCreateRequest):
     """
     Save a new service entry to the database.
     """
-    db: Session = AppDatabase()
+    db: AsyncSession = AppDatabase()
     try:
         # Pre-check for duplicates service id
-        existing = db.query(Service).filter(Service.service_id == payload.serviceId).first()
+        result = await db.execute(select(Service).where(Service.service_id == payload.serviceId))
+        existing = result.scalars().first()
         if existing:
             logger.warning(f"Duplicate service_id: {payload.serviceId}")
             raise HTTPException(
@@ -400,7 +422,8 @@ def save_service_to_db(payload: ServiceCreateRequest):
             )
         
         # Check if associated model exists
-        model_exists = db.query(Model).filter(Model.model_id == payload.modelId).first()
+        result = await db.execute(select(Model).where(Model.model_id == payload.modelId))
+        model_exists = result.scalars().first()
         if not model_exists:
             raise HTTPException(
                 status_code=400,
@@ -426,8 +449,8 @@ def save_service_to_db(payload: ServiceCreateRequest):
             benchmarks=payload_dict.get("benchmarks", []),
         )
         db.add(new_service)
-        db.commit()
-        db.refresh(new_service)
+        await db.commit()
+        await db.refresh(new_service)
         logger.info(f"Service {payload.serviceId} successfully saved to DB.")
 
 
@@ -446,16 +469,14 @@ def save_service_to_db(payload: ServiceCreateRequest):
         db.rollback()
         logger.exception("Error while saving service to DB.")
         raise Exception("Insert failed due to internal DB error") from e
-    finally:
-        # Always close session
-        db.close()
 
-def update_service(request: ServiceUpdateRequest):
+
+async def update_service(request: ServiceUpdateRequest):
     """
     Update an existing service record in PostgreSQL and refresh Redis cache.
     """
 
-    db: Session = AppDatabase()
+    db: AsyncSession = AppDatabase()
 
     try:
         if not request.serviceId:
@@ -507,14 +528,23 @@ def update_service(request: ServiceUpdateRequest):
             return 0
 
         # Update DB
-        db_service = db.query(Service).filter(Service.service_id == request.serviceId)
+        stmt_select = select(Service).where(Service.service_id == request.serviceId)
+        result = await db.execute(stmt_select)
+        db_service = result.scalars().first()
 
-        if db_service.first() is None:
+        if db_service is None:
             logger.warning(f"No DB record found for service {request.serviceId}")
             return 0
 
-        db_service.update(db_update)
-        db.commit()
+        stmt_update = (
+            update(Service)
+            .where(Service.service_id == request.serviceId)
+            .values(**db_update)
+        )
+
+        await db.execute(stmt_update)
+        await db.commit()
+
         logger.info(f"Service {request.serviceId} updated in DB: {db_update}")
 
         return 1
@@ -524,13 +554,10 @@ def update_service(request: ServiceUpdateRequest):
         logger.exception("Error updating service")
         raise e
 
-    finally:
-        db.close()
-
-def delete_service_by_uuid(id_str: str) -> int:
+async def delete_service_by_uuid(id_str: str) -> int:
     """Delete service by UUID (id)"""
    
-    db: Session = AppDatabase()
+    db: AsyncSession = AppDatabase()
 
     # Convert to UUID
     try:
@@ -539,7 +566,8 @@ def delete_service_by_uuid(id_str: str) -> int:
         logger.warning(f"Invalid UUID provided for delete: {uuid}")
         return 0
     
-    service = db.query(Service).filter(Service.id == uuid).first()
+    result = await db.execute(select(Service).where(Service.id == uuid))
+    service = result.scalars().first()
 
     if not service:
         logger.warning(f"Model with UUID {uuid} not found for delete.")
@@ -558,42 +586,34 @@ def delete_service_by_uuid(id_str: str) -> int:
         logger.warning(f"ModelCache delete failed for {uuid}: {cache_err}")
 
 
-    result = (
-        db.query(Service)
-          .filter(Service.id == uuid)
-          .delete()
-    )
-
-    db.commit()
+    await db.execute(delete(Service).where(Service.id == uuid))
+    await db.commit()
+    
     logger.info(f"DB: Service with ID {uuid} deleted successfully.")
 
-    return result
+    return 1
 
 
-def get_service_details(service_id: str) -> Dict[str, Any]:
+async def get_service_details(service_id: str) -> Dict[str, Any]:
     """
-    Full service view API:
-    - Fetch Service from PostgreSQL
-    - Resolve modelId (supports UUID → model lookup)
-    - Fetch model details
-    - Fetch benchmarks (from service table)
-    - Build response using ServiceViewResponse
-    - Includes key usage + API key details (commented for now)
+    Full service view API
     """
 
     logger.info(f"Fetching service view for: {service_id}")
 
-    db: Session = AppDatabase()
+    db: AsyncSession = AppDatabase()
 
     try:
 
-        service = (db.query(Service).filter(Service.service_id == service_id).first())
+        result = await db.execute(select(Service).where(Service.service_id == service_id))
+        service = result.scalars().first()
 
         if not service:
             # Fallback: try to find by UUID if serviceId happens to be a UUID
             try:
                 uuid = UUID(service_id)
-                service = (db.query(Service).filter(Service.id == uuid).first())
+                result = await db.execute(select(Service).where(Service.id == uuid))
+                service = result.scalars().first()
             except Exception:
                 pass
 
@@ -615,7 +635,8 @@ def get_service_details(service_id: str) -> Dict[str, Any]:
             "benchmarks": service.benchmarks,
         }
 
-        model = (db.query(Model).filter(Model.model_id == service.model_id).first())
+        result = await db.execute(select(Model).where(Model.model_id == service.model_id))
+        model = result.scalars().first()
 
         if not model:
             raise HTTPException(status_code=404, detail=f"Model with ID {service.model_id} does not exist")
@@ -675,9 +696,6 @@ def get_service_details(service_id: str) -> Dict[str, Any]:
         api_keys = []
         total_usage = 0
 
-        # ------------------------------------------------------------------
-        # 4. Build Final Response
-        # ------------------------------------------------------------------
         response = ServiceViewResponse(
             **service_dict,
             model=model_payload,
@@ -691,19 +709,17 @@ def get_service_details(service_id: str) -> Dict[str, Any]:
         logger.exception(f"Error fetching service {service_id} details from DB.")
         raise e
 
-    finally:
-        db.close()
 
 
-
-def list_all_services() -> List[Dict[str, Any]]:
+async def list_all_services() -> List[Dict[str, Any]]:
     """Fetch all service records from DB and convert to response format."""
-    db: Session = AppDatabase()
+    db: AsyncSession = AppDatabase()
 
     try:
-        services = db.query(Service).all()
+        result = await db.execute(select(Service))
+        services = result.scalars().all()
     except Exception as e:
-        logger.error(f"[DB] Error fetching service list: {str(e)}")
+        logger.error(f"[DB] Failed to fetch all services: {str(e)}")
         # raise BaseError(Errors.DHRUVA103.value, traceback.format_exc())
         raise
 
@@ -711,43 +727,44 @@ def list_all_services() -> List[Dict[str, Any]]:
     for service in services:
 
         try:
-            model = db.query(Model).filter(Model.model_id == service.model_id).first()
+            model_result = await db.execute(select(Model).where(Model.model_id == service.model_id))
+            model = model_result.scalars().first()
         except Exception:
-            # raise BaseError(Errors.DHRUVA105.value, traceback.format_exc())
-            pass
+            # raise BaseError(Errors.DHRUVA105.value, traceback.format_exc())            
+            logger.error(f"[DB] Failed to get model details from db for service {service.service_id}")
         
-        # Build response object
         result.append(
-                ServiceListResponse(
-                    serviceId=str(service.service_id),
-                    name=service.name,
-                    serviceDescription=getattr(service, "service_description", None),
-                    hardwareDescription=getattr(service, "hardware_description", None),
-                    publishedOn=getattr(service, "published_on", None),
-                    modelId=service.model_id,
-                    healthStatus=getattr(service, "health_status", None),
-                    benchmarks=getattr(service, "benchmarks", None),
+            ServiceListResponse(
+                serviceId=str(service.service_id),
+                name=service.name,
+                serviceDescription=getattr(service, "service_description", None),
+                hardwareDescription=getattr(service, "hardware_description", None),
+                publishedOn=getattr(service, "published_on", None),
+                modelId=service.model_id,
+                healthStatus=getattr(service, "health_status", None),
+                benchmarks=getattr(service, "benchmarks", None),
 
-                    # These two fields come from the MODEL table
-                    task=getattr(model, "task", {}) if model else {},
-                    languages=getattr(model, "languages", []) if model else [],
+                # These two fields come from the MODEL table
+                task=getattr(model, "task", {}) if model else {},
+                languages=getattr(model, "languages", []) if model else [],
                 )
             )
 
     return result
 
 
-def update_service_health(payload: ServiceHeartbeatRequest):
+async def update_service_health(payload: ServiceHeartbeatRequest):
     """
     Update service health status based on heartbeat request.
     """
 
     logger.info(f"Updating health status for service: {payload.serviceId}")
 
-    db: Session = AppDatabase()
+    db: AsyncSession = AppDatabase()
 
     try:
-        service = (db.query(Service).filter(Service.service_id == payload.serviceId).first())
+        result = await db.execute(select(Service).where(Service.service_id == payload.serviceId))
+        service = result.scalars().first()
 
         if not service:
             logger.warning(f"Service not found for ID: {payload.serviceId}")
@@ -790,13 +807,19 @@ def update_service_health(payload: ServiceHeartbeatRequest):
                 logger.error("Invalid UUID in service.id")
                 return 0
 
-        # Step 7: Execute update (same style as reference update_one)
-        result = (db.query(Service).filter(Service.id == service_id).update(update_data))
+        stmt = (
+            update(Service)
+            .where(Service.id == service_id)
+            .values(health_status=update_data)
+        )
+        
+        await db.execute(stmt)
+        await db.commit()
 
         db.commit()
         logger.info(f"Service {payload.serviceId} health status updated to {payload.status}")
 
-        return result
+        return 1
 
     except HTTPException:
         raise
@@ -807,5 +830,3 @@ def update_service_health(payload: ServiceHeartbeatRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"kind": "DBError", "message": "Service health update not successful"}
         ) from e
-    finally:
-        db.close()

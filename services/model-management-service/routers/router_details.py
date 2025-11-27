@@ -16,7 +16,8 @@ from typing import List
 router_details = APIRouter(
     prefix="/services/details", 
     tags=["Model Management"],
-    dependencies=[Depends(AuthProvider)] )
+    # dependencies=[Depends(AuthProvider)] 
+    )
 
 
 #################################################### Model apis ####################################################
@@ -26,7 +27,7 @@ router_details = APIRouter(
 async def view_model_request(payload: ModelViewRequest):
     
     try: 
-        data = get_model_details(payload.modelId)
+        data = await get_model_details(payload.modelId)
 
         if not data:
             raise HTTPException(status_code=404, detail="Model not found")
@@ -46,7 +47,7 @@ async def view_model_request(payload: ModelViewRequest):
 @router_details.get("/list_models" , response_model=List[ModelViewResponse])
 async def list_models_request():
     try:
-        data = list_all_models()
+        data = await list_all_models()
 
         if not data:
             return []
@@ -68,7 +69,7 @@ async def list_models_request():
 async def view_service_request(payload: ServiceViewRequest):
     
     try: 
-        data = get_service_details(payload.serviceId)
+        data = await get_service_details(payload.serviceId)
 
         if not data:
             raise HTTPException(status_code=404, detail="Service not found")
@@ -87,7 +88,7 @@ async def view_service_request(payload: ServiceViewRequest):
 @router_details.get("/list_services" , response_model=List[ServiceListResponse])
 async def list_services_request():
     try:
-        data = list_all_services()
+        data = await list_all_services()
 
         if not data:
             return []
