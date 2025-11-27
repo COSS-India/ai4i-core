@@ -44,19 +44,19 @@ def init_postgresql_connections():
     
     try:
         # Model management database connection
-        app_db_connection_string = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+        app_db_connection_string = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-        app_db_engine = create_engine(
+        app_db_engine = create_async_engine(
             app_db_connection_string,
-            pool_pre_ping=True,
-            pool_recycle=300,
-            echo=False  # Set to True for SQL debugging
+            pool_size=20,
+            max_overflow=10,
+            echo=False
         )
 
-        AppDBSessionLocal = sessionmaker(
-            autocommit=False,
-            autoflush=False,
-            bind=app_db_engine
+        AppDBSessionLocal = async_sessionmaker(
+            app_db_engine,
+            class_=AsyncSession,
+            expire_on_commit=False
         )
 
         auth_db_connection_string = f"postgresql+asyncpg://{AUTH_DB_USER}:{AUTH_DB_PASSWORD}@{AUTH_DB_HOST}:{AUTH_DB_PORT}/{AUTH_DB_NAME}"
@@ -80,29 +80,14 @@ def init_postgresql_connections():
         logger.exception(f"Error connecting to PostgreSQL: {e}")
         raise
     
-
-def get_app_db_session():
+async def get_app_db_session():
     """Get a database session for the model management database"""
     if AppDBSessionLocal is None:
         init_postgresql_connections()
     
-    db = AppDBSessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# def get_auth_db_session():
-#     """Get a database session for the auth database"""
-#     if AuthDBSessionLocal is None:
-#         init_postgresql_connections()
-
-#     db = AuthDBSessionLocal()
-#     try:
-#         yield db
-#     finally:
-#         db.close()
-
+    async with AppDBSessionLocal() as session:
+        yield session
+   
 async def get_auth_db_session():
     if AuthDBSessionLocal is None:
         init_postgresql_connections()
@@ -110,33 +95,60 @@ async def get_auth_db_session():
     async with AuthDBSessionLocal() as session:
         yield session
 
-def create_tables():
-    """Check existing tables and create missing ones"""
+# def create_tables():
+#     """Check existing tables and create missing ones"""
+#     if app_db_engine is None:
+#         init_postgresql_connections()
+
+#     # check_or_create_schema()
+
+#     inspector = inspect(app_db_engine)
+#     # existing_tables = inspector.get_table_names(schema=DB_SCHEMA)
+#     existing_tables = inspector.get_table_names()
+#     all_tables = AppDBBase.metadata.tables.keys()
+
+#     missing_tables = [t for t in all_tables if t not in existing_tables]
+#     if missing_tables:
+#         logger.info(f"Creating missing tables: {missing_tables}")
+#         AppDBBase.metadata.create_all(bind=app_db_engine)
+#     else:
+#         logger.info("All database tables already exist.")
+
+async def create_tables():
+    """Create missing tables for async engine"""
+
     if app_db_engine is None:
         init_postgresql_connections()
 
-    # check_or_create_schema()
+    # 1️⃣ Create tables using async engine
+    async with app_db_engine.begin() as conn:
+        await conn.run_sync(AppDBBase.metadata.create_all)
 
-    inspector = inspect(app_db_engine)
-    # existing_tables = inspector.get_table_names(schema=DB_SCHEMA)
-    existing_tables = inspector.get_table_names()
-    all_tables = AppDBBase.metadata.tables.keys()
+    # 2️⃣ Get list of existing tables using a sync inspector
+    def get_existing_tables(sync_conn):
+        inspector = inspect(sync_conn)
+        return inspector.get_table_names()
 
-    missing_tables = [t for t in all_tables if t not in existing_tables]
-    if missing_tables:
-        logger.info(f"Creating missing tables: {missing_tables}")
-        AppDBBase.metadata.create_all(bind=app_db_engine)
+    async with app_db_engine.connect() as conn:
+        existing_tables = await conn.run_sync(get_existing_tables)
+
+    # 3️⃣ Compare with metadata
+    all_tables = list(AppDBBase.metadata.tables.keys())
+    missing = [t for t in all_tables if t not in existing_tables]
+
+    if missing:
+        logger.info(f"Created missing tables: {missing}")
     else:
-        logger.info("All database tables already exist.")
+        logger.info("All tables already exist.")
 
 
-def AppDatabase() -> Session:
+def AppDatabase() -> AsyncSession:
     """Legacy compatibility function - returns model management database session"""
     if AppDBSessionLocal is None:
         init_postgresql_connections()
     return AppDBSessionLocal()
 
-def AuthDatabase() -> Session:
+def AuthDatabase() -> AsyncSession:
     """Legacy compatibility function - returns auth database session"""
     if AuthDBSessionLocal is None:
         init_postgresql_connections()

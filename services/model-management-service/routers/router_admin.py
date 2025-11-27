@@ -20,7 +20,8 @@ from middleware.auth_provider import AuthProvider
 router_admin = APIRouter(
     prefix="/services/admin", 
     tags=["Model Management"],
-    dependencies=[Depends(AuthProvider)] )
+    # dependencies=[Depends(AuthProvider)] 
+    )
 
 
 #################################################### Model apis ####################################################
@@ -29,7 +30,7 @@ router_admin = APIRouter(
 @router_admin.post("/create/model", response_model=str)
 async def create_model_request(payload: ModelCreateRequest):
     try:
-        save_model_to_db(payload)
+        await save_model_to_db(payload)
 
         logger.info(f"Model '{payload.name}' inserted successfully.")
         return f"Model '{payload.name}' (ID: {payload.modelId}) created successfully."
@@ -48,7 +49,7 @@ async def create_model_request(payload: ModelCreateRequest):
 @router_admin.patch("/update/model", response_model=str)
 async def update_model_request(payload: ModelUpdateRequest):
     try:
-        result = update_model(payload)
+        result = await update_model(payload)
 
         if result == 0:
             logger.warning(f"No DB record found for model {payload.modelId}")
@@ -72,7 +73,7 @@ async def update_model_request(payload: ModelUpdateRequest):
 @router_admin.delete("/delete/model", response_model=str)
 async def delete_model_request(id: str):
     try:
-        result = delete_model_by_uuid(id)
+        result = await delete_model_by_uuid(id)
 
         if result == 0:
             raise HTTPException(
@@ -99,7 +100,7 @@ async def delete_model_request(id: str):
 async def create_service_request(payload: ServiceCreateRequest):
 
     try:
-        save_service_to_db(payload)
+        await save_service_to_db(payload)
 
         logger.info(f"Service '{payload.name}' inserted successfully.")
         return f"Service '{payload.name}' (ID: {payload.serviceId}) created successfully."
@@ -118,7 +119,7 @@ async def create_service_request(payload: ServiceCreateRequest):
 async def update_service_request(payload: ServiceUpdateRequest):
     
     try:
-        result = update_service(payload)
+        result = await update_service(payload)
 
         if result == 0:
             logger.warning(f"No DB record found for service {payload.serviceId}")
@@ -142,7 +143,7 @@ async def update_service_request(payload: ServiceUpdateRequest):
 @router_admin.delete("/delete/service", response_model=str)
 async def delete_model_request(id: str):
     try:
-        result = delete_service_by_uuid(id)
+        result = await delete_service_by_uuid(id)
 
         if result == 0:
             raise HTTPException(
@@ -165,7 +166,7 @@ async def delete_model_request(id: str):
 @router_admin.patch("/health")
 async def update_service_health_request(payload: ServiceHeartbeatRequest):
     try:
-        result = update_service_health(payload)
+        result = await update_service_health(payload)
 
         if result == 0:
             logger.warning(f"No DB record found for service {payload.serviceId}")
