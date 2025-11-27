@@ -24,11 +24,11 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Set environment variables for build
-# IMPORTANT:
-# - We hard-set NEXT_PUBLIC_API_URL to empty so the compiled bundle
-#   uses relative URLs (same origin) and does NOT bake in localhost.
-# - Runtime Kubernetes ConfigMaps/Secrets are used only by the Node
-#   server in the container, not by the browser bundle.
+# - NEXT_PUBLIC_API_URL is empty so frontend uses same-origin /api
+# - NEXT_PUBLIC_API_KEY has a default global value baked into the bundle,
+#   and can still be overridden with a build-arg if needed.
+ARG NEXT_PUBLIC_API_KEY="ak_xBy1d54a2F56_8lhh1kMPyab7jEUNzx4ot2FLy4pf4ks"
+ENV NEXT_PUBLIC_API_KEY=${NEXT_PUBLIC_API_KEY}
 ENV NEXT_PUBLIC_API_URL=""
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
@@ -41,12 +41,12 @@ FROM node:18-alpine AS runner
 WORKDIR /app
 
 # Set environment variables
-ENV NODE_ENV production
-ENV NEXT_TELEMETRY_DISABLED 1
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 
 # Create non-root user
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN addgroup --system --gid 1001 nodejs \
+  && adduser --system --uid 1001 nextjs
 
 # Copy public assets
 COPY --from=builder /app/public ./public
@@ -62,7 +62,7 @@ USER nextjs
 EXPOSE 3000
 
 # Set port environment variable
-ENV PORT 3000
+ENV PORT=3000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
@@ -70,3 +70,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 
 # Start the application
 CMD ["node", "server.js"]
+
