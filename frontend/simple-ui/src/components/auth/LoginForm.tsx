@@ -25,6 +25,7 @@ import React, { useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
 import { LoginRequest } from "../../types/auth";
 import LoadingSpinner from "../common/LoadingSpinner";
+import { API_BASE_URL } from "../../services/api";
 
 interface LoginFormProps {
   onSuccess?: () => void;
@@ -216,7 +217,10 @@ const LoginForm: React.FC<LoginFormProps> = ({
             size="md"
             width="full"
             onClick={() => {
-              const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+              const apiBaseUrl =
+                API_BASE_URL || (typeof window !== "undefined"
+                  ? window.location.origin
+                  : "");
               window.location.href = `${apiBaseUrl}/api/v1/auth/oauth2/google/authorize`;
             }}
             leftIcon={

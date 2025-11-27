@@ -18,8 +18,7 @@ import {
   APIKeyResponse,
   OAuth2Provider,
 } from '../types/auth';
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+import { API_BASE_URL } from './api';
 
 class AuthService {
   private baseUrl: string;

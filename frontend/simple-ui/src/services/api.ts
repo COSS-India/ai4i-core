@@ -3,8 +3,11 @@
 import axios, { AxiosInstance, AxiosResponse, AxiosError } from 'axios';
 import { useToast } from '@chakra-ui/react';
 
-// API Base URL from environment
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+// API Base URL from environment.
+// For production this should be set to the browser-facing API gateway URL
+// (for example, https://dev.ai4inclusion.org or a dedicated API domain).
+// If not set, we fall back to relative URLs so requests go to the same origin.
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 // API Key from localStorage (user-provided) or environment (fallback)
 const getApiKey = (): string | null => {
@@ -30,7 +33,8 @@ export const apiEndpoints = {
     models: '/api/v1/asr/models',
     health: '/api/v1/asr/health',
     streamingInfo: '/api/v1/asr/streaming/info',
-    streaming: 'ws://localhost:8087/socket.io', // Direct WebSocket connection
+    streaming:
+      process.env.NEXT_PUBLIC_ASR_STREAM_URL || 'ws://localhost:8087/socket.io',
   },
   tts: {
     inference: '/api/v1/tts/inference',
