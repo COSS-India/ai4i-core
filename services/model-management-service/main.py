@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting FastAPI app initialization...")
 
     # 1. Create APP DB (sync) tables
-    create_tables()
+    await create_tables()
     logger.info("App DB tables verified or created.")
 
 
@@ -65,12 +65,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error disposing Auth DB: {e}")
 
-    logger.info("Shutdown complete.")
-
-    # Dispose sync auth engine
+    # Dispose async auth engine
     try:
         if app.state.app_db_engine:
-            app.state.app_db_engine.dispose()
+            await app.state.app_db_engine.dispose()
             logger.info("Model management DB engine disposed.")
     except Exception as e:
         logger.error(f"Error disposing Model management DB: {e}")

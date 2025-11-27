@@ -9,19 +9,19 @@ from .model_create import (
 
 class ModelUpdateRequest(BaseModel):
     modelId: str
-    version: Optional[str]
-    submittedOn: Optional[int]
-    updatedOn: Optional[int]
-    name: Optional[str]
-    description: Optional[str]
-    refUrl: Optional[str]
-    task: Optional[Task]
-    languages: Optional[List[Dict[str, Any]]]
-    license: Optional[str]
-    domain: Optional[List[str]]
-    inferenceEndPoint: Optional[InferenceEndPoint]
-    benchmarks: Optional[List[Benchmark]]
-    submitter: Optional[Submitter]
+    version: Optional[str] = None
+    submittedOn: Optional[int] = None
+    updatedOn: Optional[int] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    refUrl: Optional[str] = None
+    task: Optional[Task] = None
+    languages: Optional[List[Dict[str, Any]]] = None
+    license: Optional[str] = None
+    domain: Optional[List[str]] = None
+    inferenceEndPoint: Optional[InferenceEndPoint] = None
+    benchmarks: Optional[List[Benchmark]] = None
+    submitter: Optional[Submitter] = None
 
     model_config = {
         "validate_by_name": True,   # replaces allow_population_by_field_name
