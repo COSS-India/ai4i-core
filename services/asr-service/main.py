@@ -29,6 +29,7 @@ from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
+from utils.service_registry_client import ServiceRegistryHttpClient
 
 # Configure logging
 logging.basicConfig(
@@ -42,6 +43,8 @@ redis_client: redis.Redis = None
 db_engine = None
 db_session_factory = None
 streaming_service: StreamingASRService = None
+registry_client: ServiceRegistryHttpClient = None
+registered_instance_id: str = None
 
 
 @asynccontextmanager
@@ -56,7 +59,7 @@ async def lifespan(app: FastAPI):
         if redis_client is None:
             # Fallback Redis initialization if not done earlier
             redis_host = os.getenv("REDIS_HOST", "redis")
-            redis_port = int(os.getenv("REDIS_PORT", "6379"))
+            redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
             redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
             
             redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
@@ -139,6 +142,33 @@ async def lifespan(app: FastAPI):
         # Register error handlers
         add_error_handlers(app)
         
+        # Register service in central registry via config-service
+        try:
+            global registry_client, registered_instance_id
+            registry_client = ServiceRegistryHttpClient()
+            service_name = os.getenv("SERVICE_NAME", "asr-service")
+            service_port = int(os.getenv("SERVICE_PORT", "8087"))
+            public_base_url = os.getenv("SERVICE_PUBLIC_URL")
+            if public_base_url:
+                service_url = public_base_url.rstrip("/")
+            else:
+                service_host = os.getenv("SERVICE_HOST", service_name)
+                service_url = f"http://{service_host}:{service_port}"
+            health_url = service_url + "/health"
+            instance_id = os.getenv("SERVICE_INSTANCE_ID", f"{service_name}-{os.getpid()}")
+            registered_instance_id = await registry_client.register(
+                service_name=service_name,
+                service_url=service_url,
+                health_check_url=health_url,
+                service_metadata={"instance_id": instance_id, "status": "healthy"},
+            )
+            if registered_instance_id:
+                logger.info("Registered %s with service registry as instance %s", service_name, registered_instance_id)
+            else:
+                logger.warning("Service registry registration skipped/failed for %s", service_name)
+        except Exception as e:
+            logger.warning("Service registry registration error: %s", e)
+
         logger.info("ASR Service started successfully")
         
     except Exception as e:
@@ -151,6 +181,14 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down ASR Service...")
     
     try:
+        # Deregister from registry if previously registered
+        try:
+            if registry_client and registered_instance_id:
+                service_name = os.getenv("SERVICE_NAME", "asr-service")
+                await registry_client.deregister(service_name, registered_instance_id)
+        except Exception as e:
+            logger.warning("Service registry deregistration error: %s", e)
+
         # Close Redis client
         if redis_client:
             await redis_client.close()
@@ -171,7 +209,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ASR Service",
     version="1.0.0",
-    description="Automatic Speech Recognition microservice for converting speech to text. Supports 22+ Indian languages with real-time streaming and batch processing.",
+    description="Automatic Speech Recognition microservice for converting speech to text. Supports 22+ Indic languages with real-time streaming and batch processing.",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -214,7 +252,7 @@ app.add_middleware(
 redis_client = None
 try:
     redis_host = os.getenv("REDIS_HOST", "redis")
-    redis_port = int(os.getenv("REDIS_PORT", "6379"))
+    redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
     redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
     
     redis_client = redis.Redis(
