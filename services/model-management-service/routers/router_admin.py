@@ -1,4 +1,4 @@
-from fastapi import HTTPException, status , APIRouter
+from fastapi import HTTPException, status , APIRouter ,Depends
 from models.model_create import ModelCreateRequest
 from models.model_update import ModelUpdateRequest
 from models.service_create import ServiceCreateRequest
@@ -15,7 +15,12 @@ from db_operations import (
     )
 from logger import logger
 
-router_admin = APIRouter(prefix="/services/admin", tags=["Model Management"])
+from middleware.auth_provider import AuthProvider
+
+router_admin = APIRouter(
+    prefix="/services/admin", 
+    tags=["Model Management"],
+    dependencies=[Depends(AuthProvider)] )
 
 
 #################################################### Model apis ####################################################
