@@ -227,6 +227,65 @@ class PipelineInfo(BaseModel):
     example_pipelines: Dict[str, Any] = Field(..., description="Example pipeline configurations")
     task_sequence_rules: Dict[str, List[str]] = Field(..., description="Task sequence rules")
 
+# Feature Flag models (for API documentation)
+class FeatureFlagEvaluationRequest(BaseModel):
+    """Request model for feature flag evaluation."""
+    flag_name: str = Field(..., description="Feature flag identifier", min_length=1)
+    user_id: Optional[str] = Field(None, description="User identifier for targeting")
+    context: Optional[Dict[str, Any]] = Field(None, description="Additional context attributes")
+    default_value: Any = Field(..., description="Fallback value if flag evaluation fails (bool, str, int, float, or dict)")
+    environment: Optional[str] = Field(None, description="Environment name (development|staging|production)")
+
+class BulkEvaluationRequest(BaseModel):
+    """Request model for bulk feature flag evaluation."""
+    flag_names: List[str] = Field(..., description="List of flag names to evaluate", min_length=1)
+    user_id: Optional[str] = Field(None, description="User identifier for targeting")
+    context: Optional[Dict[str, Any]] = Field(None, description="Additional context attributes")
+    environment: Optional[str] = Field(None, description="Environment name (development|staging|production)")
+
+class FeatureFlagEvaluationResponse(BaseModel):
+    """Response model for feature flag evaluation."""
+    flag_name: str
+    value: Any
+    variant: Optional[str] = None
+    reason: str = Field(..., description="Evaluation reason (TARGETING_MATCH, DEFAULT, ERROR)")
+    evaluated_at: str
+
+class BooleanEvaluationResponse(BaseModel):
+    """Response model for boolean feature flag evaluation."""
+    flag_name: str
+    value: bool
+    reason: str
+
+class BulkEvaluationResponse(BaseModel):
+    """Response model for bulk feature flag evaluation."""
+    results: Dict[str, Any]
+
+class FeatureFlagResponse(BaseModel):
+    """Response model for feature flag details."""
+    name: str
+    description: Optional[str] = None
+    is_enabled: bool
+    environment: str
+    rollout_percentage: Optional[str] = None
+    target_users: Optional[List[str]] = None
+    unleash_flag_name: Optional[str] = None
+    last_synced_at: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+class FeatureFlagListResponse(BaseModel):
+    """Response model for feature flag list."""
+    items: List[FeatureFlagResponse]
+    total: int
+    limit: int
+    offset: int
+
+class SyncResponse(BaseModel):
+    """Response model for sync operation."""
+    synced_count: int
+    environment: str
+
 # Auth models (for API documentation)
 class RegisterUser(BaseModel):
     email: str = Field(..., description="Email address")
@@ -473,6 +532,10 @@ tags_metadata = [
         "description": "Pipeline service endpoints. Execute multi-step AI processing pipelines.",
     },
     {
+        "name": "Feature Flags",
+        "description": "Feature flag endpoints. Evaluate and manage feature flags using Unleash.",
+    },
+    {
         "name": "Status",
         "description": "Service status and health check endpoints.",
     },
@@ -628,6 +691,7 @@ def custom_openapi():
         ("/api/v1/tts", "TTS"),
         ("/api/v1/nmt", "NMT"),
         ("/api/v1/pipeline", "Pipeline"),
+        ("/api/v1/feature-flags", "Feature Flags"),
         ("/api/v1/protected", "Protected"),
         ("/api/v1/status", "Status"),
         ("/health", "Status"),
@@ -1626,6 +1690,135 @@ async def pipeline_health(
     ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "pipeline-service", headers=headers)
+
+# Feature Flag Endpoints (Proxy to Config Service)
+
+@app.post("/api/v1/feature-flags/evaluate", response_model=FeatureFlagEvaluationResponse, tags=["Feature Flags"])
+async def evaluate_feature_flag(
+    body: FeatureFlagEvaluationRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Evaluate a single feature flag. Supports boolean, string, integer, float, and object (dict) flag types."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    import json
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    payload = json.dumps(body.dict()).encode()
+    return await proxy_to_service(
+        None,
+        "/api/v1/feature-flags/evaluate",
+        "config-service",
+        method="POST",
+        body=payload,
+        headers=headers
+    )
+
+@app.post("/api/v1/feature-flags/evaluate/boolean", response_model=BooleanEvaluationResponse, tags=["Feature Flags"])
+async def evaluate_boolean_feature_flag(
+    body: FeatureFlagEvaluationRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Evaluate a boolean feature flag. Returns a simple boolean value indicating if the flag is enabled."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    import json
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    payload = json.dumps(body.dict()).encode()
+    return await proxy_to_service(
+        None,
+        "/api/v1/feature-flags/evaluate/boolean",
+        "config-service",
+        method="POST",
+        body=payload,
+        headers=headers
+    )
+
+@app.post("/api/v1/feature-flags/evaluate/bulk", response_model=BulkEvaluationResponse, tags=["Feature Flags"])
+async def bulk_evaluate_feature_flags(
+    body: BulkEvaluationRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Bulk evaluate multiple feature flags. Evaluates all specified flags in parallel."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    import json
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    payload = json.dumps(body.dict()).encode()
+    return await proxy_to_service(
+        None,
+        "/api/v1/feature-flags/evaluate/bulk",
+        "config-service",
+        method="POST",
+        body=payload,
+        headers=headers
+    )
+
+@app.get("/api/v1/feature-flags/{name}", response_model=FeatureFlagResponse, tags=["Feature Flags"])
+async def get_feature_flag(
+    request: Request,
+    name: str = Path(..., description="Feature flag name"),
+    environment: str = Query(..., description="Environment name (development|staging|production)"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get feature flag by name from Unleash. Retrieves flag details from Unleash API (cached in Redis)."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    query_params = {"environment": environment}
+    return await proxy_to_service_with_params(
+        request,
+        f"/api/v1/feature-flags/{name}",
+        "config-service",
+        query_params,
+        headers=headers
+    )
+
+@app.get("/api/v1/feature-flags/", response_model=FeatureFlagListResponse, tags=["Feature Flags"])
+async def list_feature_flags(
+    request: Request,
+    environment: str = Query(..., description="Environment name (required)"),
+    limit: int = Query(50, ge=1, le=100, description="Page size"),
+    offset: int = Query(0, ge=0, description="Page offset"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """List feature flags from Unleash. Returns paginated list of feature flags from Unleash (cached in Redis)."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    query_params = {"environment": environment, "limit": str(limit), "offset": str(offset)}
+    return await proxy_to_service_with_params(
+        request,
+        "/api/v1/feature-flags/",
+        "config-service",
+        query_params,
+        headers=headers
+    )
+
+@app.post("/api/v1/feature-flags/sync", response_model=SyncResponse, tags=["Feature Flags"])
+async def sync_feature_flags(
+    request: Request,
+    environment: str = Query(..., description="Environment name"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Refresh feature flags cache from Unleash (admin). Invalidates Redis cache and fetches fresh data from Unleash API."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    query_params = {"environment": environment}
+    return await proxy_to_service_with_params(
+        request,
+        "/api/v1/feature-flags/sync",
+        "config-service",
+        query_params,
+        method="POST",
+        headers=headers
+    )
 
 # Protected Endpoints (Require Authentication)
 
