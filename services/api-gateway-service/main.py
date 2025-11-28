@@ -1913,6 +1913,50 @@ async def delete_model(
         headers=headers,
     )
 
+@app.post("/api/v1/model-management/models", response_model=str, tags=["Model Management"])
+async def publish_model(
+    model_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Fetch metadata for a specific model."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    payload = json.dumps({"modelId": model_id}).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/services/admin/publish/model",
+        "model-management-service",
+        method="POST",
+        body=payload,
+        headers=headers,
+    )
+
+
+@app.post("/api/v1/model-management/models", response_model=str, tags=["Model Management"])
+async def publish_model(
+    model_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Fetch metadata for a specific model."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    payload = json.dumps({"modelId": model_id}).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/services/admin/unpublish/model",
+        "model-management-service",
+        method="POST",
+        body=payload,
+        headers=headers,
+    )
+
+
 
 @app.get("/api/v1/model-management/services", response_model=List[ServiceListResponse], tags=["Model Management"])
 async def list_services(
