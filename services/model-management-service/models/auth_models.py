@@ -1,4 +1,4 @@
-"""
+    """
 Auth Models
 SQLAlchemy ORM models for authentication-related database tables
 """
