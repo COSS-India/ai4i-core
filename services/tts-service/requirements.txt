@@ -43,6 +43,9 @@ python-dotenv>=1.0.0
 passlib[bcrypt]>=1.7.4
 python-jose[cryptography]>=3.3.0
 
+# Dhruva Observability Plugin (installed via Dockerfile, listed here for reference)
+# -e ../../libs/dhruva_observability
+
 # Optional (for development)
 # pytest>=7.4.0
 # pytest-asyncio>=0.21.0

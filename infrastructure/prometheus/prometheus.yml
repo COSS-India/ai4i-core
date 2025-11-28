@@ -20,7 +20,7 @@ global:
 #   - "alerts.yml"
 
 scrape_configs:
-  # Platform metrics from all services
+  # Platform metrics from all services (standard Prometheus metrics)
   - job_name: "ai4i-services"
     scrape_interval: 5s
     metrics_path: /metrics
@@ -38,8 +38,8 @@ scrape_configs:
         target_label: service
         replacement: '${1}'
 
-  # Enterprise metrics (multi-tenant) from all services
-  - job_name: "ai4i-enterprise"
+  # Enterprise metrics (multi-tenant) from all services - Dhruva Observability Plugin
+  - job_name: "dhruva-enterprise"
     scrape_interval: 5s
     metrics_path: /enterprise/metrics
     static_configs:
