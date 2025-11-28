@@ -18,12 +18,10 @@ spec:
       initContainers:
       - name: fix-permissions
         image: busybox:latest
-        command: ['sh', '-c', 'chown -R 1000:1000 /var/lib/zookeeper/data /var/lib/zookeeper/log']
+        command: ['sh', '-c', 'mkdir -p /var/lib/zookeeper/data /var/lib/zookeeper/log && chown -R 1000:1000 /var/lib/zookeeper']
         volumeMounts:
-        - name: zookeeper-data
-          mountPath: /var/lib/zookeeper/data
-        - name: zookeeper-logs
-          mountPath: /var/lib/zookeeper/log
+        - name: zookeeper-storage
+          mountPath: /var/lib/zookeeper
       tolerations:
       - key: "node-type"
         operator: Equal
@@ -42,10 +40,8 @@ spec:
         - name: ZOOKEEPER_SERVER_ID
           value: "1"
         volumeMounts:
-        - name: zookeeper-data
-          mountPath: /var/lib/zookeeper/data
-        - name: zookeeper-logs
-          mountPath: /var/lib/zookeeper/log
+        - name: zookeeper-storage
+          mountPath: /var/lib/zookeeper
         resources:
           requests:
             memory: "256Mi"
@@ -64,10 +60,7 @@ spec:
           initialDelaySeconds: 10
           periodSeconds: 5
       volumes:
-      - name: zookeeper-data
+      - name: zookeeper-storage
         persistentVolumeClaim:
           claimName: zookeeper-data-pvc
-      - name: zookeeper-logs
-        persistentVolumeClaim:
-          claimName: zookeeper-logs-pvc
       restartPolicy: Always

@@ -15,17 +15,22 @@ spec:
       labels:
         app: redis
     spec:
-      nodeSelector:
-        node-type: cpu
+      initContainers:
+      - name: fix-permissions
+        image: busybox:latest
+        command: ['sh', '-c', 'mkdir -p /data/redis-data && chown -R 999:999 /data']
+        volumeMounts:
+        - name: redis-storage
+          mountPath: /data
       tolerations:
-      - key: node-type
+      - key: "node-type"
         operator: Equal
         value: cpu
         effect: NoSchedule
       containers:
       - name: redis
         image: redis:7-alpine
-        command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+        command: ["/usr/local/etc/redis/redis-entrypoint.sh"]
         ports:
         - containerPort: 6379
         env:
@@ -38,8 +43,10 @@ spec:
         - name: redis-storage
           mountPath: /data
         - name: redis-config
-          mountPath: /usr/local/etc/redis/redis.conf
-          subPath: redis.conf
+          mountPath: /usr/local/etc/redis
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
         resources:
           requests:
             memory: "128Mi"
@@ -49,9 +56,10 @@ spec:
             cpu: "200m"
       volumes:
       - name: redis-storage
-        emptyDir: {}
+        persistentVolumeClaim:
+          claimName: redis-data-pvc
       - name: redis-config
         configMap:
           name: redis-config
-          optional: true
+          defaultMode: 0755
       restartPolicy: Always

@@ -8,18 +8,5 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 5Gi
-  storageClassName: gp2-immediate
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: zookeeper-logs-pvc
-  namespace: dev
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 2Gi
+      storage: 7Gi
   storageClassName: gp2-immediate

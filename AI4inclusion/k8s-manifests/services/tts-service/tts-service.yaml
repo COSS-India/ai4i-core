@@ -31,20 +31,46 @@ spec:
       labels:
         app: tts-service
     spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values:
+                      - ip-30-0-4-22.ap-south-1.compute.internal
       nodeSelector:
       tolerations:
       - key: "node-type"
         operator: Equal
         value: cpu
         effect: NoSchedule
+      initContainers:
+      - name: wait-for-db
+        image: busybox:1.36
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Waiting for PostgreSQL to be ready..."
+          MAX_ATTEMPTS=60
+          ATTEMPT=0
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            if nc -z postgres.dev.svc.cluster.local 5432 2>/dev/null; then
+              echo "PostgreSQL is ready!"
+              exit 0
+            fi
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS: Waiting for postgres.dev.svc.cluster.local:5432..."
+            sleep 2
+          done
+          echo "ERROR: PostgreSQL not available after $MAX_ATTEMPTS attempts"
+          exit 1
       containers:
       - name: tts-service
         image: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/tts-service:v1.0
         ports:
         - containerPort: 8088
-        env:
-        - name: ENV_FILE
-          value: ".env"
         envFrom:
         - configMapRef:
             name: tts-service-config
@@ -55,13 +81,21 @@ spec:
             memory: "512Mi"
             cpu: "300m"
           limits:
-            memory: "1Gi"
+            memory: "2Gi"
             cpu: "600m"
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8088
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 12
         livenessProbe:
           httpGet:
             path: /health
             port: 8088
-          initialDelaySeconds: 30
+          initialDelaySeconds: 60
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
@@ -69,7 +103,7 @@ spec:
           httpGet:
             path: /health
             port: 8088
-          initialDelaySeconds: 10
+          initialDelaySeconds: 20
           periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 3

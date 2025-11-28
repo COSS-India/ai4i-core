@@ -4,8 +4,62 @@ metadata:
   name: config-service-config
   namespace: dev
 data:
-  # Add your environment variables here
-  # Example:
-  # DATABASE_URL: "postgresql://ai4v_user:password123@postgres:5432/ai4v_db"
-  # REDIS_URL: "redis://redis:6379"
-  # KAFKA_BROKER: "kafka:9092"
+  # Config Service Configuration
+  SERVICE_NAME: "config-service"
+  SERVICE_PORT: "8082"
+  LOG_LEVEL: "INFO"
+
+  # Redis Configuration
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+
+  # Kafka Configuration
+  KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  KAFKA_TOPIC_CONFIG_UPDATES: "config-updates"
+
+  # Vault Configuration
+  VAULT_ADDR: "http://vault:8200"
+
+  # Environment Settings
+  SUPPORTED_ENVIRONMENTS: "development,staging,production"
+  DEFAULT_ENVIRONMENT: "development"
+
+  # ZooKeeper Configuration
+  ZOOKEEPER_HOSTS: "zookeeper:2181"
+  ZOOKEEPER_CONNECTION_TIMEOUT: "10"
+  ZOOKEEPER_SESSION_TIMEOUT: "30"
+  ZOOKEEPER_BASE_PATH: "/services"
+
+  # Service Registry Configuration
+  SERVICE_REGISTRY_ENABLED: "true"
+  SERVICE_HEALTH_CHECK_INTERVAL: "30"
+  SERVICE_INSTANCE_ID: "config-service-1"
+
+  # Health Monitoring Configuration
+  SERVICE_HEALTH_CHECK_ENABLED: "true"
+  HEALTH_CHECK_TIMEOUT: "3.0"
+  HEALTH_CHECK_MAX_RETRIES: "3"
+  HEALTH_CHECK_INITIAL_RETRY_DELAY: "1.0"
+  HEALTH_CHECK_MAX_RETRY_DELAY: "30.0"
+  HEALTH_CHECK_RETRY_BACKOFF: "2.0"
+  HEALTH_CHECK_ADDITIONAL_ENDPOINTS: "/ready,/live"
+
+  # Unleash Feature Flag Configuration
+  UNLEASH_URL: "http://unleash:4242/api"
+  UNLEASH_APP_NAME: "config-service"
+  UNLEASH_INSTANCE_ID: "config-service-1"
+  UNLEASH_REFRESH_INTERVAL: "5"
+  UNLEASH_METRICS_INTERVAL: "60"
+  UNLEASH_DISABLE_METRICS: "false"
+
+  # Feature Flag Service Configuration
+  FEATURE_FLAG_CACHE_TTL: "300"
+  FEATURE_FLAG_FALLBACK_ENABLED: "true"
+  FEATURE_FLAG_KAFKA_TOPIC: "feature-flag-events"
+
+  # Feature Flag Cache Sync Configuration
+  # Disable automatic sync since Unleash is not deployed in this cluster
+  UNLEASH_AUTO_SYNC_ENABLED: "false"
+  UNLEASH_SYNC_INTERVAL: "30"
+  # Leave UNLEASH_SYNC_ENVIRONMENTS empty to use default behavior
+  UNLEASH_SYNC_ENVIRONMENTS: ""

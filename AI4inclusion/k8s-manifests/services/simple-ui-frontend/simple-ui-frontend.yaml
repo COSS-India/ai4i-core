@@ -1,35 +1,46 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: simple-ui-frontend
+  name: simple-ui
   namespace: dev
   labels:
-    app: simple-ui-frontend
+    app: simple-ui
 spec:
   selector:
-    app: simple-ui-frontend
+    app: simple-ui
   ports:
     - port: 3000
       targetPort: 3000
       protocol: TCP
   type: ClusterIP
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: simple-ui-config
+  namespace: dev
+data:
+  NEXT_PUBLIC_API_URL: "http://api-gateway-service:8080"
+  NEXT_PUBLIC_API_KEY: "ak_xBy1d54a2F56_8lhh1kMPyab7jEUNzx4ot2FLy4pf4ks"
+  NEXT_PUBLIC_ASR_STREAM_URL: "ws://asr-service:8087/socket.io/asr"
+  NEXT_PUBLIC_TTS_STREAM_URL: "ws://tts-service:8088/socket.io/tts"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: simple-ui-frontend
+  name: simple-ui
   namespace: dev
   labels:
-    app: simple-ui-frontend
+    app: simple-ui
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: simple-ui-frontend
+      app: simple-ui
   template:
     metadata:
       labels:
-        app: simple-ui-frontend
+        app: simple-ui
     spec:
       nodeSelector:
       tolerations:
@@ -38,17 +49,13 @@ spec:
         value: cpu
         effect: NoSchedule
       containers:
-      - name: simple-ui-frontend
-        image: ai4v/simple-ui-frontend:latest
+      - name: simple-ui
+        image: ai4v/simple-ui:latest
         ports:
         - containerPort: 3000
-        env:
-        - name: NEXT_PUBLIC_API_URL
-          value: "http://api-gateway-service:8080"
-        - name: NEXT_PUBLIC_ASR_STREAM_URL
-          value: "ws://asr-service:8087/socket.io/asr"
-        - name: NEXT_PUBLIC_TTS_STREAM_URL
-          value: "ws://tts-service:8088/socket.io/tts"
+        envFrom:
+        - configMapRef:
+            name: simple-ui-config
         resources:
           requests:
             memory: "256Mi"

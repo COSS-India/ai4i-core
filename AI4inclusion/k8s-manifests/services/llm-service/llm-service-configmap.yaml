@@ -11,10 +11,11 @@ data:
   DB_POOL_SIZE: "20"
   DB_MAX_OVERFLOW: "10"
 
-  REDIS_HOST: "redis"
+  REDIS_HOST: "redis.dev.svc.cluster.local"
   REDIS_PORT: "6379"
+  REDIS_PORT_NUMBER: "6379"
 
-  TRITON_ENDPOINT: "http://13.220.11.146:8000"  #check with vikas for the endpoint
+  TRITON_ENDPOINT: "http://13.200.133.97:9000"
   TRITON_TIMEOUT: "300"
   TRITON_CONCURRENCY: "20"
 

@@ -4,7 +4,20 @@ metadata:
   name: auth-service-config
   namespace: dev
 data:
-  # Add your environment variables here
-  # Example:
-  # DATABASE_URL: "postgresql://ai4v_user:password123@postgres:5432/ai4v_db"
-  # REDIS_URL: "redis://redis:6379"
+  SERVICE_NAME: "auth-service"
+  SERVICE_PORT: "8081"
+  LOG_LEVEL: "INFO"
+
+  DB_POOL_SIZE: "20"
+  DB_MAX_OVERFLOW: "10"
+
+  REDIS_HOST: "redis.dev.svc.cluster.local"
+  REDIS_PORT: "6379"
+
+  JWT_ALGORITHM: "HS256"
+  ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+  REFRESH_TOKEN_EXPIRE_DAYS: "7"
+
+  SESSION_TIMEOUT_MINUTES: "30"
+  MAX_CONCURRENT_SESSIONS: "3"
+

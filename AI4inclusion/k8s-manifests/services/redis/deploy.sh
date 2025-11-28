@@ -8,6 +8,7 @@ echo "🔴 Deploying Redis..."
 # Apply manifests in order
 kubectl apply -f redis-pvc.yaml
 kubectl apply -f redis-secret.yaml
+kubectl apply -f redis-configmap.yaml
 kubectl apply -f redis-service.yaml
 kubectl apply -f redis-deployment.yaml
 

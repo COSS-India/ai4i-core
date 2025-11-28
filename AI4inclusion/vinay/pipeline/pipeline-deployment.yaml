@@ -4,7 +4,7 @@ metadata:
   name: pipeline-deployment
   namespace: dev
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: pipeline
@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: pipeline-container
-          image: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/pipeline-service:v1.0
+          image: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/pipeline-service:v1.1
           ports:
             - containerPort: 8090
           envFrom:
@@ -39,6 +39,6 @@ spec:
             requests:
               cpu: "500m"
               memory: "512Mi"
-            limits:
-              cpu: "1"
-              memory: "1Gi"
+            limits:           
+              cpu: "500m"
+              memory: "512Mi"

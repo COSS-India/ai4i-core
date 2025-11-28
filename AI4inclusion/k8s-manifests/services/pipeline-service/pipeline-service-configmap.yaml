@@ -1,13 +1,20 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: pipeline-service-config
+  name: pipeline-config
   namespace: dev
 data:
-  # Add your environment variables here
-  # Example:
-  # DATABASE_URL: "postgresql://ai4v_user:password123@postgres:5432/ai4v_db"
-  # REDIS_URL: "redis://redis:6379"
-  # ASR_SERVICE_URL: "http://asr-service:8087"
-  # NMT_SERVICE_URL: "http://nmt-service:8089"
-  # TTS_SERVICE_URL: "http://tts-service:8088"
+  # Basic Configuration
+  SERVICE_NAME: "pipeline-service"
+  SERVICE_PORT: "8090"
+  LOG_LEVEL: "INFO"
+
+  # AI Service URLs
+  ASR_SERVICE_URL: "http://asr-service.dev.svc.cluster.local:8087"
+  NMT_SERVICE_URL: "http://nmt-service.dev.svc.cluster.local:8089"
+  TTS_SERVICE_URL: "http://tts-service.dev.svc.cluster.local:8088"
+  PIPELINE_SERVICE_URL: "http://pipeline-service.dev.svc.cluster.local:8090"
+
+  # Timeout and CORS
+  HTTP_CLIENT_TIMEOUT: "300"
+  CORS_ORIGINS: "*"
