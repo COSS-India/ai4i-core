@@ -14,9 +14,13 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy Dhruva Observability Plugin
+COPY libs/dhruva_observability /app/libs/dhruva_observability
+
 # Copy requirements and install Python dependencies
-COPY requirements.txt .
+COPY services/tts-service/requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --user -e /app/libs/dhruva_observability
 
 # Final stage
 FROM python:3.11-slim
@@ -41,8 +45,11 @@ COPY --from=builder /root/.local /home/app/.local
 # Make sure scripts in .local are usable
 ENV PATH=/home/app/.local/bin:$PATH
 
+# Copy Dhruva Observability Plugin
+COPY --from=builder /app/libs/dhruva_observability /app/libs/dhruva_observability
+
 # Copy application code
-COPY . .
+COPY services/tts-service .
 
 # Change ownership to app user and make uvicorn executable
 RUN chown -R app:app /app /home/app/.local && \

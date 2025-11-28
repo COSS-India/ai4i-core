@@ -41,6 +41,9 @@ from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
 
+# Observability integration - Dhruva Observability Plugin
+from dhruva_observability import ObservabilityPlugin, PluginConfig
+
 # Configure logging
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -254,6 +257,19 @@ app = FastAPI(
     },
     lifespan=lifespan
 )
+
+# Initialize Dhruva Observability Plugin
+# Plugin automatically extracts metrics from request bodies - no manual recording needed!
+config = PluginConfig.from_env()
+config.enabled = True  # Enable plugin
+if not config.customers:
+    config.customers = []  # Will be extracted from JWT/headers automatically
+if not config.apps:
+    config.apps = ["tts"]  # Service name
+
+plugin = ObservabilityPlugin(config)
+plugin.register_plugin(app)
+logger.info("✅ Dhruva Observability Plugin initialized for TTS service")
 
 # Add CORS middleware
 app.add_middleware(
