@@ -6,6 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, Dict, Any, Tuple
 import hashlib
 import json
+import os
+
+import httpx
 
 from repositories.api_key_repository import ApiKeyRepository
 from repositories.user_repository import UserRepository
@@ -14,6 +17,9 @@ from middleware.exceptions import AuthenticationError, InvalidAPIKeyError, Expir
 
 from db_connection import get_auth_db_session
 from logger import logger
+
+AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
+AUTH_HTTP_TIMEOUT = float(os.getenv("AUTH_HTTP_TIMEOUT", "10"))
 
 
 
@@ -36,6 +42,13 @@ def hash_api_key(api_key: str) -> str:
     return hashlib.sha256(api_key.encode()).hexdigest()
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 async def validate_api_key(api_key: str, db: AsyncSession, redis_client) -> Tuple[ApiKeyDB, UserDB]:
     """Validate API key and return user and API key data."""
     try:
@@ -44,8 +57,9 @@ async def validate_api_key(api_key: str, db: AsyncSession, redis_client) -> Tupl
         
         # First check Redis cache
         cache_key = f"api_key:{key_hash}"
-        # cached_data = await redis_client.get(cache_key)
-        cached_data = redis_client.get(cache_key)
+        cached_data = None
+        if redis_client:
+            cached_data = await redis_client.get(cache_key)
         
         if cached_data:
             try:
@@ -81,14 +95,13 @@ async def validate_api_key(api_key: str, db: AsyncSession, redis_client) -> Tupl
                 raise ExpiredAPIKeyError("API key has expired")
         
         # Cache the result
-        cache_data = {
-            "api_key_id": api_key_db.id,
-            "user_id": api_key_db.user_id,
-            "is_active": api_key_db.is_active
-        }
-        # await redis_client.setex(cache_key, 300, json.dumps(cache_data))  # 5 minute TTL
-
-        redis_client.setex(cache_key, 300, json.dumps(cache_data))
+        if redis_client:
+            cache_data = {
+                "api_key_id": api_key_db.id,
+                "user_id": api_key_db.user_id,
+                "is_active": api_key_db.is_active
+            }
+            await redis_client.setex(cache_key, 300, json.dumps(cache_data))
         
         # Update last used
         await api_key_repo.update_last_used(api_key_db.id)
@@ -105,19 +118,43 @@ async def validate_api_key(api_key: str, db: AsyncSession, redis_client) -> Tupl
 async def AuthProvider(
     request: Request,
     authorization: Optional[str] = Header(None, alias="Authorization"),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     x_auth_source: str = Header(default="API_KEY", alias="X-Auth-Source"),
     db: AsyncSession = Depends(get_auth_db_session)
 ) -> Dict[str, Any]:
     """Authentication provider dependency for FastAPI routes."""
+    auth_enabled = _env_bool("AUTH_ENABLED", True)
+    require_api_key = _env_bool("REQUIRE_API_KEY", True)
+    allow_anonymous = _env_bool("ALLOW_ANONYMOUS_ACCESS", False)
+    auth_source = (x_auth_source or "API_KEY").upper()
+
+    if not auth_enabled or (allow_anonymous and not require_api_key):
+        # Populate anonymous context
+        request.state.user_id = None
+        request.state.api_key_id = None
+        request.state.api_key_name = None
+        request.state.user_email = None
+        request.state.is_authenticated = False
+
+        return {
+            "user_id": None,
+            "api_key_id": None,
+            "user": None,
+            "api_key": None,
+        }
+
+    if auth_source == "AUTH_TOKEN":
+        return await authenticate_bearer_token(request, authorization)
+
     try:
-        # Extract API key from authorization header
-        api_key = get_api_key_from_header(authorization)
+        # Extract API key from X-API-Key header first, then fallback to Authorization header
+        api_key = x_api_key or get_api_key_from_header(authorization)
         
         if not api_key:
             raise AuthenticationError("Missing API key")
         
         # Get Redis client from app state
-        redis_client = request.app.state.redis_client
+        redis_client = getattr(request.app.state, "redis_client", None)
         
         # Validate API key
         api_key_db, user_db = await validate_api_key(api_key, db, redis_client)
@@ -147,14 +184,57 @@ async def AuthProvider(
 async def OptionalAuthProvider(
     request: Request,
     authorization: Optional[str] = Header(None, alias="Authorization"),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     x_auth_source: str = Header(default="API_KEY", alias="X-Auth-Source"),
     db: AsyncSession = Depends(get_auth_db_session)
 ) -> Optional[Dict[str, Any]]:
     """Optional authentication provider that doesn't raise exception if no auth provided."""
     try:
-        return await AuthProvider(request, authorization, x_auth_source, db)
+        return await AuthProvider(request, authorization, x_api_key, x_auth_source, db)
     except AuthenticationError:
         # Return None for optional auth
         return None
+
+
+async def authenticate_bearer_token(request: Request, authorization: Optional[str]) -> Dict[str, Any]:
+    """Validate JWT access token via auth service."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise AuthenticationError("Missing bearer token")
+
+    token = authorization.split(" ", 1)[1]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    try:
+        async with httpx.AsyncClient(timeout=AUTH_HTTP_TIMEOUT) as client:
+            response = await client.get(f"{AUTH_SERVICE_URL}/api/v1/auth/validate", headers=headers)
+    except Exception as exc:
+        logger.error(f"Auth service validation failed: {exc}")
+        raise AuthenticationError("Failed to validate access token")
+
+    if response.status_code != 200:
+        logger.warning("Auth service rejected token with status %s", response.status_code)
+        raise AuthenticationError("Invalid or expired token")
+
+    data = response.json() if response.content else {}
+
+    user_id = data.get("user_id") or data.get("sub")
+    username = data.get("username") or data.get("email")
+
+    request.state.user_id = user_id
+    request.state.api_key_id = None
+    request.state.api_key_name = None
+    request.state.user_email = data.get("email")
+    request.state.is_authenticated = True
+
+    return {
+        "user_id": user_id,
+        "api_key_id": None,
+        "user": {
+            "username": username,
+            "email": data.get("email"),
+            "permissions": data.get("permissions"),
+        },
+        "api_key": None,
+    }
 
 
