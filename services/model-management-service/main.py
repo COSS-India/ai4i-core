@@ -5,7 +5,7 @@ from db_connection import create_tables , auth_db_engine, AuthDBSessionLocal , a
 from routers.router_admin import router_admin
 from routers.router_details import router_details
 from routers.router_health import router_health
-from cache.app_cache import get_cache_connection
+from cache.app_cache import get_cache_connection, get_async_cache_connection
 import uvicorn
 import os
 
@@ -23,7 +23,11 @@ from middleware.error_handler_middleware import add_error_handlers
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 RATE_LIMIT_PER_HOUR = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
 
-redis_client = get_cache_connection()
+# Sync Redis client for redis_om (model/service caching)
+redis_cache_client = get_cache_connection()
+
+# Async Redis client for auth and rate limiting
+redis_client = get_async_cache_connection()
 
 # -----------------------------
 # Lifespan Event Handler (replaces @app.on_event)
@@ -41,21 +45,29 @@ async def lifespan(app: FastAPI):
     app.state.app_db_engine = app_db_engine
     app.state.auth_session_factory = AuthDBSessionLocal
     app.state.app_session_factory = AppDBSessionLocal
-    app.state.redis_client = redis_client
+    app.state.redis_client = redis_client  # Async client for auth/rate limiting
+    app.state.redis_cache_client = redis_cache_client  # Sync client for redis_om (already set in CacheBaseModel)
 
     yield   # everything before this runs at startup; everything after runs at shutdown
 
 
     logger.info("Shutting down FastAPI app...")
 
-    # Close Redis
+    # Close async Redis client (for auth/rate limiting)
     try:
-        # redis_client = app.state.redis_client
         if redis_client:
-            redis_client.close()
-            logger.info("Redis connection closed.")
+            await redis_client.close()
+            logger.info("Async Redis connection closed.")
     except Exception as e:
-        logger.error(f"Error closing Redis: {e}")
+        logger.error(f"Error closing async Redis: {e}")
+    
+    # Close sync Redis client (for redis_om caching)
+    try:
+        if redis_cache_client:
+            redis_cache_client.close()
+            logger.info("Sync Redis connection closed.")
+    except Exception as e:
+        logger.error(f"Error closing sync Redis: {e}")
 
     # Dispose async auth engine
     try:

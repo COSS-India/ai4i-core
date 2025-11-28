@@ -6,6 +6,8 @@ import asyncio
 import logging
 import uuid
 import time
+import json
+from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 from enum import Enum
 from urllib.parse import urlencode, urlparse, parse_qs
@@ -227,6 +229,229 @@ class PipelineInfo(BaseModel):
     example_pipelines: Dict[str, Any] = Field(..., description="Example pipeline configurations")
     task_sequence_rules: Dict[str, List[str]] = Field(..., description="Task sequence rules")
 
+# Pydantic models for Model Management endpoints
+class ModelProcessingType(BaseModel):
+    """Model processing type."""
+    type: str = Field(..., description="Processing type")
+
+class Schema(BaseModel):
+    """Schema for inference endpoint."""
+    modelProcessingType: ModelProcessingType = Field(..., description="Model processing type")
+    request: Dict[str, Any] = Field(default_factory=dict, description="Request schema")
+    response: Dict[str, Any] = Field(default_factory=dict, description="Response schema")
+
+class InferenceEndPoint(BaseModel):
+    """Inference endpoint configuration."""
+    schema: Schema = Field(..., description="Endpoint schema")
+
+class Score(BaseModel):
+    """Benchmark score."""
+    metricName: str = Field(..., description="Metric name")
+    score: str = Field(..., description="Score value")
+
+class BenchmarkLanguage(BaseModel):
+    """Benchmark language configuration."""
+    sourceLanguage: Optional[str] = Field(None, description="Source language code")
+    targetLanguage: Optional[str] = Field(None, description="Target language code")
+
+class Benchmark(BaseModel):
+    """Benchmark information."""
+    benchmarkId: str = Field(..., description="Benchmark identifier")
+    name: str = Field(..., description="Benchmark name")
+    description: str = Field(..., description="Benchmark description")
+    domain: str = Field(..., description="Domain")
+    createdOn: datetime = Field(..., description="Creation timestamp")
+    languages: BenchmarkLanguage = Field(..., description="Language configuration")
+    score: List[Score] = Field(..., description="List of scores")
+
+class OAuthId(BaseModel):
+    """OAuth identifier."""
+    oauthId: str = Field(..., description="OAuth ID")
+    provider: str = Field(..., description="OAuth provider")
+
+class TeamMember(BaseModel):
+    """Team member information."""
+    name: str = Field(..., description="Member name")
+    aboutMe: Optional[str] = Field(None, description="About member")
+    oauthId: Optional[OAuthId] = Field(None, description="OAuth identifier")
+
+class Submitter(BaseModel):
+    """Submitter information."""
+    name: str = Field(..., description="Submitter name")
+    aboutMe: Optional[str] = Field(None, description="About submitter")
+    team: List[TeamMember] = Field(..., description="Team members")
+
+class Task(BaseModel):
+    """Task type."""
+    type: str = Field(..., description="Task type")
+
+class ModelCreateRequest(BaseModel):
+    """Request model for creating a new model."""
+    modelId: str = Field(..., description="Unique model identifier")
+    version: str = Field(..., description="Model version")
+    submittedOn: int = Field(..., description="Submission timestamp")
+    updatedOn: Optional[int] = Field(None, description="Last update timestamp")
+    name: str = Field(..., description="Model name")
+    description: str = Field(..., description="Model description")
+    refUrl: str = Field(..., description="Reference URL")
+    task: Task = Field(..., description="Task type")
+    languages: List[Dict[str, Any]] = Field(..., description="Supported languages")
+    license: str = Field(..., description="License information")
+    domain: List[str] = Field(..., description="Domain list")
+    inferenceEndPoint: InferenceEndPoint = Field(..., description="Inference endpoint configuration")
+    benchmarks: List[Benchmark] = Field(..., description="List of benchmarks")
+    submitter: Submitter = Field(..., description="Submitter information")
+
+class ModelUpdateRequest(BaseModel):
+    """Request model for updating an existing model."""
+    modelId: str = Field(..., description="Unique model identifier")
+    version: Optional[str] = Field(None, description="Model version")
+    submittedOn: Optional[int] = Field(None, description="Submission timestamp")
+    updatedOn: Optional[int] = Field(None, description="Last update timestamp")
+    name: Optional[str] = Field(None, description="Model name")
+    description: Optional[str] = Field(None, description="Model description")
+    refUrl: Optional[str] = Field(None, description="Reference URL")
+    task: Optional[Task] = Field(None, description="Task type")
+    languages: Optional[List[Dict[str, Any]]] = Field(None, description="Supported languages")
+    license: Optional[str] = Field(None, description="License information")
+    domain: Optional[List[str]] = Field(None, description="Domain list")
+    inferenceEndPoint: Optional[InferenceEndPoint] = Field(None, description="Inference endpoint configuration")
+    benchmarks: Optional[List[Benchmark]] = Field(None, description="List of benchmarks")
+    submitter: Optional[Submitter] = Field(None, description="Submitter information")
+
+class ModelViewRequest(BaseModel):
+    """Request model for viewing a model."""
+    modelId: str = Field(..., description="Unique model identifier")
+
+class ModelViewResponse(BaseModel):
+    """Response model for model view."""
+    modelId: str = Field(..., description="Unique model identifier")
+    name: str = Field(..., description="Model name")
+    description: str = Field(..., description="Model description")
+    languages: List[Dict[str, Any]] = Field(..., description="Supported languages")
+    domain: List[str] = Field(..., description="Domain list")
+    submitter: Submitter = Field(..., description="Submitter information")
+    license: str = Field(..., description="License information")
+    inferenceEndPoint: InferenceEndPoint = Field(..., description="Inference endpoint configuration")
+    source: Optional[str] = Field(None, description="Source information")
+    task: Task = Field(..., description="Task type")
+
+class BenchmarkEntry(BaseModel):
+    """Benchmark entry for service."""
+    output_length: int = Field(..., description="Output length")
+    generated: int = Field(..., description="Generated count")
+    actual: int = Field(..., description="Actual count")
+    throughput: int = Field(..., description="Throughput")
+    p50: int = Field(..., alias="50%", serialization_alias="50%", description="50th percentile")
+    p99: int = Field(..., alias="99%", serialization_alias="99%", description="99th percentile")
+    language: str = Field(..., description="Language code")
+    
+    class Config:
+        populate_by_name = True
+        json_schema_extra = {
+            "example": {
+                "output_length": 100,
+                "generated": 50,
+                "actual": 50,
+                "throughput": 1000,
+                "50%": 10,
+                "99%": 20,
+                "language": "en"
+            }
+        }
+
+class ServiceStatus(BaseModel):
+    """Service health status."""
+    status: str = Field(..., description="Status (e.g., healthy, unhealthy)")
+    lastUpdated: str = Field(..., description="Last update timestamp")
+
+class ServiceCreateRequest(BaseModel):
+    """Request model for creating a new service."""
+    serviceId: str = Field(..., description="Unique service identifier")
+    name: str = Field(..., description="Service name")
+    serviceDescription: str = Field(..., description="Service description")
+    hardwareDescription: str = Field(..., description="Hardware description")
+    publishedOn: int = Field(..., description="Publication timestamp")
+    modelId: str = Field(..., description="Associated model identifier")
+    endpoint: str = Field(..., description="Service endpoint URL")
+    api_key: str = Field(..., description="API key for the service")
+    healthStatus: Optional[ServiceStatus] = Field(None, description="Health status")
+    benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = Field(None, description="Benchmark data")
+
+class LanguagePair(BaseModel):
+    """Language pair configuration."""
+    sourceLanguage: Optional[str] = Field(None, description="Source language code")
+    sourceScriptCode: Optional[str] = Field("", description="Source script code")
+    targetLanguage: str = Field(..., description="Target language code")
+    targetScriptCode: Optional[str] = Field("", description="Target script code")
+
+class ServiceUpdateRequest(BaseModel):
+    """Request model for updating an existing service."""
+    serviceId: str = Field(..., description="Unique service identifier")
+    name: str = Field(..., description="Service name")
+    serviceDescription: Optional[str] = Field(None, description="Service description")
+    hardwareDescription: Optional[str] = Field(None, description="Hardware description")
+    publishedOn: Optional[int] = Field(None, description="Publication timestamp")
+    modelId: Optional[str] = Field(None, description="Associated model identifier")
+    endpoint: Optional[str] = Field(None, description="Service endpoint URL")
+    api_key: Optional[str] = Field(None, description="API key for the service")
+    languagePair: Optional[LanguagePair] = Field(None, description="Language pair configuration")
+    healthStatus: Optional[ServiceStatus] = Field(None, description="Health status")
+    benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = Field(None, description="Benchmark data")
+
+class ServiceViewRequest(BaseModel):
+    """Request model for viewing a service."""
+    serviceId: str = Field(..., description="Unique service identifier")
+
+class ServiceHeartbeatRequest(BaseModel):
+    """Request model for service health heartbeat."""
+    serviceId: str = Field(..., description="Unique service identifier")
+    status: str = Field(..., description="Health status")
+
+class ServiceResponse(BaseModel):
+    """Base service response model."""
+    serviceId: str = Field(..., description="Unique service identifier")
+    name: str = Field(..., description="Service name")
+    serviceDescription: str = Field(..., description="Service description")
+    hardwareDescription: str = Field(..., description="Hardware description")
+    publishedOn: int = Field(..., description="Publication timestamp")
+    modelId: str = Field(..., description="Associated model identifier")
+    endpoint: Optional[str] = Field(None, description="Service endpoint URL")
+    api_key: Optional[str] = Field(None, description="API key for the service")
+    healthStatus: Optional[ServiceStatus] = Field(None, description="Health status")
+    benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = Field(None, description="Benchmark data")
+
+class ServiceViewResponse(BaseModel):
+    """Response model for service view."""
+    serviceId: str = Field(..., description="Unique service identifier")
+    name: str = Field(..., description="Service name")
+    serviceDescription: str = Field(..., description="Service description")
+    hardwareDescription: str = Field(..., description="Hardware description")
+    publishedOn: int = Field(..., description="Publication timestamp")
+    modelId: str = Field(..., description="Associated model identifier")
+    endpoint: Optional[str] = Field(None, description="Service endpoint URL")
+    api_key: Optional[str] = Field(None, description="API key for the service")
+    healthStatus: Optional[ServiceStatus] = Field(None, description="Health status")
+    benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = Field(None, description="Benchmark data")
+    model: Optional[ModelCreateRequest] = Field(None, description="Associated model information")
+    key_usage: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="API key usage")
+    total_usage: int = Field(default=0, description="Total usage count")
+
+class ServiceListResponse(BaseModel):
+    """Response model for service list."""
+    serviceId: str = Field(..., description="Unique service identifier")
+    name: str = Field(..., description="Service name")
+    serviceDescription: str = Field(..., description="Service description")
+    hardwareDescription: str = Field(..., description="Hardware description")
+    publishedOn: int = Field(..., description="Publication timestamp")
+    modelId: str = Field(..., description="Associated model identifier")
+    endpoint: Optional[str] = Field(None, description="Service endpoint URL")
+    api_key: Optional[str] = Field(None, description="API key for the service")
+    healthStatus: Optional[ServiceStatus] = Field(None, description="Health status")
+    benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = Field(None, description="Benchmark data")
+    task: Task = Field(..., description="Task type")
+    languages: List[dict] = Field(..., description="Supported languages")
+
 # Auth models (for API documentation)
 class RegisterUser(BaseModel):
     email: str = Field(..., description="Email address")
@@ -415,6 +640,7 @@ class RouteManager:
             '/api/v1/asr': 'asr-service',
             '/api/v1/tts': 'tts-service',
             '/api/v1/nmt': 'nmt-service',
+            '/api/v1/model-management': 'model-management-service',
             '/api/v1/llm': 'llm-service',
             '/api/v1/pipeline': 'pipeline-service'
         }
@@ -467,6 +693,10 @@ tags_metadata = [
     {
         "name": "TTS",
         "description": "Text-to-Speech service endpoints. Convert text to speech audio.",
+    },
+    {
+        "name": "Model Management",
+        "description": "Model catalog management endpoints. Register, update, and list AI models and services.",
     },
     {
         "name": "Pipeline",
@@ -627,6 +857,7 @@ def custom_openapi():
         ("/api/v1/asr", "ASR"),
         ("/api/v1/tts", "TTS"),
         ("/api/v1/nmt", "NMT"),
+        ("/api/v1/model-management", "Model Management"),
         ("/api/v1/pipeline", "Pipeline"),
         ("/api/v1/protected", "Protected"),
         ("/api/v1/status", "Status"),
@@ -885,6 +1116,7 @@ async def api_status():
             "asr": os.getenv("ASR_SERVICE_URL", "http://asr-service:8087"),
             "tts": os.getenv("TTS_SERVICE_URL", "http://tts-service:8088"),
             "nmt": os.getenv("NMT_SERVICE_URL", "http://nmt-service:8089"),
+            "model-management": os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
             "llm": os.getenv("LLM_SERVICE_URL", "http://llm-service:8090"),
             "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8090")
         }
@@ -1580,6 +1812,234 @@ async def nmt_health(
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/nmt/health", "nmt-service", headers=headers)
 
+# Model Management Service Endpoints
+
+@app.get("/api/v1/model-management/models", response_model=List[ModelViewResponse], tags=["Model Management"])
+async def list_models(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """List all registered models."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/services/details/list_models", "model-management-service", headers=headers)
+
+
+@app.post("/api/v1/model-management/models/{model_id}", response_model=ModelViewResponse, tags=["Model Management"])
+async def get_model(
+    model_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Fetch metadata for a specific model."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    payload = json.dumps({"modelId": model_id}).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/services/details/view_model",
+        "model-management-service",
+        method="POST",
+        body=payload,
+        headers=headers,
+    )
+
+
+@app.post("/api/v1/model-management/models", response_model=str, tags=["Model Management"])
+async def create_model(
+    payload: ModelCreateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Register a new model."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    # Use model_dump with json mode to properly serialize datetime objects
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/services/admin/create/model",
+        "model-management-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.patch("/api/v1/model-management/models", response_model=str, tags=["Model Management"])
+async def update_model(
+    payload: ModelUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Update an existing model."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    # Use model_dump with json mode to properly serialize datetime objects
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/services/admin/update/model",
+        "model-management-service",
+        method="PATCH",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.delete("/api/v1/model-management/models/{model_id}", tags=["Model Management"])
+async def delete_model(
+    model_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Delete a model by ID."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service_with_params(
+        None,
+        "/services/admin/delete/model",
+        "model-management-service",
+        {"id": model_id},
+        method="DELETE",
+        headers=headers,
+    )
+
+
+@app.get("/api/v1/model-management/services", response_model=List[ServiceListResponse], tags=["Model Management"])
+async def list_services(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """List all deployed services."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/services/details/list_services", "model-management-service", headers=headers)
+
+
+@app.post("/api/v1/model-management/services/{service_id}", response_model=ServiceViewResponse, tags=["Model Management"])
+async def get_service_details(
+    service_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Fetch metadata for a specific runtime service."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    payload = json.dumps({"serviceId": service_id}).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/services/details/view_service",
+        "model-management-service",
+        method="POST",
+        body=payload,
+        headers=headers,
+    )
+
+
+@app.post("/api/v1/model-management/services", response_model=str, tags=["Model Management"])
+async def create_service_entry(
+    payload: ServiceCreateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Register a new service entry."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    # Use model_dump with json mode to properly serialize datetime objects
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/services/admin/create/service",
+        "model-management-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.patch("/api/v1/model-management/services", response_model=str, tags=["Model Management"])
+async def update_service_entry(
+    payload: ServiceUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Update a service entry."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    # Use model_dump with json mode to properly serialize datetime objects
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/services/admin/update/service",
+        "model-management-service",
+        method="PATCH",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.delete("/api/v1/model-management/services/{service_id}", tags=["Model Management"])
+async def delete_service_entry(
+    service_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Delete a service entry."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service_with_params(
+        None,
+        "/services/admin/delete/service",
+        "model-management-service",
+        {"id": service_id},
+        method="DELETE",
+        headers=headers,
+    )
+
+
+@app.patch("/api/v1/model-management/services/{service_id}/health", response_model=str, tags=["Model Management"])
+async def update_service_health(
+    service_id: str,
+    payload: ServiceHeartbeatRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Update the health status reported by a service."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    # Override serviceId from path parameter
+    body_data = payload.model_dump(mode='json', exclude_unset=False)
+    body_data["serviceId"] = service_id
+    body = json.dumps(body_data).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/services/admin/health",
+        "model-management-service",
+        method="PATCH",
+        body=body,
+        headers=headers,
+    )
+
+
 # Pipeline Service Endpoints (Proxy to Pipeline Service)
 
 @app.post("/api/v1/pipeline/inference", response_model=PipelineInferenceResponse, tags=["Pipeline"])
@@ -1699,6 +2159,7 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'asr-service': os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
+        'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
         'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
     }
@@ -1769,6 +2230,7 @@ async def proxy_to_service_with_params(
         'asr-service': os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
+        'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
         'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
     }
