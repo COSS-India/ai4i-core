@@ -44,3 +44,7 @@ python-jose[cryptography]>=3.3.0
 
 # WebSocket
 python-socketio>=5.10.0
+
+
+# Dhruva Observability Plugin (installed via Dockerfile, listed here for reference)
+# -e ../../libs/dhruva_observability
