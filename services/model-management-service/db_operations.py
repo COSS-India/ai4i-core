@@ -380,7 +380,7 @@ async def get_model_details(model_id: str) -> Dict[str, Any]:
             # Fallback:
             try:
                 uuid = UUID(model_id)
-                model_result = await db.execute(select(Service).where(Service.id == uuid))
+                model_result = await db.execute(select(Model).where(Model.id == uuid))
                 model = model_result.scalars().first()
             except Exception:
                 pass
@@ -440,6 +440,76 @@ async def list_all_models() -> List[Dict[str, Any]]:
         raise
 
 
+async def publish_model(payload_modelId: str):
+    """
+    Publish a model by setting is_published to True and updating published_at timestamp.
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        stmt = select(Model).where(Model.model_id == payload_modelId)
+        result = await db.execute(stmt)
+        model = result.scalars().first()
+
+        if not model:
+            logger.warning(f"Model with ID {payload_modelId} not found for publish.")
+            return 0
+
+        now_epoch = int(time.time())
+
+        await db.execute(
+                update(Model)
+                .where(Model.model_id == payload_modelId)
+                .values(
+                    is_published=True,
+                    published_at=now_epoch,
+                    unpublished_at=None
+                )
+            )
+
+        await db.commit()
+        logger.info(f"Model {payload_modelId} published successfully.")
+
+        return 1
+
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Error while publishing model.")
+        raise Exception("Publish failed due to internal DB error") from e
+    
+async def unpublish_model(payload_modelId: str):
+    """
+    Unpublish a model by setting is_published to False and updating unpublished_at timestamp.
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        stmt = select(Model).where(Model.model_id == payload_modelId)
+        result = await db.execute(stmt)
+        model = result.scalars().first()
+
+        if not model:
+            logger.warning(f"Model with ID {payload_modelId} not found for unpublish.")
+            return 0
+
+        now_epoch = int(time.time())
+
+        await db.execute(
+                update(Model)
+                .where(Model.model_id == payload_modelId)
+                .values(
+                    is_published=False,
+                    unpublished_at=now_epoch
+                )
+            )
+
+        await db.commit()
+        logger.info(f"Model {payload_modelId} unpublished successfully.")
+
+        return 1
+
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Error while unpublishing model.")
+        raise Exception("Unpublish failed due to internal DB error") from e
 
 ####################################################### Service Functions #######################################################
 

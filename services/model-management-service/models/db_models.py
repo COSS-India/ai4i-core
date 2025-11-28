@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String,BigInteger, Text, DateTime, ForeignKey
+from sqlalchemy import Column, String,BigInteger, Text, DateTime, ForeignKey , Boolean
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -27,6 +27,9 @@ class Model(AppDBBase):
     inference_endpoint = Column(JSONB, nullable=False)
     benchmarks = Column(JSONB)
     submitter = Column(JSONB, nullable=False)
+    is_published = Column(Boolean, nullable=False, default=False)
+    published_at = Column(BigInteger, default=None)
+    unpublished_at = Column(BigInteger, default=None)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
@@ -50,6 +53,9 @@ class Service(AppDBBase):
     api_key = Column(String(255))
     health_status = Column(JSONB)
     benchmarks = Column(JSONB)
+    is_published = Column(Boolean, nullable=False, default=False)
+    published_at = Column(BigInteger, default=None)
+    unpublished_at = Column(BigInteger, default=None)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
