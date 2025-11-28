@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: auth-service
-        image: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/auth-service:v1.0
+        image: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/auth-service:v1.1
         ports:
         - containerPort: 8081
         envFrom:

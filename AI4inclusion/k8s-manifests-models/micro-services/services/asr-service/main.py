@@ -57,16 +57,39 @@ async def lifespan(app: FastAPI):
             # Fallback Redis initialization if not done earlier
             redis_host = os.getenv("REDIS_HOST", "redis")
             redis_port = int(os.getenv("REDIS_PORT", "6379"))
-            redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+            redis_password = os.getenv("REDIS_PASSWORD", "")
             
-            redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
+            # Build Redis URL - only include password if it's set
+            if redis_password:
+                redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
+            else:
+                redis_url = f"redis://{redis_host}:{redis_port}"
+            
             redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
             
             # Test Redis connection
             await redis_client.ping()
             logger.info("Redis connection established successfully")
         else:
-            logger.info("Using existing Redis connection")
+            # Test the existing connection
+            try:
+                await redis_client.ping()
+                logger.info("Using existing Redis connection")
+            except Exception as e:
+                logger.warning(f"Existing Redis connection failed, reinitializing: {e}")
+                # Reinitialize if existing connection fails
+                redis_host = os.getenv("REDIS_HOST", "redis")
+                redis_port = int(os.getenv("REDIS_PORT", "6379"))
+                redis_password = os.getenv("REDIS_PASSWORD", "")
+                
+                if redis_password:
+                    redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
+                else:
+                    redis_url = f"redis://{redis_host}:{redis_port}"
+                
+                redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
+                await redis_client.ping()
+                logger.info("Redis connection reestablished successfully")
         
         # Initialize PostgreSQL async engine
         global db_engine, db_session_factory
@@ -215,21 +238,26 @@ redis_client = None
 try:
     redis_host = os.getenv("REDIS_HOST", "redis")
     redis_port = int(os.getenv("REDIS_PORT", "6379"))
-    redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+    redis_password = os.getenv("REDIS_PASSWORD", "")
     
-    redis_client = redis.Redis(
-        host=redis_host,
-        port=redis_port,
-        password=redis_password,
-        decode_responses=True,
-        socket_connect_timeout=5,
-        socket_timeout=5,
-        retry_on_timeout=True
-    )
+    # Only pass password if it's set and not empty
+    redis_kwargs = {
+        "host": redis_host,
+        "port": redis_port,
+        "decode_responses": True,
+        "socket_connect_timeout": 5,
+        "socket_timeout": 5,
+        "retry_on_timeout": True
+    }
     
-    # Test Redis connection
-    redis_client.ping()
-    logger.info("Redis connection established for middleware")
+    if redis_password:
+        redis_kwargs["password"] = redis_password
+    
+    redis_client = redis.Redis(**redis_kwargs)
+    
+    # Note: ping() is async and will be tested in lifespan function
+    # We can't await here at module level, so skip the ping test
+    logger.info("Redis client initialized for middleware (connection will be tested in lifespan)")
 except Exception as e:
     logger.warning(f"Redis connection failed for middleware: {e}")
     redis_client = None

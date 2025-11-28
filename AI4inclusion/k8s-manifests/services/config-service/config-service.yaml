@@ -39,7 +39,7 @@ spec:
         effect: NoSchedule
       containers:
       - name: config-service
-        image: ai4v/config-service:latest
+        image: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/config-service:27112025-125033-IST
         ports:
         - containerPort: 8082
         env:

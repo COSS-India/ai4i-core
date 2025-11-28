@@ -39,12 +39,9 @@ spec:
         effect: NoSchedule
       containers:
       - name: api-gateway-service
-        image: ai4v/api-gateway-service:latest
+        image: 662074586476.dkr.ecr.ap-south-1.amazonaws.com/ai4voice/api-gateway-service:27112025-101836-IST
         ports:
         - containerPort: 8080
-        env:
-        - name: ENV_FILE
-          value: ".env"
         envFrom:
         - configMapRef:
             name: api-gateway-config
@@ -67,7 +64,7 @@ spec:
           failureThreshold: 3
         readinessProbe:
           httpGet:
-            path: /ready
+            path: /health
             port: 8080
           initialDelaySeconds: 10
           periodSeconds: 5

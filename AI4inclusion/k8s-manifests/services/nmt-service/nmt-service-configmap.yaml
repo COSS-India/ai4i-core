@@ -10,12 +10,14 @@ data:
   LOG_LEVEL: "INFO"
 
   # PostgreSQL Configuration
-  DATABASE_URL: "postgresql+asyncpg://ai4v_user:password123@postgres:5432/ai4v_db"
+  DATABASE_URL: "postgresql+asyncpg://ai4v_user:password123@postgres.dev.svc.cluster.local:5432/auth_db"
+  POSTGRES_HOST: "postgres.dev.svc.cluster.local"
   DB_POOL_SIZE: "20"
   DB_MAX_OVERFLOW: "10"
 
   # Redis Configuration
-  REDIS_HOST: "redis"
+  REDIS_HOST: "redis.dev.svc.cluster.local"
+  REDIS_PORT: "6379"
   REDIS_PORT_NUMBER: "6379"
   REDIS_TIMEOUT: "5"
 
