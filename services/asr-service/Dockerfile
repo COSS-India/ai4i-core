@@ -1,44 +1,66 @@
 # -----------------------------
 # STAGE 1 — BUILDER
 # -----------------------------
-FROM python:3.10-slim AS builder
+FROM python:3.11-slim AS builder
 WORKDIR /app
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        gcc \
+        g++ \
+        curl \
+        libpq-dev \
         ffmpeg \
-        libsndfile1 \
+        libsndfile1-dev \
         build-essential \
         git \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy everything
-COPY . /app
+# Copy Dhruva Observability Plugin
+COPY libs/dhruva_observability /app/libs/dhruva_observability
 
-# Install Python dependencies
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
+# Copy requirements and install dependencies
+COPY services/asr-service/requirements.txt .
+
+# Upgrade pip, setuptools, and wheel first
+RUN pip install --upgrade pip setuptools wheel
+
+# Install Python dependencies from requirements.txt first
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Then install the observability plugin (after its dependencies are installed)
+RUN pip install --no-cache-dir --user -e /app/libs/dhruva_observability
 
 
 # -----------------------------
 # STAGE 2 — RUNTIME
 # -----------------------------
-FROM python:3.10-slim AS runtime
+FROM python:3.11-slim AS runtime
 WORKDIR /app
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        curl \
+        libpq5 \
+        libssl3 \
+        libnss3 \
+        libstdc++6 \
+        ca-certificates \
         ffmpeg \
         libsndfile1 \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python libraries
-COPY --from=builder /usr/local /usr/local
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+
+# Copy Dhruva Observability Plugin
+COPY --from=builder /app/libs/dhruva_observability /app/libs/dhruva_observability
 
 # Copy application code
-COPY --from=builder /app /app
+COPY services/asr-service .
 
 # ❗ IMPORTANT FIX: REMOVE .env so ConfigMap overrides work
 RUN rm -f /app/.env || true
