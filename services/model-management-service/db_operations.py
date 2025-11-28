@@ -214,52 +214,22 @@ async def update_by_filter(filters: Dict[str, Any], data: Dict[str, Any]) -> int
 async def update_model(payload: ModelUpdateRequest):
     """
     Update model record in PostgreSQL and refresh Redis cache.
-    """
+    Note: modelId is used as identifier and is NOT changed during update.
+        """
 
     logger.info(f"Attempting to update model: {payload.modelId}")
 
     request_dict = payload.model_dump(exclude_none=True)
     now_epoch = int(time.time())
 
-    try:
-        cache = ModelCache.get(payload.modelId)
-    except Exception:
-        logger.warning(f"Model {payload.modelId} not found in cache")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Model not found in cache"
-        )
-
-    # 2. Patch cache
-    new_cache = cache.model_dump()
-
-    model_fields = cache.__class__.model_fields
-
-    for key, value in request_dict.items():
-        if key in model_fields and value is not None:
-            new_cache[key] = value
-
-    new_cache["updatedOn"] = now_epoch
-
-    # Convert to Redis-safe format before saving
-    new_cache = model_redis_safe_payload(new_cache)
-
-    # Save patched cache
-    try:
-        updated_cache = ModelCache(**new_cache)
-        updated_cache.save()
-        logger.info(f"Cache updated for model {payload.modelId}")
-    except Exception as ce:
-        logger.warning(f"Failed to update cache for {payload.modelId}: {ce}")
-
-    # 3. DB Patch Logic
+    # 1. Update DB first
     postgres_data = {}
 
     for key, value in request_dict.items():
         if value is None:
             continue    # PATCH: skip null fields
 
-        # Skip modelId (used only for filtering)
+        # Skip modelId (used only for filtering, not updated)
         if key == "modelId":
             continue
 
@@ -277,8 +247,77 @@ async def update_model(payload: ModelUpdateRequest):
     logger.info(f"Updating DB for model {payload.modelId} with fields: {list(postgres_data.keys())}")
     logger.debug(f"DB update data: {postgres_data}")
 
-    # 4. Repository update
+    # 2. Repository update
     result = await update_by_filter({"model_id": payload.modelId}, postgres_data)
+
+    # 3. Update Redis cache
+    # Try to get existing cache, or fetch from DB if cache doesn't exist
+    try:
+        cache = ModelCache.get(payload.modelId)
+        # Cache exists, patch it
+        new_cache = cache.model_dump()
+        model_fields = cache.__class__.model_fields
+
+        for key, value in request_dict.items():
+            if key in model_fields and value is not None:
+                new_cache[key] = value
+
+        new_cache["updatedOn"] = now_epoch
+    except Exception:
+        # Cache doesn't exist, fetch from DB and create cache entry
+        logger.info(f"Model {payload.modelId} not found in cache, fetching from DB to create cache entry")
+        db: AsyncSession = AppDatabase()
+        try:
+            stmt = select(Model).where(Model.model_id == payload.modelId)
+            result_db = await db.execute(stmt)
+            db_model = result_db.scalar()
+            
+            if not db_model:
+                logger.warning(f"Model {payload.modelId} not found in DB")
+                return result
+            
+            # Convert DB model to cache format
+            new_cache = _json_safe({
+                "modelId": db_model.model_id,
+                "version": db_model.version,
+                "submittedOn": db_model.submitted_on,
+                "updatedOn": db_model.updated_on,
+                "name": db_model.name,
+                "description": db_model.description,
+                "refUrl": db_model.ref_url,
+                "task": db_model.task,
+                "languages": db_model.languages,
+                "license": db_model.license,
+                "domain": db_model.domain,
+                "inferenceEndPoint": db_model.inference_endpoint,
+                "benchmarks": db_model.benchmarks,
+                "submitter": db_model.submitter,
+            })
+            
+            # Apply updates to the fetched data
+            for key, value in request_dict.items():
+                if key != "modelId" and value is not None:
+                    # Map camelCase to snake_case for DB fields
+                    if key == "refUrl":
+                        new_cache["refUrl"] = value
+                    elif key == "inferenceEndPoint":
+                        new_cache["inferenceEndPoint"] = value
+                    else:
+                        new_cache[key] = value
+            
+            new_cache["updatedOn"] = now_epoch
+        except Exception as e:
+            logger.exception(f"Error fetching model from DB for cache: {e}")
+            return result
+
+    # Convert to Redis-safe format and save
+    try:
+        new_cache = model_redis_safe_payload(new_cache)
+        updated_cache = ModelCache(**new_cache)
+        updated_cache.save()
+        logger.info(f"Cache updated for model {payload.modelId}")
+    except Exception as ce:
+        logger.warning(f"Failed to update cache for {payload.modelId}: {ce}")
 
     logger.info(f"Model {payload.modelId} successfully updated.")
 
@@ -474,6 +513,7 @@ async def save_service_to_db(payload: ServiceCreateRequest):
 async def update_service(request: ServiceUpdateRequest):
     """
     Update an existing service record in PostgreSQL and refresh Redis cache.
+    Note: serviceId is used as identifier and is NOT changed during update.
     """
 
     db: AsyncSession = AppDatabase()
@@ -483,34 +523,9 @@ async def update_service(request: ServiceUpdateRequest):
             logger.warning("Missing serviceId in update request")
             return 0
 
-        try:
-            cache = ServiceCache.get(request.serviceId)
-        except Exception:
-            logger.warning(f"Service {request.serviceId} not found in cache")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Service not found in cache"
-            )
-
         request_dict = request.model_dump(exclude_none=True)
-        new_cache = cache.model_dump()
-        cache_fields = cache.__class__.model_fields
 
-        # Patch only valid cache fields
-        for key, value in request_dict.items():
-            if key in cache_fields:
-                new_cache[key] = value
-
-        try:
-            updated_cache = ServiceCache(**new_cache)
-            updated_cache.save()
-            logger.info(f"Service {request.serviceId} cache refreshed")
-
-        except Exception as e:
-            logger.warning(f"Cache update failed for service {request.serviceId}: {e}")
-
-
-        # Build DB update dict
+        # 1. Build DB update dict
         db_update = {}
 
         if "name" in request_dict:
@@ -521,13 +536,21 @@ async def update_service(request: ServiceUpdateRequest):
             db_update["hardware_description"] = request_dict["hardwareDescription"]
         if "endpoint" in request_dict:
             db_update["endpoint"] = request_dict["endpoint"]
+        if "api_key" in request_dict:
+            db_update["api_key"] = request_dict["api_key"]
+        if "modelId" in request_dict:
+            db_update["model_id"] = request_dict["modelId"]
+        if "healthStatus" in request_dict:
+            db_update["health_status"] = _json_safe(request_dict["healthStatus"])
+        if "benchmarks" in request_dict:
+            db_update["benchmarks"] = _json_safe(request_dict["benchmarks"])
         # languagePair is not persisted on services table; skip
 
         if not db_update:
             logger.warning("No valid update fields provided for service update")
             return 0
 
-        # Update DB
+        # 2. Update DB
         stmt_select = select(Service).where(Service.service_id == request.serviceId)
         result = await db.execute(stmt_select)
         db_service = result.scalars().first()
@@ -546,6 +569,65 @@ async def update_service(request: ServiceUpdateRequest):
         await db.commit()
 
         logger.info(f"Service {request.serviceId} updated in DB: {db_update}")
+
+        # 3. Update Redis cache
+        # Try to get existing cache, or fetch from DB if cache doesn't exist
+        try:
+            cache = ServiceCache.get(request.serviceId)
+            # Cache exists, patch it
+            new_cache = cache.model_dump()
+            cache_fields = cache.__class__.model_fields
+
+            # Patch only valid cache fields
+            for key, value in request_dict.items():
+                if key in cache_fields:
+                    new_cache[key] = value
+        except Exception:
+            # Cache doesn't exist, fetch from DB and create cache entry
+            logger.info(f"Service {request.serviceId} not found in cache, fetching from DB to create cache entry")
+            try:
+                # Refresh to get updated data
+                await db.refresh(db_service)
+                
+                # Convert DB model to cache format
+                new_cache = _json_safe({
+                    "serviceId": db_service.service_id,
+                    "name": db_service.name,
+                    "serviceDescription": db_service.service_description,
+                    "hardwareDescription": db_service.hardware_description,
+                    "publishedOn": db_service.published_on,
+                    "modelId": db_service.model_id,
+                    "endpoint": db_service.endpoint,
+                    "apiKey": db_service.api_key,
+                    "healthStatus": db_service.health_status or {},
+                    "benchmarks": db_service.benchmarks or {},
+                })
+                
+                # Apply updates to the fetched data
+                for key, value in request_dict.items():
+                    if key != "serviceId" and value is not None:
+                        # Map to cache field names
+                        if key == "serviceDescription":
+                            new_cache["serviceDescription"] = value
+                        elif key == "hardwareDescription":
+                            new_cache["hardwareDescription"] = value
+                        elif key == "api_key":
+                            new_cache["apiKey"] = value
+                        elif key == "modelId":
+                            new_cache["modelId"] = value
+                        elif key in cache_fields:
+                            new_cache[key] = value
+            except Exception as e:
+                logger.exception(f"Error fetching service from DB for cache: {e}")
+                return 1
+
+        # Save updated cache
+        try:
+            updated_cache = ServiceCache(**new_cache)
+            updated_cache.save()
+            logger.info(f"Service {request.serviceId} cache refreshed")
+        except Exception as e:
+            logger.warning(f"Cache update failed for service {request.serviceId}: {e}")
 
         return 1
 
