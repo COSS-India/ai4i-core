@@ -57,13 +57,34 @@ cp services/tts-service/env.template services/tts-service/.env
 cp services/nmt-service/env.template services/nmt-service/.env
 
 # Frontend
-cp frontend/simple-ui/.env.template frontend/simple-ui/.env
+cp frontend/simple-ui/env.template frontend/simple-ui/.env
+
+cp services/alerting-service/env.template services/alerting-service/.env
+
+cp services/api-gateway-service/env.template services/api-gateway-service/.env
+
+cp services/auth-service/env.template services/auth-service/.env
+
+cp services/config-service/env.template services/config-service/.env
+
+cp services/dashboard-service/env.template services/dashboard-service/.env
+
+cp services/llm-service/env.template services/llm-service/.env
+
+cp services/metrics-service/env.template services/metrics-service/.env
+
+cp services/pipeline-service/env.template services/pipeline-service/.env
+
+cp services/telemetry-service/env.template services/telemetry-service/.env
 ```
 
 ### Step 4: Start Infrastructure Services
 ```bash
 # Start PostgreSQL, Redis, InfluxDB, Elasticsearch, Kafka
 docker-compose up -d postgres redis influxdb elasticsearch kafka zookeeper
+
+docker compose up -d --build postgres redis influxdb elasticsearch kafka zookeeper
+
 
 # Wait for services to be healthy (30-60 seconds)
 docker-compose ps
