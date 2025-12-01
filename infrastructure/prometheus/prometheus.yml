@@ -29,7 +29,8 @@ scrape_configs:
           - "nmt-service:8089"
           - "tts-service:8088"
           - "asr-service:8087"
-          - "llm-service:8090"
+          - "transliteration-service:8090"
+          - "llm-service:8091"
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
@@ -47,7 +48,8 @@ scrape_configs:
           - "nmt-service:8089"
           - "tts-service:8088"
           - "asr-service:8087"
-          - "llm-service:8090"
+          - "transliteration-service:8090"
+          - "llm-service:8091"
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance

@@ -454,6 +454,43 @@ services:
       # start_period: 30s
     restart: unless-stopped
 
+  transliteration-service:
+    build:
+      context: .
+      dockerfile: services/transliteration-service/Dockerfile
+    container_name: ai4v-transliteration-service
+    ports:
+      - "8094:8090"
+    environment:
+      - ENV_FILE=.env
+      - SERVICE_NAME=transliteration-service
+      - SERVICE_PORT=8090
+      - SERVICE_HOST=transliteration-service
+      - DATABASE_URL=postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=redis_secure_password_2024
+      - TRITON_ENDPOINT=65.1.35.3:8200
+      - TRITON_API_KEY=your_api_key
+      - LOG_LEVEL=INFO
+      - CONFIG_SERVICE_URL=http://config-service:8082
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+      # test: ["CMD", "curl", "-f", "http://localhost:8089/health"]
+      # interval: 30s
+      # timeout: 10s
+      # retries: 3
+      # start_period: 30s
+    restart: unless-stopped
+
   llm-service:
     build:
       context: ./services/llm-service
@@ -488,7 +525,7 @@ services:
       dockerfile: Dockerfile
     container_name: ai4v-pipeline-service
     ports:
-      - "8092:8090"
+      - "8093:8090"
     environment:
       - ENV_FILE=.env
     env_file:
@@ -505,6 +542,8 @@ services:
       nmt-service:
         condition: service_started
       tts-service:
+        condition: service_started
+      transliteration-service:
         condition: service_started
     networks:
       - microservices-network

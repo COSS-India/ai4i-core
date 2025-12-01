@@ -170,6 +170,40 @@ class StreamingInfo(BaseModel):
     max_connections: int = Field(..., description="Maximum concurrent connections")
     response_frequency_ms: int = Field(..., description="Response frequency in milliseconds")
 
+# Pydantic models for Transliteration endpoints
+class TransliterationLanguagePair(BaseModel):
+    """Language pair configuration for transliteration."""
+    sourceLanguage: str = Field(..., description="Source language code (e.g., 'en', 'hi', 'ta')")
+    targetLanguage: str = Field(..., description="Target language code")
+    sourceScriptCode: Optional[str] = Field(None, description="Script code for source")
+    targetScriptCode: Optional[str] = Field(None, description="Script code for target")
+
+class TransliterationTextInput(BaseModel):
+    """Text input for transliteration."""
+    source: str = Field(..., description="Input text to transliterate")
+
+class TransliterationInferenceConfig(BaseModel):
+    """Configuration for transliteration inference."""
+    serviceId: str = Field(..., description="Identifier for transliteration service/model")
+    language: TransliterationLanguagePair = Field(..., description="Language pair configuration")
+    isSentence: bool = Field(True, description="True for sentence-level, False for word-level")
+    numSuggestions: int = Field(0, description="Number of suggestions (0 for best, >0 for word-level only)")
+
+class TransliterationInferenceRequest(BaseModel):
+    """Transliteration inference request model."""
+    input: List[TransliterationTextInput] = Field(..., description="List of text inputs to transliterate", min_items=1)
+    config: TransliterationInferenceConfig = Field(..., description="Configuration for inference")
+    controlConfig: Optional[Dict[str, Any]] = Field(None, description="Additional control parameters")
+
+class TransliterationOutput(BaseModel):
+    """Transliteration output."""
+    source: str = Field(..., description="Source text")
+    target: Any = Field(..., description="Transliterated text (string or list of strings)")
+
+class TransliterationInferenceResponse(BaseModel):
+    """Transliteration inference response model."""
+    output: List[TransliterationOutput] = Field(..., description="Transliteration results")
+
 # Pydantic models for Pipeline endpoints
 class PipelineTaskType(str, Enum):
     """Pipeline task types."""
@@ -415,6 +449,7 @@ class RouteManager:
             '/api/v1/asr': 'asr-service',
             '/api/v1/tts': 'tts-service',
             '/api/v1/nmt': 'nmt-service',
+            '/api/v1/transliteration': 'transliteration-service',
             '/api/v1/llm': 'llm-service',
             '/api/v1/pipeline': 'pipeline-service'
         }
@@ -469,6 +504,10 @@ tags_metadata = [
         "description": "Text-to-Speech service endpoints. Convert text to speech audio.",
     },
     {
+        "name": "Transliteration",
+        "description": "Transliteration service endpoints. Convert text from one script to another.",
+    },
+    {
         "name": "Pipeline",
         "description": "Pipeline service endpoints. Execute multi-step AI processing pipelines.",
     },
@@ -513,6 +552,14 @@ async def spa_nmt():
 @app.get("/nmt/")
 async def spa_nmt_trailing():
     return RedirectResponse(url=f"{FRONTEND_BASE}/nmt", status_code=307)
+
+@app.get("/transliteration")
+async def spa_transliteration():
+    return RedirectResponse(url=f"{FRONTEND_BASE}/transliteration", status_code=307)
+
+@app.get("/transliteration/")
+async def spa_transliteration_trailing():
+    return RedirectResponse(url=f"{FRONTEND_BASE}/transliteration", status_code=307)
 
 @app.get("/pipeline")
 async def spa_pipeline():
@@ -627,6 +674,7 @@ def custom_openapi():
         ("/api/v1/asr", "ASR"),
         ("/api/v1/tts", "TTS"),
         ("/api/v1/nmt", "NMT"),
+        ("/api/v1/transliteration", "Transliteration"),
         ("/api/v1/pipeline", "Pipeline"),
         ("/api/v1/protected", "Protected"),
         ("/api/v1/status", "Status"),
@@ -885,8 +933,9 @@ async def api_status():
             "asr": os.getenv("ASR_SERVICE_URL", "http://asr-service:8087"),
             "tts": os.getenv("TTS_SERVICE_URL", "http://tts-service:8088"),
             "nmt": os.getenv("NMT_SERVICE_URL", "http://nmt-service:8089"),
-            "llm": os.getenv("LLM_SERVICE_URL", "http://llm-service:8090"),
-            "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8090")
+            "transliteration": os.getenv("TRANSLITERATION_SERVICE_URL", "http://transliteration-service:8090"),
+            "llm": os.getenv("LLM_SERVICE_URL", "http://llm-service:8091"),
+            "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8092")
         }
     }
 
@@ -1580,6 +1629,96 @@ async def nmt_health(
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/nmt/health", "nmt-service", headers=headers)
 
+# Transliteration Service Endpoints (Proxy to Transliteration Service)
+
+@app.post("/api/v1/transliteration/inference", response_model=TransliterationInferenceResponse, tags=["Transliteration"])
+async def transliteration_inference(
+    payload: TransliterationInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Perform transliteration inference"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    import json
+    # Convert Pydantic model to JSON for proxy
+    body = json.dumps(payload.dict()).encode()
+    headers: Dict[str, str] = {}
+    if credentials and credentials.credentials:
+        headers['Authorization'] = f"Bearer {credentials.credentials}"
+    if api_key:
+        headers['X-API-Key'] = api_key
+    return await proxy_to_service(None, "/api/v1/transliteration/inference", "transliteration-service", method="POST", body=body, headers=headers)
+
+@app.get("/api/v1/transliteration/languages", response_model=Dict[str, Any], tags=["Transliteration"])
+async def get_transliteration_languages(
+    request: Request,
+    model_id: Optional[str] = Query(None, description="Model ID to get languages for"),
+    service_id: Optional[str] = Query(None, description="Service ID to get languages for"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get supported languages for transliteration service"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers: Dict[str, str] = {}
+    if credentials and credentials.credentials:
+        headers['Authorization'] = f"Bearer {credentials.credentials}"
+    if api_key:
+        headers['X-API-Key'] = api_key
+    
+    # Build query parameters dict
+    query_params = {}
+    if service_id:
+        query_params["service_id"] = service_id
+    elif model_id:
+        query_params["model_id"] = model_id
+    
+    # Build path and pass params separately
+    path = "/api/v1/transliteration/languages"
+    
+    return await proxy_to_service_with_params(None, path, "transliteration-service", query_params, headers=headers)
+
+@app.get("/api/v1/transliteration/models", response_model=Dict[str, Any], tags=["Transliteration"])
+async def get_transliteration_models(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get available transliteration models"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers: Dict[str, str] = {}
+    if credentials and credentials.credentials:
+        headers['Authorization'] = f"Bearer {credentials.credentials}"
+    if api_key:
+        headers['X-API-Key'] = api_key
+    return await proxy_to_service(None, "/api/v1/transliteration/models", "transliteration-service", headers=headers)
+
+@app.get("/api/v1/transliteration/services", response_model=Dict[str, Any], tags=["Transliteration"])
+async def get_transliteration_services(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get available transliteration services"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers: Dict[str, str] = {}
+    if credentials and credentials.credentials:
+        headers['Authorization'] = f"Bearer {credentials.credentials}"
+    if api_key:
+        headers['X-API-Key'] = api_key
+    return await proxy_to_service(None, "/api/v1/transliteration/services", "transliteration-service", headers=headers)
+
+@app.get("/api/v1/transliteration/health", tags=["Transliteration"])
+async def transliteration_health(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Transliteration service health check"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/health", "transliteration-service", headers=headers)
+
 # Pipeline Service Endpoints (Proxy to Pipeline Service)
 
 @app.post("/api/v1/pipeline/inference", response_model=PipelineInferenceResponse, tags=["Pipeline"])
@@ -1699,8 +1838,9 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'asr-service': os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
-        'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
-        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
+        'transliteration-service': os.getenv('TRANSLITERATION_SERVICE_URL', 'http://transliteration-service:8090'),
+        'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8091'),
+        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8092')
     }
     
     try:
@@ -1769,8 +1909,9 @@ async def proxy_to_service_with_params(
         'asr-service': os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
-        'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
-        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
+        'transliteration-service': os.getenv('TRANSLITERATION_SERVICE_URL', 'http://transliteration-service:8090'),
+        'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8091'),
+        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8092')
     }
     
     try:
