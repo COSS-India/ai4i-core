@@ -12,7 +12,7 @@ The current version of platform consists of 12 microservices, 1 frontend applica
 
 - **API Gateway Service** (Port 8080) - Central entry point with routing, rate limiting, and authentication
 - **Authentication & Authorization Service** (Port 8081) - Identity management with JWT and OAuth2 | [Documentation](services/auth-service/docs/SERVICE_DOCUMENTATION.md)
-- **Configuration Management Service** (Port 8082) - Centralized configuration, feature flags with Unleash, and service registry
+- **Configuration Management Service** (Port 8082) - Centralized configuration, feature flags with Unleash, and service registry | [Documentation](services/config-service/docs/SERVICE_DOCUMENTATION.md)
 - **ASR Service** (Port 8087) - Speech-to-Text with 22+ Indic languages | [Documentation](services/asr-service/docs/SERVICE_DOCUMENTATION.md)
 - **TTS Service** (Port 8088) - Text-to-Speech with multiple voice options | [Documentation](services/tts-service/docs/SERVICE_DOCUMENTATION.md)
 - **NMT Service** (Port 8091) - Neural Machine Translation for Indic languages | [Documentation](services/nmt-service/docs/SERVICE_DOCUMENTATION.md)
