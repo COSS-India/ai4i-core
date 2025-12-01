@@ -1,4 +1,4 @@
-# NMT Service - Complete Documentation
+# NMT Service - Documentation
 
 ## Table of Contents
 
@@ -693,18 +693,4 @@ pytest tests/
 - **ReDoc**: Available at `http://localhost:8089/redoc`
 - **OpenAPI Spec**: Available at `http://localhost:8089/openapi.json`
 
----
-
-## Support
-
-For issues, questions, or contributions:
-
-- **GitHub Issues**: [Repository Issues](https://github.com/your-repo/issues)
-- **Email**: support@dhruva-platform.com
-- **Documentation**: [Platform Documentation](https://docs.dhruva-platform.com)
-
----
-
-**Last Updated**: 2024
-**Version**: 1.0.2
 
