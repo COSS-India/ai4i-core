@@ -1,0 +1,696 @@
+_format_version: "3.0"
+_transform: true
+
+# ============================================
+# AIV4-Core Kong API Gateway Configuration
+# ============================================
+# This file defines all services, routes, upstreams, and plugins
+# for the AIV4-Core microservices architecture.
+
+# ============================================
+# UPSTREAMS - Service pools with load balancing
+# ============================================
+upstreams:
+  - name: auth-service-upstream
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: config-service-upstream
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+
+  - name: metrics-service-upstream
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+
+  - name: telemetry-service-upstream
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+
+  - name: alerting-service-upstream
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+
+  - name: dashboard-service-upstream
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+
+  - name: asr-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: tts-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /api/v1/tts/health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+
+  - name: nmt-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /api/v1/nmt/health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+
+  - name: pipeline-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /api/v1/pipeline/health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+
+# ============================================
+# TARGETS - Backend service instances
+# ============================================
+targets:
+  - target: auth-service:8081
+    upstream: auth-service-upstream
+    weight: 100
+
+  - target: config-service:8082
+    upstream: config-service-upstream
+    weight: 100
+
+  - target: metrics-service:8083
+    upstream: metrics-service-upstream
+    weight: 100
+
+  - target: telemetry-service:8084
+    upstream: telemetry-service-upstream
+    weight: 100
+
+  - target: alerting-service:8085
+    upstream: alerting-service-upstream
+    weight: 100
+
+  - target: dashboard-service:8086
+    upstream: dashboard-service-upstream
+    weight: 100
+
+  - target: asr-service:8087
+    upstream: asr-service-upstream
+    weight: 100
+
+  - target: tts-service:8088
+    upstream: tts-service-upstream
+    weight: 100
+
+  - target: nmt-service:8089
+    upstream: nmt-service-upstream
+    weight: 100
+
+  - target: pipeline-service:8090
+    upstream: pipeline-service-upstream
+    weight: 100
+
+# ============================================
+# SERVICES - API service definitions
+# ============================================
+
+# Authentication Service (Public - No Auth Required)
+services:
+  - name: auth-service
+    url: http://auth-service-upstream
+    routes:
+      - name: auth-route
+        paths:
+          - /api/v1/auth
+        strip_path: true
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - PATCH
+        plugins:
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+                - POST
+                - PUT
+                - DELETE
+                - PATCH
+                - OPTIONS
+              credentials: true
+              max_age: 3600
+          - name: rate-limiting
+            config:
+              minute: 200
+              hour: 2000
+              limit_by: ip
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+              redis_database: 1
+              redis_timeout: 2000
+              redis_ssl: false
+              redis_ssl_verify: false
+          - name: request-transformer
+            config:
+              add:
+                headers:
+                  - "X-Correlation-ID:$(uuid)"
+                  - "X-Request-ID:$(uuid)"
+                  - "X-Forwarded-For:$(proxy_proxy_address)"
+          - name: response-transformer
+            config:
+              add:
+                headers:
+                  - "X-Served-By:Kong-Gateway"
+                  - "X-Service:Auth-Service"
+
+  # Configuration Service
+  - name: config-service
+    url: http://config-service-upstream
+    routes:
+      - name: config-route
+        paths:
+          - /api/v1/config
+        strip_path: true
+        plugins:
+          - name: key-auth
+            config:
+              key_names:
+                - apikey
+                - X-API-Key
+              hide_credentials: true
+          - name: rate-limiting
+            config:
+              minute: 200
+              hour: 2000
+              limit_by: consumer
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+              redis_database: 1
+              redis_timeout: 2000
+              redis_ssl: false
+              redis_ssl_verify: false
+          - name: request-transformer
+            config:
+              add:
+                headers:
+                  - "X-Correlation-ID:$(uuid)"
+                  - "X-Request-ID:$(uuid)"
+
+  # Metrics Service
+  - name: metrics-service
+    url: http://metrics-service-upstream
+    routes:
+      - name: metrics-route
+        paths:
+          - /api/v1/metrics
+        strip_path: true
+        plugins:
+          - name: key-auth
+            config:
+              key_names:
+                - apikey
+                - X-API-Key
+              hide_credentials: true
+          - name: rate-limiting
+            config:
+              minute: 300
+              hour: 3000
+              limit_by: consumer
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+              redis_database: 1
+              redis_timeout: 2000
+              redis_ssl: false
+              redis_ssl_verify: false
+
+  # Telemetry Service
+  - name: telemetry-service
+    url: http://telemetry-service-upstream
+    routes:
+      - name: telemetry-route
+        paths:
+          - /api/v1/telemetry
+        strip_path: true
+        plugins:
+          - name: key-auth
+            config:
+              key_names:
+                - apikey
+                - X-API-Key
+              hide_credentials: true
+          - name: rate-limiting
+            config:
+              minute: 500
+              hour: 5000
+              limit_by: consumer
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+              redis_database: 1
+              redis_timeout: 2000
+              redis_ssl: false
+              redis_ssl_verify: false
+
+  # Alerting Service
+  - name: alerting-service
+    url: http://alerting-service-upstream
+    routes:
+      - name: alerting-route
+        paths:
+          - /api/v1/alerting
+        strip_path: true
+        plugins:
+          - name: key-auth
+            config:
+              key_names:
+                - apikey
+                - X-API-Key
+              hide_credentials: true
+          - name: rate-limiting
+            config:
+              minute: 200
+              hour: 2000
+              limit_by: consumer
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+              redis_database: 1
+              redis_timeout: 2000
+              redis_ssl: false
+              redis_ssl_verify: false
+
+  # Dashboard Service
+  - name: dashboard-service
+    url: http://dashboard-service-upstream
+    routes:
+      - name: dashboard-route
+        paths:
+          - /api/v1/dashboard
+        strip_path: true
+        plugins:
+          - name: key-auth
+            config:
+              key_names:
+                - apikey
+                - X-API-Key
+              hide_credentials: true
+          - name: rate-limiting
+            config:
+              minute: 100
+              hour: 1000
+              limit_by: consumer
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+              redis_database: 1
+              redis_timeout: 2000
+              redis_ssl: false
+              redis_ssl_verify: false
+
+  # ASR Service (AI Service - Language-Aware Routing)
+  - name: asr-service
+    url: http://asr-service-upstream
+    routes:
+      - name: asr-route
+        paths:
+          - /api/v1/asr
+        strip_path: true
+        methods:
+          - GET
+          - POST
+          - PUT
+        plugins:
+          - name: key-auth
+            config:
+              key_names:
+                - apikey
+                - X-API-Key
+              hide_credentials: true
+          - name: rate-limiting
+            config:
+              minute: 100
+              hour: 1000
+              limit_by: consumer
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+              redis_database: 1
+              redis_timeout: 2000
+              redis_ssl: false
+              redis_ssl_verify: false
+          - name: request-transformer
+            config:
+              add:
+                headers:
+                  - "X-Correlation-ID:$(uuid)"
+                  - "X-Request-ID:$(uuid)"
+                  - "X-Gateway-Timestamp:$(now)"
+                  - "X-Language-Detection-Source:Kong"
+              replace:
+                headers:
+                  - "Host:asr-service:8087"
+          - name: response-transformer
+            config:
+              add:
+                headers:
+                  - "X-Served-By:Kong-Gateway"
+                  - "X-Service:ASR-Service"
+                  - "X-Response-Time:$(latency)"
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+                - POST
+                - OPTIONS
+              credentials: true
+              max_age: 3600
+
+  # TTS Service (AI Service)
+  - name: tts-service
+    url: http://tts-service-upstream
+    routes:
+      - name: tts-route
+        paths:
+          - /api/v1/tts
+        strip_path: true
+        methods:
+          - GET
+          - POST
+          - PUT
+        plugins:
+          - name: key-auth
+            config:
+              key_names:
+                - apikey
+                - X-API-Key
+              hide_credentials: true
+          - name: rate-limiting
+            config:
+              minute: 100
+              hour: 1000
+              limit_by: consumer
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+              redis_database: 1
+              redis_timeout: 2000
+              redis_ssl: false
+              redis_ssl_verify: false
+          - name: request-transformer
+            config:
+              add:
+                headers:
+                  - "X-Correlation-ID:$(uuid)"
+                  - "X-Request-ID:$(uuid)"
+                  - "X-Gateway-Timestamp:$(now)"
+          - name: response-transformer
+            config:
+              add:
+                headers:
+                  - "X-Served-By:Kong-Gateway"
+                  - "X-Service:TTS-Service"
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+                - POST
+                - OPTIONS
+              credentials: true
+
+  # NMT Service (AI Service - Language-Aware Routing)
+  - name: nmt-service
+    url: http://nmt-service-upstream
+    routes:
+      - name: nmt-route
+        paths:
+          - /api/v1/nmt
+        strip_path: true
+        methods:
+          - GET
+          - POST
+          - PUT
+        plugins:
+          - name: key-auth
+            config:
+              key_names:
+                - apikey
+                - X-API-Key
+              hide_credentials: true
+          - name: rate-limiting
+            config:
+              minute: 150
+              hour: 1500
+              limit_by: consumer
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+              redis_database: 1
+              redis_timeout: 2000
+              redis_ssl: false
+              redis_ssl_verify: false
+          - name: request-transformer
+            config:
+              add:
+                headers:
+                  - "X-Correlation-ID:$(uuid)"
+                  - "X-Request-ID:$(uuid)"
+                  - "X-Gateway-Timestamp:$(now)"
+          - name: response-transformer
+            config:
+              add:
+                headers:
+                  - "X-Served-By:Kong-Gateway"
+                  - "X-Service:NMT-Service"
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+                - POST
+                - OPTIONS
+              credentials: true
+
+  # Pipeline Service (AI Orchestration)
+  - name: pipeline-service
+    url: http://pipeline-service-upstream
+    routes:
+      - name: pipeline-route
+        paths:
+          - /api/v1/pipeline
+        strip_path: true
+        methods:
+          - GET
+          - POST
+          - PUT
+        plugins:
+          - name: key-auth
+            config:
+              key_names:
+                - apikey
+                - X-API-Key
+              hide_credentials: true
+          - name: rate-limiting
+            config:
+              minute: 50
+              hour: 500
+              limit_by: consumer
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+              redis_database: 1
+              redis_timeout: 2000
+              redis_ssl: false
+              redis_ssl_verify: false
+          - name: request-transformer
+            config:
+              add:
+                headers:
+                  - "X-Correlation-ID:$(uuid)"
+                  - "X-Request-ID:$(uuid)"
+                  - "X-Gateway-Timestamp:$(now)"
+          - name: response-transformer
+            config:
+              add:
+                headers:
+                  - "X-Served-By:Kong-Gateway"
+                  - "X-Service:Pipeline-Service"
+          - name: cors
+            config:
+              origins:
+                - "*"
+              methods:
+                - GET
+                - POST
+                - OPTIONS
+              credentials: true
+
+# ============================================
+# CONSUMERS - API key users
+# ============================================
+consumers:
+  - username: ai4voice-client
+    tags:
+      - production
+      - ai-services
+    keyauth_credentials:
+      - key: ${AI4VOICE_API_KEY}
+        tags:
+          - ai-services
+          - full-access
+
+  - username: asr-client
+    tags:
+      - production
+    keyauth_credentials:
+      - key: ${ASR_API_KEY}
+        tags:
+          - asr-only
+
+  - username: tts-client
+    tags:
+      - production
+    keyauth_credentials:
+      - key: ${TTS_API_KEY}
+        tags:
+          - tts-only
+
+  - username: nmt-client
+    tags:
+      - production
+    keyauth_credentials:
+      - key: ${NMT_API_KEY}
+        tags:
+          - nmt-only
+
+  - username: pipeline-client
+    tags:
+      - production
+    keyauth_credentials:
+      - key: ${PIPELINE_API_KEY}
+        tags:
+          - pipeline-only
+
+  - username: developer-client
+    tags:
+      - development
+    keyauth_credentials:
+      - key: ${DEVELOPER_API_KEY}
+        tags:
+          - development
+
+# ============================================
+# GLOBAL PLUGINS - Applied to all requests
+# ============================================
+plugins:
+  # Prometheus metrics plugin
+  - name: prometheus
+    config:
+      per_consumer: true
+      status_code_metrics: true
+      latency_metrics: true
+      bandwidth_metrics: true
+      upstream_health_metrics: true
+
+  # Correlation ID plugin (for request tracing)
+  - name: correlation-id
+    config:
+      header_name: X-Correlation-ID
+      echo_downstream: true
+
+  # Request ID plugin (commented out - not enabled in Kong 3.4 by default)
+  # - name: request-id
+  #   config:
+  #     header_name: X-Request-ID
+  #     echo_downstream: true
+
+# ============================================
+# END OF CONFIGURATION
+# ============================================
+# Note: Custom plugins like 'language-router' need to be
+# implemented separately and mounted into Kong container.
+# See IMPLEMENTATION_PROMPT.md for details.
+
