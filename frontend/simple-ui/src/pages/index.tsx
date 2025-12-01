@@ -1,116 +1,193 @@
 // Home page (landing page) with service overview and navigation cards
 
-import React from 'react';
-import Head from 'next/head';
-import Link from 'next/link';
 import {
   Box,
-  Heading,
-  Text,
-  SimpleGrid,
+  Button,
   Card,
   CardBody,
   CardHeader,
-  Button,
-  VStack,
-  Container,
-  useColorModeValue,
+  Heading,
   Icon,
+  SimpleGrid,
   Stat,
   StatLabel,
   StatNumber,
-  StatHelpText,
-} from '@chakra-ui/react';
+  Text,
+  VStack,
+  useColorModeValue,
+} from "@chakra-ui/react";
+import Head from "next/head";
+import { useRouter } from "next/router";
+import React, { useState } from "react";
+import { FaMicrophone } from "react-icons/fa";
 import {
-  IoVolumeHighOutline,
-  IoLanguageOutline,
   IoGitMergeOutline,
-} from 'react-icons/io5';
-import { FaMicrophone } from 'react-icons/fa';
-import ContentLayout from '../components/common/ContentLayout';
+  IoLanguageOutline,
+  IoSparklesOutline,
+  IoVolumeHighOutline,
+} from "react-icons/io5";
+import AuthModal from "../components/auth/AuthModal";
+import ContentLayout from "../components/common/ContentLayout";
+import { useAuth } from "../hooks/useAuth";
+import { useFeatureFlag } from "../hooks/useFeatureFlag";
 
 const HomePage: React.FC = () => {
-  const cardBg = useColorModeValue('white', 'gray.800');
-  const cardBorder = useColorModeValue('gray.200', 'gray.700');
-  const hoverBg = useColorModeValue('gray.50', 'gray.700');
+  const router = useRouter();
+  const { isAuthenticated, isLoading } = useAuth();
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<string | null>(
+    null
+  );
+  const cardBg = useColorModeValue("white", "gray.800");
+  const cardBorder = useColorModeValue("gray.200", "gray.700");
+  const hoverBg = useColorModeValue("gray.50", "gray.700");
+
+  // Navigate when authenticated and there's a pending navigation
+  React.useEffect(() => {
+    console.log("HomePage useEffect:", {
+      isAuthenticated,
+      isLoading,
+      pendingNavigation,
+      showAuthModal,
+    });
+    if (!isLoading && isAuthenticated && pendingNavigation) {
+      console.log(
+        "✅ Authentication detected, navigating to pending route:",
+        pendingNavigation
+      );
+      const navPath = pendingNavigation;
+      setPendingNavigation(null); // Clear before navigation
+      setShowAuthModal(false); // Close modal
+      router.push(navPath);
+    }
+  }, [isAuthenticated, isLoading, pendingNavigation, router, showAuthModal]);
+
+  // Handle case where user becomes authenticated but there's no pending navigation
+  React.useEffect(() => {
+    if (!isLoading && isAuthenticated && showAuthModal) {
+      console.log("HomePage: User authenticated, closing modal");
+      setShowAuthModal(false);
+      if (!pendingNavigation && router.pathname !== "/") {
+        console.log("HomePage: Redirecting to home after login");
+        router.push("/");
+      }
+    }
+  }, [isAuthenticated, isLoading, showAuthModal, pendingNavigation, router]);
+
+  const handleServiceClick = async (path: string) => {
+    console.log("handleServiceClick called:", {
+      path,
+      isAuthenticated,
+      isLoading,
+    });
+
+    if (isLoading) {
+      console.log("HomePage: Auth still loading, waiting...");
+      return;
+    }
+
+    if (isAuthenticated) {
+      console.log("HomePage: User authenticated, navigating to:", path);
+      setPendingNavigation(null);
+      setShowAuthModal(false);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      router.push(path);
+    } else {
+      console.log("HomePage: User not authenticated, showing modal for:", path);
+      setPendingNavigation(path);
+      setShowAuthModal(true);
+    }
+  };
+
+  const handleAuthModalClose = () => {
+    setShowAuthModal(false);
+  };
+
+  // Feature flags for each service
+  const asrEnabled = useFeatureFlag({ flagName: "asr-enabled" });
+  const ttsEnabled = useFeatureFlag({ flagName: "tts-enabled" });
+  const nmtEnabled = useFeatureFlag({ flagName: "nmt-enabled" });
+  const llmEnabled = useFeatureFlag({ flagName: "llm-enabled" });
+  const pipelineEnabled = useFeatureFlag({ flagName: "pipeline-enabled" });
 
   const services = [
     {
-      id: 'asr',
-      title: 'Speech Recognition',
-      description: 'Convert speech to text with support for 22+ Indian languages',
+      id: "asr",
+      title: "ASR – Automatic Speech Recognition",
+      description: "Convert speech to text in 12+ Indic languages",
       icon: FaMicrophone,
-      path: '/asr',
-      color: 'orange',
+      path: "/asr",
+      color: "orange",
+      enabled: asrEnabled.isEnabled,
     },
     {
-      id: 'tts',
-      title: 'Text-to-Speech',
-      description: 'Convert text to natural-sounding speech with multiple voice options',
+      id: "tts",
+      title: "TTS – Text-to-Speech",
+      description:
+        "Convert text to natural, human-like speech in multiple Indic languages and voices",
       icon: IoVolumeHighOutline,
-      path: '/tts',
-      color: 'blue',
+      path: "/tts",
+      color: "blue",
+      enabled: ttsEnabled.isEnabled,
     },
     {
-      id: 'nmt',
-      title: 'Translation',
-      description: 'Translate text between 22+ Indian languages with high accuracy',
+      id: "nmt",
+      title: "Text Translation",
+      description: "Translate text between 22+ Indic languages",
       icon: IoLanguageOutline,
-      path: '/nmt',
-      color: 'green',
+      path: "/nmt",
+      color: "green",
+      enabled: nmtEnabled.isEnabled,
     },
     {
-      id: 'pipeline',
-      title: 'Pipeline',
-      description: 'Chain multiple services together for end-to-end workflows',
-      icon: IoGitMergeOutline,
-      path: '/pipeline',
-      color: 'purple',
+      id: "llm",
+      title: "LLM",
+      description: "Enable contextual translation with GPT OSS 20B",
+      icon: IoSparklesOutline,
+      path: "/llm",
+      color: "pink",
+      enabled: llmEnabled.isEnabled,
     },
-  ];
-
-  const stats = [
-    { label: 'Total Services', value: '4' },
-    { label: 'Supported Languages', value: '22+' },
-    { label: 'Uptime', value: '99.9%' },
-  ];
+    {
+      id: "pipeline",
+      title: "Pipeline",
+      description:
+        "Chain multiple Language AI services together for seamless end-to-end workflows",
+      icon: IoGitMergeOutline,
+      path: "/pipeline",
+      color: "purple",
+      enabled: pipelineEnabled.isEnabled,
+    },
+  ].filter((service) => service.enabled); // Filter out disabled services
 
   return (
     <>
       <Head>
-        <title>Simple UI - AI Services Testing Interface</title>
-        <meta name="description" content="Test ASR, TTS, NMT, and Pipeline microservices with a modern web interface" />
+        <title>AI4Inclusion Console</title>
+        <meta
+          name="description"
+          content="Test ASR, TTS, NMT, LLM (GPT OSS 20B), and Pipeline microservices with a modern web interface"
+        />
       </Head>
 
       <ContentLayout>
         <VStack spacing={12} w="full">
           {/* Hero Section */}
-          <Box textAlign="center" py="4rem">
-            <Heading
-              size="xl"
-              fontWeight="bold"
-              color="gray.800"
-              mb={4}
-            >
-              AI Services Testing Interface
+          <Box textAlign="center" pt="2rem" pb="4rem">
+            <Heading size="xl" fontWeight="bold" color="gray.800" mb={4}>
+              AI Accessibility Studio
             </Heading>
-            <Text
-              fontSize="lg"
-              color="gray.600"
-              maxW="600px"
-              mx="auto"
-            >
-              Test and interact with ASR, TTS, NMT, and Pipeline microservices through a modern, 
-              user-friendly web interface. Experience the power of AI4Bharat&apos;s language technologies.
+            <Text fontSize="lg" color="gray.600" maxW="600px" mx="auto">
+              Test and explore NLP and LLM models
             </Text>
           </Box>
 
           {/* Service Cards Grid */}
           <SimpleGrid
-            columns={{ base: 1, md: 2, lg: 4 }}
+            columns={{ base: 1, md: 2, lg: 2, xl: 5 }}
             spacing={6}
             w="full"
-            maxW="1400px"
+            maxW="1600px"
             mx="auto"
           >
             {services.map((service) => (
@@ -122,8 +199,8 @@ const HomePage: React.FC = () => {
                 borderRadius="lg"
                 boxShadow="md"
                 _hover={{
-                  transform: 'translateY(-4px)',
-                  boxShadow: 'xl',
+                  transform: "translateY(-4px)",
+                  boxShadow: "xl",
                   bg: hoverBg,
                 }}
                 transition="all 0.2s"
@@ -152,18 +229,22 @@ const HomePage: React.FC = () => {
                     >
                       {service.description}
                     </Text>
-                    <Link href={service.path} passHref>
-                      <Button
-                        colorScheme={service.color}
-                        size="md"
-                        w="full"
-                        _hover={{
-                          transform: 'translateY(-1px)',
-                        }}
-                      >
-                        Try {service.title}
-                      </Button>
-                    </Link>
+
+                    {/* Auth-aware navigation button */}
+                    <Button
+                      colorScheme={service.color}
+                      size="md"
+                      w="full"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        handleServiceClick(service.path);
+                      }}
+                      _hover={{
+                        transform: "translateY(-1px)",
+                      }}
+                    >
+                      Try it now
+                    </Button>
                   </VStack>
                 </CardBody>
               </Card>
@@ -173,57 +254,42 @@ const HomePage: React.FC = () => {
           {/* Quick Stats Section */}
           <Box w="full" maxW="800px" mx="auto">
             <Heading size="lg" textAlign="center" mb={8} color="gray.800">
-              Platform Statistics
+              Platform Insights
             </Heading>
-            <SimpleGrid columns={{ base: 1, md: 3 }} spacing={8}>
-              {stats.map((stat, index) => (
-                <Stat key={index} textAlign="center">
-                  <StatLabel color="gray.600" fontSize="sm">
-                    {stat.label}
-                  </StatLabel>
-                  <StatNumber color="orange.600" fontSize="2xl">
-                    {stat.value}
-                  </StatNumber>
-                  <StatHelpText color="gray.500">
-                    {index === 0 && 'Available Services'}
-                    {index === 1 && 'Indian Languages'}
-                    {index === 2 && 'Reliability'}
-                  </StatHelpText>
-                </Stat>
-              ))}
+            <SimpleGrid
+              columns={{ base: 1, md: 2 }}
+              spacing={8}
+              justifyItems="center"
+            >
+              <Stat textAlign="center">
+                <StatLabel color="gray.600" fontSize="sm">
+                  Total Services
+                </StatLabel>
+                <StatNumber color="orange.600" fontSize="2xl">
+                  {services.length}
+                </StatNumber>
+              </Stat>
+              <Stat textAlign="center">
+                <StatLabel color="gray.600" fontSize="sm">
+                  Supported Languages
+                </StatLabel>
+                <StatNumber color="orange.600" fontSize="2xl">
+                  22+
+                </StatNumber>
+              </Stat>
             </SimpleGrid>
           </Box>
 
-          {/* Getting Started Section */}
-          <Box
-            bg="orange.50"
-            p={8}
-            borderRadius="lg"
-            w="full"
-            maxW="800px"
-            mx="auto"
-            textAlign="center"
-          >
-            <Heading size="md" color="gray.800" mb={4}>
-              Getting Started
-            </Heading>
-            <Text color="gray.600" mb={6}>
-              Set up your API key to start testing the AI services. 
-              Each service supports real-time processing and provides detailed statistics.
-            </Text>
-            <Button
-              colorScheme="orange"
-              size="lg"
-              onClick={() => {
-                // This will be handled by the Header component's API key modal
-                window.dispatchEvent(new CustomEvent('open-api-key-modal'));
-              }}
-            >
-              Set Up API Key
-            </Button>
-          </Box>
+          {/* Getting Started section removed per requirements */}
         </VStack>
       </ContentLayout>
+
+      {/* Auth Modal for service access */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={handleAuthModalClose}
+        initialMode="login"
+      />
     </>
   );
 };
