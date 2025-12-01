@@ -6,7 +6,7 @@ A comprehensive microservices platform built with FastAPI, following the AI4I-Co
 
 <img width="413" height="392" alt="image" src="https://github.com/user-attachments/assets/78400e0a-d180-4c74-9e75-1c15b4b4c8bb" />
 
-The current version of platform consists of 12 microservices, 1 frontend application, and 7 infrastructure components:
+The current version of platform consists of 8 microservices, 1 frontend application, and 7 infrastructure components:
 
 ### Microservices
 
