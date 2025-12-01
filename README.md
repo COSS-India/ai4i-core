@@ -46,7 +46,7 @@ The current version of platform consists of 12 microservices, 1 frontend applica
 - Request/response visualization with stats
 - Audio waveform visualization
 
-**Technology Stack**: Next.js 13.1.1, TypeScript, Chakra UI, TanStack React Query, Socket.IO Client, Framer Motion
+**Technology Stack**: Next.js 13.1.1, TypeScript, Chakra UI, TanStack React Query, Socket.IO Client
 
 ## 🚀 Getting Started
 
