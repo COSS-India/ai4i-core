@@ -1,8 +1,8 @@
-## AI4I Core Observability & Dhruva Plugin – End‑to‑End Guide
+## AI4I Core Observability – AI4ICore Plugin End‑to‑End Guide
 
 This is the single, up‑to‑date guide for how observability works in AI4I Core:
 
-- **What we use:** Dhruva Observability Plugin (`libs/dhruva_observability`) + Prometheus + Grafana  
+- **What we use:** AI4ICore Observability Plugin (`libs/ai4icore_observability`) + Prometheus + Grafana  
 - **Where metrics live:** On each service (NMT, TTS, ASR, LLM), not on the API gateway  
 - **How it is wired:** Via Docker build (`pip install -e`), Prometheus scrape config, and Grafana dashboards  
 
@@ -10,7 +10,7 @@ Older documents about `ai4i_observability` and low‑level build details are now
 
 ---
 
-## 1. What You Get From the Dhruva Observability Plugin
+## 1. What You Get From the AI4ICore Observability Plugin
 
 - **Automatic request metrics**
   - Counts and latencies for every HTTP request
@@ -41,12 +41,12 @@ At a high level:
 ```text
 Client/API Gateway (8080) ──► NMT/TTS/ASR/LLM services
                                    │
-                                   │ (Dhruva plugin exposes /enterprise/metrics)
+                                   │ (AI4ICore plugin exposes /enterprise/metrics)
                                    ▼
                          Prometheus (9090) ──► Grafana (3001)
 ```
 
-- Each service runs its **own FastAPI app** and mounts the Dhruva plugin.  
+- Each service runs its **own FastAPI app** and mounts the AI4ICore plugin.  
 - Each service exposes:
   - `/enterprise/metrics` (plugin metrics, scraped by Prometheus)
   - `/enterprise/health` (plugin health)
@@ -74,13 +74,13 @@ Prometheus runs inside the Docker network and talks to services on container por
 
 ## 3. Build & Packaging Model (How the Plugin Reaches the Service)
 
-The Dhruva plugin is a **pip package** stored in the repo as source:
+The AI4ICore plugin is a **pip package** stored in the repo as source:
 
 ```text
 libs/
-  dhruva_observability/
-    dhruva_observability/   # package code
-    pyproject.toml          # package metadata & deps
+  ai4icore_observability/
+    ai4icore_observability/   # package code
+    pyproject.toml            # package metadata & deps
     README.md
 ```
 
@@ -92,34 +92,34 @@ Each service’s Dockerfile:
 Example (NMT/TTS Dockerfile pattern):
 
 ```dockerfile
-# Copy Dhruva plugin source into image
-COPY libs/dhruva_observability /app/libs/dhruva_observability
+# Copy AI4ICore plugin source into image
+COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 
 # Install as editable pip package in the builder image
-RUN pip install --no-cache-dir --user -e /app/libs/dhruva_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 ```
 
 ### What `pip install -e` does (short version)
 
 - Reads `pyproject.toml` and installs required dependencies (FastAPI, Prometheus client, etc.).  
-- Creates a small `.egg-link` file in `site-packages` that points to `/app/libs/dhruva_observability`.  
+- Creates a small `.egg-link` file in `site-packages` that points to `/app/libs/ai4icore_observability`.  
 - Python import then works in your code:
 
 ```python
-from dhruva_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_observability import ObservabilityPlugin, PluginConfig
 ```
 
 You do **not** need to set `PYTHONPATH` manually for the plugin; pip handles that.
 
 ### Shared‑code vs plugin (why they are different)
 
-- The Dhruva plugin is a **package with its own dependencies**, so using `pip install -e` is appropriate.  
+- The AI4ICore plugin is a **package with its own dependencies**, so using `pip install -e` is appropriate.  
 - Other shared code (for example, common auth/DB helpers) can be copied as plain Python modules (like a `common/` folder) and imported via `PYTHONPATH`.  
 - Both patterns can coexist; this guide focuses on the plugin side.
 
 ---
 
-## 4. Integrating the Dhruva Plugin into a Service
+## 4. Integrating the AI4ICore Plugin into a Service
 
 The integration has two main parts:
 
@@ -134,7 +134,7 @@ In the NMT and TTS Dockerfiles you will find:
 COPY libs/dhruva_observability /app/libs/dhruva_observability
 RUN pip install --no-cache-dir --user -e /app/libs/dhruva_observability
 ```
-
+  
 This is all that is required on the build side.
 
 ### 4.2 `main.py` changes – NMT service
@@ -143,11 +143,11 @@ Key parts of `services/nmt-service/main.py`:
 
 ```python
 from fastapi import FastAPI
-from dhruva_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_observability import ObservabilityPlugin, PluginConfig
 
 app = FastAPI(..., lifespan=lifespan)
 
-# Initialize Dhruva Observability Plugin
+# Initialize AI4ICore Observability Plugin
 config = PluginConfig.from_env()
 config.enabled = True
 if not config.customers:
@@ -171,7 +171,7 @@ Key parts of `services/tts-service/main.py`:
 
 ```python
 from fastapi import FastAPI
-from dhruva_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_observability import ObservabilityPlugin, PluginConfig
 
 app = FastAPI(..., lifespan=lifespan)
 
@@ -190,7 +190,7 @@ The pattern is identical; only the `apps` list changes to reflect the service (�
 
 ### 4.4 ASR and other services
 
-- NMT and TTS are already integrated with Dhruva.  
+- NMT and TTS are already integrated with AI4ICore plugin.  
 - ASR and other services can be integrated by repeating the **same two steps**:
   1. Add the `COPY` + `pip install -e` lines to the Dockerfile.  
   2. Import and register `ObservabilityPlugin` in `main.py` with `apps=["asr"]` (or the appropriate app name).
@@ -217,10 +217,10 @@ File: `infrastructure/prometheus/prometheus.yml`
         - "llm-service:8090"
 ```
 
-- Dhruva enterprise metrics (plugin):
+- AI4ICore enterprise metrics (plugin):
 
 ```yaml
-- job_name: "dhruva-enterprise"
+- job_name: "ai4icore-enterprise"
   scrape_interval: 5s
   metrics_path: /enterprise/metrics
   static_configs:
@@ -235,7 +235,7 @@ Important points:
 
 - Prometheus talks to services on **container ports** (`8089`, `8088`, `8087`, `8090`).  
 - Prometheus runs in the same Docker network, so it can use service names like `nmt-service`.  
-- The Dhruva plugin metrics are all exposed under `/enterprise/metrics`.
+- The AI4ICore plugin metrics are all exposed under `/enterprise/metrics`.
 
 ### 5.2 Grafana datasource
 
@@ -250,7 +250,7 @@ Dashboards can be provisioned via JSON files under `infrastructure/grafana/provi
 
 ## 6. Environment Variables
 
-### 6.1 Dhruva plugin configuration
+### 6.1 AI4ICore plugin configuration
 
 Core variables (read by `PluginConfig.from_env()`):
 
@@ -340,7 +340,7 @@ curl http://localhost:8091/enterprise/metrics | grep telemetry_obsv_nmt_characte
 
 Open `http://localhost:9090` and:
 
-- Go to **Status → Targets** and check `ai4i-services` and `dhruva-enterprise` jobs are `UP`.  
+- Go to **Status → Targets** and check `ai4i-services` and `ai4icore-enterprise` jobs are `UP`.  
 - Use the **Graph** tab with queries such as:
 
 ```promql
@@ -361,7 +361,7 @@ Open `http://localhost:3001`:
 
 ---
 
-## 8. Historical Note: From `ai4i_observability` to Dhruva Plugin
+## 8. Historical Note: From `ai4i_observability` to AI4ICore Observability Plugin
 
 Originally, the project used a custom `ai4i_observability` package:
 
@@ -369,7 +369,7 @@ Originally, the project used a custom `ai4i_observability` package:
 - Required **manual** metric calls, e.g. `record_translation(...)`, `record_tts_characters(...)`.  
 - Metric names were prefixed with `ai4i_...` (for example, `ai4i_requests_total`).
 
-The Dhruva Observability Plugin replaced this with:
+The AI4ICore Observability Plugin replaced this with:
 
 - Automatic metric extraction from request bodies and headers.  
 - New metric names with `telemetry_obsv_...` prefix.  
@@ -377,7 +377,7 @@ The Dhruva Observability Plugin replaced this with:
 
 You may still see some legacy files related to `ai4i_observability` in the repo, but for new work you should:
 
-- Use **Dhruva Observability Plugin** as described in this guide.  
+- Use **AI4ICore Observability Plugin** as described in this guide.  
 - Prefer metrics with the `telemetry_obsv_` prefix in Prometheus and Grafana.  
 
 ---
@@ -387,8 +387,8 @@ You may still see some legacy files related to `ai4i_observability` in the repo,
 To recap the steps in the simplest possible checklist:
 
 1. **Add the plugin to your service Dockerfile**
-   - `COPY libs/dhruva_observability /app/libs/dhruva_observability`
-   - `RUN pip install --no-cache-dir --user -e /app/libs/dhruva_observability`
+   - `COPY libs/ai4icore_observability /app/libs/ai4icore_observability`
+   - `RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability`
 2. **Register the plugin in your FastAPI `main.py`**
    - Import `ObservabilityPlugin` and `PluginConfig`  
    - Create config via `PluginConfig.from_env()`  

@@ -2313,7 +2313,7 @@
   "refresh": "30s",
   "schemaVersion": 42,
   "tags": [
-    "dhruva",
+    "ai4icore",
     "devops",
     "operations",
     "monitoring"
@@ -2360,7 +2360,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Dhruva DevOps Operations Dashboard-v5",
-  "uid": "dhruva-devops-operational-dashboard-v5",
+  "title": "AI4ICore DevOps Operations Dashboard-v5",
+  "uid": "ai4icore-devops-operational-dashboard-v5",
   "version": 12
 }

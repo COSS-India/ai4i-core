@@ -17,8 +17,8 @@ RUN apt-get update && \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Dhruva Observability Plugin
-COPY libs/dhruva_observability /app/libs/dhruva_observability
+# Copy AI4ICore Observability Plugin
+COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 
 # Copy requirements and install dependencies
 COPY services/asr-service/requirements.txt .
@@ -30,7 +30,7 @@ RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Then install the observability plugin (after its dependencies are installed)
-RUN pip install --no-cache-dir --user -e /app/libs/dhruva_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 
 
 # -----------------------------
@@ -56,8 +56,8 @@ RUN apt-get update && \
 COPY --from=builder /root/.local /root/.local
 ENV PATH=/root/.local/bin:$PATH
 
-# Copy Dhruva Observability Plugin
-COPY --from=builder /app/libs/dhruva_observability /app/libs/dhruva_observability
+# Copy AI4ICore Observability Plugin
+COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 
 # Copy application code
 COPY services/asr-service .

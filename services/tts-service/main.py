@@ -41,8 +41,8 @@ from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
 
-# Observability integration - Dhruva Observability Plugin
-from dhruva_observability import ObservabilityPlugin, PluginConfig
+# Observability integration - AI4ICore Observability Plugin
+from ai4icore_observability import ObservabilityPlugin, PluginConfig
 
 # Configure logging
 logging.basicConfig(
@@ -247,9 +247,9 @@ app = FastAPI(
         }
     ],
     contact={
-        "name": "Dhruva Platform Team",
-        "url": "https://github.com/AI4Bharat/Dhruva",
-        "email": "support@dhruva-platform.com"
+        "name": "AI4ICore Team",
+        "url": "https://github.com/AI4X",
+        "email": "support@ai4x.com"
     },
     license_info={
         "name": "MIT",
@@ -258,7 +258,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Initialize Dhruva Observability Plugin
+# Initialize AI4ICore Observability Plugin
 # Plugin automatically extracts metrics from request bodies - no manual recording needed!
 config = PluginConfig.from_env()
 config.enabled = True  # Enable plugin
@@ -269,7 +269,7 @@ if not config.apps:
 
 plugin = ObservabilityPlugin(config)
 plugin.register_plugin(app)
-logger.info("✅ Dhruva Observability Plugin initialized for TTS service")
+logger.info("✅ AI4ICore Observability Plugin initialized for TTS service")
 
 # Add CORS middleware
 app.add_middleware(
