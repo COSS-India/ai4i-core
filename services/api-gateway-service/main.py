@@ -1913,7 +1913,7 @@ async def delete_model(
         headers=headers,
     )
 
-@app.post("/api/v1/model-management/models", response_model=str, tags=["Model Management"])
+@app.post("/api/v1/model-management/models/publish", response_model=str, tags=["Model Management"])
 async def publish_model(
     model_id: str,
     request: Request,
@@ -1935,7 +1935,7 @@ async def publish_model(
     )
 
 
-@app.post("/api/v1/model-management/models", response_model=str, tags=["Model Management"])
+@app.post("/api/v1/model-management/models/unpublish", response_model=str, tags=["Model Management"])
 async def unpublish_model(
     model_id: str,
     request: Request,
