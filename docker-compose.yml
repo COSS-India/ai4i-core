@@ -614,6 +614,43 @@ services:
       # start_period: 30s
     restart: unless-stopped
 
+  model-management-service:
+    build:
+      context: ./services/model-management-service
+      dockerfile: Dockerfile
+    container_name: ai4v-model-management-service
+    ports:
+      - "8094:8091"
+    environment:
+      - APP_DB_USER=${POSTGRES_USER}
+      - APP_DB_PASSWORD=${POSTGRES_PASSWORD}
+      - APP_DB_HOST=postgres
+      - APP_DB_PORT=5432
+      - APP_DB_NAME=model_management_db
+      - AUTH_DB_USER=${POSTGRES_USER}
+      - AUTH_DB_PASSWORD=${POSTGRES_PASSWORD}
+      - AUTH_DB_HOST=postgres
+      - AUTH_DB_PORT=5432
+      - AUTH_DB_NAME=auth_db
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - RATE_LIMIT_PER_MINUTE=${MODEL_MANAGEMENT_RATE_LIMIT_PER_MINUTE:-60}
+      - RATE_LIMIT_PER_HOUR=${MODEL_MANAGEMENT_RATE_LIMIT_PER_HOUR:-1000}
+      - AUTH_ENABLED=${MODEL_MANAGEMENT_AUTH_ENABLED:-true}
+      - REQUIRE_API_KEY=${MODEL_MANAGEMENT_REQUIRE_API_KEY:-true}
+      - ALLOW_ANONYMOUS_ACCESS=${MODEL_MANAGEMENT_ALLOW_ANONYMOUS_ACCESS:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
   simple-ui-frontend:
     build:
       context: ./frontend/simple-ui
