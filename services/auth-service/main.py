@@ -6,9 +6,10 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
-from fastapi import FastAPI, Request, HTTPException, Depends, status
+from fastapi import FastAPI, Request, HTTPException, Depends, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import RedirectResponse
 import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -19,9 +20,11 @@ from models import (
     LoginRequest, LoginResponse, TokenRefreshRequest, TokenRefreshResponse,
     TokenValidationResponse, PasswordChangeRequest, PasswordResetRequest,
     PasswordResetConfirm, LogoutRequest, LogoutResponse, APIKeyCreate,
-    APIKeyResponse, OAuth2Provider, OAuth2Callback
+    APIKeyResponse, OAuth2Provider, OAuth2Callback, Role, UserRole
 )
+from pydantic import BaseModel
 from auth_utils import AuthUtils
+from oauth_utils import OAuthUtils
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -120,12 +123,40 @@ async def startup_event():
     
     try:
         # Initialize Redis connection
+        redis_host = os.getenv('REDIS_HOST', 'redis')
+        redis_port = os.getenv('REDIS_PORT', '6379')
+        redis_password = os.getenv('REDIS_PASSWORD', '')
+        
+        # Build Redis URL - only include password if it's set
+        if redis_password:
+            redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
+        else:
+            redis_url = f"redis://{redis_host}:{redis_port}"
+        
         redis_client = redis.from_url(
-            f"redis://:{os.getenv('REDIS_PASSWORD', 'redis_secure_password_2024')}@"
-            f"{os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', '6379')}"
+            redis_url,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True
         )
-        await redis_client.ping()
-        logger.info("Connected to Redis")
+        
+        # Try to connect with retries
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                await redis_client.ping()
+                logger.info("Connected to Redis")
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Redis ping attempt {attempt + 1}/{max_retries} failed: {e}, retrying...")
+                    await asyncio.sleep(2)
+                else:
+                    logger.warning(f"Redis connection failed after {max_retries} attempts: {e}")
+                    logger.warning("Proceeding without Redis (session management disabled)")
+                    redis_client = None
+                    break
         
         # Initialize PostgreSQL connection
         database_url = os.getenv(
@@ -206,6 +237,30 @@ async def health_check():
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail="Service unhealthy")
 
+@app.get("/ready")
+async def readiness_check():
+    """Readiness check endpoint for Kubernetes probes"""
+    try:
+        # Check PostgreSQL connectivity (required for readiness)
+        if db_engine:
+            try:
+                async with db_engine.begin() as conn:
+                    await conn.execute(text("SELECT 1"))
+                return {
+                    "status": "ready",
+                    "service": "auth-service"
+                }
+            except Exception as e:
+                logger.error(f"PostgreSQL readiness check failed: {e}")
+                raise HTTPException(status_code=503, detail="Service not ready")
+        else:
+            raise HTTPException(status_code=503, detail="Database not initialized")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        raise HTTPException(status_code=503, detail="Service not ready")
+
 @app.get("/api/v1/auth/status")
 async def auth_status():
     """Authentication service status"""
@@ -270,6 +325,15 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     )
     
     db.add(db_user)
+    await db.flush()  # Flush to ensure the user is added to the session
+    
+    # Assign default USER role to new users
+    result = await db.execute(select(Role).where(Role.name == 'USER'))
+    user_role_obj = result.scalar_one_or_none()
+    if user_role_obj:
+        user_role = UserRole(user_id=db_user.id, role_id=user_role_obj.id)
+        db.add(user_role)
+    
     await db.commit()
     await db.refresh(db_user)
     
@@ -299,21 +363,26 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    # Get user roles
+    user_roles = await AuthUtils.get_user_roles(db, user.id)
+    
     # Generate tokens
     access_token_expires = timedelta(minutes=15)
     refresh_token_expires = timedelta(days=7) if login_data.remember_me else timedelta(hours=24)
     
     access_token = AuthUtils.create_access_token(
         data={"sub": str(user.id), "email": user.email, "username": user.username},
-        expires_delta=access_token_expires
+        expires_delta=access_token_expires,
+        roles=user_roles
     )
     
     refresh_token = AuthUtils.create_refresh_token(
         data={"sub": str(user.id), "email": user.email},
-        expires_delta=refresh_token_expires
+        expires_delta=refresh_token_expires,
+        roles=user_roles
     )
     
-    # Create session
+    # Create session using raw SQL to avoid async ORM issues
     session_token = AuthUtils.generate_session_token()
     device_info = {
         "ip_address": request.client.host if request.client else None,
@@ -321,19 +390,24 @@ async def login(
         "remember_me": login_data.remember_me
     }
     
-    await AuthUtils.create_user_session(
-        db=db,
-        user_id=user.id,
-        session_token=session_token,
-        refresh_token=refresh_token,
-        device_info=device_info,
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
-        expires_delta=refresh_token_expires
+    # Insert session row (Core insert) and update last_login in same commit
+    from sqlalchemy import insert as sa_insert
+    now = datetime.utcnow()
+    expires_at = now + refresh_token_expires
+    await db.execute(
+        sa_insert(UserSession.__table__).values(
+            user_id=user.id,
+            session_token=session_token,
+            refresh_token=refresh_token,
+            device_info=device_info,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            is_active=True,
+            expires_at=expires_at
+        )
     )
+    user.last_login = now
     
-    # Update last login
-    user.last_login = datetime.utcnow()
     await db.commit()
     
     logger.info(f"User logged in: {user.email}")
@@ -341,23 +415,8 @@ async def login(
     return LoginResponse(
         access_token=access_token,
         refresh_token=refresh_token,
-        expires_in=int(access_token_expires.total_seconds()),
-        user=UserResponse(
-            id=user.id,
-            email=user.email,
-            username=user.username,
-            full_name=user.full_name,
-            phone_number=user.phone_number,
-            timezone=user.timezone,
-            language=user.language,
-            is_active=user.is_active,
-            is_verified=user.is_verified,
-            is_superuser=user.is_superuser,
-            created_at=user.created_at,
-            updated_at=user.updated_at,
-            last_login=user.last_login,
-            avatar_url=user.avatar_url
-        )
+        token_type="bearer",
+        expires_in=int(access_token_expires.total_seconds())
     )
 
 @app.post("/api/v1/auth/refresh", response_model=TokenRefreshResponse)
@@ -408,11 +467,15 @@ async def refresh_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    # Get user roles
+    user_roles = await AuthUtils.get_user_roles(db, user.id)
+    
     # Generate new access token
     access_token_expires = timedelta(minutes=15)
     access_token = AuthUtils.create_access_token(
         data={"sub": str(user.id), "email": user.email, "username": user.username},
-        expires_delta=access_token_expires
+        expires_delta=access_token_expires,
+        roles=user_roles
     )
     
     # Update session last accessed
@@ -449,24 +512,47 @@ async def logout(
 
 @app.get("/api/v1/auth/validate", response_model=TokenValidationResponse)
 async def validate_token(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Validate token and return user info"""
-    permissions = await AuthUtils.get_user_permissions(db_session(), current_user.id)
+    permissions = await AuthUtils.get_user_permissions(db, current_user.id)
+    roles = await AuthUtils.get_user_roles(db, current_user.id)
     
     return TokenValidationResponse(
         valid=True,
         user_id=current_user.id,
         username=current_user.username,
-        permissions=permissions
+        permissions=permissions,
+        roles=roles
     )
 
 @app.get("/api/v1/auth/me", response_model=UserResponse)
 async def get_current_user_info(
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Get current user information"""
-    return current_user
+    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    # Create response dict with roles
+    user_dict = {
+        "id": current_user.id,
+        "email": current_user.email,
+        "username": current_user.username,
+        "full_name": current_user.full_name,
+        "phone_number": current_user.phone_number,
+        "timezone": current_user.timezone,
+        "language": current_user.language,
+        "is_active": current_user.is_active,
+        "is_verified": current_user.is_verified,
+        "is_superuser": current_user.is_superuser,
+        "created_at": current_user.created_at,
+        "updated_at": current_user.updated_at,
+        "last_login": current_user.last_login,
+        "avatar_url": current_user.avatar_url,
+        "roles": user_roles
+    }
+    return user_dict
 
 @app.put("/api/v1/auth/me", response_model=UserResponse)
 async def update_current_user(
@@ -650,36 +736,374 @@ async def revoke_api_key(
     logger.info(f"API key revoked: {key_id} for user: {current_user.email}")
     return {"message": "API key revoked successfully"}
 
-# OAuth2 Endpoints (Placeholders)
+# OAuth2 Endpoints
 
-@app.get("/api/v1/auth/oauth2/providers", response_model=List[OAuth2Provider])
+@app.get("/api/v1/auth/oauth2/providers", response_model=List[OAuth2Provider], tags=["OAuth2"])
 async def get_oauth2_providers():
     """Get available OAuth2 providers"""
-    return [
-        OAuth2Provider(
-            provider="google",
-            client_id=os.getenv("GOOGLE_CLIENT_ID", ""),
-            authorization_url="https://accounts.google.com/oauth/authorize",
-            scope=["openid", "email", "profile"]
-        ),
-        OAuth2Provider(
-            provider="github",
-            client_id=os.getenv("GITHUB_CLIENT_ID", ""),
-            authorization_url="https://github.com/login/oauth/authorize",
-            scope=["user:email"]
+    providers = []
+    
+    google_client_id = os.getenv("GOOGLE_CLIENT_ID")
+    if google_client_id:
+        providers.append(
+            OAuth2Provider(
+                provider="google",
+                client_id=google_client_id,
+                authorization_url="/api/v1/auth/oauth2/google/authorize",
+                scope=["openid", "email", "profile"]
+            )
         )
-    ]
+    
+    github_client_id = os.getenv("GITHUB_CLIENT_ID")
+    if github_client_id:
+        providers.append(
+            OAuth2Provider(
+                provider="github",
+                client_id=github_client_id,
+                authorization_url="/api/v1/auth/oauth2/github/authorize",
+                scope=["user:email"]
+            )
+        )
+    
+    return providers
 
-@app.post("/api/v1/auth/oauth2/callback")
-async def oauth2_callback(
-    callback_data: OAuth2Callback,
+@app.get("/api/v1/auth/oauth2/google/authorize", tags=["OAuth2"])
+async def google_authorize(request: Request):
+    """Initiate Google OAuth flow - redirects to Google"""
+    if not redis_client:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Redis connection not available"
+        )
+    
+    try:
+        # Generate state token for CSRF protection
+        state = await OAuthUtils.generate_state_token(redis_client)
+        
+        # Get redirect URI
+        redirect_uri = os.getenv("GOOGLE_REDIRECT_URI")
+        if not redirect_uri:
+            # Construct from request if not set
+            base_url = str(request.base_url).rstrip('/')
+            redirect_uri = f"{base_url}/api/v1/auth/oauth2/google/callback"
+        
+        # Generate authorization URL
+        auth_url = OAuthUtils.get_google_authorization_url(state, redirect_uri)
+        
+        logger.info(f"Redirecting to Google OAuth: {redirect_uri}")
+        return RedirectResponse(url=auth_url)
+    
+    except ValueError as e:
+        logger.error(f"Google OAuth configuration error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Google OAuth not properly configured"
+        )
+    except Exception as e:
+        logger.error(f"Error initiating Google OAuth: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to initiate OAuth flow"
+        )
+
+@app.get("/api/v1/auth/oauth2/google/callback", tags=["OAuth2"])
+async def google_callback(
+    request: Request,
+    code: str = Query(..., description="Authorization code from Google"),
+    state: str = Query(..., description="State token for CSRF protection"),
     db: AsyncSession = Depends(get_db)
 ):
-    """Handle OAuth2 callback (placeholder)"""
-    # In production, exchange code for tokens and create/login user
-    logger.info(f"OAuth2 callback received for provider: {callback_data.provider}")
-    return {"message": "OAuth2 callback functionality would be implemented with provider integration"}
+    """Handle Google OAuth callback - exchange code for tokens and create/login user"""
+    if not redis_client:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Redis connection not available"
+        )
+    
+    try:
+        # 1. Validate state token (CSRF protection)
+        if not await OAuthUtils.validate_state_token(redis_client, state):
+            logger.warning(f"Invalid OAuth state token: {state[:16]}...")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired state token. Please try again."
+            )
+        
+        # 2. Get redirect URI
+        redirect_uri = os.getenv("GOOGLE_REDIRECT_URI")
+        if not redirect_uri:
+            base_url = str(request.base_url).rstrip('/')
+            redirect_uri = f"{base_url}/api/v1/auth/oauth2/google/callback"
+        
+        # 3. Exchange authorization code for tokens
+        oauth_tokens = await OAuthUtils.exchange_google_code_for_tokens(code, redirect_uri)
+        access_token = oauth_tokens.get("access_token")
+        
+        if not access_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to obtain access token from Google"
+            )
+        
+        # 4. Get user info from Google
+        user_info = await OAuthUtils.get_google_user_info(access_token)
+        email = user_info.get("email")
+        provider_user_id = user_info.get("id")
+        
+        if not email or not provider_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to retrieve user information from Google"
+            )
+        
+        # 5. Create or link user account
+        user = await AuthUtils.create_user_from_oauth(
+            db=db,
+            email=email,
+            full_name=user_info.get("name"),
+            avatar_url=user_info.get("picture"),
+            provider_name="google",
+            provider_user_id=provider_user_id,
+            oauth_tokens=oauth_tokens
+        )
+        
+        # 6. Get user roles
+        user_roles = await AuthUtils.get_user_roles(db, user.id)
+        
+        # 7. Generate JWT tokens
+        access_token_expires = timedelta(minutes=15)
+        refresh_token_expires = timedelta(days=7)
+        
+        jwt_access_token = AuthUtils.create_access_token(
+            data={"sub": str(user.id), "email": user.email, "username": user.username},
+            expires_delta=access_token_expires,
+            roles=user_roles
+        )
+        
+        jwt_refresh_token = AuthUtils.create_refresh_token(
+            data={"sub": str(user.id), "email": user.email},
+            expires_delta=refresh_token_expires,
+            roles=user_roles
+        )
+        
+        # 8. Create session
+        session_token = AuthUtils.generate_session_token()
+        device_info = {
+            "ip_address": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+            "oauth_provider": "google"
+        }
+        
+        from sqlalchemy import insert as sa_insert
+        now = datetime.utcnow()
+        expires_at = now + refresh_token_expires
+        await db.execute(
+            sa_insert(UserSession.__table__).values(
+                user_id=user.id,
+                session_token=session_token,
+                refresh_token=jwt_refresh_token,
+                device_info=device_info,
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+                is_active=True,
+                expires_at=expires_at
+            )
+        )
+        user.last_login = now
+        await db.commit()
+        
+        logger.info(f"OAuth login successful for user: {email} via Google")
+        
+        # 9. Redirect to frontend with tokens (or return JSON)
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        redirect_url = (
+            f"{frontend_url}/auth/callback?"
+            f"access_token={jwt_access_token}&"
+            f"refresh_token={jwt_refresh_token}&"
+            f"token_type=bearer"
+        )
+        
+        return RedirectResponse(url=redirect_url)
+    
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"Google OAuth configuration error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Google OAuth not properly configured"
+        )
+    except Exception as e:
+        logger.error(f"Error in Google OAuth callback: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to complete OAuth authentication"
+        )
+
+# Role Management Endpoints (Admin only)
+
+class AssignRoleRequest(BaseModel):
+    user_id: int
+    role_name: str
+
+class RemoveRoleRequest(BaseModel):
+    user_id: int
+    role_name: str
+
+class UserRolesResponse(BaseModel):
+    user_id: int
+    username: str
+    email: str
+    roles: List[str]
+
+@app.post("/api/v1/auth/roles/assign", response_model=dict, tags=["Role Management"])
+async def assign_role(
+    role_data: AssignRoleRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Assign a role to a user (Admin only)"""
+    # Check if current user is admin
+    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    if "ADMIN" not in user_roles and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can assign roles"
+        )
+    
+    # Get target user
+    target_user = await AuthUtils.get_user_by_id(db, role_data.user_id)
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Get role
+    result = await db.execute(select(Role).where(Role.name == role_data.role_name))
+    role = result.scalar_one_or_none()
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Role '{role_data.role_name}' not found"
+        )
+    
+    # Check if user already has this role
+    result = await db.execute(
+        select(UserRole).where(
+            UserRole.user_id == role_data.user_id,
+            UserRole.role_id == role.id
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        return {"message": f"User already has role '{role_data.role_name}'"}
+    
+    # Assign role
+    user_role = UserRole(user_id=role_data.user_id, role_id=role.id)
+    db.add(user_role)
+    await db.commit()
+    
+    logger.info(f"Role '{role_data.role_name}' assigned to user {target_user.email} by {current_user.email}")
+    return {"message": f"Role '{role_data.role_name}' assigned successfully"}
+
+@app.post("/api/v1/auth/roles/remove", response_model=dict, tags=["Role Management"])
+async def remove_role(
+    role_data: RemoveRoleRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Remove a role from a user (Admin only)"""
+    # Check if current user is admin
+    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    if "ADMIN" not in user_roles and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can remove roles"
+        )
+    
+    # Get target user
+    target_user = await AuthUtils.get_user_by_id(db, role_data.user_id)
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    # Get role
+    result = await db.execute(select(Role).where(Role.name == role_data.role_name))
+    role = result.scalar_one_or_none()
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Role '{role_data.role_name}' not found"
+        )
+    
+    # Remove role
+    result = await db.execute(
+        select(UserRole).where(
+            UserRole.user_id == role_data.user_id,
+            UserRole.role_id == role.id
+        )
+    )
+    user_role = result.scalar_one_or_none()
+    if not user_role:
+        return {"message": f"User does not have role '{role_data.role_name}'"}
+    
+    await db.delete(user_role)
+    await db.commit()
+    
+    logger.info(f"Role '{role_data.role_name}' removed from user {target_user.email} by {current_user.email}")
+    return {"message": f"Role '{role_data.role_name}' removed successfully"}
+
+@app.get("/api/v1/auth/roles/user/{user_id}", response_model=UserRolesResponse, tags=["Role Management"])
+async def get_user_roles_endpoint(
+    user_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get roles for a user (Admin or self)"""
+    # Check if current user is admin or viewing own profile
+    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    if user_id != current_user.id and "ADMIN" not in user_roles and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can view other users' roles"
+        )
+    
+    target_user = await AuthUtils.get_user_by_id(db, user_id)
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    roles = await AuthUtils.get_user_roles(db, user_id)
+    return UserRolesResponse(
+        user_id=target_user.id,
+        username=target_user.username,
+        email=target_user.email,
+        roles=roles
+    )
+
+@app.get("/api/v1/auth/roles/list", response_model=List[dict], tags=["Role Management"])
+async def list_roles(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """List all available roles (Admin only)"""
+    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    if "ADMIN" not in user_roles and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can list roles"
+        )
+    
+    result = await db.execute(select(Role))
+    roles = result.scalars().all()
+    return [{"id": role.id, "name": role.name, "description": role.description} for role in roles]
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8081)
+

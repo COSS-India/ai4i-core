@@ -1,6 +1,6 @@
 // ASR service API client with typed methods
 
-import { apiClient, apiEndpoints } from './api';
+import { asrApiClient, apiEndpoints } from './api';
 import { 
   ASRInferenceRequest, 
   ASRInferenceResponse, 
@@ -29,7 +29,7 @@ export const performASRInference = async (
       },
     };
 
-    const response = await apiClient.post<ASRInferenceResponse>(
+    const response = await asrApiClient.post<ASRInferenceResponse>(
       apiEndpoints.asr.inference,
       payload
     );
@@ -45,12 +45,12 @@ export const performASRInference = async (
  * Transcribe audio using the transcribe endpoint (alias for inference)
  * @param audioContent - Base64 encoded audio content
  * @param config - ASR configuration
- * @returns Promise with ASR inference response
+ * @returns Promise with ASR inference response and timing info
  */
 export const transcribeAudio = async (
   audioContent: string,
   config: ASRInferenceRequest['config']
-): Promise<ASRInferenceResponse> => {
+): Promise<{ data: ASRInferenceResponse; responseTime: number }> => {
   try {
     // Dhruva Platform ASR request schema
     const payload: ASRInferenceRequest = {
@@ -66,17 +66,32 @@ export const transcribeAudio = async (
       },
     };
 
-    console.log('Sending ASR request:', {
-      audioLength: audioContent.length,
-      config: payload.config,
+    console.log('=== ASR API Request ===');
+    console.log('Endpoint:', apiEndpoints.asr.inference);
+    console.log('Audio length:', audioContent.length);
+    console.log('Config:', JSON.stringify(payload.config, null, 2));
+    console.log('Full payload (audio truncated):', {
+      ...payload,
+      audio: [{ audioContent: `${audioContent.substring(0, 50)}... (truncated)` }]
     });
 
-    const response = await apiClient.post<ASRInferenceResponse>(
+    const response = await asrApiClient.post<ASRInferenceResponse>(
       apiEndpoints.asr.inference,
       payload
     );
 
-    return response.data;
+    console.log('=== ASR API Response ===');
+    console.log('Response status:', response.status);
+    console.log('Response data:', response.data);
+    console.log('Response output:', response.data.output);
+
+    // Extract response time from headers
+    const responseTime = parseInt(response.headers['request-duration'] || '0');
+
+    return {
+      data: response.data,
+      responseTime
+    };
   } catch (error) {
     console.error('ASR transcription error:', error);
     throw new Error('Failed to transcribe audio');
@@ -89,7 +104,7 @@ export const transcribeAudio = async (
  */
 export const listASRModels = async (): Promise<ASRModelsResponse> => {
   try {
-    const response = await apiClient.get<ASRModelsResponse>(
+    const response = await asrApiClient.get<ASRModelsResponse>(
       apiEndpoints.asr.models
     );
 
@@ -106,7 +121,7 @@ export const listASRModels = async (): Promise<ASRModelsResponse> => {
  */
 export const checkASRHealth = async (): Promise<ASRHealthResponse> => {
   try {
-    const response = await apiClient.get<ASRHealthResponse>(
+    const response = await asrApiClient.get<ASRHealthResponse>(
       apiEndpoints.asr.health
     );
 
@@ -123,7 +138,7 @@ export const checkASRHealth = async (): Promise<ASRHealthResponse> => {
  */
 export const getASRConfig = async () => {
   try {
-    const response = await apiClient.get('/api/v1/asr/config');
+    const response = await asrApiClient.get('/api/v1/asr/config');
     return response.data;
   } catch (error) {
     console.error('Failed to fetch ASR config:', error);
