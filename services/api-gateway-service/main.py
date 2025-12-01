@@ -1936,7 +1936,7 @@ async def publish_model(
 
 
 @app.post("/api/v1/model-management/models", response_model=str, tags=["Model Management"])
-async def publish_model(
+async def unpublish_model(
     model_id: str,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
