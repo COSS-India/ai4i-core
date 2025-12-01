@@ -11,17 +11,13 @@ The current version of platform consists of 12 microservices, 1 frontend applica
 ### Microservices
 
 - **API Gateway Service** (Port 8080) - Central entry point with routing, rate limiting, and authentication
-- **Authentication & Authorization Service** (Port 8081) - Identity management with JWT and OAuth2
+- **Authentication & Authorization Service** (Port 8081) - Identity management with JWT and OAuth2 | [Documentation](services/auth-service/docs/SERVICE_DOCUMENTATION.md)
 - **Configuration Management Service** (Port 8082) - Centralized configuration, feature flags with Unleash, and service registry
-- **Metrics Collection Service** (Port 8083) - System and application metrics collection
-- **Telemetry Service** (Port 8084) - Log aggregation, distributed tracing, and event correlation
-- **Alerting Service** (Port 8085) - Proactive issue detection and notification
-- **Dashboard Service** (Port 8090) - Visualization and reporting with Streamlit UI (Port 8501)
-- **ASR Service** (Port 8087) - Speech-to-Text with 22+ Indic languages
-- **TTS Service** (Port 8088) - Text-to-Speech with multiple voice options
-- **NMT Service** (Port 8091) - Neural Machine Translation for Indic languages
-- **LLM Service** (Port 8093) - Large Language Model service for text generation
-- **Pipeline Service** (Port 8092) - Orchestrates multiple AI services in workflows
+- **ASR Service** (Port 8087) - Speech-to-Text with 22+ Indic languages | [Documentation](services/asr-service/docs/SERVICE_DOCUMENTATION.md)
+- **TTS Service** (Port 8088) - Text-to-Speech with multiple voice options | [Documentation](services/tts-service/docs/SERVICE_DOCUMENTATION.md)
+- **NMT Service** (Port 8091) - Neural Machine Translation for Indic languages | [Documentation](services/nmt-service/docs/SERVICE_DOCUMENTATION.md)
+- **LLM Service** (Port 8093) - Large Language Model service for text generation | [Documentation](services/llm-service/docs/SERVICE_DOCUMENTATION.md)
+- **Pipeline Service** (Port 8092) - Orchestrates multiple AI services in workflows | [Documentation](services/pipeline-service/docs/SERVICE_DOCUMENTATION.md)
 
 ### Frontend
 
