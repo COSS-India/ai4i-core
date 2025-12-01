@@ -29,6 +29,7 @@ import {
 import AuthModal from "../components/auth/AuthModal";
 import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
+import { useFeatureFlag } from "../hooks/useFeatureFlag";
 
 const HomePage: React.FC = () => {
   const router = useRouter();
@@ -102,31 +103,41 @@ const HomePage: React.FC = () => {
     setShowAuthModal(false);
   };
 
+  // Feature flags for each service
+  const asrEnabled = useFeatureFlag({ flagName: "asr-enabled" });
+  const ttsEnabled = useFeatureFlag({ flagName: "tts-enabled" });
+  const nmtEnabled = useFeatureFlag({ flagName: "nmt-enabled" });
+  const llmEnabled = useFeatureFlag({ flagName: "llm-enabled" });
+  const pipelineEnabled = useFeatureFlag({ flagName: "pipeline-enabled" });
+
   const services = [
     {
       id: "asr",
       title: "ASR – Automatic Speech Recognition",
-      description: "Convert speech to text in 12+ Indian languages",
+      description: "Convert speech to text in 12+ Indic languages",
       icon: FaMicrophone,
       path: "/asr",
       color: "orange",
+      enabled: asrEnabled.isEnabled,
     },
     {
       id: "tts",
       title: "TTS – Text-to-Speech",
       description:
-        "Convert text to natural, human-like speech in multiple Indian languages and voices",
+        "Convert text to natural, human-like speech in multiple Indic languages and voices",
       icon: IoVolumeHighOutline,
       path: "/tts",
       color: "blue",
+      enabled: ttsEnabled.isEnabled,
     },
     {
       id: "nmt",
       title: "Text Translation",
-      description: "Translate text between 22+ Indian languages",
+      description: "Translate text between 22+ Indic languages",
       icon: IoLanguageOutline,
       path: "/nmt",
       color: "green",
+      enabled: nmtEnabled.isEnabled,
     },
     {
       id: "llm",
@@ -135,6 +146,7 @@ const HomePage: React.FC = () => {
       icon: IoSparklesOutline,
       path: "/llm",
       color: "pink",
+      enabled: llmEnabled.isEnabled,
     },
     {
       id: "pipeline",
@@ -144,14 +156,9 @@ const HomePage: React.FC = () => {
       icon: IoGitMergeOutline,
       path: "/pipeline",
       color: "purple",
+      enabled: pipelineEnabled.isEnabled,
     },
-  ];
-
-  // Platform insight cards (uptime removed)
-  const stats = [
-    { label: "Total Services", value: "5" },
-    { label: "Supported Languages", value: "22+" },
-  ];
+  ].filter((service) => service.enabled); // Filter out disabled services
 
   return (
     <>
@@ -254,16 +261,22 @@ const HomePage: React.FC = () => {
               spacing={8}
               justifyItems="center"
             >
-              {stats.map((stat, index) => (
-                <Stat key={index} textAlign="center">
-                  <StatLabel color="gray.600" fontSize="sm">
-                    {stat.label}
-                  </StatLabel>
-                  <StatNumber color="orange.600" fontSize="2xl">
-                    {stat.value}
-                  </StatNumber>
-                </Stat>
-              ))}
+              <Stat textAlign="center">
+                <StatLabel color="gray.600" fontSize="sm">
+                  Total Services
+                </StatLabel>
+                <StatNumber color="orange.600" fontSize="2xl">
+                  {services.length}
+                </StatNumber>
+              </Stat>
+              <Stat textAlign="center">
+                <StatLabel color="gray.600" fontSize="sm">
+                  Supported Languages
+                </StatLabel>
+                <StatNumber color="orange.600" fontSize="2xl">
+                  22+
+                </StatNumber>
+              </Stat>
             </SimpleGrid>
           </Box>
 
