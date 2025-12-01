@@ -6,7 +6,7 @@ A comprehensive microservices platform built with FastAPI, following the AI4I-Co
 
 <img width="413" height="392" alt="image" src="https://github.com/user-attachments/assets/78400e0a-d180-4c74-9e75-1c15b4b4c8bb" />
 
-The current version of platform consists of 10 microservices, 1 frontend application, and 5 infrastructure components:
+The current version of platform consists of 12 microservices, 1 frontend application, and 7 infrastructure components:
 
 ### Microservices
 
@@ -16,10 +16,12 @@ The current version of platform consists of 10 microservices, 1 frontend applica
 - **Metrics Collection Service** (Port 8083) - System and application metrics collection
 - **Telemetry Service** (Port 8084) - Log aggregation, distributed tracing, and event correlation
 - **Alerting Service** (Port 8085) - Proactive issue detection and notification
-- **Dashboard Service** (Port 8086) - Visualization and reporting with Streamlit UI (Port 8501)
+- **Dashboard Service** (Port 8090) - Visualization and reporting with Streamlit UI (Port 8501)
 - **ASR Service** (Port 8087) - Speech-to-Text with 22+ Indic languages
 - **TTS Service** (Port 8088) - Text-to-Speech with multiple voice options
-- **NMT Service** (Port 8089) - Neural Machine Translation for Indic languages
+- **NMT Service** (Port 8091) - Neural Machine Translation for Indic languages
+- **LLM Service** (Port 8093) - Large Language Model service for text generation
+- **Pipeline Service** (Port 8092) - Orchestrates multiple AI services in workflows
 
 ### Frontend
 
@@ -27,11 +29,11 @@ The current version of platform consists of 10 microservices, 1 frontend applica
 
 ### Infrastructure Components
 
-- **PostgreSQL** (Port 5432) - Primary database with separate schemas for each service
-- **Redis** (Port 6379) - Caching, session management, and rate limiting
-- **InfluxDB** (Port 8086) - Time-series database for metrics storage
-- **Elasticsearch** (Port 9200) - Log storage and search engine
-- **Kafka** (Port 9092) - Event streaming and message queuing
+- **PostgreSQL** (Port 5434) - Primary database with separate schemas for each service
+- **Redis** (Port 6381) - Caching, session management, and rate limiting
+- **InfluxDB** (Port 8089) - Time-series database for metrics storage
+- **Elasticsearch** (Port 9203) - Log storage and search engine
+- **Kafka** (Port 9093) - Event streaming and message queuing
 - **Zookeeper** (Port 2181) - Kafka coordination service
 - **Unleash** (Port 4242) - Feature flag management and progressive delivery (uses shared PostgreSQL)
 
@@ -48,7 +50,7 @@ The current version of platform consists of 10 microservices, 1 frontend applica
 - Request/response visualization with stats
 - Audio waveform visualization
 
-**Technology Stack**: Next.js 13, TypeScript, Chakra UI, TanStack React Query, Socket.IO Client
+**Technology Stack**: Next.js 13.1.1, TypeScript, Chakra UI, TanStack React Query, Socket.IO Client, Framer Motion
 
 ## 🚀 Getting Started
 
@@ -64,7 +66,7 @@ For setup instructions, refer to the [Setup Guide](docs/SETUP_GUIDE.md) or the w
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License.
 
 ## 🤝 Support
 
