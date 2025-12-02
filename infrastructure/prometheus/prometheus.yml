@@ -30,6 +30,7 @@ scrape_configs:
           - "tts-service:8088"
           - "asr-service:8087"
           - "llm-service:8090"
+          - "ocr-service:8090"
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
@@ -48,6 +49,7 @@ scrape_configs:
           - "tts-service:8088"
           - "asr-service:8087"
           - "llm-service:8090"
+          - "ocr-service:8090"
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
