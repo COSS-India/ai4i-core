@@ -368,8 +368,8 @@ services:
 
   asr-service:
     build:
-      context: ./services/asr-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/asr-service/Dockerfile
     container_name: ai4v-asr-service
     ports:
       - "8087:8087"
@@ -399,8 +399,8 @@ services:
 
   tts-service:
     build:
-      context: ./services/tts-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/tts-service/Dockerfile
     container_name: ai4v-tts-service
     ports:
       - "8088:8088"
@@ -428,8 +428,8 @@ services:
 
   nmt-service:
     build:
-      context: ./services/nmt-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/nmt-service/Dockerfile
     container_name: ai4v-nmt-service
     ports:
       - "8091:8089"
@@ -541,6 +541,59 @@ services:
       # start_period: 40s
     restart: unless-stopped
 
+  # Observability: Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ai4v-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+    networks:
+      - microservices-network
+    depends_on:
+      - nmt-service
+      - tts-service
+      - asr-service
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Observability: Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ai4v-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - microservices-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 volumes:
   postgres-data:
     driver: local
@@ -555,6 +608,10 @@ volumes:
   zookeeper-data:
     driver: local
   zookeeper-logs:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
     driver: local
 
 networks:
