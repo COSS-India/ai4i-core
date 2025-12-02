@@ -406,7 +406,6 @@ class MetricsCollector:
 
         # Also track as data processing
         self.track_data_processing(organization, app, "ocr_characters", characters)
-    
     def track_ocr_image_size(
         self, organization: str, app: str, image_size_kb: float
     ):
@@ -562,6 +561,13 @@ class MetricsCollector:
         return generate_latest(self.registry).decode("utf-8")
 
 
+def prometheus_latest_text() -> str:
+    """Get latest Prometheus metrics text."""
+    # This would be implemented to return the latest metrics
+    # For now, return a placeholder
+    return "# Prometheus metrics would be generated here"
+
+
 # Global metrics collector instance
 _global_collector = None
 
@@ -572,4 +578,3 @@ def get_global_collector() -> MetricsCollector:
     if _global_collector is None:
         _global_collector = MetricsCollector()
     return _global_collector
-
