@@ -49,7 +49,7 @@ services:
     image: influxdb:2.7-alpine
     container_name: ai4v-influxdb
     environment:
-      DOCKER_INFLUXDB_INIT_MODE: setup
+      # DOCKER_INFLUXDB_INIT_MODE: setup
       DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_ADMIN_USER}
       DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD}
       DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG}
@@ -480,6 +480,32 @@ services:
     #   start_period: 30s
     restart: unless-stopped
 
+  speaker-diarization-service:
+    build:
+      context: .
+      dockerfile: services/speaker-diarization-service/Dockerfile
+    container_name: ai4v-speaker-diarization-service
+    ports:
+      - "8095:8095"
+    environment:
+      - ENV_FILE=.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 30s
+    restart: unless-stopped
+
   llm-service:
     build:
       context: ./services/llm-service
@@ -588,6 +614,7 @@ services:
       - nmt-service
       - tts-service
       - asr-service
+      - speaker-diarization-service
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]

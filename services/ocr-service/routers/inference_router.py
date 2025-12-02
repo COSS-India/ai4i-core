@@ -45,7 +45,7 @@ def get_ocr_service(request: Request) -> OCRService:
 @inference_router.post(
     "/inference",
     response_model=OCRInferenceResponse,
-    summary="Perform batch OCR inference",
+    summaryb="Perform batch OCR inference",
     description="Run OCR on one or more images using Surya OCR via Triton.",
 )
 async def run_inference(
