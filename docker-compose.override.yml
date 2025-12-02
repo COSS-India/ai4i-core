@@ -37,7 +37,7 @@ services:
   metrics-service:
     volumes:
       - ./services/metrics-service:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8083 --reload
+    command: ["--reload"]
     environment:
       - DEBUG=true
       - LOG_LEVEL=DEBUG
@@ -46,7 +46,7 @@ services:
   telemetry-service:
     volumes:
       - ./services/telemetry-service:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8084 --reload
+    command: ["--reload"]
     environment:
       - DEBUG=true
       - LOG_LEVEL=DEBUG
@@ -55,7 +55,7 @@ services:
   alerting-service:
     volumes:
       - ./services/alerting-service:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8085 --reload
+    command: ["--reload"]
     environment:
       - DEBUG=true
       - LOG_LEVEL=DEBUG
@@ -64,7 +64,7 @@ services:
   dashboard-service:
     volumes:
       - ./services/dashboard-service:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8086 --reload
+    command: ["--reload"]
     environment:
       - DEBUG=true
       - LOG_LEVEL=DEBUG
@@ -78,7 +78,7 @@ services:
   pipeline-service:
     volumes:
       - ./services/pipeline-service:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8090 --reload
+    command: ["--reload"]
     environment:
       - DEBUG=true
       - LOG_LEVEL=DEBUG
