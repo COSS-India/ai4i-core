@@ -123,6 +123,9 @@ services:
       DATABASE_SSL: "false"
       UNLEASH_URL: http://unleash:4242
       LOG_LEVEL: info
+      BASE_URI_PATH: /feature-flags
+      UNLEASH_PUBLIC_BASE_URL: https://core-v1.ai4inclusion.org/feature-flags
+      TRUST_PROXY: "true"
     depends_on:
       postgres:
         condition: service_healthy
