@@ -30,6 +30,7 @@ scrape_configs:
           - "tts-service:8088"
           - "asr-service:8087"
           - "transliteration-service:8090"
+          - "language-detection-service:8090"
           - "llm-service:8091"
     relabel_configs:
       - source_labels: [__address__]
@@ -49,6 +50,7 @@ scrape_configs:
           - "tts-service:8088"
           - "asr-service:8087"
           - "transliteration-service:8090"
+          - "language-detection-service:8090"
           - "llm-service:8091"
     relabel_configs:
       - source_labels: [__address__]
