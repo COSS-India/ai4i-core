@@ -1,6 +1,7 @@
 """
 OCR Service - Optical Character Recognition microservice
 
+
 Main FastAPI application entry point for the OCR microservice.
 Provides batch OCR inference using Triton Inference Server (Surya OCR).
 """
