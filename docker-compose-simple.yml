@@ -37,12 +37,13 @@ services:
     image: influxdb:2.7-alpine
     container_name: ai4v-influxdb
     environment:
-      DOCKER_INFLUXDB_INIT_MODE: setup
-      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_ADMIN_USER}
-      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD}
-      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG}
-      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET}
-      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_ADMIN_TOKEN}
+      # All init variables commented out - InfluxDB already initialized
+      # DOCKER_INFLUXDB_INIT_MODE: setup
+      # DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_ADMIN_USER}
+      # DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD}
+      # DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG}
+      # DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET}
+      # DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_ADMIN_TOKEN}
     ports:
       - "8089:8086"
     volumes:
@@ -292,6 +293,22 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/nmt-service/.env
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  speaker-diarization-service:
+    build:
+      context: .
+      dockerfile: services/speaker-diarization-service/Dockerfile
+    container_name: ai4v-speaker-diarization-service
+    ports:
+      - "8095:8095"
+    environment:
+      - ENV_FILE=.env
     depends_on:
       - postgres
       - redis
