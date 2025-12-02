@@ -161,9 +161,9 @@ const Header: React.FC = () => {
                   size="sm"
                 />
                 <MenuList>
-                  <MenuItem onClick={() => setIsApiKeyViewerOpen(true)}>
+                  {/* {<MenuItem onClick={() => setIsApiKeyViewerOpen(true)}>
                     API Key
-                  </MenuItem>
+                  </MenuItem> */}
                   <MenuItem onClick={() => logout()}>Sign out</MenuItem>
                 </MenuList>
               </Menu>
