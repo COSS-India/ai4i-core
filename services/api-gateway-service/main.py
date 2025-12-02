@@ -163,6 +163,68 @@ class VoiceListResponse(BaseModel):
     page: int = Field(default=1, description="Current page number")
     pageSize: int = Field(default=50, description="Number of voices per page")
 
+
+# Pydantic models for OCR endpoints
+class OCRLanguageConfig(BaseModel):
+    """Language configuration for OCR."""
+
+    sourceLanguage: str = Field(
+        ..., description="Source language code (e.g., 'en', 'hi', 'ta')"
+    )
+
+
+class OCRImageInput(BaseModel):
+    """Image input for OCR processing."""
+
+    imageContent: Optional[str] = Field(
+        None, description="Base64 encoded image content"
+    )
+    imageUri: Optional[str] = Field(
+        None, description="URI to image file (will be downloaded and encoded)"
+    )
+
+
+class OCRInferenceConfig(BaseModel):
+    """Configuration for OCR inference."""
+
+    serviceId: str = Field(
+        ..., description="OCR service/model ID (e.g., ai4bharat/surya-ocr-v1--gpu--t4)"
+    )
+    language: OCRLanguageConfig = Field(..., description="Language configuration")
+    textDetection: Optional[bool] = Field(
+        False,
+        description=(
+            "Whether to enable advanced text detection (bounding boxes, lines, etc.)."
+        ),
+    )
+
+
+class OCRInferenceRequest(BaseModel):
+    """OCR inference request model."""
+
+    image: List[OCRImageInput] = Field(
+        ..., description="List of images to process", min_items=1
+    )
+    config: OCRInferenceConfig = Field(..., description="Inference configuration")
+
+
+class OCRTextOutput(BaseModel):
+    """OCR text output for a single image."""
+
+    source: str = Field(..., description="Extracted text from the image")
+    target: str = Field("", description="Reserved for future use")
+
+
+class OCRInferenceResponse(BaseModel):
+    """OCR inference response model."""
+
+    output: List[OCRTextOutput] = Field(
+        ..., description="List of OCR results (one per image input)"
+    )
+    config: Optional[Dict[str, Any]] = Field(
+        None, description="Response configuration metadata"
+    )
+
 class StreamingInfo(BaseModel):
     """Streaming service information."""
     endpoint: str = Field(..., description="WebSocket endpoint URL")
@@ -482,6 +544,7 @@ class RouteManager:
             '/api/v1/nmt': 'nmt-service',
             '/api/v1/transliteration': 'transliteration-service',
             '/api/v1/language-detection': 'language-detection-service',
+            '/api/v1/ocr': 'ocr-service',
             '/api/v1/llm': 'llm-service',
             '/api/v1/pipeline': 'pipeline-service'
         }
@@ -542,6 +605,10 @@ tags_metadata = [
     {
         "name": "Language Detection",
         "description": "Language detection service endpoints. Identify the language and script of text.",
+    },
+    {
+        "name": "OCR",
+        "description": "Optical Character Recognition service endpoints. Extract text from images.",
     },
     {
         "name": "Pipeline",
@@ -712,6 +779,7 @@ def custom_openapi():
         ("/api/v1/nmt", "NMT"),
         ("/api/v1/transliteration", "Transliteration"),
         ("/api/v1/language-detection", "Language Detection"),
+        ("/api/v1/ocr", "OCR"),
         ("/api/v1/pipeline", "Pipeline"),
         ("/api/v1/protected", "Protected"),
         ("/api/v1/status", "Status"),
@@ -971,8 +1039,10 @@ async def api_status():
             "tts": os.getenv("TTS_SERVICE_URL", "http://tts-service:8088"),
             "nmt": os.getenv("NMT_SERVICE_URL", "http://nmt-service:8089"),
             "transliteration": os.getenv("TRANSLITERATION_SERVICE_URL", "http://transliteration-service:8090"),
-            "llm": os.getenv("LLM_SERVICE_URL", "http://llm-service:8091"),
-            "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8092")
+            "language_detection": os.getenv("LANGUAGE_DETECTION_SERVICE_URL", "http://language-detection-service:8090"),
+            "ocr": os.getenv("OCR_SERVICE_URL", "http://ocr-service:8090"),
+            "llm": os.getenv("LLM_SERVICE_URL", "http://llm-service:8090"),
+            "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8090")
         }
     }
 
@@ -1816,6 +1886,42 @@ async def language_detection_health(
     # Health endpoints typically don't require authentication
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/language-detection/health", "language-detection-service", headers=headers)
+=======
+# OCR Service Endpoints (Proxy to OCR Service)
+
+@app.get("/api/v1/ocr/health", tags=["OCR"])
+async def ocr_health(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """OCR service health check"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/health", "ocr-service", headers=headers)
+
+
+@app.post("/api/v1/ocr/inference", response_model=OCRInferenceResponse, tags=["OCR"])
+async def ocr_inference(
+    payload: OCRInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Perform OCR inference on one or more images"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    import json
+
+    body = json.dumps(payload.dict()).encode()
+    headers: Dict[str, str] = {}
+    if credentials and credentials.credentials:
+        headers["Authorization"] = f"Bearer {credentials.credentials}"
+    if api_key:
+        headers["X-API-Key"] = api_key
+    return await proxy_to_service(
+        None, "/api/v1/ocr/inference", "ocr-service", method="POST", body=body, headers=headers
+    )
+>>>>>>> 7b9a8c837aafbd1cb430f9b206c605c397d5fde3
 
 # Pipeline Service Endpoints (Proxy to Pipeline Service)
 
@@ -1938,8 +2044,9 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
         'transliteration-service': os.getenv('TRANSLITERATION_SERVICE_URL', 'http://transliteration-service:8090'),
         'language-detection-service': os.getenv('LANGUAGE_DETECTION_SERVICE_URL', 'http://language-detection-service:8090'),
-        'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8091'),
-        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8092')
+        'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8090'),
+        'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
+        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
     }
     
     try:
@@ -2010,8 +2117,9 @@ async def proxy_to_service_with_params(
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
         'transliteration-service': os.getenv('TRANSLITERATION_SERVICE_URL', 'http://transliteration-service:8090'),
         'language-detection-service': os.getenv('LANGUAGE_DETECTION_SERVICE_URL', 'http://language-detection-service:8090'),
-        'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8091'),
-        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8092')
+        'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8090'),
+        'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
+        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
     }
     
     try:
