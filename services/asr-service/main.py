@@ -30,6 +30,8 @@ from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
+from ai4icore_observability import ObservabilityPlugin, PluginConfig
+
 
 # Configure logging
 logging.basicConfig(
@@ -59,7 +61,7 @@ async def lifespan(app: FastAPI):
         if redis_client is None:
             # Fallback Redis initialization if not done earlier
             redis_host = os.getenv("REDIS_HOST", "redis")
-            redis_port = int(os.getenv("REDIS_PORT", "6379"))
+            redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
             redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
             
             redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
@@ -228,9 +230,9 @@ app = FastAPI(
         }
     ],
     contact={
-        "name": "Dhruva Platform Team",
-        "url": "https://github.com/AI4Bharat/Dhruva",
-        "email": "support@dhruva-platform.com"
+        "name": "AI4ICore Team",
+        "url": "https://github.com/AI4X",
+        "email": "support@ai4x.com"
     },
     license_info={
         "name": "MIT",
@@ -238,6 +240,20 @@ app = FastAPI(
     },
     lifespan=lifespan
 )
+
+
+# Initialize AI4ICore Observability Plugin
+# Plugin automatically extracts metrics from request bodies - no manual recording needed!
+config = PluginConfig.from_env()
+config.enabled = True  # Enable plugin
+if not config.customers:
+    config.customers = []  # Will be extracted from JWT/headers automatically
+if not config.apps:
+    config.apps = ["asr"]  # Service name
+
+plugin = ObservabilityPlugin(config)
+plugin.register_plugin(app)
+logger.info("✅ AI4ICore Observability Plugin initialized for ASR service")
 
 # Add CORS middleware
 app.add_middleware(
@@ -252,7 +268,7 @@ app.add_middleware(
 redis_client = None
 try:
     redis_host = os.getenv("REDIS_HOST", "redis")
-    redis_port = int(os.getenv("REDIS_PORT", "6379"))
+    redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
     redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
     
     redis_client = redis.Redis(

@@ -1,0 +1,65 @@
+# Prometheus configuration for AI4I Core services
+# Scrapes metrics from all microservices
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+  external_labels:
+    cluster: 'ai4i-core'
+    environment: 'production'
+
+# Alertmanager configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Load rules once and periodically evaluate them
+# rule_files:
+#   - "alerts.yml"
+
+scrape_configs:
+  # Platform metrics from all services (standard Prometheus metrics)
+  - job_name: "ai4i-services"
+    scrape_interval: 5s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "nmt-service:8089"
+          - "tts-service:8088"
+          - "asr-service:8087"
+          - "llm-service:8090"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__address__]
+        regex: '([^:]+):(\d+)'
+        target_label: service
+        replacement: '${1}'
+
+  # Enterprise metrics (multi-tenant) from all services - Dhruva Observability Plugin
+  - job_name: "dhruva-enterprise"
+    scrape_interval: 5s
+    metrics_path: /enterprise/metrics
+    static_configs:
+      - targets:
+          - "nmt-service:8089"
+          - "tts-service:8088"
+          - "asr-service:8087"
+          - "llm-service:8090"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__address__]
+        regex: '([^:]+):(\d+)'
+        target_label: service
+        replacement: '${1}'
+
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - "localhost:9090"
+
