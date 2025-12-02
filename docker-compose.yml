@@ -399,8 +399,8 @@ services:
 
   tts-service:
     build:
-      context: .
-      dockerfile: services/tts-service/Dockerfile
+      context: ./services/tts-service
+      dockerfile: Dockerfile
     container_name: ai4v-tts-service
     ports:
       - "8088:8088"
@@ -428,8 +428,8 @@ services:
 
   nmt-service:
     build:
-      context: .
-      dockerfile: services/nmt-service/Dockerfile
+      context: ./services/nmt-service
+      dockerfile: Dockerfile
     container_name: ai4v-nmt-service
     ports:
       - "8091:8089"
