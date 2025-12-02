@@ -9,8 +9,15 @@ logger = logging.getLogger(__name__)
 
 
 class ServiceRegistryHttpClient:
+    """
+    HTTP client for interacting with the central service registry.
+
+    Copied from NMT/ASR services to keep behavior consistent.
+    """
+
     def __init__(self) -> None:
         base_url = os.getenv("CONFIG_SERVICE_URL", "http://config-service:8082")
+        # Ensure we point at the registry API root
         self._registry_base = base_url.rstrip("/") + "/api/v1/registry"
 
     async def register(
@@ -37,7 +44,12 @@ class ServiceRegistryHttpClient:
             logger.warning("Service registry registration failed: %s", e)
             return None
 
-    async def deregister(self, service_name: str, instance_id: str, request_timeout_s: float = 5.0) -> bool:
+    async def deregister(
+        self,
+        service_name: str,
+        instance_id: str,
+        request_timeout_s: float = 5.0,
+    ) -> bool:
         try:
             async with httpx.AsyncClient(timeout=request_timeout_s) as client:
                 resp = await client.post(
@@ -50,10 +62,14 @@ class ServiceRegistryHttpClient:
             logger.warning("Service registry deregistration failed: %s", e)
             return False
 
-    async def discover_url(self, service_name: str, request_timeout_s: float = 3.0) -> Optional[str]:
+    async def discover_url(
+        self, service_name: str, request_timeout_s: float = 3.0
+    ) -> Optional[str]:
         try:
             async with httpx.AsyncClient(timeout=request_timeout_s) as client:
-                resp = await client.get(f"{self._registry_base}/services/{service_name}/url")
+                resp = await client.get(
+                    f"{self._registry_base}/services/{service_name}/url"
+                )
                 if resp.status_code == 404:
                     return None
                 resp.raise_for_status()
@@ -62,5 +78,3 @@ class ServiceRegistryHttpClient:
         except Exception as e:
             logger.warning("Service discovery failed for %s: %s", service_name, e)
             return None
-
-
