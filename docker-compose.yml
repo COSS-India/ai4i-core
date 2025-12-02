@@ -466,7 +466,7 @@ services:
       - "8093:8090"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=http://13.233.147.233:8000
+      - TRITON_ENDPOINT=http://3.235.56.233:8001
       - TRITON_TIMEOUT=300
     env_file:
       - ./services/llm-service/.env
@@ -559,6 +559,8 @@ services:
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--storage.tsdb.retention.time=30d'
+      - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
+      - '--web.route-prefix=/'
     networks:
       - microservices-network
     depends_on:
@@ -582,7 +584,8 @@ services:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_INSTALL_PLUGINS=
-      - GF_SERVER_ROOT_URL=http://localhost:3001
+      - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
     volumes:
       - grafana-data:/var/lib/grafana
       - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning
