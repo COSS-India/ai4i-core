@@ -1,0 +1,3 @@
+NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
+
+#https://core-v1.ai4inclusion.org
