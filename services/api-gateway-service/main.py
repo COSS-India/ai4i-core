@@ -1894,9 +1894,9 @@ async def update_model(
     )
 
 
-@app.delete("/api/v1/model-management/models/{model_id}", tags=["Model Management"])
+@app.delete("/api/v1/model-management/models/{uuid}", tags=["Model Management"])
 async def delete_model(
-    model_id: str,
+    uuid: str,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
@@ -1908,14 +1908,14 @@ async def delete_model(
         None,
         "/services/admin/delete/model",
         "model-management-service",
-        {"id": model_id},
+        {"id": uuid},
         method="DELETE",
         headers=headers,
     )
 
 @app.post("/api/v1/model-management/models/publish", response_model=str, tags=["Model Management"])
 async def publish_model(
-    model_id: str,
+    payload: ModelViewRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
@@ -1924,20 +1924,21 @@ async def publish_model(
     ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
-    payload = json.dumps({"modelId": model_id}).encode("utf-8")
+    # Use model_dump with json mode to properly serialize datetime objects
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
         "/services/admin/publish/model",
         "model-management-service",
         method="POST",
-        body=payload,
+        body=body,
         headers=headers,
     )
 
 
 @app.post("/api/v1/model-management/models/unpublish", response_model=str, tags=["Model Management"])
 async def unpublish_model(
-    model_id: str,
+    payload: ModelViewRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
@@ -1946,13 +1947,14 @@ async def unpublish_model(
     ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
-    payload = json.dumps({"modelId": model_id}).encode("utf-8")
+    # Use model_dump with json mode to properly serialize datetime objects
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
         "/services/admin/unpublish/model",
         "model-management-service",
         method="POST",
-        body=payload,
+        body=body,
         headers=headers,
     )
 
@@ -2038,9 +2040,9 @@ async def update_service_entry(
     )
 
 
-@app.delete("/api/v1/model-management/services/{service_id}", tags=["Model Management"])
+@app.delete("/api/v1/model-management/services/{uuid}", tags=["Model Management"])
 async def delete_service_entry(
-    service_id: str,
+    uuid: str,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
@@ -2052,7 +2054,7 @@ async def delete_service_entry(
         None,
         "/services/admin/delete/service",
         "model-management-service",
-        {"id": service_id},
+        {"id": uuid},
         method="DELETE",
         headers=headers,
     )

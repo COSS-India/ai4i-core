@@ -21,8 +21,8 @@ class BenchmarkEntry(BaseModel):
     }
 
 class ServiceStatus(BaseModel):
-    status: str
-    lastUpdated: str
+    status: str = None
+    lastUpdated: str = None
 
 class ServiceCreateRequest(BaseModel):
     serviceId: str

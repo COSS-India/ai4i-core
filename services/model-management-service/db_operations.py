@@ -628,6 +628,14 @@ async def update_service(request: ServiceUpdateRequest):
         if db_service is None:
             logger.warning(f"No DB record found for service {request.serviceId}")
             return 0
+        
+        result_model = await db.execute(select(Model).where(Model.model_id == request.modelId))
+        model_exists = result_model.scalars().first()
+        if not model_exists:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model with ID {request.modelId} does not exist, cannot update service."
+            )
 
         stmt_update = (
             update(Service)
@@ -715,7 +723,7 @@ async def delete_service_by_uuid(id_str: str) -> int:
     try:
         uuid = UUID(id_str)
     except ValueError:
-        logger.warning(f"Invalid UUID provided for delete: {uuid}")
+        logger.warning(f"Invalid UUID provided for delete: {id_str}")
         return 0
     
     result = await db.execute(select(Service).where(Service.id == uuid))
