@@ -48,3 +48,6 @@ python-socketio>=5.10.0
 
 # AI4ICore Observability Plugin (installed via Dockerfile, listed here for reference)
 # -e ../../libs/ai4icore_observability
+
+prometheus-fastapi-instrumentator
+prometheus-client
