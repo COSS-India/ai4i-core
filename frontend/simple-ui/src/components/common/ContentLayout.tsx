@@ -11,14 +11,20 @@ const ContentLayout: React.FC<ContentLayoutProps> = ({ children }) => {
   const bgColor = useColorModeValue('light.100', 'dark.100');
 
   return (
-    <Box pt="1%" px="1%">
+    <Box 
+      pt={2} 
+      pl="calc(4.5rem + 1rem)"
+      pr={4}
+      h="calc(100vh - 3.5rem)"
+      overflow="hidden"
+    >
       <Box
-        mt="1%"
-        py="2%"
-        px="2%"
-        h="90%"
+        h="full"
+        py={4}
+        px={4}
         bg={bgColor}
         borderRadius="md"
+        overflow="auto"
       >
         {children}
       </Box>

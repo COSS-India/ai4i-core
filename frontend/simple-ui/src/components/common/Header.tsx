@@ -51,13 +51,22 @@ const Header: React.FC = () => {
         setTitle("Text Translation");
         break;
       case "/llm":
-        setTitle("Large Language Model - GPT OSS 20B");
-        break;
+        setTitle("Large Language Model");
+        break
       case "/pipeline":
         setTitle("Speech-to-Speech Pipeline");
         break;
       case "/pipeline-builder":
         setTitle("Pipeline Builder");
+        break;
+      case "/profile":
+        setTitle("Profile");
+        break;
+      case "/model-management":
+        setTitle("Model Management");
+        break;
+      case "/auth":
+        setTitle("Sign In");
         break;
       case "/":
         setTitle("AI4Inclusion Console");
@@ -80,8 +89,8 @@ const Header: React.FC = () => {
   };
 
   const handleAuthClick = () => {
-    console.log("Header: Sign In button clicked, opening AuthModal");
-    setIsAuthModalOpen(true);
+    console.log("Header: Sign In button clicked, redirecting to /auth");
+    router.push("/auth");
   };
 
   // Debug: Log AuthModal state
@@ -92,9 +101,9 @@ const Header: React.FC = () => {
   return (
     <>
       <Box
-        h="6.5rem"
+        h="3.5rem"
         bg={bgColor}
-        px="2rem"
+        px="1.5rem"
         boxShadow="sm"
         position="sticky"
         top={0}
@@ -104,19 +113,19 @@ const Header: React.FC = () => {
       >
         <HStack justify="space-between" h="full">
           {/* Left side - Back button, Logo and Page title */}
-          <HStack spacing={4}>
+          <HStack spacing={3}>
             {showBackButton && (
               <IconButton
                 aria-label="Go back"
                 icon={<ArrowBackIcon />}
                 variant="ghost"
-                size="md"
+                size="sm"
                 onClick={handleBack}
                 colorScheme="gray"
                 _hover={{ bg: "gray.100" }}
               />
             )}
-            <Heading size="lg" color="gray.800">
+            <Heading size="md" color="gray.800">
               {title}
             </Heading>
           </HStack>
@@ -161,9 +170,12 @@ const Header: React.FC = () => {
                   size="sm"
                 />
                 <MenuList>
-                  <MenuItem onClick={() => setIsApiKeyViewerOpen(true)}>
-                    API Key
+                  <MenuItem onClick={() => router.push("/profile")}>
+                    Profile
                   </MenuItem>
+                  {/* <MenuItem onClick={() => setIsApiKeyViewerOpen(true)}>
+                    API Key
+                  </MenuItem> */}
                   <MenuItem onClick={() => logout()}>Sign out</MenuItem>
                 </MenuList>
               </Menu>
