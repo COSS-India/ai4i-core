@@ -164,16 +164,54 @@ asrApiClient.interceptors.response.use(
   }
 );
 
+// Get JWT token from auth service
+const getJwtToken = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  // Check both localStorage and sessionStorage for token (same logic as authService)
+  const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+  return token;
+};
+
+// Flag to prevent infinite refresh loops
+let isRefreshing = false;
+let failedQueue: Array<{
+  resolve: (value?: any) => void;
+  reject: (error?: any) => void;
+}> = [];
+
+const processQueue = (error: any, token: string | null = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
+
 // Request interceptor for authentication and timing
 apiClient.interceptors.request.use(
   (config) => {
     // Add request start time for timing calculation
     config.headers['request-startTime'] = new Date().getTime().toString();
     
-    // Add API key if available (from env or localStorage)
-    const apiKey = getApiKey();
-    if (apiKey) {
-      config.headers['Authorization'] = `Bearer ${apiKey}`;
+    // Check if this is a model-management endpoint
+    const isModelManagementEndpoint = config.url?.includes('/model-management');
+    
+    if (isModelManagementEndpoint) {
+      // For model-management endpoints, use JWT token with AUTH_TOKEN source
+      const jwtToken = getJwtToken();
+      if (jwtToken) {
+        config.headers['Authorization'] = `Bearer ${jwtToken}`;
+        config.headers['x-auth-source'] = 'AUTH_TOKEN';
+      }
+    } else {
+      // For other endpoints, use API key if available
+      const apiKey = getApiKey();
+      if (apiKey) {
+        config.headers['Authorization'] = `Bearer ${apiKey}`;
+      }
     }
     
     return config;
@@ -195,17 +233,99 @@ apiClient.interceptors.response.use(
     
     return response;
   },
-  (error: AxiosError) => {
+  async (error: AxiosError) => {
+    const originalRequest = error.config as any;
+    
     // Handle different error types
     if (error.response) {
       const { status, data } = error.response;
       
       switch (status) {
         case 401:
-          // Unauthorized - clear API key and redirect
+          // Unauthorized - handle based on endpoint type
           if (typeof window !== 'undefined') {
-            localStorage.removeItem('api_key');
-            window.location.href = '/';
+            const isModelManagementEndpoint = error.config?.url?.includes('/model-management');
+            
+            if (isModelManagementEndpoint) {
+              // For model-management endpoints, try to refresh token
+              if (!originalRequest._retry) {
+                originalRequest._retry = true;
+                
+                if (isRefreshing) {
+                  // If already refreshing, queue this request
+                  return new Promise((resolve, reject) => {
+                    failedQueue.push({ resolve, reject });
+                  })
+                    .then((token) => {
+                      originalRequest.headers['Authorization'] = `Bearer ${token}`;
+                      return apiClient(originalRequest);
+                    })
+                    .catch((err) => {
+                      return Promise.reject(err);
+                    });
+                }
+                
+                isRefreshing = true;
+                
+                try {
+                  // Import authService dynamically to avoid circular dependencies
+                  const { default: authService } = await import('./authService');
+                  const refreshToken = authService.getRefreshToken();
+                  
+                  if (!refreshToken) {
+                    throw new Error('No refresh token available');
+                  }
+                  
+                  // Call refresh token API
+                  const response = await authService.refreshToken();
+                  const newAccessToken = response.access_token;
+                  
+                  // Update the token in storage
+                  const rememberMe = localStorage.getItem('remember_me') === 'true';
+                  authService.setAccessToken(newAccessToken, rememberMe);
+                  
+                  // Update the original request with new token
+                  originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+                  
+                  // Process queued requests
+                  processQueue(null, newAccessToken);
+                  isRefreshing = false;
+                  
+                  // Retry the original request
+                  return apiClient(originalRequest);
+                } catch (refreshError) {
+                  // Refresh failed, clear tokens and logout
+                  processQueue(refreshError, null);
+                  isRefreshing = false;
+                  
+                  console.error('Token refresh failed:', refreshError);
+                  
+                  // Clear tokens and redirect to auth page
+                  const { default: authService } = await import('./authService');
+                  authService.clearAuthTokens();
+                  authService.clearStoredUser();
+                  
+                  if (typeof window !== 'undefined') {
+                    window.location.href = '/auth';
+                  }
+                  
+                  return Promise.reject(refreshError);
+                }
+              } else {
+                // Already retried, redirect to auth
+                const { default: authService } = await import('./authService');
+                authService.clearAuthTokens();
+                authService.clearStoredUser();
+                
+                if (typeof window !== 'undefined') {
+                  window.location.href = '/auth';
+                }
+              }
+            } else {
+              // For other endpoints, clear API key and redirect
+              localStorage.removeItem('api_key');
+              window.location.href = '/';
+            }
           }
           break;
           
