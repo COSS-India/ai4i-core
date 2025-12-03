@@ -17,6 +17,15 @@ export interface User {
   updated_at?: string;
   last_login?: string;
   avatar_url?: string;
+  preferences?: Record<string, any>;
+}
+
+export interface UserUpdateRequest {
+  full_name?: string;
+  phone_number?: string;
+  timezone?: string;
+  language?: string;
+  preferences?: Record<string, any>;
 }
 
 export interface LoginRequest {
