@@ -6,8 +6,14 @@ import { useToast } from '@chakra-ui/react';
 // API Base URL from environment.
 // For production this should be set to the browser-facing API gateway URL
 // (for example, https://dev.ai4inclusion.org or a dedicated API domain).
-// If not set, we fall back to relative URLs so requests go to the same origin.
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
+// Default to localhost:8080 for local development if not set.
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+
+// Debug: Log the API base URL in development
+if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+  console.log('API Base URL:', API_BASE_URL);
+  console.log('NEXT_PUBLIC_API_URL from env:', process.env.NEXT_PUBLIC_API_URL);
+}
 
 // API Key from localStorage (user-provided) or environment (fallback)
 const getApiKey = (): string | null => {
