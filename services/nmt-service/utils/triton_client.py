@@ -159,10 +159,13 @@ class TritonClient:
                         f"Triton model '{model_name}' not found at '{self.triton_url}'. "
                         f"Please verify the model name and endpoint are correct."
                     )
-            elif "Connection" in error_msg or "connect" in error_msg.lower():
+            elif "Connection" in error_msg or "connect" in error_msg.lower() or "name resolution" in error_msg.lower() or "gaierror" in error_msg.lower():
                 raise TritonInferenceError(
                     f"Cannot connect to Triton server at '{self.triton_url}'. "
-                    f"Please verify the endpoint is correct and the server is running."
+                    f"DNS resolution failed. Please verify: "
+                    f"1) The endpoint '{self.triton_url}' is correct, "
+                    f"2) The Docker container has network access, "
+                    f"3) The Triton server is accessible from the container network."
                 )
             raise TritonInferenceError(f"Triton inference request failed: {e}")
     

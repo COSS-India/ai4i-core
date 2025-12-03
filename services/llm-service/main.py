@@ -40,7 +40,7 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db")
-TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "http://13.220.11.146:8000")
+TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "http://3.235.56.233:8001")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
 TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT", "300.0"))
 
