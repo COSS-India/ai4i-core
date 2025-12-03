@@ -1826,6 +1826,53 @@ async def list_models(
     return await proxy_to_service(None, "/services/details/list_models", "model-management-service", headers=headers)
 
 
+
+@app.post("/api/v1/model-management/models/publish", response_model=str, tags=["Model Management"])
+async def publish_model(
+    payload: ModelViewRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Fetch metadata for a specific model."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    # Use model_dump with json mode to properly serialize datetime objects
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/services/admin/publish/model",
+        "model-management-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.post("/api/v1/model-management/models/unpublish", response_model=str, tags=["Model Management"])
+async def unpublish_model(
+    payload: ModelViewRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Fetch metadata for a specific model."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    # Use model_dump with json mode to properly serialize datetime objects
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/services/admin/unpublish/model",
+        "model-management-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+
 @app.post("/api/v1/model-management/models/{model_id}", response_model=ModelViewResponse, tags=["Model Management"])
 async def get_model(
     model_id: str,
@@ -1910,51 +1957,6 @@ async def delete_model(
         "model-management-service",
         {"id": uuid},
         method="DELETE",
-        headers=headers,
-    )
-
-@app.post("/api/v1/model-management/models/publish", response_model=str, tags=["Model Management"])
-async def publish_model(
-    payload: ModelViewRequest,
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
-):
-    """Fetch metadata for a specific model."""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    headers["Content-Type"] = "application/json"
-    # Use model_dump with json mode to properly serialize datetime objects
-    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
-    return await proxy_to_service(
-        None,
-        "/services/admin/publish/model",
-        "model-management-service",
-        method="POST",
-        body=body,
-        headers=headers,
-    )
-
-
-@app.post("/api/v1/model-management/models/unpublish", response_model=str, tags=["Model Management"])
-async def unpublish_model(
-    payload: ModelViewRequest,
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
-):
-    """Fetch metadata for a specific model."""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    headers["Content-Type"] = "application/json"
-    # Use model_dump with json mode to properly serialize datetime objects
-    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
-    return await proxy_to_service(
-        None,
-        "/services/admin/unpublish/model",
-        "model-management-service",
-        method="POST",
-        body=body,
         headers=headers,
     )
 
