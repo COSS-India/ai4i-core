@@ -4,13 +4,13 @@ from datetime import datetime
 
 
 class BenchmarkEntry(BaseModel):
-    output_length: int
-    generated: int
-    actual: int
-    throughput: int
-    _50: int
-    _99: int
-    language: str
+    output_length: int = None
+    generated: int = None
+    actual: int = None
+    throughput: int = None
+    _50: int = None
+    _99: int = None
+    language: str = None
 
     model_config = {
         "populate_by_name": True,
