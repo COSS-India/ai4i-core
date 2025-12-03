@@ -23,6 +23,9 @@ from utils.validation_utils import (
 from middleware.auth_provider import AuthProvider
 from middleware.exceptions import AuthenticationError, AuthorizationError
 
+# Observability: Dhruva plugin automatically extracts metrics from request body
+# No manual recording needed - metrics are tracked automatically by middleware!
+
 logger = logging.getLogger(__name__)
 
 # Create router
@@ -101,6 +104,11 @@ async def run_inference(
         logger.info(f"Processing NMT inference request with {len(request.input)} texts")
         
         # Run inference
+        # Note: Dhruva Observability Plugin automatically extracts and records:
+        # - Translation characters from request body
+        # - Organization/app from JWT token or headers
+        # - Request duration and status
+        # No manual metric recording needed!
         response = await nmt_service.run_inference(
             request=request,
             user_id=user_id,
