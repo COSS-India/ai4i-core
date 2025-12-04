@@ -3,7 +3,7 @@
 
 set -e
 
-INPUT_FILE="/kong/kong.yml"
+INPUT_FILE="/kong/kong-new-architecture.yml"
 OUTPUT_FILE="/tmp/kong-substituted.yml"
 
 if [ ! -f "$INPUT_FILE" ]; then
@@ -41,6 +41,14 @@ fi
 
 if [ -n "$DEVELOPER_API_KEY" ]; then
     sed -i "s|\${DEVELOPER_API_KEY}|$DEVELOPER_API_KEY|g" "$OUTPUT_FILE"
+fi
+
+if [ -n "$MODEL_MANAGEMENT_API_KEY" ]; then
+    sed -i "s|\${MODEL_MANAGEMENT_API_KEY}|$MODEL_MANAGEMENT_API_KEY|g" "$OUTPUT_FILE"
+fi
+
+if [ -n "$LLM_API_KEY" ]; then
+    sed -i "s|\${LLM_API_KEY}|$LLM_API_KEY|g" "$OUTPUT_FILE"
 fi
 
 echo "Environment variables substituted successfully"

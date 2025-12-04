@@ -15,22 +15,20 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   console.log('NEXT_PUBLIC_API_URL from env:', process.env.NEXT_PUBLIC_API_URL);
 }
 
-// API Key from localStorage (user-provided) or environment (fallback)
-const getApiKey = (): string | null => {
+// Get JWT access token from localStorage (stored after login)
+// This is used for Authorization: Bearer header
+const getAuthToken = (): string | null => {
   if (typeof window !== 'undefined') {
-    // First check localStorage (user-provided via "manage API key")
-    const storedApiKey = localStorage.getItem('api_key');
-    if (storedApiKey && storedApiKey.trim() !== '') {
-      return storedApiKey.trim();
-    }
-    // Fallback to environment variable if no API key is provided
-    const envApiKey = process.env.NEXT_PUBLIC_API_KEY;
-    if (envApiKey && envApiKey.trim() !== '' && envApiKey !== 'your_api_key_here') {
-      return envApiKey.trim();
+    const accessToken = localStorage.getItem('access_token');
+    if (accessToken && accessToken.trim() !== '') {
+      return accessToken.trim();
     }
   }
   return null;
 };
+
+// Note: X-API-Key is now injected by Kong automatically based on route
+// Frontend only needs to send Authorization: Bearer <token>
 
 // API Endpoints
 export const apiEndpoints = {
@@ -92,11 +90,13 @@ const asrApiClient: AxiosInstance = axios.create({
 llmApiClient.interceptors.request.use(
   (config) => {
     config.headers['request-startTime'] = new Date().getTime().toString();
-    // Use getApiKey() to respect priority: localStorage first, then env
-    const apiKey = getApiKey();
-    if (apiKey) {
-      config.headers['Authorization'] = `Bearer ${apiKey}`;
+    // Use JWT token from login for Authorization: Bearer header
+    // Kong will validate this token via Auth Service and inject X-API-Key automatically
+    const authToken = getAuthToken();
+    if (authToken) {
+      config.headers['Authorization'] = `Bearer ${authToken}`;
     }
+    // Note: X-API-Key is now injected by Kong based on route, frontend doesn't need to send it
     return config;
   },
   (error) => {
@@ -118,7 +118,9 @@ llmApiClient.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response;
       if (status === 401 && typeof window !== 'undefined') {
-        localStorage.removeItem('api_key');
+        // Clear JWT tokens on 401 (unauthorized)
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
         window.location.href = '/';
       }
     }
@@ -130,11 +132,13 @@ llmApiClient.interceptors.response.use(
 asrApiClient.interceptors.request.use(
   (config) => {
     config.headers['request-startTime'] = new Date().getTime().toString();
-    // Use getApiKey() to respect priority: localStorage first, then env
-    const apiKey = getApiKey();
-    if (apiKey) {
-      config.headers['Authorization'] = `Bearer ${apiKey}`;
+    // Use JWT token from login for Authorization: Bearer header
+    // Kong will validate this token via Auth Service and inject X-API-Key automatically
+    const authToken = getAuthToken();
+    if (authToken) {
+      config.headers['Authorization'] = `Bearer ${authToken}`;
     }
+    // Note: X-API-Key is now injected by Kong based on route, frontend doesn't need to send it
     return config;
   },
   (error) => {
@@ -156,7 +160,9 @@ asrApiClient.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response;
       if (status === 401 && typeof window !== 'undefined') {
-        localStorage.removeItem('api_key');
+        // Clear JWT tokens on 401 (unauthorized)
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
         window.location.href = '/';
       }
     }
@@ -213,6 +219,7 @@ apiClient.interceptors.request.use(
         config.headers['Authorization'] = `Bearer ${apiKey}`;
       }
     }
+    // Note: X-API-Key is now injected by Kong based on route, frontend doesn't need to send it
     
     return config;
   },
