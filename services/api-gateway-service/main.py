@@ -784,28 +784,34 @@ def build_auth_headers(request: Request, credentials: Optional[HTTPAuthorization
         headers['X-API-Key'] = api_key
     return headers
 
-def ensure_authenticated_for_request(req: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> None:
-    """Enforce auth based on Swagger x-auth-source header.
-
-    - If x-auth-source=API_KEY, require X-API-Key
-    - If x-auth-source=AUTH_TOKEN, require Bearer token
-    - Otherwise, accept either Bearer or API key
+async def ensure_authenticated_for_request(req: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> None:
+    """Enforce authentication - always require valid JWT token in Authorization header.
+    
+    - Kong handles X-API-Key authentication (service-level)
+    - API Gateway requires valid JWT token in Authorization header (user-level)
+    - X-API-Key presence does NOT bypass JWT token validation
     """
-    choice = (req.headers.get('x-auth-source') or '').upper()
-    has_bearer = bool(credentials and credentials.credentials)
-    has_api_key = bool(api_key)
-
-    if choice == 'API_KEY':
-        if not has_api_key:
-            raise HTTPException(status_code=401, detail="Not authenticated: API key required (X-API-Key)")
-        return
-    if choice == 'AUTH_TOKEN':
-        if not has_bearer:
-            raise HTTPException(status_code=401, detail="Not authenticated: Bearer access token required (Authorization)")
-        return
-
-    if not (has_bearer or has_api_key):
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    # Always require a Bearer token in Authorization header
+    if not credentials or not credentials.credentials:
+        raise HTTPException(
+            status_code=401, 
+            detail="Not authenticated: Bearer access token required (Authorization header)",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    # Verify the JWT token is valid
+    token = credentials.credentials
+    payload = await auth_middleware.verify_token(token)
+    
+    if payload is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    # Token is valid - authentication successful
+    # Note: X-API-Key is only used by Kong for service-level authentication, not by API Gateway
 
 # --- OpenAPI customization: add x-auth-source dropdown param globally ---
 def custom_openapi():
@@ -1543,7 +1549,7 @@ async def transcribe_audio(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Transcribe audio to text using ASR service (alias for /inference)"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
@@ -1562,7 +1568,7 @@ async def asr_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Perform batch ASR inference on audio inputs"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
@@ -1580,7 +1586,7 @@ async def get_streaming_info(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get WebSocket streaming endpoint information"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers: Dict[str, str] = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
@@ -1595,7 +1601,7 @@ async def get_asr_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available ASR models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers: Dict[str, str] = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
@@ -1610,7 +1616,7 @@ async def asr_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """ASR service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "asr-service", headers=headers)
 
@@ -1623,7 +1629,7 @@ async def tts_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """TTS service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "tts-service", headers=headers)
 
@@ -1634,7 +1640,7 @@ async def tts_root(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """TTS service root endpoint"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/", "tts-service", headers=headers)
 
@@ -1645,7 +1651,7 @@ async def tts_streaming_info(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """TTS streaming endpoint information"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/streaming/info", "tts-service", headers=headers)
 
@@ -1657,7 +1663,7 @@ async def tts_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Perform batch TTS inference on text inputs"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
@@ -1675,7 +1681,7 @@ async def get_tts_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available TTS models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/tts/models", "tts-service", headers=headers)
 
@@ -1690,7 +1696,7 @@ async def get_tts_voices(
     is_active: Optional[bool] = True
 ):
     """Get available TTS voices with optional filtering"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     # Build query parameters
     params = {}
     if language:
@@ -1719,7 +1725,7 @@ async def nmt_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Perform NMT inference"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
@@ -1737,7 +1743,7 @@ async def batch_translate(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Batch translate multiple texts using NMT service"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/nmt/batch-translate", "nmt-service", headers=headers)
 
@@ -1750,7 +1756,7 @@ async def get_nmt_languages(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get supported languages for NMT service"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers: Dict[str, str] = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
@@ -1778,7 +1784,7 @@ async def get_nmt_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available NMT models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers: Dict[str, str] = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
@@ -1793,7 +1799,7 @@ async def get_nmt_services(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available NMT services"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers: Dict[str, str] = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
@@ -1808,7 +1814,7 @@ async def nmt_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """NMT service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/nmt/health", "nmt-service", headers=headers)
 
@@ -1821,7 +1827,7 @@ async def list_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """List all registered models."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/services/details/list_models", "model-management-service", headers=headers)
 
@@ -1835,7 +1841,7 @@ async def publish_model(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Fetch metadata for a specific model."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
@@ -1858,7 +1864,7 @@ async def unpublish_model(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Fetch metadata for a specific model."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
@@ -1881,7 +1887,7 @@ async def get_model(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Fetch metadata for a specific model."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     payload = json.dumps({"modelId": model_id}).encode("utf-8")
@@ -1903,7 +1909,7 @@ async def create_model(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Register a new model."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
@@ -1926,7 +1932,7 @@ async def update_model(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Update an existing model."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
@@ -1949,7 +1955,7 @@ async def delete_model(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Delete a model by ID."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service_with_params(
         None,
@@ -1969,7 +1975,7 @@ async def list_services(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """List all deployed services."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/services/details/list_services", "model-management-service", headers=headers)
 
@@ -1982,7 +1988,7 @@ async def get_service_details(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Fetch metadata for a specific runtime service."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     payload = json.dumps({"serviceId": service_id}).encode("utf-8")
@@ -2004,7 +2010,7 @@ async def create_service_entry(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Register a new service entry."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
@@ -2027,7 +2033,7 @@ async def update_service_entry(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Update a service entry."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
@@ -2050,7 +2056,7 @@ async def delete_service_entry(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Delete a service entry."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service_with_params(
         None,
@@ -2071,7 +2077,7 @@ async def update_service_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Update the health status reported by a service."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     # Override serviceId from path parameter
@@ -2098,7 +2104,7 @@ async def pipeline_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Execute pipeline inference (e.g., Speech-to-Speech translation)"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
@@ -2116,7 +2122,7 @@ async def get_pipeline_info(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get pipeline service information"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
@@ -2131,7 +2137,7 @@ async def pipeline_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Pipeline service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "pipeline-service", headers=headers)
 

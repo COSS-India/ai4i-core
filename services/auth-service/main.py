@@ -511,11 +511,12 @@ async def logout(
     )
 
 @app.get("/api/v1/auth/validate", response_model=TokenValidationResponse)
+@app.post("/api/v1/auth/validate", response_model=TokenValidationResponse)
 async def validate_token(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Validate token and return user info"""
+    """Validate token and return user info (supports both GET and POST for Kong introspection)"""
     permissions = await AuthUtils.get_user_permissions(db, current_user.id)
     roles = await AuthUtils.get_user_roles(db, current_user.id)
     

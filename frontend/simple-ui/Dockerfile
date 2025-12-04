@@ -24,12 +24,23 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Set environment variables for build
-# - NEXT_PUBLIC_API_URL is empty so frontend uses same-origin /api
-# - NEXT_PUBLIC_API_KEY has a default global value baked into the bundle,
-#   and can still be overridden with a build-arg if needed.
-ARG NEXT_PUBLIC_API_KEY="ak_xBy1d54a2F56_8lhh1kMPyab7jEUNzx4ot2FLy4pf4ks"
+# - NEXT_PUBLIC_API_URL is provided as a build-arg so we can point the UI
+#   either at Kong (preferred) or directly at the API gateway.
+# - Service-specific API keys are provided as build-args from .env file
+ARG NEXT_PUBLIC_API_URL=""
+ARG NEXT_PUBLIC_API_KEY=""
+ARG NEXT_PUBLIC_ASR_API_KEY=""
+ARG NEXT_PUBLIC_TTS_API_KEY=""
+ARG NEXT_PUBLIC_NMT_API_KEY=""
+ARG NEXT_PUBLIC_PIPELINE_API_KEY=""
+ARG NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=""
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV NEXT_PUBLIC_API_KEY=${NEXT_PUBLIC_API_KEY}
-ENV NEXT_PUBLIC_API_URL=""
+ENV NEXT_PUBLIC_ASR_API_KEY=${NEXT_PUBLIC_ASR_API_KEY}
+ENV NEXT_PUBLIC_TTS_API_KEY=${NEXT_PUBLIC_TTS_API_KEY}
+ENV NEXT_PUBLIC_NMT_API_KEY=${NEXT_PUBLIC_NMT_API_KEY}
+ENV NEXT_PUBLIC_PIPELINE_API_KEY=${NEXT_PUBLIC_PIPELINE_API_KEY}
+ENV NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY}
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 

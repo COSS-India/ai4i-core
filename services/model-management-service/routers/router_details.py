@@ -1,5 +1,4 @@
-from fastapi import HTTPException, status , APIRouter , Depends
-from middleware.auth_provider import AuthProvider
+from fastapi import HTTPException, status , APIRouter
 from models.model_view import ModelViewRequest , ModelViewResponse
 from models.service_view import ServiceViewRequest , ServiceViewResponse
 from models.service_list import ServiceListResponse
@@ -13,11 +12,11 @@ from logger import logger
 from typing import List
 
 
+# Authentication is handled by Kong + Auth Service, no need for AuthProvider here
 router_details = APIRouter(
     prefix="/services/details", 
-    tags=["Model Management"],
-    dependencies=[Depends(AuthProvider)] 
-    )
+    tags=["Model Management"]
+)
 
 
 #################################################### Model apis ####################################################
