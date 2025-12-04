@@ -563,7 +563,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=~\"/api/v1/.*transliteration.*|/services/inference/pipeline/transliteration\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\"\n    }[1d])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -642,7 +642,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      endpoint=~\"/api/v1/.*txt-lang-detection.*|/services/inference/pipeline/txt-lang-detection\"\n    }[1d])\n  ) by (le)\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum(\n    rate(telemetry_obsv_request_duration_seconds_bucket{\n      organization=~\"$organization\",\n      app=~\"$app\",\n      service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\"\n    }[1d])\n  ) by (le)\n)",
           "hide": false,
           "legendFormat": "__auto",
           "range": true,
@@ -2079,7 +2079,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/transliteration\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/transliteration\"})\n)",
+          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\"})\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -2152,7 +2152,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/transliteration\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=\"/services/inference/pipeline/transliteration\"}\n    )\n)",
+          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", service=\"transliteration-service\", endpoint=~\"/api/v1/transliteration/.*\"}\n    )\n)",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
@@ -2221,7 +2221,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*txt-lang-detection.*|/services/inference/pipeline/txt-lang-detection\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*txt-lang-detection.*|/services/inference/pipeline/txt-lang-detection\"})\n)",
+          "expr": "100 * (\n  sum(telemetry_obsv_errors_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\"})\n  /\n  sum(telemetry_obsv_requests_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\"})\n)",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -2294,7 +2294,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*txt-lang-detection.*|/services/inference/pipeline/txt-lang-detection\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", endpoint=~\"/api/v1/.*txt-lang-detection.*|/services/inference/pipeline/txt-lang-detection\"}\n    )\n)",
+          "expr": "100 * sum by(status_code) (\n    telemetry_obsv_errors_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\"}\n)\n/\nscalar(\n    sum(\n        telemetry_obsv_errors_total{organization=~\"$organization\", service=\"language-detection-service\", endpoint=~\"/api/v1/language-detection/.*\"}\n    )\n)",
           "fullMetaSearch": false,
           "hide": false,
           "includeNullMetadata": true,
