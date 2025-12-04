@@ -389,16 +389,19 @@ async def get_model_details(model_id: str) -> Dict[str, Any]:
             return None
 
         return {
-             "modelId": model.model_id,
-             "name": model.name,
-             "description": model.description,
-             "languages": model.languages or [],
-             "domain": model.domain,
-             "submitter": model.submitter,
-             "license": model.license,
-             "inferenceEndPoint": model.inference_endpoint,
-             "source": "",  ## ask value for this field
-             "task": model.task
+            "modelId": model.model_id,
+            "name": model.name,
+            "description": model.description,
+            "languages": model.languages or [],
+            "domain": model.domain,
+            "submitter": model.submitter,
+            "license": model.license,
+            "inferenceEndPoint": model.inference_endpoint,
+            "source": "",  ## ask value for this field
+            "task": model.task,
+            "isPublished": model.is_published,
+            "publishedAt": datetime.fromtimestamp(model.published_at).isoformat() if model.published_at else None,
+            "unpublishedAt": datetime.fromtimestamp(model.unpublished_at).isoformat() if model.unpublished_at else None,
          }
      
     except Exception as e:
@@ -431,7 +434,10 @@ async def list_all_models() -> List[Dict[str, Any]]:
                 "license": data.get("license"),
                 "inferenceEndPoint": data.get("inference_endpoint"),
                 "source": data.get("ref_url"),
-                "task": data.get("task", {})
+                "task": data.get("task", {}),
+                "isPublished": data.get("is_published", {}),
+                "publishedAt": datetime.fromtimestamp(data.get("published_at", {})).isoformat() if data.get("published_at", {}) else None ,
+                "unpublishedAt": datetime.fromtimestamp( data.get("unpublished_at", {})).isoformat() if  data.get("unpublished_at", {}) else None,
             })
 
         return result
