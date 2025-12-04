@@ -12,19 +12,18 @@ const ContentLayout: React.FC<ContentLayoutProps> = ({ children }) => {
 
   return (
     <Box 
-      pt={2} 
+      pt="calc(3.5rem + 0.5rem)" 
       pl="calc(4.5rem + 1rem)"
       pr={4}
-      h="calc(100vh - 3.5rem)"
-      overflow="hidden"
+      pb={4}
+      minH="calc(100vh - 3.5rem)"
     >
       <Box
-        h="full"
         py={4}
         px={4}
         bg={bgColor}
         borderRadius="md"
-        overflow="auto"
+        minH="calc(100vh - 3.5rem - 1rem)"
       >
         {children}
       </Box>

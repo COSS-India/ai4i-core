@@ -103,11 +103,14 @@ const Header: React.FC = () => {
       <Box
         h="3.5rem"
         bg={bgColor}
-        px="1.5rem"
+        pl="calc(4.5rem + 1.5rem)"
+        pr="1.5rem"
         boxShadow="sm"
-        position="sticky"
+        position="fixed"
         top={0}
-        zIndex={10}
+        left={0}
+        right={0}
+        zIndex={50}
         borderBottom="1px"
         borderColor={borderColor}
       >
