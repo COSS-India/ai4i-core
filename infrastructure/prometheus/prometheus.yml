@@ -1,0 +1,80 @@
+# Prometheus configuration for AI4I Core services
+# Scrapes metrics from ALL microservices
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+  external_labels:
+    cluster: 'ai4i-core'
+    environment: 'production'
+
+# -----------------------------
+# Scrape all microservices
+# -----------------------------
+scrape_configs:
+
+  # --------------------------------------------
+  # 1. Platform metrics – /metrics
+  # --------------------------------------------
+  - job_name: "ai4i-services"
+    scrape_interval: 5s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "api-gateway-service:8080"
+          - "auth-service:8081"
+          - "config-service:8082"
+          - "metrics-service:8083"
+          - "telemetry-service:8084"
+          - "alerting-service:8085"
+          - "dashboard-service:8086"
+          - "asr-service:8087"
+          - "tts-service:8088"
+          - "nmt-service:8089"
+          - "llm-service:8090"
+          - "pipeline-service:8090"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__address__]
+        regex: '([^:]+):(\d+)'
+        target_label: service
+        replacement: '${1}'
+
+  # --------------------------------------------
+  # 2. Dhruva Enterprise Metrics – /enterprise/metrics
+  # --------------------------------------------
+  - job_name: "dhruva-enterprise"
+    scrape_interval: 5s
+    metrics_path: /enterprise/metrics
+    static_configs:
+      - targets:
+          - "api-gateway-service:8080"
+          - "auth-service:8081"
+          - "config-service:8082"
+          - "metrics-service:8083"
+          - "telemetry-service:8084"
+          - "alerting-service:8085"
+          - "dashboard-service:8086"
+          - "asr-service:8087"
+          - "tts-service:8088"
+          - "nmt-service:8089"
+          - "llm-service:8090"
+          - "pipeline-service:8090"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__address__]
+        regex: '([^:]+):(\d+)'
+        target_label: service
+        replacement: '${1}'
+
+  # --------------------------------------------
+  # 3. Prometheus self-monitoring
+  # --------------------------------------------
+  - job_name: "prometheus"
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - "localhost:9090"
+
