@@ -8,11 +8,13 @@ set -e
 echo "Starting Unleash initialization..."
 
 # Set environment variables
+# Note: BASE_URI_PATH is configured in docker-compose.yml as /feature-flags
 UNLEASH_URL="${UNLEASH_URL:-http://unleash:4242}"
+BASE_URI_PATH="${BASE_URI_PATH:-/feature-flags}"
 
 # Wait for Unleash to be ready
 echo "Waiting for Unleash to be ready..."
-until curl -f "${UNLEASH_URL}/health" 2>/dev/null; do
+until curl -f "${UNLEASH_URL}${BASE_URI_PATH}/health" 2>/dev/null; do
     echo "Unleash is not ready yet, waiting..."
     sleep 5
 done
@@ -29,7 +31,7 @@ sleep 10
 
 # Verify Unleash API is accessible
 echo "Verifying Unleash API accessibility..."
-if curl -f -s "${UNLEASH_URL}/api/health" > /dev/null; then
+if curl -f -s "${UNLEASH_URL}${BASE_URI_PATH}/api/health" > /dev/null; then
     echo "Unleash API is accessible"
 else
     echo "Warning: Unleash API health check failed, but continuing..."
@@ -37,7 +39,7 @@ fi
 
 # Check if default API token exists (Unleash creates one by default)
 echo "Checking for default API tokens..."
-TOKEN_RESPONSE=$(curl -s -X POST "${UNLEASH_URL}/api/admin/login" \
+TOKEN_RESPONSE=$(curl -s -X POST "${UNLEASH_URL}${BASE_URI_PATH}/api/admin/login" \
     -H "Content-Type: application/json" \
     -d "{\"username\":\"${UNLEASH_ADMIN_USER}\",\"password\":\"${UNLEASH_ADMIN_PASSWORD}\"}" \
     || echo "")
@@ -50,7 +52,7 @@ fi
 
 # Verify database connection by checking if Unleash can list features
 echo "Verifying database connection..."
-FEATURES_RESPONSE=$(curl -s -f "${UNLEASH_URL}/api/client/features" \
+FEATURES_RESPONSE=$(curl -s -f "${UNLEASH_URL}${BASE_URI_PATH}/api/client/features" \
     -H "Authorization: *:*.unleash-insecure-api-token" \
     || echo "")
 
@@ -62,7 +64,7 @@ fi
 
 # Create default project if it doesn't exist (Unleash usually creates 'default' project automatically)
 echo "Verifying default project exists..."
-PROJECTS_RESPONSE=$(curl -s -f "${UNLEASH_URL}/api/admin/projects" \
+PROJECTS_RESPONSE=$(curl -s -f "${UNLEASH_URL}${BASE_URI_PATH}/api/admin/projects" \
     -H "Authorization: *:*.unleash-insecure-api-token" \
     || echo "")
 
@@ -74,7 +76,7 @@ fi
 
 # Test feature flag API endpoint
 echo "Testing feature flag API endpoint..."
-API_TEST=$(curl -s -f "${UNLEASH_URL}/api/client/features" \
+API_TEST=$(curl -s -f "${UNLEASH_URL}${BASE_URI_PATH}/api/client/features" \
     -H "Authorization: *:*.unleash-insecure-api-token" \
     -w "%{http_code}" \
     -o /dev/null \
@@ -96,7 +98,7 @@ echo "  - Admin UI: http://localhost:4242 (from host)"
 echo "  - Default credentials: ${UNLEASH_ADMIN_USER} / ${UNLEASH_ADMIN_PASSWORD}"
 echo ""
 echo "Note: For production, create a proper API token in the Unleash UI:"
-echo "  1. Access http://localhost:4242 from your host machine"
+echo "  1. Access http://localhost:4242${BASE_URI_PATH} from your host machine"
 echo "  2. Go to Settings → API Access"
 echo "  3. Create a new API token with appropriate permissions"
 echo "  4. Update UNLEASH_API_TOKEN in your service configuration"

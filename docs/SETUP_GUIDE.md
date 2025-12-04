@@ -181,7 +181,8 @@ The following feature flags are used by the frontend to control service visibili
 
 ### How to Create Feature Flags in Unleash
 
-1. **Access Unleash UI**: Navigate to http://localhost:4242 (or your Unleash instance URL)
+1. **Access Unleash UI**: 
+   - **Local Development**: Navigate to http://localhost:4242/feature-flags
    - **Default Username**: `admin`
    - **Default Password**: `unleash4all`
 
