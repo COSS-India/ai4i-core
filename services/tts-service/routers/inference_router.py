@@ -24,16 +24,15 @@ from utils.validation_utils import (
     validate_text_input,
     validate_audio_duration
 )
-from middleware.auth_provider import AuthProvider
 from middleware.exceptions import AuthenticationError, AuthorizationError
 
 logger = logging.getLogger(__name__)
 
 # Create router
+# Authentication is handled by Kong + Auth Service, no need for AuthProvider here
 inference_router = APIRouter(
     prefix="/api/v1/tts", 
     tags=["TTS Inference"]
-    # Authentication disabled for development
 )
 
 
