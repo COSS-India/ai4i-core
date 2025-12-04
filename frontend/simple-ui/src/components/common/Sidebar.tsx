@@ -159,19 +159,20 @@ const Sidebar: React.FC = () => {
     <Box
       position="fixed"
       left={0}
-      top="3.5rem"
-      h="calc(100vh - 3.5rem)"
+      top={0}
+      h="100vh"
       w={isExpanded ? "240px" : "4.5rem"}
       bg={bgColor}
       boxShadow="md"
-      zIndex={50}
+      zIndex={40}
       transition="width 0.2s ease"
       onMouseEnter={() => setIsExpanded(true)}
       onMouseLeave={() => setIsExpanded(false)}
       borderRight="1px"
       borderColor={borderColor}
+      pt="3.5rem"
     >
-      <VStack spacing={3} p={3} h="full">
+      <VStack spacing={3} p={3} h="calc(100vh - 3.5rem)" overflowY="auto">
         {/* Logo Section */}
         <VStack spacing={2} w="full">
           <Box
