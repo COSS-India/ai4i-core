@@ -49,7 +49,6 @@ services:
     image: influxdb:2.7-alpine
     container_name: ai4v-influxdb
     environment:
-      # All init variables commented out - InfluxDB already initialized
       # DOCKER_INFLUXDB_INIT_MODE: setup
       DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_ADMIN_USER}
       DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD}
@@ -124,13 +123,17 @@ services:
       DATABASE_SSL: "false"
       UNLEASH_URL: http://unleash:4242
       LOG_LEVEL: info
+      BASE_URI_PATH: /feature-flags
+      UNLEASH_PUBLIC_BASE_URL: https://core-v1.ai4inclusion.org/feature-flags
+      TRUST_PROXY: "true"
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - microservices-network
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4242/health || exit 1"]
+      # Unleash is mounted under BASE_URI_PATH=/feature-flags, so health lives at /feature-flags/health
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4242/feature-flags/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -241,7 +244,7 @@ services:
       zookeeper:
         condition: service_healthy
       unleash:
-        condition: service_healthy
+        condition: service_started
     networks:
       - microservices-network
     # healthcheck:
@@ -400,8 +403,8 @@ services:
 
   tts-service:
     build:
-      context: .
-      dockerfile: services/tts-service/Dockerfile
+      context: ./services/tts-service
+      dockerfile: Dockerfile
     container_name: ai4v-tts-service
     ports:
       - "8088:8088"
@@ -429,8 +432,8 @@ services:
 
   nmt-service:
     build:
-      context: .
-      dockerfile: services/nmt-service/Dockerfile
+      context: ./services/nmt-service
+      dockerfile: Dockerfile
     container_name: ai4v-nmt-service
     ports:
       - "8091:8089"
@@ -455,32 +458,6 @@ services:
       # start_period: 30s
     restart: unless-stopped
 
-  ocr-service:
-    build:
-      context: .
-      dockerfile: services/ocr-service/Dockerfile
-    container_name: ai4v-ocr-service
-    ports:
-      - "8094:8090"
-    environment:
-      - ENV_FILE=.env
-    depends_on:
-      config-service:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - microservices-network
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 30s
-    restart: unless-stopped
-
   speaker-diarization-service:
     build:
       context: .
@@ -490,6 +467,7 @@ services:
       - "8095:8095"
     environment:
       - ENV_FILE=.env
+      - TRITON_ENDPOINT=http://65.1.35.3:8700
     depends_on:
       config-service:
         condition: service_healthy
@@ -501,6 +479,64 @@ services:
       - microservices-network
     # healthcheck:
     #   test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 30s
+    restart: unless-stopped
+
+  language-diarization-service:
+    build:
+      context: .
+      dockerfile: services/language-diarization-service/Dockerfile
+    container_name: ai4v-language-diarization-service
+    ports:
+      - "8094:8094"
+    environment:
+      - ENV_FILE=.env
+      - TRITON_ENDPOINT=65.1.35.3:8600
+    env_file:
+      - ./services/language-diarization-service/.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8094/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 30s
+    restart: unless-stopped
+
+  audio-lang-detection-service:
+    build:
+      context: .
+      dockerfile: services/audio-lang-detection-service/Dockerfile
+    container_name: ai4v-audio-lang-detection-service
+    ports:
+      - "8096:8096"
+    environment:
+      - ENV_FILE=.env
+      - TRITON_ENDPOINT=65.1.35.3:8100
+    env_file:
+      - ./services/audio-lang-detection-service/.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8096/health"]
     #   interval: 30s
     #   timeout: 10s
     #   retries: 3
@@ -609,6 +645,10 @@ services:
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--storage.tsdb.retention.time=30d'
+      # Local development: serve Prometheus UI at root (http://localhost:9090)
+      # For production behind a reverse proxy, re-enable and adjust these flags.
+      # - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
+      # - '--web.route-prefix=/'
     networks:
       - microservices-network
     depends_on:
@@ -616,6 +656,8 @@ services:
       - tts-service
       - asr-service
       - speaker-diarization-service
+      - language-diarization-service
+      - audio-lang-detection-service
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
@@ -633,7 +675,9 @@ services:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_INSTALL_PLUGINS=
-      - GF_SERVER_ROOT_URL=http://localhost:3001
+      # Local development: serve Grafana directly at http://localhost:3001/
+      - GF_SERVER_ROOT_URL=http://localhost:3001/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=false
     volumes:
       - grafana-data:/var/lib/grafana
       - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning

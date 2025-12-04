@@ -31,17 +31,17 @@ RUN apt-get update && apt-get install -y \
 # Copy Python packages from builder stage
 COPY --from=builder /root/.local /home/app/.local
 
-# Make sure scripts in .local are usable
-ENV PATH=/home/app/.local/bin:$PATH
-
 # Copy application code
 COPY . .
 
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash app
-# Create non-root user first
 # Change ownership to app user
 RUN chown -R app:app /app /home/app/.local
+
+# Make sure scripts in .local are usable
+ENV PATH=/home/app/.local/bin:$PATH
+
 USER app
 
 # Expose port
@@ -52,4 +52,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8083/health || exit 1
 
 # Run the application
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8083"]
+CMD ["/home/app/.local/bin/uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8083"]

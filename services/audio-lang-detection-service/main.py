@@ -1,8 +1,8 @@
 """
-Speaker Diarization Service - Speaker Diarization microservice
+Audio Language Detection Service - Audio Language Detection microservice
 
-Main FastAPI application entry point for the Speaker Diarization microservice.
-Provides batch speaker diarization inference using Triton Inference Server.
+Main FastAPI application entry point for the Audio Language Detection microservice.
+Provides batch audio language detection inference using Triton Inference Server.
 """
 
 import asyncio
@@ -29,6 +29,7 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
+from utils.triton_client import TritonClient
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -46,7 +47,7 @@ DATABASE_URL = os.getenv(
     "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db",
 )
 
-TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "65.1.35.3:8700")
+TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "65.1.35.3:8100")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
 TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT", "300.0"))
 
@@ -61,7 +62,7 @@ registered_instance_id: Optional[str] = None
 async def lifespan(app: FastAPI):
     global redis_client, db_engine, db_session_factory, registry_client, registered_instance_id
 
-    logger.info("Starting Speaker Diarization Service...")
+    logger.info("Starting Audio Language Detection Service...")
 
     # Redis
     max_retries = 3
@@ -144,8 +145,8 @@ async def lifespan(app: FastAPI):
     # Service registry
     try:
         registry_client = ServiceRegistryHttpClient()
-        service_name = os.getenv("SERVICE_NAME", "speaker-diarization-service")
-        service_port = int(os.getenv("SERVICE_PORT", "8095"))
+        service_name = os.getenv("SERVICE_NAME", "audio-lang-detection-service")
+        service_port = int(os.getenv("SERVICE_PORT", "8096"))
         public_base_url = os.getenv("SERVICE_PUBLIC_URL")
         if public_base_url:
             service_url = public_base_url.rstrip("/")
@@ -173,15 +174,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Service registry registration error: %s", e)
 
-    logger.info("Speaker Diarization Service started successfully")
+    logger.info("Audio Language Detection Service started successfully")
 
     yield
 
-    logger.info("Shutting down Speaker Diarization Service...")
+    logger.info("Shutting down Audio Language Detection Service...")
     try:
         try:
             if registry_client and registered_instance_id:
-                service_name = os.getenv("SERVICE_NAME", "speaker-diarization-service")
+                service_name = os.getenv("SERVICE_NAME", "audio-lang-detection-service")
                 await registry_client.deregister(service_name, registered_instance_id)
         except Exception as e:
             logger.warning("Service registry deregistration error: %s", e)
@@ -198,17 +199,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Speaker Diarization Service",
+    title="Audio Language Detection Service",
     version="1.0.0",
     description=(
-        "Speaker Diarization microservice using Triton Inference Server. "
-        "Identifies different speakers in audio and returns their segments."
+        "Audio Language Detection microservice using Triton Inference Server. "
+        "Detects the language of audio content and returns language code, confidence, and all scores."
     ),
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
     openapi_tags=[
-        {"name": "Speaker Diarization Inference", "description": "Speaker diarization inference endpoints"},
+        {"name": "Audio Language Detection Inference", "description": "Audio language detection inference endpoints"},
         {"name": "Health", "description": "Service health and readiness checks"},
     ],
     contact={
@@ -229,11 +230,11 @@ config.enabled = True
 if not config.customers:
     config.customers = []
 if not config.apps:
-    config.apps = ["speaker-diarization"]
+    config.apps = ["audio-lang-detection"]
 
 plugin = ObservabilityPlugin(config)
 plugin.register_plugin(app)
-logger.info("AI4ICore Observability Plugin initialized for Speaker Diarization service")
+logger.info("AI4ICore Observability Plugin initialized for Audio Language Detection service")
 
 # CORS
 app.add_middleware(
@@ -267,10 +268,10 @@ app.include_router(inference_router.inference_router)
 @app.get("/", tags=["Health"])
 async def root():
     return {
-        "service": "speaker-diarization-service",
+        "service": "audio-lang-detection-service",
         "version": "1.0.0",
         "status": "running",
-        "description": "Speaker Diarization microservice",
+        "description": "Audio Language Detection microservice",
     }
 
 
@@ -278,6 +279,7 @@ async def root():
 async def health(request: Request):
     redis_ok = False
     db_ok = False
+    triton_ok = False
 
     try:
         rc = getattr(request.app.state, "redis_client", None)
@@ -296,14 +298,24 @@ async def health(request: Request):
     except Exception as e:
         logger.warning("/health: PostgreSQL check failed: %s", e)
 
-    status_str = "ok" if (redis_ok and db_ok) else "degraded"
+    try:
+        triton_endpoint = getattr(request.app.state, "triton_endpoint", "")
+        if triton_endpoint:
+            triton_client_instance = TritonClient(triton_endpoint)
+            if triton_client_instance.client.is_server_live() and triton_client_instance.client.is_server_ready():
+                triton_ok = True
+    except Exception as e:
+        logger.warning("/health: Triton check failed: %s", e)
+
+    status_str = "ok" if (redis_ok and db_ok and triton_ok) else "degraded"
     status_code = 200 if status_str == "ok" else 503
 
     return {
-        "service": "speaker-diarization-service",
+        "service": "audio-lang-detection-service",
         "status": status_str,
         "redis_ok": redis_ok,
         "db_ok": db_ok,
+        "triton_ok": triton_ok,
         "version": "1.0.0",
     }, status_code
 
@@ -311,7 +323,7 @@ async def health(request: Request):
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("SERVICE_PORT", "8095"))
+    port = int(os.getenv("SERVICE_PORT", "8096"))
     log_level = os.getenv("LOG_LEVEL", "info").lower()
 
     uvicorn.run(
