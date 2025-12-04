@@ -385,6 +385,15 @@ CREATE TRIGGER update_llm_requests_updated_at BEFORE UPDATE ON llm_requests
 
 \c config_db;
 
+-- Create updated_at trigger function for config_db
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
 -- Configurations table
 CREATE TABLE IF NOT EXISTS configurations (
     id SERIAL PRIMARY KEY,

@@ -14,7 +14,7 @@ redis>=5.0.0
 pydantic>=2.4.0
 pydantic-settings>=2.0.0
 
-# Triton client for Speaker Diarization
+# Triton client for Audio Language Detection
 tritonclient[http]>=2.40.0
 gevent>=23.9.0
 
@@ -35,4 +35,7 @@ python-jose[cryptography]>=3.3.0
 
 # AI4ICore Observability Plugin is installed in Dockerfile (listed for reference)
 # -e ../../libs/ai4icore_observability
+
+# System monitoring
+psutil>=5.9.0
 

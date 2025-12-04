@@ -27,10 +27,11 @@ def get_speaker_diarization_service(request: Request) -> SpeakerDiarizationServi
     """
     Dependency to construct SpeakerDiarizationService with configured Triton client.
 
-    Uses TRITON_ENDPOINT and TRITON_API_KEY from app.state (set in main.py).
+    Uses TRITON_ENDPOINT, TRITON_API_KEY, and TRITON_TIMEOUT from app.state (set in main.py).
     """
     triton_endpoint: str = getattr(request.app.state, "triton_endpoint", "")
     triton_api_key: str = getattr(request.app.state, "triton_api_key", "")
+    triton_timeout: float = getattr(request.app.state, "triton_timeout", 300.0)
 
     if not triton_endpoint:
         raise HTTPException(
@@ -38,7 +39,7 @@ def get_speaker_diarization_service(request: Request) -> SpeakerDiarizationServi
             detail="TRITON_ENDPOINT is not configured for Speaker Diarization service",
         )
 
-    triton_client = TritonClient(triton_endpoint, triton_api_key or None)
+    triton_client = TritonClient(triton_endpoint, triton_api_key or None, triton_timeout)
     return SpeakerDiarizationService(triton_client=triton_client)
 
 

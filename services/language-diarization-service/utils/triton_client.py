@@ -1,8 +1,8 @@
 """
-Triton Inference Server client wrapper for Speaker Diarization.
+Triton Inference Server client wrapper for Language Diarization.
 
 This client sends base64-encoded audio to a Triton deployment of the
-speaker diarization model and parses its JSON output.
+language diarization model and parses its JSON output.
 """
 
 import json
@@ -12,7 +12,6 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import tritonclient.http as http_client
 from tritonclient.utils import np_to_triton_dtype
-import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ class TritonInferenceError(Exception):
 
 
 class TritonClient:
-    """Triton Inference Server client for Speaker Diarization operations."""
+    """Triton Inference Server client for Language Diarization operations."""
 
     def __init__(self, triton_url: str, api_key: Optional[str] = None, timeout: float = 300.0):
         """
@@ -52,7 +51,7 @@ class TritonClient:
         """Lazy initialization of Triton HTTP client."""
         if self._client is None:
             logger.info(
-                "Initializing Triton client for Speaker Diarization with URL: %s",
+                "Initializing Triton client for Language Diarization with URL: %s",
                 self.triton_url,
             )
             try:
@@ -90,35 +89,33 @@ class TritonClient:
         inp.set_data_from_numpy(arr)
         return inp
 
-    def get_speaker_diarization_io_for_triton(
-        self, audio_base64: str, num_speakers: Optional[int] = None
+    def get_language_diarization_io_for_triton(
+        self, audio_base64: str, target_language: str = ""
     ) -> Tuple[List[http_client.InferInput], List[http_client.InferRequestedOutput]]:
         """
-        Prepare inputs and outputs for speaker diarization inference.
+        Prepare inputs and outputs for language diarization inference.
 
         Args:
             audio_base64: Base64-encoded audio string
-            num_speakers: Optional number of speakers (if None, will be auto-detected)
+            target_language: Target language code (default: "" empty string for all languages)
 
         Returns:
             tuple: (inputs, outputs) for Triton inference
         """
         # Shape needs to be [1, 1] for Triton (batch_size=1, num_elements=1)
-        # NUM_SPEAKERS is expected as a string in BYTES format
-        num_speakers_str = str(num_speakers) if num_speakers is not None else ""
-
+        # LANGUAGE is expected as a string in BYTES format
         inputs = [
             self._get_string_tensor([[audio_base64]], "AUDIO_DATA"),
-            self._get_string_tensor([[num_speakers_str]], "NUM_SPEAKERS"),
+            self._get_string_tensor([[target_language]], "LANGUAGE"),
         ]
         outputs = [http_client.InferRequestedOutput("DIARIZATION_RESULT")]
         return inputs, outputs
 
-    def run_speaker_diarization_inference(
-        self, audio_base64: str, num_speakers: Optional[int] = None
+    def run_language_diarization_inference(
+        self, audio_base64: str, target_language: str = ""
     ) -> Dict:
         """
-        Run speaker diarization on a single base64-encoded audio.
+        Run language diarization on a single base64-encoded audio.
 
         Returns a parsed JSON object from the diarization model.
         If the result cannot be parsed, an empty dict is returned.
@@ -126,8 +123,8 @@ class TritonClient:
         if not audio_base64:
             return {}
 
-        inputs, outputs = self.get_speaker_diarization_io_for_triton(
-            audio_base64, num_speakers
+        inputs, outputs = self.get_language_diarization_io_for_triton(
+            audio_base64, target_language
         )
 
         headers: Dict[str, str] = {}
@@ -136,22 +133,22 @@ class TritonClient:
 
         try:
             response = self.client.infer(
-                model_name="speaker_diarization",
+                model_name="lang_diarization",
                 inputs=inputs,
                 outputs=outputs,
                 headers=headers or None,
             )
         except Exception as exc:  # pragma: no cover - external failure path
             logger.error(
-                "Triton Speaker Diarization inference failed: %s", exc, exc_info=True
+                "Triton Language Diarization inference failed: %s", exc, exc_info=True
             )
             raise TritonInferenceError(
-                f"Triton Speaker Diarization inference failed: {exc}"
+                f"Triton Language Diarization inference failed: {exc}"
             ) from exc
 
         result = response.as_numpy("DIARIZATION_RESULT")
         if result is None or len(result) == 0:
-            logger.warning("Empty response from Triton for speaker diarization")
+            logger.warning("Empty response from Triton for language diarization")
             return {}
 
         # Decode the response - Result shape is [1, 1], so access [0][0]
@@ -167,12 +164,13 @@ class TritonClient:
             result_str = str(result_bytes)
 
         logger.debug(
-            "Speaker Diarization Triton response preview=%s",
+            "Language Diarization Triton response preview=%s",
             result_str[:200],
         )
 
         try:
             return json.loads(result_str)
         except json.JSONDecodeError:
-            logger.exception("Failed to parse Speaker Diarization JSON from Triton")
+            logger.exception("Failed to parse Language Diarization JSON from Triton")
             return {}
+
