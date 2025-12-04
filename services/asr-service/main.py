@@ -31,7 +31,6 @@ from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
-from prometheus_fastapi_instrumentator import Instrumentator
 
 # Configure logging
 logging.basicConfig(
@@ -240,12 +239,7 @@ app = FastAPI(
     },
     lifespan=lifespan
 )
-instrumentator = Instrumentator().instrument(app)
-instrumentator.expose(
-    app,
-    endpoint="/metrics",
-    include_in_schema=False)
-    
+
 
 
 # Initialize AI4ICore Observability Plugin
