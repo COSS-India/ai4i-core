@@ -654,6 +654,50 @@ services:
       - microservices-network
     restart: unless-stopped
 
+  transliteration-service:
+    build:
+      context: .
+      dockerfile: services/transliteration-service/Dockerfile
+    container_name: ai4v-transliteration-service
+    ports:
+      - "8097:8090"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/transliteration-service/.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  language-detection-service:
+    build:
+      context: .
+      dockerfile: services/language-detection-service/Dockerfile
+    container_name: ai4v-language-detection-service
+    ports:
+      - "8098:8090"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/language-detection-service/.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
   simple-ui-frontend:
     build:
       context: ./frontend/simple-ui
