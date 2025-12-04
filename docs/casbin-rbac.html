@@ -1,0 +1,699 @@
+<!DOCTYPE html><html><head>
+      <title>casbin-rbac</title>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      
+      <link rel="stylesheet" href="file:////home/supriya/.vscode/extensions/shd101wyy.markdown-preview-enhanced-0.8.20/crossnote/dependencies/katex/katex.min.css">
+      
+      
+      <script type="text/javascript" src="file:////home/supriya/.vscode/extensions/shd101wyy.markdown-preview-enhanced-0.8.20/crossnote/dependencies/mermaid/mermaid.min.js" charset="UTF-8"></script>
+      
+      
+      <style>
+      code[class*=language-],pre[class*=language-]{color:#333;background:0 0;font-family:Consolas,"Liberation Mono",Menlo,Courier,monospace;text-align:left;white-space:pre;word-spacing:normal;word-break:normal;word-wrap:normal;line-height:1.4;-moz-tab-size:8;-o-tab-size:8;tab-size:8;-webkit-hyphens:none;-moz-hyphens:none;-ms-hyphens:none;hyphens:none}pre[class*=language-]{padding:.8em;overflow:auto;border-radius:3px;background:#f5f5f5}:not(pre)>code[class*=language-]{padding:.1em;border-radius:.3em;white-space:normal;background:#f5f5f5}.token.blockquote,.token.comment{color:#969896}.token.cdata{color:#183691}.token.doctype,.token.macro.property,.token.punctuation,.token.variable{color:#333}.token.builtin,.token.important,.token.keyword,.token.operator,.token.rule{color:#a71d5d}.token.attr-value,.token.regex,.token.string,.token.url{color:#183691}.token.atrule,.token.boolean,.token.code,.token.command,.token.constant,.token.entity,.token.number,.token.property,.token.symbol{color:#0086b3}.token.prolog,.token.selector,.token.tag{color:#63a35c}.token.attr-name,.token.class,.token.class-name,.token.function,.token.id,.token.namespace,.token.pseudo-class,.token.pseudo-element,.token.url-reference .token.variable{color:#795da3}.token.entity{cursor:help}.token.title,.token.title .token.punctuation{font-weight:700;color:#1d3e81}.token.list{color:#ed6a43}.token.inserted{background-color:#eaffea;color:#55a532}.token.deleted{background-color:#ffecec;color:#bd2c00}.token.bold{font-weight:700}.token.italic{font-style:italic}.language-json .token.property{color:#183691}.language-markup .token.tag .token.punctuation{color:#333}.language-css .token.function,code.language-css{color:#0086b3}.language-yaml .token.atrule{color:#63a35c}code.language-yaml{color:#183691}.language-ruby .token.function{color:#333}.language-markdown .token.url{color:#795da3}.language-makefile .token.symbol{color:#795da3}.language-makefile .token.variable{color:#183691}.language-makefile .token.builtin{color:#0086b3}.language-bash .token.keyword{color:#0086b3}pre[data-line]{position:relative;padding:1em 0 1em 3em}pre[data-line] .line-highlight-wrapper{position:absolute;top:0;left:0;background-color:transparent;display:block;width:100%}pre[data-line] .line-highlight{position:absolute;left:0;right:0;padding:inherit 0;margin-top:1em;background:hsla(24,20%,50%,.08);background:linear-gradient(to right,hsla(24,20%,50%,.1) 70%,hsla(24,20%,50%,0));pointer-events:none;line-height:inherit;white-space:pre}pre[data-line] .line-highlight:before,pre[data-line] .line-highlight[data-end]:after{content:attr(data-start);position:absolute;top:.4em;left:.6em;min-width:1em;padding:0 .5em;background-color:hsla(24,20%,50%,.4);color:#f4f1ef;font:bold 65%/1.5 sans-serif;text-align:center;vertical-align:.3em;border-radius:999px;text-shadow:none;box-shadow:0 1px #fff}pre[data-line] .line-highlight[data-end]:after{content:attr(data-end);top:auto;bottom:.4em}html body{font-family:'Helvetica Neue',Helvetica,'Segoe UI',Arial,freesans,sans-serif;font-size:16px;line-height:1.6;color:#333;background-color:#fff;overflow:initial;box-sizing:border-box;word-wrap:break-word}html body>:first-child{margin-top:0}html body h1,html body h2,html body h3,html body h4,html body h5,html body h6{line-height:1.2;margin-top:1em;margin-bottom:16px;color:#000}html body h1{font-size:2.25em;font-weight:300;padding-bottom:.3em}html body h2{font-size:1.75em;font-weight:400;padding-bottom:.3em}html body h3{font-size:1.5em;font-weight:500}html body h4{font-size:1.25em;font-weight:600}html body h5{font-size:1.1em;font-weight:600}html body h6{font-size:1em;font-weight:600}html body h1,html body h2,html body h3,html body h4,html body h5{font-weight:600}html body h5{font-size:1em}html body h6{color:#5c5c5c}html body strong{color:#000}html body del{color:#5c5c5c}html body a:not([href]){color:inherit;text-decoration:none}html body a{color:#08c;text-decoration:none}html body a:hover{color:#00a3f5;text-decoration:none}html body img{max-width:100%}html body>p{margin-top:0;margin-bottom:16px;word-wrap:break-word}html body>ol,html body>ul{margin-bottom:16px}html body ol,html body ul{padding-left:2em}html body ol.no-list,html body ul.no-list{padding:0;list-style-type:none}html body ol ol,html body ol ul,html body ul ol,html body ul ul{margin-top:0;margin-bottom:0}html body li{margin-bottom:0}html body li.task-list-item{list-style:none}html body li>p{margin-top:0;margin-bottom:0}html body .task-list-item-checkbox{margin:0 .2em .25em -1.8em;vertical-align:middle}html body .task-list-item-checkbox:hover{cursor:pointer}html body blockquote{margin:16px 0;font-size:inherit;padding:0 15px;color:#5c5c5c;background-color:#f0f0f0;border-left:4px solid #d6d6d6}html body blockquote>:first-child{margin-top:0}html body blockquote>:last-child{margin-bottom:0}html body hr{height:4px;margin:32px 0;background-color:#d6d6d6;border:0 none}html body table{margin:10px 0 15px 0;border-collapse:collapse;border-spacing:0;display:block;width:100%;overflow:auto;word-break:normal;word-break:keep-all}html body table th{font-weight:700;color:#000}html body table td,html body table th{border:1px solid #d6d6d6;padding:6px 13px}html body dl{padding:0}html body dl dt{padding:0;margin-top:16px;font-size:1em;font-style:italic;font-weight:700}html body dl dd{padding:0 16px;margin-bottom:16px}html body code{font-family:Menlo,Monaco,Consolas,'Courier New',monospace;font-size:.85em;color:#000;background-color:#f0f0f0;border-radius:3px;padding:.2em 0}html body code::after,html body code::before{letter-spacing:-.2em;content:'\00a0'}html body pre>code{padding:0;margin:0;word-break:normal;white-space:pre;background:0 0;border:0}html body .highlight{margin-bottom:16px}html body .highlight pre,html body pre{padding:1em;overflow:auto;line-height:1.45;border:#d6d6d6;border-radius:3px}html body .highlight pre{margin-bottom:0;word-break:normal}html body pre code,html body pre tt{display:inline;max-width:initial;padding:0;margin:0;overflow:initial;line-height:inherit;word-wrap:normal;background-color:transparent;border:0}html body pre code:after,html body pre code:before,html body pre tt:after,html body pre tt:before{content:normal}html body blockquote,html body dl,html body ol,html body p,html body pre,html body ul{margin-top:0;margin-bottom:16px}html body kbd{color:#000;border:1px solid #d6d6d6;border-bottom:2px solid #c7c7c7;padding:2px 4px;background-color:#f0f0f0;border-radius:3px}@media print{html body{background-color:#fff}html body h1,html body h2,html body h3,html body h4,html body h5,html body h6{color:#000;page-break-after:avoid}html body blockquote{color:#5c5c5c}html body pre{page-break-inside:avoid}html body table{display:table}html body img{display:block;max-width:100%;max-height:100%}html body code,html body pre{word-wrap:break-word;white-space:pre}}.markdown-preview{width:100%;height:100%;box-sizing:border-box}.markdown-preview ul{list-style:disc}.markdown-preview ul ul{list-style:circle}.markdown-preview ul ul ul{list-style:square}.markdown-preview ol{list-style:decimal}.markdown-preview ol ol,.markdown-preview ul ol{list-style-type:lower-roman}.markdown-preview ol ol ol,.markdown-preview ol ul ol,.markdown-preview ul ol ol,.markdown-preview ul ul ol{list-style-type:lower-alpha}.markdown-preview .newpage,.markdown-preview .pagebreak{page-break-before:always}.markdown-preview pre.line-numbers{position:relative;padding-left:3.8em;counter-reset:linenumber}.markdown-preview pre.line-numbers>code{position:relative}.markdown-preview pre.line-numbers .line-numbers-rows{position:absolute;pointer-events:none;top:1em;font-size:100%;left:0;width:3em;letter-spacing:-1px;border-right:1px solid #999;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;user-select:none}.markdown-preview pre.line-numbers .line-numbers-rows>span{pointer-events:none;display:block;counter-increment:linenumber}.markdown-preview pre.line-numbers .line-numbers-rows>span:before{content:counter(linenumber);color:#999;display:block;padding-right:.8em;text-align:right}.markdown-preview .mathjax-exps .MathJax_Display{text-align:center!important}.markdown-preview:not([data-for=preview]) .code-chunk .code-chunk-btn-group{display:none}.markdown-preview:not([data-for=preview]) .code-chunk .status{display:none}.markdown-preview:not([data-for=preview]) .code-chunk .output-div{margin-bottom:16px}.markdown-preview .md-toc{padding:0}.markdown-preview .md-toc .md-toc-link-wrapper .md-toc-link{display:inline;padding:.25rem 0}.markdown-preview .md-toc .md-toc-link-wrapper .md-toc-link div,.markdown-preview .md-toc .md-toc-link-wrapper .md-toc-link p{display:inline}.markdown-preview .md-toc .md-toc-link-wrapper.highlighted .md-toc-link{font-weight:800}.scrollbar-style::-webkit-scrollbar{width:8px}.scrollbar-style::-webkit-scrollbar-track{border-radius:10px;background-color:transparent}.scrollbar-style::-webkit-scrollbar-thumb{border-radius:5px;background-color:rgba(150,150,150,.66);border:4px solid rgba(150,150,150,.66);background-clip:content-box}html body[for=html-export]:not([data-presentation-mode]){position:relative;width:100%;height:100%;top:0;left:0;margin:0;padding:0;overflow:auto}html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{position:relative;top:0;min-height:100vh}@media screen and (min-width:914px){html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{padding:2em calc(50% - 457px + 2em)}}@media screen and (max-width:914px){html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{padding:2em}}@media screen and (max-width:450px){html body[for=html-export]:not([data-presentation-mode]) .markdown-preview{font-size:14px!important;padding:1em}}@media print{html body[for=html-export]:not([data-presentation-mode]) #sidebar-toc-btn{display:none}}html body[for=html-export]:not([data-presentation-mode]) #sidebar-toc-btn{position:fixed;bottom:8px;left:8px;font-size:28px;cursor:pointer;color:inherit;z-index:99;width:32px;text-align:center;opacity:.4}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] #sidebar-toc-btn{opacity:1}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc{position:fixed;top:0;left:0;width:300px;height:100%;padding:32px 0 48px 0;font-size:14px;box-shadow:0 0 4px rgba(150,150,150,.33);box-sizing:border-box;overflow:auto;background-color:inherit}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc::-webkit-scrollbar{width:8px}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc::-webkit-scrollbar-track{border-radius:10px;background-color:transparent}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc::-webkit-scrollbar-thumb{border-radius:5px;background-color:rgba(150,150,150,.66);border:4px solid rgba(150,150,150,.66);background-clip:content-box}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc a{text-decoration:none}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc{padding:0 16px}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper .md-toc-link{display:inline;padding:.25rem 0}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper .md-toc-link div,html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper .md-toc-link p{display:inline}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .md-sidebar-toc .md-toc .md-toc-link-wrapper.highlighted .md-toc-link{font-weight:800}html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview{left:300px;width:calc(100% - 300px);padding:2em calc(50% - 457px - 300px / 2);margin:0;box-sizing:border-box}@media screen and (max-width:1274px){html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview{padding:2em}}@media screen and (max-width:450px){html body[for=html-export]:not([data-presentation-mode])[html-show-sidebar-toc] .markdown-preview{width:100%}}html body[for=html-export]:not([data-presentation-mode]):not([html-show-sidebar-toc]) .markdown-preview{left:50%;transform:translateX(-50%)}html body[for=html-export]:not([data-presentation-mode]):not([html-show-sidebar-toc]) .md-sidebar-toc{display:none}
+/* Please visit the URL below for more information: */
+/*   https://shd101wyy.github.io/markdown-preview-enhanced/#/customize-css */
+
+      </style>
+      <!-- The content below will be included at the end of the <head> element. --><script type="text/javascript">
+  document.addEventListener("DOMContentLoaded", function () {
+    // your code here
+  });
+</script></head><body for="html-export">
+    
+    
+      <div class="crossnote markdown-preview  ">
+      <div>
+<h1 id="casbin-rbac-with-domains-users-and-api-keys">Casbin RBAC with Domains (Users and API Keys) </h1>
+<p>This document describes how to apply Casbin-based RBAC with domain (tenant) isolation for both user and API-key authentication in this project. It covers the model, validation flows, and two simple architecture diagrams (user-level and API-key-level enforcement).</p>
+<h2 id="executive-summary">Executive summary </h2>
+<ul>
+<li>Casbin is our central permission engine: every request is checked here.</li>
+<li>Domains = tenants; all checks are tenant-scoped to keep orgs isolated.</li>
+<li><strong>Users</strong> use role-based access (assigned roles, roles have permissions).</li>
+<li><strong>API keys</strong> use direct permissions (permissions assigned directly, no roles needed).</li>
+<li>Service access (ASR/TTS/NMT inference) requires API keys — users cannot access services directly.</li>
+<li>Each request is checked on: who/what calls, which tenant, which resource, and what action.</li>
+</ul>
+<h3 id="plain-language-validation-rule">Plain-language validation rule </h3>
+<p>“Given who/what is calling, which tenant they’re in, the resource they want, and the action they want to perform, Casbin decides if it’s allowed for that tenant. If allowed, the request proceeds; otherwise it’s blocked and logged.”</p>
+<p><strong>Service access note:</strong> ASR/TTS/NMT (and any inference-like actions) require an API key. User roles do <strong>not</strong> get inference permissions; users can manage services/models (create/delete/get) but cannot call inference without an API key.</p>
+<h3 id="what-changes-for-us">What changes for us </h3>
+<ul>
+<li>One central policy store (casbin_rule) instead of scattered checks.</li>
+<li>Consistent enforcement for all services and for API keys and users.</li>
+<li>Tenant isolation by default via the domain in every request and policy.</li>
+<li>Clear audit trail: every allow/deny is decided in one place.</li>
+</ul>
+<h3 id="rollout-plan-high-level">Rollout plan (high level) </h3>
+<ul>
+<li>Wire Casbin middleware in services (enforcer call per protected route).</li>
+<li>Populate policies/role bindings in the DB adapter (per tenant).</li>
+<li>Enable cache + watcher (e.g., Redis) for live policy updates.</li>
+<li>Add basic allow/deny logging for audit and troubleshooting.</li>
+</ul>
+<h2 id="use-cases-and-advantages">Use Cases and Advantages </h2>
+<h3 id="use-cases">Use Cases </h3>
+<ol>
+<li>
+<p><strong>Multi-tenant SaaS applications</strong></p>
+<ul>
+<li>Isolate permissions per tenant/workspace automatically</li>
+<li>Prevent cross-tenant data access</li>
+<li>Support different permission models per tenant</li>
+</ul>
+</li>
+<li>
+<p><strong>Unified authorization for users and API keys</strong></p>
+<ul>
+<li>Same permission engine for both authentication methods</li>
+<li>Consistent security model across all access types</li>
+<li>Easier to audit and manage</li>
+</ul>
+</li>
+<li>
+<p><strong>Dynamic permission management</strong></p>
+<ul>
+<li>Update permissions without code changes</li>
+<li>Add/remove roles and permissions in real-time</li>
+<li>Support complex role hierarchies (admin → moderator → user)</li>
+</ul>
+</li>
+<li>
+<p><strong>Service-to-service authorization</strong></p>
+<ul>
+<li>API keys can have fine-grained permissions (e.g., only ASR inference, not TTS)</li>
+<li>Support different permission levels per service</li>
+<li>Enable service-specific access controls</li>
+</ul>
+</li>
+<li>
+<p><strong>Compliance and audit requirements</strong></p>
+<ul>
+<li>Centralized decision logging</li>
+<li>Complete audit trail of who accessed what and when</li>
+<li>Easy to generate compliance reports</li>
+</ul>
+</li>
+</ol>
+<h3 id="advantages">Advantages </h3>
+<ol>
+<li>
+<p><strong>Centralized policy management</strong></p>
+<ul>
+<li>Single source of truth for all permissions</li>
+<li>No scattered permission checks across codebase</li>
+<li>Easier to maintain and update</li>
+</ul>
+</li>
+<li>
+<p><strong>Performance and scalability</strong></p>
+<ul>
+<li>Efficient policy evaluation with caching</li>
+<li>Fast permission checks (milliseconds)</li>
+<li>Scales to thousands of policies and users</li>
+</ul>
+</li>
+<li>
+<p><strong>Flexibility and extensibility</strong></p>
+<ul>
+<li>Easy to add new resources and actions</li>
+<li>Support complex permission models (RBAC, ABAC, etc.)</li>
+<li>Can evolve permission model without major refactoring</li>
+</ul>
+</li>
+<li>
+<p><strong>Security benefits</strong></p>
+<ul>
+<li>Tenant isolation by design (domain-based)</li>
+<li>Consistent enforcement prevents security gaps</li>
+<li>Reduces risk of permission bypass bugs</li>
+</ul>
+</li>
+<li>
+<p><strong>Developer experience</strong></p>
+<ul>
+<li>Simple API: <code>enforce(subject, domain, object, action)</code></li>
+<li>Clear separation of concerns (auth vs. authorization)</li>
+<li>Easy to test and debug</li>
+</ul>
+</li>
+<li>
+<p><strong>Operational benefits</strong></p>
+<ul>
+<li>Real-time policy updates without service restarts</li>
+<li>Policy changes take effect immediately via watcher</li>
+<li>Reduced deployment frequency for permission changes</li>
+</ul>
+</li>
+<li>
+<p><strong>Cost savings</strong></p>
+<ul>
+<li>Less code to maintain (no custom permission logic)</li>
+<li>Faster development of new features</li>
+<li>Reduced security review time</li>
+</ul>
+</li>
+</ol>
+<h2 id="casbin-model-rbac-with-domain">Casbin Model (RBAC with Domain) </h2>
+<pre data-role="codeBlock" data-info="" class="language-text"><code>[request_definition]
+r = sub, dom, obj, act
+
+[policy_definition]
+p = sub, dom, obj, act
+
+[role_definition]
+g = sub, dom, role
+g2 = role, dom, role   # optional hierarchy
+
+[policy_effect]
+e = some(where (p.eft == allow))
+
+[matchers]
+m = g(r.sub, r.dom, p.sub) &amp;&amp; r.dom == p.dom &amp;&amp; r.obj == p.obj &amp;&amp; r.act == p.act
+    || r.sub == p.sub &amp;&amp; r.dom == p.dom &amp;&amp; r.obj == p.obj &amp;&amp; r.act == p.act
+    || g2(p.sub, p.dom, r.obj)  # optional if using role→role nesting
+</code></pre><p>Key concepts:</p>
+<ul>
+<li><code>sub</code> (subject): <code>user:{id}</code> for end-users, <code>api_key:{id}</code> for API keys.</li>
+<li><code>dom</code> (domain): tenant/workspace/org identifier.</li>
+<li><code>obj</code> (object): resource (users, configurations, dashboards, alerts, metrics, asr, tts, nmt, etc.).</li>
+<li><code>act</code> (action): create, read, update, delete, inference, export.</li>
+</ul>
+<h2 id="architecture-user-level-enforcement">Architecture (User-Level Enforcement) </h2>
+<div class="mermaid">flowchart LR
+  A[Client] --&gt; B[AuthN]
+  B --&gt; C[Context sub=user_id dom=tenant_id]
+  C --&gt; D[Route mapper obj act]
+  D --&gt; E[Casbin enforcer]
+  subgraph Casbin
+    E --&gt; F[Model]
+    E --&gt; G[Adapter casbin_rule]
+    E --&gt; H[Watcher Redis]
+  end
+  E --&gt; I[Service handler]
+</div><p><strong>Validation Flow:</strong> <code>userId → roles → permissions → allowed? deny?</code></p>
+<h3 id="validation-rules">Validation Rules </h3>
+<p><strong>Process:</strong></p>
+<ol>
+<li>Extract <code>user_id</code> and <code>tenant_id</code> from JWT token</li>
+<li>Lookup user's roles: <code>g(user_id, tenant_id, role)</code> → returns list of roles</li>
+<li>For each role, check permissions: <code>p(role, tenant_id, object, action)</code></li>
+<li>If any role has the permission → <strong>ALLOWED</strong></li>
+<li>If no role has the permission → <strong>DENIED</strong></li>
+</ol>
+<p><strong>Example:</strong></p>
+<ul>
+<li>User <code>alice</code> in <code>tenantA</code> has role <code>admin</code> (<code>g, user:alice, tenantA, admin</code>)</li>
+<li>Role <code>admin</code> has permission <code>p, admin, tenantA, users, read</code></li>
+<li>Request: <code>(user:alice, tenantA, users, read)</code> → <strong>ALLOWED</strong></li>
+</ul>
+<h3 id="summary">Summary </h3>
+<ul>
+<li>User signs in and gets a token that says who they are and which tenant they belong to.</li>
+<li>System looks up which roles the user has in that tenant.</li>
+<li>System checks if those roles have the required permission for the resource and action.</li>
+<li>If allowed, the request goes through; otherwise it is blocked and recorded.</li>
+</ul>
+<h2 id="architecture-api-key-level-enforcement">Architecture (API-Key-Level Enforcement) </h2>
+<div class="mermaid">flowchart LR
+  A[Client with API key] --&gt; B[API key validator]
+  B --&gt; C[Context sub=api_key_id dom=tenant_id]
+  C --&gt; D[Route mapper obj act]
+  D --&gt; E[Casbin enforcer]
+  subgraph Casbin
+    E --&gt; F[Model]
+    E --&gt; G[Adapter casbin_rule]
+    E --&gt; H[Watcher Redis]
+  end
+  E --&gt; I[Service handler]
+</div><p><strong>Validation Flow:</strong> <code>api-key → permissions → allowed? deny?</code></p>
+<h3 id="validation-rules-1">Validation Rules </h3>
+<p><strong>Process:</strong></p>
+<ol>
+<li>Validate API key (hash, active, not expired) → get <code>api_key_id</code> and <code>tenant_id</code></li>
+<li>Check direct permissions: <code>p(api_key_id, tenant_id, object, action)</code> — no roles needed</li>
+<li>If permission exists → <strong>ALLOWED</strong></li>
+<li>If permission does not exist → <strong>DENIED</strong></li>
+</ol>
+<p><strong>Example:</strong></p>
+<ul>
+<li>API key <code>api_key_1</code> has permission <code>p, api_key_1, tenantA, users, read</code></li>
+<li>Request: <code>(api_key_1, tenantA, users, read)</code> → <strong>ALLOWED</strong></li>
+<li>Request: <code>(api_key_1, tenantA, users, create)</code> → <strong>DENIED</strong> (no such permission)</li>
+</ul>
+<h3 id="summary-1">Summary </h3>
+<ul>
+<li>The API key is checked to ensure it exists, is active, and belongs to the right tenant.</li>
+<li>System directly checks if the API key has the required permission (no role lookup needed).</li>
+<li>Each permission is directly assigned to the API key.</li>
+<li>If allowed, the request proceeds; otherwise it is blocked and logged.</li>
+</ul>
+<h2 id="policy-examples">Policy Examples </h2>
+<h3 id="format">Format </h3>
+<ul>
+<li><strong>User policies (role-based):</strong> <code>p, role, domain, object, action</code></li>
+<li><strong>API key policies (direct):</strong> <code>p, api_key_id, domain, object, action</code></li>
+<li><strong>Role bindings:</strong> <code>g, user_id, domain, role</code></li>
+</ul>
+<h3 id="user-level-policies-role-based">User-Level Policies (Role-Based) </h3>
+<p><strong>Admin role policies (tenant <code>tenantA</code>):</strong></p>
+<ul>
+<li><code>p, admin, tenantA, users, create</code></li>
+<li><code>p, admin, tenantA, users, read</code></li>
+<li><code>p, admin, tenantA, users, update</code></li>
+<li><code>p, admin, tenantA, users, delete</code></li>
+<li><code>p, admin, tenantA, users, search</code></li>
+<li><code>p, admin, tenantA, configurations, create</code></li>
+<li><code>p, admin, tenantA, configurations, read</code></li>
+<li><code>p, admin, tenantA, configurations, update</code></li>
+<li><code>p, admin, tenantA, configurations, delete</code></li>
+<li><code>p, admin, tenantA, metrics, read</code></li>
+<li><code>p, admin, tenantA, metrics, export</code></li>
+<li><code>p, admin, tenantA, alerts, create</code></li>
+<li><code>p, admin, tenantA, alerts, read</code></li>
+<li><code>p, admin, tenantA, alerts, update</code></li>
+<li><code>p, admin, tenantA, alerts, delete</code></li>
+<li><code>p, admin, tenantA, dashboards, create</code></li>
+<li><code>p, admin, tenantA, dashboards, read</code></li>
+<li><code>p, admin, tenantA, dashboards, update</code></li>
+<li><code>p, admin, tenantA, dashboards, delete</code></li>
+</ul>
+<p><strong>User role policies (read-only example):</strong></p>
+<ul>
+<li><code>p, user, tenantA, users, read</code></li>
+<li><code>p, user, tenantA, users, search</code></li>
+<li><code>p, user, tenantA, configurations, read</code></li>
+<li><code>p, user, tenantA, dashboards, read</code></li>
+<li><code>p, user, tenantA, alerts, read</code></li>
+<li><code>p, user, tenantA, metrics, read</code></li>
+</ul>
+<p><strong>Role bindings (assign users to roles):</strong></p>
+<ul>
+<li><code>g, user:alice, tenantA, admin</code></li>
+<li><code>g, user:bob, tenantA, user</code></li>
+</ul>
+<h3 id="api-key-level-policies-direct-permissions">API-Key-Level Policies (Direct Permissions) </h3>
+<p><strong>Service access (ASR/TTS/NMT) is API-key only — direct permissions:</strong></p>
+<p>Example API key 1:</p>
+<ul>
+<li><code>p, api_key_1, tenantA, users, read</code></li>
+<li><code>p, api_key_1, tenantA, users, search</code></li>
+<li><code>p, api_key_1, tenantA, asr, read</code></li>
+<li><code>p, api_key_1, tenantA, asr, inference</code></li>
+<li><code>p, api_key_1, tenantA, tts, read</code></li>
+</ul>
+<p>Example API key 2:</p>
+<ul>
+<li><code>p, api_key_2, tenantA, users, create</code></li>
+<li><code>p, api_key_2, tenantA, users, read</code></li>
+<li><code>p, api_key_2, tenantA, nmt, read</code></li>
+<li><code>p, api_key_2, tenantA, nmt, inference</code></li>
+</ul>
+<p><strong>Note:</strong> API keys use direct permissions — each permission is explicitly assigned to the API key. No roles needed.</p>
+<p>Optional role hierarchy (if you introduce moderator/user tiers):</p>
+<ul>
+<li><code>g2, admin, tenantA, moderator</code></li>
+<li><code>g2, moderator, tenantA, user</code></li>
+</ul>
+<h3 id="important-rules">Important Rules </h3>
+<ul>
+<li><strong>Service access (ASR/TTS/NMT):</strong> Requires API key — users cannot access services directly, only via API keys.</li>
+<li>Always include <code>dom</code> (tenant) in requests and policies to ensure tenant isolation.</li>
+<li>Users go through roles; API keys use direct permissions (no roles).</li>
+</ul>
+<h2 id="testing-guide">Testing Guide </h2>
+<h3 id="what-needs-to-be-tested">What Needs to Be Tested </h3>
+<p>The Casbin RBAC system needs to be tested to ensure:</p>
+<ol>
+<li><strong>Permission enforcement works correctly</strong> - Users/API keys can only access what they're allowed</li>
+<li><strong>Tenant isolation is maintained</strong> - Users from one tenant cannot access another tenant's resources</li>
+<li><strong>Role-based access works</strong> - Users with different roles get appropriate permissions</li>
+<li><strong>API key permissions work</strong> - API keys respect their assigned permissions</li>
+<li><strong>Policy updates take effect</strong> - Changes to permissions are reflected immediately</li>
+<li><strong>Error handling</strong> - Invalid requests are properly rejected and logged</li>
+</ol>
+<h3 id="test-scenarios-user-level-enforcement">Test Scenarios: User-Level Enforcement </h3>
+<h4 id="test-case-1-admin-user---full-access-role-based">Test Case 1: Admin User - Full Access (Role-Based) </h4>
+<p><strong>Setup:</strong></p>
+<ul>
+<li>Create user <code>alice</code> in <code>tenantA</code></li>
+<li>Assign role <code>admin</code> to <code>alice</code>: <code>g, user:alice, tenantA, admin</code></li>
+<li>Admin role has permissions: <code>p, admin, tenantA, users, create|read|update|delete|search</code></li>
+<li>Admin role has permissions: <code>p, admin, tenantA, configurations, create|read|update|delete</code></li>
+<li>Admin role has permissions: <code>p, admin, tenantA, dashboards, create|read|update|delete</code></li>
+<li>Admin role has permissions: <code>p, admin, tenantA, alerts, create|read|update|delete</code></li>
+<li>Admin role has permissions: <code>p, admin, tenantA, metrics, read|export</code></li>
+</ul>
+<p><strong>Validation Flow Tested:</strong></p>
+<pre data-role="codeBlock" data-info="" class="language-text"><code>user:alice → role:admin → permissions → allowed
+</code></pre><p><strong>Test Steps:</strong></p>
+<ol>
+<li>Authenticate as <code>alice</code> → get JWT token</li>
+<li>Try to access each resource with each action:
+<ul>
+<li>Create/read/update/delete/search users</li>
+<li>Create/read/update/delete configurations</li>
+<li>Create/read/update/delete dashboards</li>
+<li>Create/read/update/delete alerts</li>
+<li>Read/export metrics</li>
+</ul>
+</li>
+<li>Try to call ASR/TTS/NMT (read/inference) <strong>without</strong> API key</li>
+</ol>
+<p><strong>Expected Result:</strong></p>
+<ul>
+<li>Management actions above: <strong>ALLOWED</strong> (HTTP 200/201)</li>
+<li>Service calls (ASR/TTS/NMT) without API key: <strong>DENIED</strong> (HTTP 401/403)</li>
+</ul>
+<p><strong>What to Verify:</strong></p>
+<ul>
+<li>✅ User → role lookup works (<code>g, user:alice, tenantA, admin</code>)</li>
+<li>✅ Role → permissions lookup works (<code>p, admin, tenantA, users, read</code>)</li>
+<li>✅ All admin operations succeed</li>
+<li>✅ Service access is properly blocked (requires API key)</li>
+<li>✅ Audit logs show "allow" decisions</li>
+</ul>
+<h4 id="test-case-2-regular-user---limited-access-role-based">Test Case 2: Regular User - Limited Access (Role-Based) </h4>
+<p><strong>Setup:</strong></p>
+<ul>
+<li>Create user <code>bob</code> in <code>tenantA</code></li>
+<li>Assign role <code>user</code> to <code>bob</code>: <code>g, user:bob, tenantA, user</code></li>
+<li>User role has only read permissions: <code>p, user, tenantA, users, read|search</code></li>
+<li>User role has: <code>p, user, tenantA, configurations, read</code></li>
+<li>User role has: <code>p, user, tenantA, dashboards, read</code></li>
+<li>User role has: <code>p, user, tenantA, alerts, read</code></li>
+<li>User role has: <code>p, user, tenantA, metrics, read</code></li>
+</ul>
+<p><strong>Validation Flow Tested:</strong></p>
+<pre data-role="codeBlock" data-info="" class="language-text"><code>user:bob → role:user → permissions (read only) → allowed/denied
+</code></pre><p><strong>Test Steps:</strong></p>
+<ol>
+<li>Authenticate as <code>bob</code> → get JWT token</li>
+<li>Try to read resources (users, configs, dashboards, alerts, metrics)</li>
+<li>Try to create/update/delete resources</li>
+<li>Try to access ASR/TTS/NMT (any action) without API key</li>
+</ol>
+<p><strong>Expected Result:</strong></p>
+<ul>
+<li>Read operations: <strong>ALLOWED</strong> (HTTP 200)</li>
+<li>Create/update/delete operations: <strong>DENIED</strong> (HTTP 403)</li>
+<li>Service calls (ASR/TTS/NMT) without API key: <strong>DENIED</strong> (HTTP 401/403)</li>
+</ul>
+<p><strong>What to Verify:</strong></p>
+<ul>
+<li>✅ User → role lookup works (<code>g, user:bob, tenantA, user</code>)</li>
+<li>✅ Role → permissions lookup works (<code>p, user, tenantA, users, read</code>)</li>
+<li>✅ Read permissions work</li>
+<li>✅ Write permissions are blocked (no <code>create|update|delete</code> in role)</li>
+<li>✅ Service access is blocked</li>
+<li>✅ Error messages are clear</li>
+<li>✅ Audit logs show correct allow/deny decisions</li>
+</ul>
+<h4 id="test-case-3-cross-tenant-access-prevention">Test Case 3: Cross-Tenant Access Prevention </h4>
+<p><strong>Setup:</strong></p>
+<ul>
+<li>Create user <code>alice</code> in <code>tenantA</code> with admin role</li>
+<li>Create user <code>charlie</code> in <code>tenantB</code> with admin role</li>
+<li>Create resource <code>config1</code> in <code>tenantA</code></li>
+</ul>
+<p><strong>Test Steps:</strong></p>
+<ol>
+<li>Authenticate as <code>charlie</code> (tenantB admin)</li>
+<li>Try to access <code>config1</code> from <code>tenantA</code></li>
+</ol>
+<p><strong>Expected Result:</strong> <strong>DENIED</strong> (HTTP 403 or 404)</p>
+<p><strong>What to Verify:</strong></p>
+<ul>
+<li>✅ Tenant isolation is enforced</li>
+<li>✅ Users cannot access other tenants' resources</li>
+<li>✅ Error message indicates permission denied or resource not found</li>
+</ul>
+<h4 id="test-case-4-user-without-role">Test Case 4: User Without Role </h4>
+<p><strong>Setup:</strong></p>
+<ul>
+<li>Create user <code>dave</code> in <code>tenantA</code></li>
+<li>Do NOT assign any role (no <code>g, user:dave, tenantA, role</code> entry)</li>
+</ul>
+<p><strong>Validation Flow Tested:</strong></p>
+<pre data-role="codeBlock" data-info="" class="language-text"><code>user:dave → roles (none) → permissions (none) → denied
+</code></pre><p><strong>Test Steps:</strong></p>
+<ol>
+<li>Authenticate as <code>dave</code> → get JWT token</li>
+<li>Try to access any resource</li>
+</ol>
+<p><strong>Expected Result:</strong> All requests <strong>DENIED</strong> (HTTP 403)</p>
+<p><strong>What to Verify:</strong></p>
+<ul>
+<li>✅ User → role lookup returns empty (<code>g, user:dave, tenantA, role</code> → no results)</li>
+<li>✅ No permissions found (no roles = no permissions)</li>
+<li>✅ Users without roles cannot access anything</li>
+<li>✅ Clear error message about missing permissions</li>
+</ul>
+<h3 id="test-scenarios-api-key-level-enforcement">Test Scenarios: API-Key-Level Enforcement </h3>
+<h4 id="test-case-5-api-key-with-full-service-access-direct-permissions">Test Case 5: API Key with Full Service Access (Direct Permissions) </h4>
+<p><strong>Setup:</strong></p>
+<ul>
+<li>Create API key <code>api_key_1</code> for <code>tenantA</code></li>
+<li>Assign direct permissions:
+<ul>
+<li><code>p, api_key_1, tenantA, asr, read</code></li>
+<li><code>p, api_key_1, tenantA, asr, inference</code></li>
+<li><code>p, api_key_1, tenantA, tts, read</code></li>
+<li><code>p, api_key_1, tenantA, tts, inference</code></li>
+<li><code>p, api_key_1, tenantA, nmt, read</code></li>
+<li><code>p, api_key_1, tenantA, nmt, inference</code></li>
+</ul>
+</li>
+</ul>
+<p><strong>Validation Flow Tested:</strong></p>
+<pre data-role="codeBlock" data-info="" class="language-text"><code>api_key_1 → permissions → allowed
+</code></pre><p><strong>Test Steps:</strong></p>
+<ol>
+<li>Use API key <code>api_key_1</code> in request header</li>
+<li>Try to access ASR, TTS, NMT services with read and inference actions</li>
+</ol>
+<p><strong>Expected Result:</strong> All service requests <strong>ALLOWED</strong> (HTTP 200)</p>
+<p><strong>What to Verify:</strong></p>
+<ul>
+<li>✅ API key authentication works</li>
+<li>✅ Direct permission lookup works (<code>p, api_key_1, tenantA, asr, read</code>)</li>
+<li>✅ No role lookup needed (direct permissions)</li>
+<li>✅ Both read and inference work</li>
+</ul>
+<h4 id="test-case-6-api-key-with-limited-permissions-direct-permissions">Test Case 6: API Key with Limited Permissions (Direct Permissions) </h4>
+<p><strong>Setup:</strong></p>
+<ul>
+<li>Create API key <code>api_key_2</code> for <code>tenantA</code></li>
+<li>Assign only direct permission: <code>p, api_key_2, tenantA, asr, read</code> (no inference, no other services)</li>
+</ul>
+<p><strong>Validation Flow Tested:</strong></p>
+<pre data-role="codeBlock" data-info="" class="language-text"><code>api_key_2 → permissions (only asr.read) → allowed/denied
+</code></pre><p><strong>Test Steps:</strong></p>
+<ol>
+<li>Use API key <code>api_key_2</code> in request header</li>
+<li>Try ASR read operation → should work</li>
+<li>Try ASR inference operation → should fail (no permission)</li>
+<li>Try TTS read operation → should fail (no permission)</li>
+<li>Try TTS inference operation → should fail (no permission)</li>
+</ol>
+<p><strong>Expected Result:</strong></p>
+<ul>
+<li>ASR read: <strong>ALLOWED</strong> (HTTP 200) - permission exists</li>
+<li>ASR inference: <strong>DENIED</strong> (HTTP 403) - no permission <code>p, api_key_2, tenantA, asr, inference</code></li>
+<li>TTS operations: <strong>DENIED</strong> (HTTP 403) - no TTS permissions</li>
+</ul>
+<p><strong>What to Verify:</strong></p>
+<ul>
+<li>✅ Direct permission lookup works (<code>p, api_key_2, tenantA, asr, read</code>)</li>
+<li>✅ Missing permissions are correctly denied</li>
+<li>✅ Fine-grained permissions work</li>
+<li>✅ API keys are restricted to assigned permissions only</li>
+<li>✅ Error messages are clear</li>
+</ul>
+<h4 id="test-case-7-expiredinactive-api-key">Test Case 7: Expired/Inactive API Key </h4>
+<p><strong>Setup:</strong></p>
+<ul>
+<li>Create API key <code>key789</code> for <code>tenantA</code></li>
+<li>Mark as inactive OR set expiration date in the past</li>
+</ul>
+<p><strong>Test Steps:</strong></p>
+<ol>
+<li>Use expired/inactive API key <code>key789</code> in request header</li>
+<li>Try to access any service</li>
+</ol>
+<p><strong>Expected Result:</strong> <strong>DENIED</strong> (HTTP 401 or 403)</p>
+<p><strong>What to Verify:</strong></p>
+<ul>
+<li>✅ Expired keys are rejected</li>
+<li>✅ Inactive keys are rejected</li>
+<li>✅ Clear error message about key status</li>
+</ul>
+<h4 id="test-case-8-api-key-cross-tenant-access">Test Case 8: API Key Cross-Tenant Access </h4>
+<p><strong>Setup:</strong></p>
+<ul>
+<li>Create API key <code>key999</code> for <code>tenantA</code> with admin permissions</li>
+<li>Create resource in <code>tenantB</code></li>
+</ul>
+<p><strong>Test Steps:</strong></p>
+<ol>
+<li>Use API key <code>key999</code> (tenantA) in request header</li>
+<li>Try to access resource from <code>tenantB</code></li>
+</ol>
+<p><strong>Expected Result:</strong> <strong>DENIED</strong> (HTTP 403)</p>
+<p><strong>What to Verify:</strong></p>
+<ul>
+<li>✅ API keys are tenant-scoped</li>
+<li>✅ Cannot access other tenants' resources</li>
+</ul>
+<h3 id="test-scenarios-policy-updates">Test Scenarios: Policy Updates </h3>
+<h4 id="test-case-9-real-time-policy-updates">Test Case 9: Real-Time Policy Updates </h4>
+<p><strong>Setup:</strong></p>
+<ul>
+<li>User <code>alice</code> in <code>tenantA</code> with <code>user</code> role (read-only)</li>
+<li>Initially cannot create resources</li>
+</ul>
+<p><strong>Test Steps:</strong></p>
+<ol>
+<li>Authenticate as <code>alice</code> → try to create resource → should fail</li>
+<li>Update policy: assign <code>admin</code> role to <code>alice</code> (via watcher/cache invalidation)</li>
+<li>Wait for cache refresh (if applicable)</li>
+<li>Try to create resource again</li>
+</ol>
+<p><strong>Expected Result:</strong></p>
+<ul>
+<li>Before update: <strong>DENIED</strong> (HTTP 403)</li>
+<li>After update: <strong>ALLOWED</strong> (HTTP 201)</li>
+</ul>
+<p><strong>What to Verify:</strong></p>
+<ul>
+<li>✅ Policy changes take effect without service restart</li>
+<li>✅ Cache invalidation works correctly</li>
+<li>✅ Watcher mechanism updates policies in real-time</li>
+</ul>
+<h3 id="test-scenarios-error-handling">Test Scenarios: Error Handling </h3>
+<h4 id="test-case-10-invalidmissing-subject">Test Case 10: Invalid/Missing Subject </h4>
+<p><strong>Test Steps:</strong></p>
+<ol>
+<li>Send request without authentication token</li>
+<li>Send request with invalid/malformed token</li>
+<li>Send request with non-existent user ID</li>
+</ol>
+<p><strong>Expected Result:</strong> <strong>DENIED</strong> (HTTP 401)</p>
+<p><strong>What to Verify:</strong></p>
+<ul>
+<li>✅ Unauthenticated requests are rejected</li>
+<li>✅ Invalid tokens are rejected</li>
+<li>✅ Clear error messages</li>
+</ul>
+<h4 id="test-case-11-invalid-resourceaction">Test Case 11: Invalid Resource/Action </h4>
+<p><strong>Test Steps:</strong></p>
+<ol>
+<li>Authenticate as valid user</li>
+<li>Try to access non-existent resource (e.g., <code>invalid_resource</code>)</li>
+<li>Try invalid action (e.g., <code>invalid_action</code>)</li>
+</ol>
+<p><strong>Expected Result:</strong> <strong>DENIED</strong> (HTTP 403 or 400)</p>
+<p><strong>What to Verify:</strong></p>
+<ul>
+<li>✅ Invalid resources are rejected</li>
+<li>✅ Invalid actions are rejected</li>
+<li>✅ Appropriate error codes returned</li>
+</ul>
+<h3 id="test-checklist-summary">Test Checklist Summary </h3>
+<p><strong>User-Level Testing (userId → roles → permissions → allowed/deny):</strong></p>
+<ul>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> User → role lookup works correctly (<code>g, user_id, tenant, role</code>)</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Role → permissions lookup works correctly (<code>p, role, tenant, obj, act</code>)</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Admin user can access all resources (through admin role)</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Regular user has limited access (read-only through user role)</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Users without roles cannot access anything (no role = no permissions)</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Cross-tenant access is blocked (tenant isolation)</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Role hierarchy works (if implemented)</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Service calls (ASR/TTS/NMT) without API key are denied</li>
+</ul>
+<p><strong>API-Key-Level Testing (api-key → permissions → allowed/deny):</strong></p>
+<ul>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Direct permission lookup works (<code>p, api_key_id, tenant, obj, act</code>)</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> No role lookup needed (direct permissions only)</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> API keys with full permissions work</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> API keys with limited permissions are restricted</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Expired API keys are rejected</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Inactive API keys are rejected</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> API keys are tenant-scoped</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Fine-grained service permissions work (e.g., <code>asr.read</code> but not <code>asr.inference</code>)</li>
+</ul>
+<p><strong>Policy Management:</strong></p>
+<ul>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Policy updates take effect in real-time</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Cache invalidation works</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Watcher mechanism updates policies correctly</li>
+</ul>
+<p><strong>Error Handling:</strong></p>
+<ul>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Invalid authentication is rejected</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Missing permissions return clear errors</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Invalid resources/actions are rejected</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Audit logs record all decisions</li>
+</ul>
+<p><strong>Performance:</strong></p>
+<ul>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Permission checks are fast (&lt; 10ms)</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> Caching improves performance</li>
+<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox"> System handles high request volume</li>
+</ul>
+<h2 id="operational-notes">Operational Notes </h2>
+<ul>
+<li>Adapter: use Casbin Postgres adapter against <code>casbin_rule</code>.</li>
+<li>Watcher: use Redis (or equivalent) to invalidate enforcer cache on policy changes.</li>
+<li>Logging/metrics: record <code>(sub, dom, obj, act, decision)</code> for audit and observability.</li>
+<li>Caching: optionally warm per-tenant policy cache; keep cache TTL modest and rely on watcher for accuracy.</li>
+</ul>
+</div>
+      </div>
+      
+      
+    
+    
+    <script type="module">
+// TODO: If ZenUML gets integrated into mermaid in the future,
+//      we can remove the following lines.
+
+
+var MERMAID_CONFIG = ({"startOnLoad":false});
+if (typeof MERMAID_CONFIG !== 'undefined') {
+  MERMAID_CONFIG.startOnLoad = false
+  MERMAID_CONFIG.cloneCssStyles = false
+  MERMAID_CONFIG.theme = "default"
+}
+
+mermaid.initialize(MERMAID_CONFIG || {})
+if (typeof(window['Reveal']) !== 'undefined') {
+  function mermaidRevealHelper(event) {
+    var currentSlide = event.currentSlide
+    var diagrams = currentSlide.querySelectorAll('.mermaid')
+    for (var i = 0; i < diagrams.length; i++) {
+      var diagram = diagrams[i]
+      if (!diagram.hasAttribute('data-processed')) {
+        mermaid.init(null, diagram, ()=> {
+          Reveal.slide(event.indexh, event.indexv)
+        })
+      }
+    }
+  }
+  Reveal.addEventListener('slidetransitionend', mermaidRevealHelper)
+  Reveal.addEventListener('ready', mermaidRevealHelper)
+  await mermaid.run({
+    nodes: document.querySelectorAll('.mermaid')
+  })
+} else {
+  await mermaid.run({
+    nodes: document.querySelectorAll('.mermaid')
+  })
+}
+</script>
+    
+    
+    
+  
+    </body></html>
