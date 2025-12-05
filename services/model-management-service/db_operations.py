@@ -670,15 +670,14 @@ async def update_service(request: ServiceUpdateRequest):
             logger.warning(f"No DB record found for service {request.serviceId}")
             return 0
         
-        #Commenting because model id is optional
-        # result_model = await db.execute(select(Model).where(Model.model_id == request.modelId))
-        # model_exists = result_model.scalars().first()
-        # if not model_exists:
-        #     raise HTTPException(
-        #         status_code=400,
-        #         detail=f"Model with ID {request.modelId} does not exist, cannot update service."
-        #     )
-        print("DB Update Data:", db_update)
+        result_model = await db.execute(select(Model).where(Model.model_id == request.modelId))
+        model_exists = result_model.scalars().first()
+        if not model_exists:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model with ID {request.modelId} does not exist, cannot update service."
+            )
+        
         stmt_update = (
             update(Service)
             .where(Service.service_id == request.serviceId)

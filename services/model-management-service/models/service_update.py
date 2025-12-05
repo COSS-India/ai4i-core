@@ -17,7 +17,7 @@ class ServiceUpdateRequest(BaseModel):
     serviceDescription: Optional[str] = None
     hardwareDescription: Optional[str] = None
     publishedOn: Optional[int] = None
-    modelId: Optional[str] = None
+    modelId: str
     endpoint: Optional[str] = None
     api_key: Optional[str] = None
     languagePair: Optional[LanguagePair] = None

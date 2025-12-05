@@ -52,7 +52,7 @@ async def list_models_request(task_type: Union[TaskTypeEnum, None]):
         if data is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"No valid models found for task type: '{task_type}'"
+                detail=f"No valid models found for task type: '{task_type.value}'"
             )
 
         return data
