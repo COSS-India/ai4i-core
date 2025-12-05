@@ -8,6 +8,7 @@ import logging
 import json
 from typing import Optional, List
 from uuid import UUID
+import math
 
 import numpy as np
 
@@ -139,6 +140,34 @@ class LanguageDetectionService:
             return service_info[1]  # Return model name
         return "indiclid"  # Default to "indiclid" if not found
     
+    def normalize_confidence_score(self, confidence: float) -> float:
+        """Normalize confidence score to be between 0.0 and 1.0.
+        
+        The database constraint requires confidence_score to be in [0.0, 1.0].
+        This function handles cases where the model returns scores outside this range.
+        
+        Args:
+            confidence: Raw confidence score from the model
+            
+        Returns:
+            Normalized confidence score in [0.0, 1.0]
+        """
+        # If already in valid range, return as is
+        if 0.0 <= confidence <= 1.0:
+            return confidence
+        
+        # Log warning when normalization is needed
+        logger.warning(
+            f"Confidence score {confidence} is outside [0.0, 1.0] range. "
+            f"Normalizing using sigmoid function."
+        )
+        
+        # Use sigmoid to normalize to [0, 1]
+        # This handles log probabilities, log-odds, or other scales
+        normalized = 1.0 / (1.0 + math.exp(-confidence))
+        logger.debug(f"Normalized confidence {confidence} -> {normalized}")
+        return normalized
+    
     async def run_inference(
         self,
         request: LanguageDetectionInferenceRequest,
@@ -205,7 +234,18 @@ class LanguageDetectionService:
                         try:
                             detection_data = json.loads(json_str)
                             lang_code_full = detection_data.get("langCode", "other")
-                            confidence = float(detection_data.get("confidence", 0.0))
+                            raw_confidence = float(detection_data.get("confidence", 0.0))
+                            
+                            # Log the raw confidence from Triton model for debugging
+                            logger.debug(
+                                f"Triton model returned confidence: {raw_confidence} "
+                                f"for text: '{source_text[:50]}...' (lang: {lang_code_full})"
+                            )
+                            
+                            # Normalize confidence score to [0.0, 1.0] for database constraint
+                            # The IndicLID model may return log probabilities or raw scores
+                            # that need to be normalized to match database CHECK constraint
+                            normalized_confidence = self.normalize_confidence_score(raw_confidence)
                             
                             # Split langCode format "lang_Script" into language and script
                             if "_" in lang_code_full:
@@ -217,11 +257,11 @@ class LanguageDetectionService:
                             # Get full language name
                             language_name = self.INDICLID_TO_LANGUAGE.get(lang_code_full, "Other")
                             
-                            # Create prediction
+                            # Create prediction (use normalized confidence for API response too)
                             prediction = LanguagePrediction(
                                 langCode=lang_code,
                                 scriptCode=script_code,
-                                langScore=confidence,
+                                langScore=normalized_confidence,
                                 language=language_name
                             )
                             
@@ -230,13 +270,13 @@ class LanguageDetectionService:
                                 langPrediction=[prediction]
                             ))
                             
-                            # Store result in database
+                            # Store result in database with normalized confidence
                             await self.repository.create_result(
                                 request_id=request_id,
                                 source_text=source_text,
                                 detected_language=lang_code,
                                 detected_script=script_code,
-                                confidence_score=confidence,
+                                confidence_score=normalized_confidence,
                                 language_name=language_name
                             )
                             
