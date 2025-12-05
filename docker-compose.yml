@@ -568,7 +568,7 @@ services:
 
     ports:
 
-      - "8099:8090"
+      - "8099:8099"
 
     environment:
 
@@ -612,7 +612,7 @@ services:
       dockerfile: services/ner-service/Dockerfile
     container_name: ai4v-ner-service
     ports:
-      - "9000:8091"        # host:container (NER listens on 8091 in the container)
+      - "9001:9001"        # host:container (NER listens on 8091 in the container)
     environment:
       - ENV_FILE=.env
     env_file:
