@@ -251,6 +251,124 @@ CREATE INDEX IF NOT EXISTS idx_llm_requests_status_created ON llm_requests(statu
 CREATE INDEX IF NOT EXISTS idx_llm_results_request_id ON llm_results(request_id);
 CREATE INDEX IF NOT EXISTS idx_llm_results_created_at ON llm_results(created_at);
 
+-- Language Detection Tables
+
+-- Language Detection Requests table - tracks language detection inference requests
+CREATE TABLE IF NOT EXISTS language_detection_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+    session_id INTEGER,
+    model_id VARCHAR(100) NOT NULL,
+    text_length INTEGER,
+    processing_time FLOAT,
+    status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
+    error_message TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE language_detection_requests IS 'Language detection requests table - tracks language detection inference requests';
+COMMENT ON COLUMN language_detection_requests.model_id IS 'Identifier for the language detection model used (e.g., ai4bharat/indiclid, indiclid)';
+COMMENT ON COLUMN language_detection_requests.text_length IS 'Length of input text in characters';
+COMMENT ON COLUMN language_detection_requests.processing_time IS 'Time taken to process the request in seconds';
+COMMENT ON COLUMN language_detection_requests.status IS 'Current status of the request: processing, completed, or failed';
+
+-- Language Detection Results table - stores language detection inference results
+CREATE TABLE IF NOT EXISTS language_detection_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id UUID REFERENCES language_detection_requests(id) ON DELETE CASCADE,
+    source_text TEXT NOT NULL,
+    detected_language VARCHAR(10) NOT NULL,
+    detected_script VARCHAR(10) NOT NULL,
+    confidence_score FLOAT NOT NULL CHECK (confidence_score >= 0.0 AND confidence_score <= 1.0),
+    language_name VARCHAR(100),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE language_detection_results IS 'Language detection results table - stores language detection inference results';
+COMMENT ON COLUMN language_detection_results.source_text IS 'The input text that was analyzed';
+COMMENT ON COLUMN language_detection_results.detected_language IS 'ISO 639-3 language code (e.g., hin, eng, tam)';
+COMMENT ON COLUMN language_detection_results.detected_script IS 'ISO 15924 script code (e.g., Deva, Latn, Taml)';
+COMMENT ON COLUMN language_detection_results.confidence_score IS 'Confidence score for the detection (0.0 to 1.0)';
+COMMENT ON COLUMN language_detection_results.language_name IS 'Full language name (e.g., Hindi, English)';
+
+-- Transliteration Tables
+
+-- Transliteration Requests table - tracks transliteration inference requests
+CREATE TABLE IF NOT EXISTS transliteration_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    model_id VARCHAR(100) NOT NULL,
+    source_language VARCHAR(10) NOT NULL,
+    target_language VARCHAR(10) NOT NULL,
+    text_length INTEGER,
+    is_sentence_level BOOLEAN DEFAULT true,
+    num_suggestions INTEGER DEFAULT 0,
+    processing_time FLOAT,
+    status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
+    error_message TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE transliteration_requests IS 'Transliteration requests table - tracks transliteration inference requests';
+COMMENT ON COLUMN transliteration_requests.model_id IS 'Identifier for the transliteration model used';
+COMMENT ON COLUMN transliteration_requests.source_language IS 'Source language code (e.g., en, hi, ta)';
+COMMENT ON COLUMN transliteration_requests.target_language IS 'Target language code (e.g., en, hi, ta)';
+COMMENT ON COLUMN transliteration_requests.text_length IS 'Length of input text in characters';
+COMMENT ON COLUMN transliteration_requests.is_sentence_level IS 'Whether transliteration is at sentence level (true) or word level (false)';
+COMMENT ON COLUMN transliteration_requests.num_suggestions IS 'Number of transliteration suggestions requested';
+COMMENT ON COLUMN transliteration_requests.processing_time IS 'Time taken to process the request in seconds';
+COMMENT ON COLUMN transliteration_requests.status IS 'Current status of the request: processing, completed, or failed';
+
+-- Transliteration Results table - stores transliteration inference results
+CREATE TABLE IF NOT EXISTS transliteration_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id UUID REFERENCES transliteration_requests(id) ON DELETE CASCADE,
+    transliterated_text JSONB NOT NULL,
+    source_text TEXT,
+    confidence_score FLOAT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE transliteration_results IS 'Transliteration results table - stores transliteration inference results';
+COMMENT ON COLUMN transliteration_results.transliterated_text IS 'The transliterated text (can be string or list of strings for top-k)';
+COMMENT ON COLUMN transliteration_results.source_text IS 'Original source text for reference';
+COMMENT ON COLUMN transliteration_results.confidence_score IS 'Confidence score for the transliteration (optional)';
+
+-- Indexes for Language Detection tables
+CREATE INDEX IF NOT EXISTS idx_language_detection_requests_user_id ON language_detection_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_language_detection_requests_api_key_id ON language_detection_requests(api_key_id);
+CREATE INDEX IF NOT EXISTS idx_language_detection_requests_session_id ON language_detection_requests(session_id);
+CREATE INDEX IF NOT EXISTS idx_language_detection_requests_status ON language_detection_requests(status);
+CREATE INDEX IF NOT EXISTS idx_language_detection_requests_model_id ON language_detection_requests(model_id);
+CREATE INDEX IF NOT EXISTS idx_language_detection_requests_created_at ON language_detection_requests(created_at);
+CREATE INDEX IF NOT EXISTS idx_language_detection_requests_user_created ON language_detection_requests(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_language_detection_requests_status_created ON language_detection_requests(status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_language_detection_results_request_id ON language_detection_results(request_id);
+CREATE INDEX IF NOT EXISTS idx_language_detection_results_created_at ON language_detection_results(created_at);
+CREATE INDEX IF NOT EXISTS idx_language_detection_results_detected_language ON language_detection_results(detected_language);
+
+-- Indexes for Transliteration tables
+CREATE INDEX IF NOT EXISTS idx_transliteration_requests_user_id ON transliteration_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_transliteration_requests_api_key_id ON transliteration_requests(api_key_id);
+CREATE INDEX IF NOT EXISTS idx_transliteration_requests_session_id ON transliteration_requests(session_id);
+CREATE INDEX IF NOT EXISTS idx_transliteration_requests_status ON transliteration_requests(status);
+CREATE INDEX IF NOT EXISTS idx_transliteration_requests_model_id ON transliteration_requests(model_id);
+CREATE INDEX IF NOT EXISTS idx_transliteration_requests_source_language ON transliteration_requests(source_language);
+CREATE INDEX IF NOT EXISTS idx_transliteration_requests_target_language ON transliteration_requests(target_language);
+CREATE INDEX IF NOT EXISTS idx_transliteration_requests_created_at ON transliteration_requests(created_at);
+CREATE INDEX IF NOT EXISTS idx_transliteration_requests_user_created ON transliteration_requests(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_transliteration_requests_status_created ON transliteration_requests(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_transliteration_requests_language_pair ON transliteration_requests(source_language, target_language);
+
+CREATE INDEX IF NOT EXISTS idx_transliteration_results_request_id ON transliteration_results(request_id);
+CREATE INDEX IF NOT EXISTS idx_transliteration_results_created_at ON transliteration_results(created_at);
+
 -- Check if update_updated_at_column function exists, create if not
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -278,6 +396,16 @@ CREATE TRIGGER update_nmt_requests_updated_at
 
 CREATE TRIGGER update_llm_requests_updated_at
     BEFORE UPDATE ON llm_requests
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_language_detection_requests_updated_at
+    BEFORE UPDATE ON language_detection_requests
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_transliteration_requests_updated_at
+    BEFORE UPDATE ON transliteration_requests
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
@@ -313,6 +441,20 @@ BEGIN
     WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
     
     DELETE FROM llm_requests 
+    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
+    
+    -- Delete old Language Detection data
+    DELETE FROM language_detection_results 
+    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
+    
+    DELETE FROM language_detection_requests 
+    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
+    
+    -- Delete old Transliteration data
+    DELETE FROM transliteration_results 
+    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
+    
+    DELETE FROM transliteration_requests 
     WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
     
     RAISE NOTICE 'Cleaned up AI service data older than % days', retention_days;

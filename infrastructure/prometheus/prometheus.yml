@@ -35,6 +35,8 @@ scrape_configs:
           - "ner-service:9001"
           - "llm-service:8090"
           - "pipeline-service:8090"
+          # Note: transliteration-service and language-detection-service only expose /enterprise/metrics
+          # They are included in the dhruva-enterprise job below
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
@@ -65,6 +67,8 @@ scrape_configs:
           - "ner-service:9001"
           - "llm-service:8090"
           - "pipeline-service:8090"
+          - "transliteration-service:8090"
+          - "language-detection-service:8090"
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
