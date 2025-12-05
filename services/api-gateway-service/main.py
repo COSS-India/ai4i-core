@@ -172,6 +172,76 @@ class StreamingInfo(BaseModel):
     max_connections: int = Field(..., description="Maximum concurrent connections")
     response_frequency_ms: int = Field(..., description="Response frequency in milliseconds")
 
+# Pydantic models for Transliteration endpoints
+
+class TransliterationLanguagePair(BaseModel):
+    """Language pair configuration for transliteration."""
+    sourceLanguage: str = Field(..., description="Source language code (e.g., 'en', 'hi', 'ta')")
+    targetLanguage: str = Field(..., description="Target language code")
+    sourceScriptCode: Optional[str] = Field(None, description="Script code for source (e.g., 'Deva', 'Arab')")
+    targetScriptCode: Optional[str] = Field(None, description="Script code for target")
+
+
+class TransliterationTextInput(BaseModel):
+    """Text input for transliteration."""
+    source: str = Field(..., description="Input text to transliterate")
+
+
+class TransliterationInferenceConfig(BaseModel):
+    """Transliteration inference configuration."""
+    serviceId: str = Field(..., description="Identifier for transliteration service/model")
+    language: TransliterationLanguagePair = Field(..., description="Language pair configuration")
+    isSentence: bool = Field(True, description="True for sentence-level, False for word-level transliteration")
+    numSuggestions: int = Field(
+        0,
+        description="Number of top-k suggestions (0 for best, >0 for word-level only, max 10)",
+    )
+
+
+class TransliterationInferenceRequest(BaseModel):
+    """Transliteration inference request."""
+    input: List[TransliterationTextInput] = Field(
+        ...,
+        description="List of text inputs to transliterate",
+        min_items=1,
+        max_items=100,
+    )
+    config: TransliterationInferenceConfig = Field(..., description="Configuration for inference")
+    controlConfig: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Additional control parameters (optional)",
+    )
+
+
+# Pydantic models for Language Detection endpoints
+
+class LanguageDetectionTextInput(BaseModel):
+    """Text input for language detection."""
+    source: str = Field(..., description="Input text to detect language")
+
+
+class LanguageDetectionInferenceConfig(BaseModel):
+    """Configuration for language detection inference."""
+    serviceId: str = Field(..., description="Language detection service/model ID")
+
+
+class LanguageDetectionInferenceRequest(BaseModel):
+    """Request model for language detection inference."""
+    input: List[LanguageDetectionTextInput] = Field(
+        ...,
+        description="List of text inputs to detect language",
+        min_items=1,
+    )
+    config: LanguageDetectionInferenceConfig = Field(
+        ...,
+        description="Configuration for inference",
+    )
+    controlConfig: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Additional control parameters (optional)",
+    )
+
+
 # Pydantic models for Pipeline endpoints
 class PipelineTaskType(str, Enum):
     """Pipeline task types."""
@@ -640,6 +710,8 @@ class RouteManager:
             '/api/v1/asr': 'asr-service',
             '/api/v1/tts': 'tts-service',
             '/api/v1/nmt': 'nmt-service',
+            '/api/v1/transliteration': 'transliteration-service',
+            '/api/v1/language-detection': 'language-detection-service',
             '/api/v1/model-management': 'model-management-service',
             '/api/v1/llm': 'llm-service',
             '/api/v1/pipeline': 'pipeline-service'
@@ -693,6 +765,14 @@ tags_metadata = [
     {
         "name": "TTS",
         "description": "Text-to-Speech service endpoints. Convert text to speech audio.",
+    },
+    {
+        "name": "Transliteration",
+        "description": "Transliteration service endpoints. Convert text from one script to another.",
+    },
+    {
+        "name": "Language Detection",
+        "description": "Language detection service endpoints. Identify text language and script.",
     },
     {
         "name": "Model Management",
@@ -857,6 +937,8 @@ def custom_openapi():
         ("/api/v1/asr", "ASR"),
         ("/api/v1/tts", "TTS"),
         ("/api/v1/nmt", "NMT"),
+        ("/api/v1/transliteration", "Transliteration"),
+        ("/api/v1/language-detection", "Language Detection"),
         ("/api/v1/model-management", "Model Management"),
         ("/api/v1/pipeline", "Pipeline"),
         ("/api/v1/protected", "Protected"),
@@ -1116,6 +1198,8 @@ async def api_status():
             "asr": os.getenv("ASR_SERVICE_URL", "http://asr-service:8087"),
             "tts": os.getenv("TTS_SERVICE_URL", "http://tts-service:8088"),
             "nmt": os.getenv("NMT_SERVICE_URL", "http://nmt-service:8089"),
+            "transliteration": os.getenv("TRANSLITERATION_SERVICE_URL", "http://transliteration-service:8090"),
+            "language-detection": os.getenv("LANGUAGE_DETECTION_SERVICE_URL", "http://language-detection-service:8090"),
             "model-management": os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
             "llm": os.getenv("LLM_SERVICE_URL", "http://llm-service:8090"),
             "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8090")
@@ -1812,6 +1896,139 @@ async def nmt_health(
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/nmt/health", "nmt-service", headers=headers)
 
+# Transliteration Service Endpoints (Proxy to Transliteration Service)
+
+@app.post(
+    "/api/v1/transliteration/inference",
+    tags=["Transliteration"],
+)
+async def transliteration_inference(
+    payload: TransliterationInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Perform transliteration inference"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(
+        payload.model_dump(mode="json", exclude_none=True)
+    ).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/api/v1/transliteration/inference",
+        "transliteration-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.get("/api/v1/transliteration/models", tags=["Transliteration"])
+async def get_transliteration_models(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get available transliteration models"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/transliteration/models", "transliteration-service", headers=headers)
+
+@app.get("/api/v1/transliteration/services", tags=["Transliteration"])
+async def get_transliteration_services(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get available transliteration services"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/transliteration/services", "transliteration-service", headers=headers)
+
+@app.get("/api/v1/transliteration/languages", tags=["Transliteration"])
+async def get_transliteration_languages(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get supported languages for transliteration"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/transliteration/languages", "transliteration-service", headers=headers)
+
+@app.get("/api/v1/transliteration/health", tags=["Transliteration"])
+async def transliteration_health(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Transliteration service health check"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/health", "transliteration-service", headers=headers)
+
+# Language Detection Service Endpoints (Proxy to Language Detection Service)
+
+@app.post(
+    "/api/v1/language-detection/inference",
+    tags=["Language Detection"],
+)
+async def language_detection_inference(
+    payload: LanguageDetectionInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Perform language detection inference"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(
+        payload.model_dump(mode="json", exclude_none=True)
+    ).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/api/v1/language-detection/inference",
+        "language-detection-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.get("/api/v1/language-detection/models", tags=["Language Detection"])
+async def get_language_detection_models(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get available language detection models"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/language-detection/models", "language-detection-service", headers=headers)
+
+@app.get("/api/v1/language-detection/languages", tags=["Language Detection"])
+async def get_language_detection_languages(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get supported languages for language detection"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/language-detection/languages", "language-detection-service", headers=headers)
+
+@app.get("/api/v1/language-detection/health", tags=["Language Detection"])
+async def language_detection_health(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Language detection service health check"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/language-detection/health", "language-detection-service", headers=headers)
+
 # Model Management Service Endpoints
 
 @app.get("/api/v1/model-management/models", response_model=List[ModelViewResponse], tags=["Model Management"])
@@ -2207,6 +2424,8 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'asr-service': os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
+        'transliteration-service': os.getenv('TRANSLITERATION_SERVICE_URL', 'http://transliteration-service:8090'),
+        'language-detection-service': os.getenv('LANGUAGE_DETECTION_SERVICE_URL', 'http://language-detection-service:8090'),
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
         'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
