@@ -6,13 +6,16 @@ set -e
 INPUT_FILE="/kong/kong-new-architecture.yml"
 OUTPUT_FILE="/tmp/kong-substituted.yml"
 
-if [ ! -f "$INPUT_FILE" ]; then
-    echo "Error: $INPUT_FILE not found" >&2
-    exit 1
+# If resolve-service-ips.sh already created the output file, use it
+# Otherwise, copy from input file
+if [ ! -f "$OUTPUT_FILE" ]; then
+    if [ ! -f "$INPUT_FILE" ]; then
+        echo "Error: $INPUT_FILE not found" >&2
+        exit 1
+    fi
+    # Copy original file
+    cp "$INPUT_FILE" "$OUTPUT_FILE"
 fi
-
-# Copy original file
-cp "$INPUT_FILE" "$OUTPUT_FILE"
 
 # Substitute each environment variable using sed
 if [ -n "$REDIS_PASSWORD" ]; then

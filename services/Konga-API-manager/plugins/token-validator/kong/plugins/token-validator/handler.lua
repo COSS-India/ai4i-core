@@ -52,7 +52,14 @@ end
 
 -- Optional rate limiting (per IP)
 local function check_rate_limit(conf)
-  if not conf.enable_rate_limit then
+  -- Check if rate limiting is explicitly enabled (handle both boolean and string "false")
+  local rate_limit_enabled = conf.enable_rate_limit
+  if type(rate_limit_enabled) == "string" then
+    rate_limit_enabled = rate_limit_enabled ~= "false" and rate_limit_enabled ~= "0"
+  end
+  -- Also check for nil, false, or empty string
+  if not rate_limit_enabled or rate_limit_enabled == false or rate_limit_enabled == "" then
+    kong.log.debug("Rate limiting disabled, skipping")
     return
   end
 
@@ -63,38 +70,63 @@ local function check_rate_limit(conf)
   local key = string.format("rl:%s:%d", client_ip, bucket)
 
   local red = redis:new()
-  red:set_timeout(1000)
+  -- Use reasonable timeout to allow connection establishment
+  red:set_timeout(2000)  -- 2 second timeout for connection and operations
 
-  local ok, err = red:connect(conf.redis_host or "redis", conf.redis_port or 6379)
+  -- Try to connect with timeout protection
+  -- Use hostname first, but the timeout should prevent blocking
+  local redis_host = conf.redis_host or "redis"
+  local redis_port = conf.redis_port or 6379
+  
+  local ok, err = red:connect(redis_host, redis_port)
   if not ok then
-    kong.log.err("rate limit redis connect failed: ", err)
-    return -- fail-open
+    kong.log.warn("rate limit redis connect failed (fail-open): ", err, " host: ", redis_host, " port: ", redis_port)
+    -- Fail-open: allow request to proceed if Redis is unavailable
+    return
   end
+
+  -- Set timeout for subsequent operations
+  red:set_timeout(2000)
 
   if conf.redis_password and conf.redis_password ~= "" then
     local ok_auth, err_auth = red:auth(conf.redis_password)
     if not ok_auth then
-      kong.log.err("rate limit redis auth failed: ", err_auth)
-      return
+      kong.log.warn("rate limit redis auth failed (fail-open): ", err_auth)
+      red:close()
+      return -- fail-open
     end
   end
 
   local current, err = red:incr(key)
   if not current then
-    kong.log.err("rate limit redis incr failed: ", err)
-    return
+    kong.log.warn("rate limit redis incr failed (fail-open): ", err)
+    red:close()
+    return -- fail-open
   end
 
   if current == 1 then
-    red:expire(key, window)
+    -- Set expiration, but don't fail if it errors
+    local expire_ok, expire_err = red:expire(key, window)
+    if not expire_ok then
+      kong.log.warn("rate limit redis expire failed: ", expire_err)
+    end
   end
 
+  -- Check rate limit before closing/keeping connection
   if current > (conf.rate_limit or 100) then
+    red:close()
     return kong.response.exit(429, {
       message = "Rate limit exceeded",
     }, {
       ["Retry-After"] = tostring(window),
     })
+  end
+
+  -- Reuse connection with keepalive for better performance (only if not rate limited)
+  local ok_keepalive, err_keepalive = red:set_keepalive(10000, 100)
+  if not ok_keepalive then
+    kong.log.warn("rate limit redis keepalive failed: ", err_keepalive)
+    red:close()
   end
 end
 
@@ -131,6 +163,8 @@ end
 function TokenValidator:access(conf)
   local method = kong.request.get_method()
   local path   = kong.request.get_path()
+  
+  kong.log.warn("=== TokenValidator:access START === path: ", path, " method: ", method)
 
   -- 1) CORS preflight: respond and skip auth
   if method == "OPTIONS" then
@@ -155,8 +189,13 @@ function TokenValidator:access(conf)
   for _, pattern in ipairs(public_paths) do
     if string.match(path, pattern) then
       is_public = true
+      kong.log.info("Path matched public pattern: ", pattern, " for path: ", path)
       break
     end
+  end
+  
+  if not is_public then
+    kong.log.info("Path is NOT public: ", path)
   end
 
   -- 3) Auth for protected paths
@@ -186,8 +225,14 @@ function TokenValidator:access(conf)
     end
   end
 
-  -- 4) Optional rate limit (per IP)
-  check_rate_limit(conf)
+  -- 4) Optional rate limit (per IP) - only for non-public paths or if explicitly enabled
+  -- Skip rate limiting for public paths to avoid unnecessary Redis calls
+  if not is_public then
+    kong.log.info("Checking rate limit for non-public path: ", path)
+    check_rate_limit(conf)
+  else
+    kong.log.info("Skipping rate limit for public path: ", path)
+  end
 
   -- 5) Extra request headers
   local correlation_id = kong.request.get_header("X-Correlation-ID") or ngx.var.request_id or tostring(ngx.now())
@@ -203,6 +248,10 @@ function TokenValidator:access(conf)
   if conf.api_key and conf.api_key ~= "" then
     kong.service.request.set_header("X-API-Key", conf.api_key)
   end
+  
+  -- Explicitly allow request to proceed to upstream
+  -- In Kong plugins, returning nil allows the request to continue
+  return
 end
 
 function TokenValidator:header_filter(conf)
