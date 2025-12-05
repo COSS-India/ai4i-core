@@ -1,0 +1,37 @@
+# FastAPI and ASGI server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Database ORM and driver (for consistency with other services)
+sqlalchemy>=2.0.0
+asyncpg>=0.29.0
+alembic>=1.12.0
+
+# Redis for caching and rate limiting
+redis>=5.0.0
+
+# Data validation
+pydantic>=2.4.0
+pydantic-settings>=2.0.0
+
+# Triton client for Dhruva NER
+tritonclient[http]>=2.40.0
+gevent>=23.9.0
+
+# NumPy for array operations
+numpy>=1.24.0
+
+# HTTP client and utilities
+requests>=2.31.0
+python-multipart>=0.0.6
+python-dotenv>=1.0.0
+
+# Authentication and security (for future integration)
+passlib[bcrypt]>=1.7.4
+python-jose[cryptography]>=3.3.0
+
+# AI4ICore Observability Plugin is installed in Dockerfile (listed for reference)
+# -e ../../libs/ai4icore_observability
+
+
+
