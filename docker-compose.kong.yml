@@ -43,6 +43,13 @@ services:
       KONG_ADMIN_GUI_URL: http://localhost:8002
       # Load only our custom plugin
       KONG_PLUGINS: token-validator
+      # DNS configuration - use Docker's internal DNS
+      # Note: DNS resolution happens at runtime via resolve-service-ips.sh
+      # This ensures portability across different machines
+      KONG_DNS_RESOLVER: 127.0.0.11:53
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_DNS_STRICT_ORDER: off
+      KONG_DNS_NO_SYNC: off
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       AI4VOICE_API_KEY: ${AI4VOICE_API_KEY}
       ASR_API_KEY: ${ASR_API_KEY}
@@ -57,9 +64,11 @@ services:
     volumes:
       - ./services/Konga-API-manager/kong-new-architecture.yml:/kong/kong-new-architecture.yml:ro
       - ./services/Konga-API-manager/substitute-env.sh:/kong/substitute-env.sh:ro
+      - ./services/Konga-API-manager/resolve-service-ips.sh:/kong/resolve-service-ips.sh:ro
       - ./services/Konga-API-manager/plugins/token-validator/kong/plugins:/usr/local/share/lua/5.1/kong/plugins:ro
     command: >
       sh -c "
+        sh /kong/resolve-service-ips.sh || true &&
         sh /kong/substitute-env.sh &&
         /docker-entrypoint.sh kong docker-start
       "
