@@ -500,8 +500,8 @@ services:
 
   tts-service:
     build:
-      context: ./services/tts-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/tts-service/Dockerfile
     container_name: ai4v-tts-service
     ports:
       - "8088:8088"
@@ -553,6 +553,78 @@ services:
       # timeout: 10s
       # retries: 3
       # start_period: 30s
+    restart: unless-stopped
+
+
+  ocr-service:
+
+    build:
+
+      context: .
+
+      dockerfile: services/ocr-service/Dockerfile
+
+    container_name: ai4v-ocr-service
+
+    ports:
+      - "8099:8099"
+
+    environment:
+
+      - ENV_FILE=.env
+
+    depends_on:
+
+      config-service:
+
+        condition: service_healthy
+
+      postgres:
+
+        condition: service_healthy
+
+      redis:
+
+        condition: service_healthy
+
+    networks:
+
+      - microservices-network
+
+    # healthcheck:
+
+    #   test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+
+    #   interval: 30s
+
+    #   timeout: 10s
+
+    #   retries: 3
+
+    #   start_period: 30s
+
+    restart: unless-stopped
+
+  ner-service:
+    build:
+      context: .
+      dockerfile: services/ner-service/Dockerfile
+    container_name: ai4v-ner-service
+    ports:
+      - "9001:9001"        # host:container (NER listens on 9001 in the container)
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/ner-service/.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
     restart: unless-stopped
 
   llm-service:
@@ -739,6 +811,8 @@ services:
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--storage.tsdb.retention.time=30d'
       - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
+      # - '--web.external-url=http://localhost:9090'
+
       - '--web.route-prefix=/'
     networks:
       - microservices-network
@@ -764,6 +838,8 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_INSTALL_PLUGINS=
       - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
+      # - GF_SERVER_ROOT_URL=http://localhost:3001
+
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
     volumes:
       - grafana-data:/var/lib/grafana

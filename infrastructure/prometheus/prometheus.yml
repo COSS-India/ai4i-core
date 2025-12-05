@@ -31,6 +31,8 @@ scrape_configs:
           - "asr-service:8087"
           - "tts-service:8088"
           - "nmt-service:8089"
+          - "ocr-service:8099"
+          - "ner-service:9001"
           - "llm-service:8090"
           - "pipeline-service:8090"
           # Note: transliteration-service and language-detection-service only expose /enterprise/metrics
@@ -61,6 +63,8 @@ scrape_configs:
           - "asr-service:8087"
           - "tts-service:8088"
           - "nmt-service:8089"
+          - "ocr-service:8099"
+          - "ner-service:9001"
           - "llm-service:8090"
           - "pipeline-service:8090"
           - "transliteration-service:8090"
