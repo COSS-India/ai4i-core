@@ -31,6 +31,7 @@ scrape_configs:
           - "asr-service:8087"
           - "tts-service:8088"
           - "nmt-service:8089"
+          - "ocr-service:8090"
           - "llm-service:8090"
           - "pipeline-service:8090"
     relabel_configs:
@@ -59,6 +60,7 @@ scrape_configs:
           - "asr-service:8087"
           - "tts-service:8088"
           - "nmt-service:8089"
+          - "ocr-service:8090"
           - "llm-service:8090"
           - "pipeline-service:8090"
     relabel_configs:
