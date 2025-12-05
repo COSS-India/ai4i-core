@@ -288,6 +288,75 @@ class OCRInferenceResponse(BaseModel):
     )
 
 
+# Pydantic models for NER endpoints
+
+class NERLanguageConfig(BaseModel):
+    """Language configuration for NER."""
+    sourceLanguage: str = Field(
+        ..., description="Source language code (e.g., 'en', 'hi', 'ta')"
+    )
+
+
+class NERTextInput(BaseModel):
+    """Text input for NER processing."""
+    source: str = Field(..., description="Input text to analyze for entities")
+
+
+class NERInferenceConfig(BaseModel):
+    """Configuration for NER inference."""
+    serviceId: str = Field(
+        ..., description="NER service/model ID (e.g., Dhruva NER)"
+    )
+    language: NERLanguageConfig = Field(..., description="Language configuration")
+
+
+class NERInferenceRequest(BaseModel):
+    """NER inference request model."""
+    input: List[NERTextInput] = Field(
+        ..., description="List of texts to process", min_items=1
+    )
+    config: NERInferenceConfig = Field(
+        ..., description="Configuration for NER inference"
+    )
+    controlConfig: Optional[Dict[str, Any]] = Field(
+        None, description="Additional control parameters"
+    )
+
+
+class NERTokenPrediction(BaseModel):
+    """Token-level NER prediction."""
+    token: Optional[str] = Field(None, description="Token text")
+    tag: str = Field(..., description="NER tag (e.g., PERSON, ORG, O)")
+    tokenIndex: Optional[int] = Field(
+        None, description="Index of token within the input text"
+    )
+    tokenStartIndex: int = Field(
+        ..., description="Character start index of token in the input text"
+    )
+    tokenEndIndex: int = Field(
+        ..., description="Character end index of token in the input text"
+    )
+
+
+class NERPrediction(BaseModel):
+    """NER prediction for a single input text."""
+    source: Optional[str] = Field(None, description="Original source text")
+    nerPrediction: List[NERTokenPrediction] = Field(
+        ..., description="List of token-level predictions"
+    )
+
+
+class NERInferenceResponse(BaseModel):
+    """NER inference response model."""
+    taskType: str = Field("ner", description="Type of task (always 'ner')")
+    output: List[NERPrediction] = Field(
+        ..., description="List of NER predictions (one per input text)"
+    )
+    config: Optional[Dict[str, Any]] = Field(
+        None, description="Response configuration metadata"
+    )
+
+
 
 
 
@@ -766,6 +835,8 @@ class RouteManager:
             '/api/v1/asr': 'asr-service',
             '/api/v1/tts': 'tts-service',
             '/api/v1/nmt': 'nmt-service',
+            '/api/v1/ocr': 'ocr-service',
+            '/api/v1/ner': 'ner-service',
             '/api/v1/model-management': 'model-management-service',
             '/api/v1/llm': 'llm-service',
             '/api/v1/pipeline': 'pipeline-service'
@@ -988,6 +1059,7 @@ def custom_openapi():
         ("/api/v1/tts", "TTS"),
         ("/api/v1/nmt", "NMT"),
         ("/api/v1/ocr", "OCR"),
+        ("/api/v1/ner", "NER"),
         ("/api/v1/model-management", "Model Management"),
         ("/api/v1/pipeline", "Pipeline"),
         ("/api/v1/protected", "Protected"),
@@ -1972,44 +2044,68 @@ async def ocr_health(
 
 
 @app.post("/api/v1/ocr/inference", response_model=OCRInferenceResponse, tags=["OCR"])
-
 async def ocr_inference(
-
     payload: OCRInferenceRequest,
-
     request: Request,
-
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-
     api_key: Optional[str] = Security(api_key_scheme),
-
 ):
-
     """Perform OCR inference on one or more images"""
-
     ensure_authenticated_for_request(request, credentials, api_key)
 
     import json
 
+    body = json.dumps(payload.dict()).encode()
 
+    headers: Dict[str, str] = {}
+    if credentials and credentials.credentials:
+        headers["Authorization"] = f"Bearer {credentials.credentials}"
+    if api_key:
+        headers["X-API-Key"] = api_key
+
+    return await proxy_to_service(
+        None, "/api/v1/ocr/inference", "ocr-service", method="POST", body=body, headers=headers
+    )
+
+
+# NER Service Endpoints (Proxy to NER Service)
+
+@app.get("/api/v1/ner/health", tags=["NER"])
+async def ner_health(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """NER service health check"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/health", "ner-service", headers=headers)
+
+
+@app.post("/api/v1/ner/inference", response_model=NERInferenceResponse, tags=["NER"])
+async def ner_inference(
+    payload: NERInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Perform NER inference on one or more text inputs"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+
+    import json
 
     body = json.dumps(payload.dict()).encode()
 
     headers: Dict[str, str] = {}
-
     if credentials and credentials.credentials:
-
         headers["Authorization"] = f"Bearer {credentials.credentials}"
-
     if api_key:
-
         headers["X-API-Key"] = api_key
 
     return await proxy_to_service(
-
-        None, "/api/v1/ocr/inference", "ocr-service", method="POST", body=body, headers=headers
-
+        None, "/api/v1/ner/inference", "ner-service", method="POST", body=body, headers=headers
     )
+
 
 # Model Management Service Endpoints
 
@@ -2407,6 +2503,7 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
         'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8090'),
+        'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:8091'),
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
         'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
@@ -2479,6 +2576,7 @@ async def proxy_to_service_with_params(
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
         'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8090'),
+        'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:8091'),
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
         'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
