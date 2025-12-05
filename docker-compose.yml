@@ -555,6 +555,57 @@ services:
       # start_period: 30s
     restart: unless-stopped
 
+
+  ocr-service:
+
+    build:
+
+      context: .
+
+      dockerfile: services/ocr-service/Dockerfile
+
+    container_name: ai4v-ocr-service
+
+    ports:
+
+      - "8094:8090"
+
+    environment:
+
+      - ENV_FILE=.env
+
+    depends_on:
+
+      config-service:
+
+        condition: service_healthy
+
+      postgres:
+
+        condition: service_healthy
+
+      redis:
+
+        condition: service_healthy
+
+    networks:
+
+      - microservices-network
+
+    # healthcheck:
+
+    #   test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+
+    #   interval: 30s
+
+    #   timeout: 10s
+
+    #   retries: 3
+
+    #   start_period: 30s
+
+    restart: unless-stopped
+
   llm-service:
     build:
       context: ./services/llm-service
