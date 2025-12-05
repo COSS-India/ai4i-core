@@ -23,28 +23,6 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # Redis for Kong rate limiting / token-validator plugin
-  redis:
-    image: redis:7-alpine
-    container_name: ai4v-redis-kong
-    command: redis-server /usr/local/etc/redis/redis.conf
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-    ports:
-      - "6382:6379"
-    volumes:
-      - kong-redis-data:/data
-      - ./infrastructure/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
-    networks:
-      - microservices-network
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -h localhost -p 6379 -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-    restart: unless-stopped
-
   # Kong API Gateway (DB-less, using declarative config)
   kong:
     image: kong:3.4-ubuntu
@@ -90,8 +68,6 @@ services:
     depends_on:
       postgres-konga:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "kong", "health"]
       interval: 10s
@@ -127,8 +103,6 @@ services:
 
 volumes:
   kong-postgres-konga-data:
-    driver: local
-  kong-redis-data:
     driver: local
 
 networks:
