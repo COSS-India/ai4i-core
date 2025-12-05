@@ -1319,7 +1319,7 @@ async def api_status():
             "asr": os.getenv("ASR_SERVICE_URL", "http://asr-service:8087"),
             "tts": os.getenv("TTS_SERVICE_URL", "http://tts-service:8088"),
             "nmt": os.getenv("NMT_SERVICE_URL", "http://nmt-service:8089"),
-            "ocr": os.getenv("OCR_SERVICE_URL", "http://ocr-service:8090"),
+            "ocr": os.getenv("OCR_SERVICE_URL", "http://ocr-service:8099"),
             "model-management": os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
             "llm": os.getenv("LLM_SERVICE_URL", "http://llm-service:8090"),
             "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8090")
@@ -2502,8 +2502,8 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'asr-service': os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
-        'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8090'),
-        'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:8091'),
+        'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
+        'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
         'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
@@ -2575,8 +2575,8 @@ async def proxy_to_service_with_params(
         'asr-service': os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
-        'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8090'),
-        'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:8091'),
+        'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
+        'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
         'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
