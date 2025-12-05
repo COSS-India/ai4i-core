@@ -309,7 +309,7 @@ async def health(request: Request):
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("SERVICE_PORT", "8090"))
+    port = int(os.getenv("SERVICE_PORT", "8099"))
     log_level = os.getenv("LOG_LEVEL", "info").lower()
 
     uvicorn.run(
