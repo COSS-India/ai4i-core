@@ -29,6 +29,7 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
+from models import database_models
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -129,6 +130,15 @@ async def lifespan(app: FastAPI):
             raise Exception("PostgreSQL connection timeout after 60 seconds")
 
         logger.info("PostgreSQL connection established successfully")
+
+        # Create tables if they do not exist
+        try:
+            async with db_engine.begin() as conn:
+                await conn.run_sync(database_models.Base.metadata.create_all)
+            logger.info("OCR database tables verified/created successfully")
+        except Exception as e:
+            logger.error("Failed to create OCR database tables: %s", e)
+            raise
     except Exception as e:
         logger.error("Failed to connect to PostgreSQL: %s", e)
         raise
