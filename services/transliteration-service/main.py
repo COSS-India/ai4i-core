@@ -155,6 +155,15 @@ async def lifespan(app: FastAPI):
             raise Exception("PostgreSQL connection timeout after 60 seconds")
 
         logger.info("✓ PostgreSQL connection established successfully")
+        
+        # Create tables if they do not exist
+        try:
+            async with db_engine.begin() as conn:
+                await conn.run_sync(database_models.Base.metadata.create_all)
+            logger.info("✓ Database tables verified/created successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to create database tables: {e}")
+            raise
 
     except Exception as e:
         logger.error(f"❌ Failed to connect to PostgreSQL: {e}")

@@ -242,11 +242,6 @@ class LanguageDetectionService:
                                 f"for text: '{source_text[:50]}...' (lang: {lang_code_full})"
                             )
                             
-                            # Normalize confidence score to [0.0, 1.0] for database constraint
-                            # The IndicLID model may return log probabilities or raw scores
-                            # that need to be normalized to match database CHECK constraint
-                            normalized_confidence = self.normalize_confidence_score(raw_confidence)
-                            
                             # Split langCode format "lang_Script" into language and script
                             if "_" in lang_code_full:
                                 lang_code, script_code = lang_code_full.split("_", 1)
@@ -257,11 +252,12 @@ class LanguageDetectionService:
                             # Get full language name
                             language_name = self.INDICLID_TO_LANGUAGE.get(lang_code_full, "Other")
                             
-                            # Create prediction (use normalized confidence for API response too)
+                            # Create prediction (use raw confidence for API response)
+                            # API consumers get the original model output
                             prediction = LanguagePrediction(
                                 langCode=lang_code,
                                 scriptCode=script_code,
-                                langScore=normalized_confidence,
+                                langScore=raw_confidence,
                                 language=language_name
                             )
                             
@@ -269,6 +265,11 @@ class LanguageDetectionService:
                                 source=source_text,
                                 langPrediction=[prediction]
                             ))
+                            
+                            # Normalize confidence score to [0.0, 1.0] only for database constraint
+                            # The IndicLID model may return log probabilities or raw scores
+                            # that need to be normalized to match database CHECK constraint
+                            normalized_confidence = self.normalize_confidence_score(raw_confidence)
                             
                             # Store result in database with normalized confidence
                             await self.repository.create_result(
