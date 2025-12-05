@@ -606,6 +606,28 @@ services:
 
     restart: unless-stopped
 
+  ner-service:
+    build:
+      context: .
+      dockerfile: services/ner-service/Dockerfile
+    container_name: ai4v-ner-service
+    ports:
+      - "8096:8091"        # host:container (NER listens on 8091 in the container)
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/ner-service/.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
   llm-service:
     build:
       context: ./services/llm-service
