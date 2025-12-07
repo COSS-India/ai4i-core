@@ -3205,6 +3205,8 @@ async def proxy_to_service_with_params(
         'speaker-diarization-service': os.getenv('SPEAKER_DIARIZATION_SERVICE_URL', 'http://speaker-diarization-service:8095'),
         'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:8094'),
         'audio-lang-detection-service': os.getenv('AUDIO_LANG_DETECTION_SERVICE_URL', 'http://audio-lang-detection-service:8096'),
+        'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
+        'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
         'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')

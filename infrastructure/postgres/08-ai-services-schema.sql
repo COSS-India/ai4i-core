@@ -631,6 +631,19 @@ CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_status_created ON a
 
 CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_results_request_id ON audio_lang_detection_results(request_id);
 CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_results_created_at ON audio_lang_detection_results(created_at);
+-- Indexes for NER tables
+CREATE INDEX IF NOT EXISTS idx_ner_requests_user_id ON ner_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_api_key_id ON ner_requests(api_key_id);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_session_id ON ner_requests(session_id);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_status ON ner_requests(status);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_language ON ner_requests(language);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_model_id ON ner_requests(model_id);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_created_at ON ner_requests(created_at);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_user_created ON ner_requests(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_status_created ON ner_requests(status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_ner_results_request_id ON ner_results(request_id);
+CREATE INDEX IF NOT EXISTS idx_ner_results_created_at ON ner_results(created_at);
 
 -- Check if update_updated_at_column function exists, create if not
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -694,6 +707,13 @@ CREATE TRIGGER update_language_diarization_requests_updated_at
 
 CREATE TRIGGER update_audio_lang_detection_requests_updated_at
     BEFORE UPDATE ON audio_lang_detection_requests
+CREATE TRIGGER update_ocr_requests_updated_at
+    BEFORE UPDATE ON ocr_requests
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_ner_requests_updated_at
+    BEFORE UPDATE ON ner_requests
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
