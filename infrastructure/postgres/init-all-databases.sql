@@ -275,6 +275,81 @@ CREATE TABLE IF NOT EXISTS nmt_results (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Speaker Diarization Tables
+CREATE TABLE IF NOT EXISTS speaker_diarization_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+    session_id INTEGER REFERENCES user_sessions(id) ON DELETE SET NULL,
+    model_id VARCHAR(100) NOT NULL,
+    audio_duration FLOAT,
+    num_speakers INTEGER,
+    processing_time FLOAT,
+    status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
+    error_message TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS speaker_diarization_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id UUID REFERENCES speaker_diarization_requests(id) ON DELETE CASCADE,
+    total_segments INTEGER NOT NULL,
+    num_speakers INTEGER NOT NULL,
+    speakers JSONB NOT NULL,
+    segments JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Language Diarization Tables
+CREATE TABLE IF NOT EXISTS language_diarization_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+    session_id INTEGER REFERENCES user_sessions(id) ON DELETE SET NULL,
+    model_id VARCHAR(100) NOT NULL,
+    audio_duration FLOAT,
+    target_language VARCHAR(10),
+    processing_time FLOAT,
+    status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
+    error_message TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS language_diarization_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id UUID REFERENCES language_diarization_requests(id) ON DELETE CASCADE,
+    total_segments INTEGER NOT NULL,
+    segments JSONB NOT NULL,
+    target_language VARCHAR(10),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Audio Language Detection Tables
+CREATE TABLE IF NOT EXISTS audio_lang_detection_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+    session_id INTEGER REFERENCES user_sessions(id) ON DELETE SET NULL,
+    model_id VARCHAR(100) NOT NULL,
+    audio_duration FLOAT,
+    processing_time FLOAT,
+    status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
+    error_message TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS audio_lang_detection_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id UUID REFERENCES audio_lang_detection_requests(id) ON DELETE CASCADE,
+    language_code VARCHAR(50) NOT NULL,
+    confidence FLOAT CHECK (confidence >= 0.0 AND confidence <= 1.0),
+    all_scores JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Create indexes for auth_db
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
@@ -356,6 +431,42 @@ CREATE INDEX IF NOT EXISTS idx_nmt_requests_language_pair ON nmt_requests(source
 CREATE INDEX IF NOT EXISTS idx_nmt_results_request_id ON nmt_results(request_id);
 CREATE INDEX IF NOT EXISTS idx_nmt_results_created_at ON nmt_results(created_at);
 
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_user_id ON speaker_diarization_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_api_key_id ON speaker_diarization_requests(api_key_id);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_session_id ON speaker_diarization_requests(session_id);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_status ON speaker_diarization_requests(status);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_model_id ON speaker_diarization_requests(model_id);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_created_at ON speaker_diarization_requests(created_at);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_user_created ON speaker_diarization_requests(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_status_created ON speaker_diarization_requests(status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_results_request_id ON speaker_diarization_results(request_id);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_results_created_at ON speaker_diarization_results(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_user_id ON language_diarization_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_api_key_id ON language_diarization_requests(api_key_id);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_session_id ON language_diarization_requests(session_id);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_status ON language_diarization_requests(status);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_model_id ON language_diarization_requests(model_id);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_created_at ON language_diarization_requests(created_at);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_user_created ON language_diarization_requests(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_status_created ON language_diarization_requests(status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_language_diarization_results_request_id ON language_diarization_results(request_id);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_results_created_at ON language_diarization_results(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_user_id ON audio_lang_detection_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_api_key_id ON audio_lang_detection_requests(api_key_id);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_session_id ON audio_lang_detection_requests(session_id);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_status ON audio_lang_detection_requests(status);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_model_id ON audio_lang_detection_requests(model_id);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_created_at ON audio_lang_detection_requests(created_at);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_user_created ON audio_lang_detection_requests(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_status_created ON audio_lang_detection_requests(status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_results_request_id ON audio_lang_detection_results(request_id);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_results_created_at ON audio_lang_detection_results(created_at);
+
 -- Create updated_at trigger function
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -388,6 +499,18 @@ CREATE TRIGGER update_nmt_requests_updated_at BEFORE UPDATE ON nmt_requests
 
 DROP TRIGGER IF EXISTS update_llm_requests_updated_at ON llm_requests;
 CREATE TRIGGER update_llm_requests_updated_at BEFORE UPDATE ON llm_requests
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_speaker_diarization_requests_updated_at ON speaker_diarization_requests;
+CREATE TRIGGER update_speaker_diarization_requests_updated_at BEFORE UPDATE ON speaker_diarization_requests
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_language_diarization_requests_updated_at ON language_diarization_requests;
+CREATE TRIGGER update_language_diarization_requests_updated_at BEFORE UPDATE ON language_diarization_requests
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_audio_lang_detection_requests_updated_at ON audio_lang_detection_requests;
+CREATE TRIGGER update_audio_lang_detection_requests_updated_at BEFORE UPDATE ON audio_lang_detection_requests
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================================================

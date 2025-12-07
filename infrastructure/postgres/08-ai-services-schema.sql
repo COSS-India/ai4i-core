@@ -369,6 +369,165 @@ CREATE INDEX IF NOT EXISTS idx_transliteration_requests_language_pair ON transli
 CREATE INDEX IF NOT EXISTS idx_transliteration_results_request_id ON transliteration_results(request_id);
 CREATE INDEX IF NOT EXISTS idx_transliteration_results_created_at ON transliteration_results(created_at);
 
+-- Speaker Diarization Tables
+
+-- Speaker Diarization Requests table - tracks speaker diarization inference requests
+CREATE TABLE IF NOT EXISTS speaker_diarization_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    model_id VARCHAR(100) NOT NULL,
+    audio_duration FLOAT,
+    num_speakers INTEGER,
+    processing_time FLOAT,
+    status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
+    error_message TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE speaker_diarization_requests IS 'Speaker Diarization requests table - tracks speaker diarization inference requests';
+COMMENT ON COLUMN speaker_diarization_requests.model_id IS 'Identifier for the speaker diarization model used (e.g., speaker_diarization)';
+COMMENT ON COLUMN speaker_diarization_requests.audio_duration IS 'Duration of input audio in seconds';
+COMMENT ON COLUMN speaker_diarization_requests.num_speakers IS 'Number of speakers detected or requested';
+COMMENT ON COLUMN speaker_diarization_requests.processing_time IS 'Time taken to process the request in seconds';
+COMMENT ON COLUMN speaker_diarization_requests.status IS 'Current status of the request: processing, completed, or failed';
+
+-- Speaker Diarization Results table - stores speaker diarization inference results
+CREATE TABLE IF NOT EXISTS speaker_diarization_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id UUID REFERENCES speaker_diarization_requests(id) ON DELETE CASCADE,
+    total_segments INTEGER NOT NULL,
+    num_speakers INTEGER NOT NULL,
+    speakers JSONB NOT NULL,
+    segments JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE speaker_diarization_results IS 'Speaker Diarization results table - stores speaker diarization inference results';
+COMMENT ON COLUMN speaker_diarization_results.total_segments IS 'Total number of segments identified';
+COMMENT ON COLUMN speaker_diarization_results.num_speakers IS 'Number of unique speakers identified';
+COMMENT ON COLUMN speaker_diarization_results.speakers IS 'List of unique speaker identifiers in JSONB format';
+COMMENT ON COLUMN speaker_diarization_results.segments IS 'List of diarized segments with start_time, end_time, duration, speaker in JSONB format';
+
+-- Language Diarization Tables
+
+-- Language Diarization Requests table - tracks language diarization inference requests
+CREATE TABLE IF NOT EXISTS language_diarization_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    model_id VARCHAR(100) NOT NULL,
+    audio_duration FLOAT,
+    target_language VARCHAR(10),
+    processing_time FLOAT,
+    status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
+    error_message TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE language_diarization_requests IS 'Language Diarization requests table - tracks language diarization inference requests';
+COMMENT ON COLUMN language_diarization_requests.model_id IS 'Identifier for the language diarization model used (e.g., lang_diarization)';
+COMMENT ON COLUMN language_diarization_requests.audio_duration IS 'Duration of input audio in seconds';
+COMMENT ON COLUMN language_diarization_requests.target_language IS 'Target language for diarization (e.g., en, all)';
+COMMENT ON COLUMN language_diarization_requests.processing_time IS 'Time taken to process the request in seconds';
+COMMENT ON COLUMN language_diarization_requests.status IS 'Current status of the request: processing, completed, or failed';
+
+-- Language Diarization Results table - stores language diarization inference results
+CREATE TABLE IF NOT EXISTS language_diarization_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id UUID REFERENCES language_diarization_requests(id) ON DELETE CASCADE,
+    total_segments INTEGER NOT NULL,
+    segments JSONB NOT NULL,
+    target_language VARCHAR(10),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE language_diarization_results IS 'Language Diarization results table - stores language diarization inference results';
+COMMENT ON COLUMN language_diarization_results.total_segments IS 'Total number of segments identified';
+COMMENT ON COLUMN language_diarization_results.segments IS 'List of language segments with start_time, end_time, duration, language, confidence in JSONB format';
+COMMENT ON COLUMN language_diarization_results.target_language IS 'Target language used for diarization';
+
+-- Audio Language Detection Tables
+
+-- Audio Language Detection Requests table - tracks audio language detection inference requests
+CREATE TABLE IF NOT EXISTS audio_lang_detection_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    model_id VARCHAR(100) NOT NULL,
+    audio_duration FLOAT,
+    processing_time FLOAT,
+    status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
+    error_message TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE audio_lang_detection_requests IS 'Audio Language Detection requests table - tracks audio language detection inference requests';
+COMMENT ON COLUMN audio_lang_detection_requests.model_id IS 'Identifier for the audio language detection model used (e.g., ald)';
+COMMENT ON COLUMN audio_lang_detection_requests.audio_duration IS 'Duration of input audio in seconds';
+COMMENT ON COLUMN audio_lang_detection_requests.processing_time IS 'Time taken to process the request in seconds';
+COMMENT ON COLUMN audio_lang_detection_requests.status IS 'Current status of the request: processing, completed, or failed';
+
+-- Audio Language Detection Results table - stores audio language detection inference results
+CREATE TABLE IF NOT EXISTS audio_lang_detection_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id UUID REFERENCES audio_lang_detection_requests(id) ON DELETE CASCADE,
+    language_code VARCHAR(50) NOT NULL,
+    confidence FLOAT CHECK (confidence >= 0.0 AND confidence <= 1.0),
+    all_scores JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE audio_lang_detection_results IS 'Audio Language Detection results table - stores audio language detection inference results';
+COMMENT ON COLUMN audio_lang_detection_results.language_code IS 'Detected language code (e.g., en: English)';
+COMMENT ON COLUMN audio_lang_detection_results.confidence IS 'Confidence score for the detected language (0.0 to 1.0)';
+COMMENT ON COLUMN audio_lang_detection_results.all_scores IS 'Detailed scores for all predicted languages in JSONB format';
+
+-- Indexes for Speaker Diarization tables
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_user_id ON speaker_diarization_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_api_key_id ON speaker_diarization_requests(api_key_id);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_session_id ON speaker_diarization_requests(session_id);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_status ON speaker_diarization_requests(status);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_model_id ON speaker_diarization_requests(model_id);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_created_at ON speaker_diarization_requests(created_at);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_user_created ON speaker_diarization_requests(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_requests_status_created ON speaker_diarization_requests(status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_results_request_id ON speaker_diarization_results(request_id);
+CREATE INDEX IF NOT EXISTS idx_speaker_diarization_results_created_at ON speaker_diarization_results(created_at);
+
+-- Indexes for Language Diarization tables
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_user_id ON language_diarization_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_api_key_id ON language_diarization_requests(api_key_id);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_session_id ON language_diarization_requests(session_id);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_status ON language_diarization_requests(status);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_model_id ON language_diarization_requests(model_id);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_created_at ON language_diarization_requests(created_at);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_user_created ON language_diarization_requests(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_requests_status_created ON language_diarization_requests(status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_language_diarization_results_request_id ON language_diarization_results(request_id);
+CREATE INDEX IF NOT EXISTS idx_language_diarization_results_created_at ON language_diarization_results(created_at);
+
+-- Indexes for Audio Language Detection tables
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_user_id ON audio_lang_detection_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_api_key_id ON audio_lang_detection_requests(api_key_id);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_session_id ON audio_lang_detection_requests(session_id);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_status ON audio_lang_detection_requests(status);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_model_id ON audio_lang_detection_requests(model_id);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_created_at ON audio_lang_detection_requests(created_at);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_user_created ON audio_lang_detection_requests(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_status_created ON audio_lang_detection_requests(status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_results_request_id ON audio_lang_detection_results(request_id);
+CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_results_created_at ON audio_lang_detection_results(created_at);
+
 -- Check if update_updated_at_column function exists, create if not
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -406,6 +565,21 @@ CREATE TRIGGER update_language_detection_requests_updated_at
 
 CREATE TRIGGER update_transliteration_requests_updated_at
     BEFORE UPDATE ON transliteration_requests
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_speaker_diarization_requests_updated_at
+    BEFORE UPDATE ON speaker_diarization_requests
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_language_diarization_requests_updated_at
+    BEFORE UPDATE ON language_diarization_requests
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_audio_lang_detection_requests_updated_at
+    BEFORE UPDATE ON audio_lang_detection_requests
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
@@ -455,6 +629,27 @@ BEGIN
     WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
     
     DELETE FROM transliteration_requests 
+    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
+    
+    -- Delete old Speaker Diarization data
+    DELETE FROM speaker_diarization_results 
+    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
+    
+    DELETE FROM speaker_diarization_requests 
+    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
+    
+    -- Delete old Language Diarization data
+    DELETE FROM language_diarization_results 
+    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
+    
+    DELETE FROM language_diarization_requests 
+    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
+    
+    -- Delete old Audio Language Detection data
+    DELETE FROM audio_lang_detection_results 
+    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
+    
+    DELETE FROM audio_lang_detection_requests 
     WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
     
     RAISE NOTICE 'Cleaned up AI service data older than % days', retention_days;
