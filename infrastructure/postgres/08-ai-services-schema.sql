@@ -189,6 +189,44 @@ COMMENT ON COLUMN nmt_results.source_text IS 'Original source text for reference
 COMMENT ON COLUMN nmt_results.language_detected IS 'Detected source language if different from requested';
 COMMENT ON COLUMN nmt_results.word_alignments IS 'Word-level alignment information in JSONB format';
 
+-- OCR (Optical Character Recognition) Tables
+
+-- OCR Requests table - tracks OCR inference requests
+CREATE TABLE IF NOT EXISTS ocr_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    model_id VARCHAR(100) NOT NULL,
+    language VARCHAR(10) NOT NULL,
+    image_count INTEGER,
+    processing_time FLOAT,
+    status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
+    error_message TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE ocr_requests IS 'OCR requests table - tracks OCR inference requests';
+COMMENT ON COLUMN ocr_requests.model_id IS 'Identifier for the OCR model used (e.g., surya-ocr)';
+COMMENT ON COLUMN ocr_requests.language IS 'Language code for the document text (e.g., en, hi, ta)';
+COMMENT ON COLUMN ocr_requests.image_count IS 'Number of images processed in the request';
+COMMENT ON COLUMN ocr_requests.processing_time IS 'Time taken to process the request in seconds';
+COMMENT ON COLUMN ocr_requests.status IS 'Current status of the request: processing, completed, or failed';
+
+-- OCR Results table - stores OCR inference results
+CREATE TABLE IF NOT EXISTS ocr_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id UUID REFERENCES ocr_requests(id) ON DELETE CASCADE,
+    extracted_text TEXT NOT NULL,
+    page_count INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE ocr_results IS 'OCR results table - stores OCR inference results';
+COMMENT ON COLUMN ocr_results.extracted_text IS 'The text extracted from the input image(s)';
+COMMENT ON COLUMN ocr_results.page_count IS 'Number of pages or images represented by this result row';
+
 -- Indexes for ASR tables
 CREATE INDEX IF NOT EXISTS idx_asr_requests_user_id ON asr_requests(user_id);
 CREATE INDEX IF NOT EXISTS idx_asr_requests_api_key_id ON asr_requests(api_key_id);
@@ -235,6 +273,20 @@ CREATE INDEX IF NOT EXISTS idx_nmt_requests_language_pair ON nmt_requests(source
 
 CREATE INDEX IF NOT EXISTS idx_nmt_results_request_id ON nmt_results(request_id);
 CREATE INDEX IF NOT EXISTS idx_nmt_results_created_at ON nmt_results(created_at);
+
+-- Indexes for OCR tables
+CREATE INDEX IF NOT EXISTS idx_ocr_requests_user_id ON ocr_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_ocr_requests_api_key_id ON ocr_requests(api_key_id);
+CREATE INDEX IF NOT EXISTS idx_ocr_requests_session_id ON ocr_requests(session_id);
+CREATE INDEX IF NOT EXISTS idx_ocr_requests_status ON ocr_requests(status);
+CREATE INDEX IF NOT EXISTS idx_ocr_requests_language ON ocr_requests(language);
+CREATE INDEX IF NOT EXISTS idx_ocr_requests_model_id ON ocr_requests(model_id);
+CREATE INDEX IF NOT EXISTS idx_ocr_requests_created_at ON ocr_requests(created_at);
+CREATE INDEX IF NOT EXISTS idx_ocr_requests_user_created ON ocr_requests(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ocr_requests_status_created ON ocr_requests(status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_ocr_results_request_id ON ocr_results(request_id);
+CREATE INDEX IF NOT EXISTS idx_ocr_results_created_at ON ocr_results(created_at);
 
 -- Indexes for LLM tables
 CREATE INDEX IF NOT EXISTS idx_llm_requests_user_id ON llm_requests(user_id);
@@ -338,6 +390,44 @@ COMMENT ON TABLE transliteration_results IS 'Transliteration results table - sto
 COMMENT ON COLUMN transliteration_results.transliterated_text IS 'The transliterated text (can be string or list of strings for top-k)';
 COMMENT ON COLUMN transliteration_results.source_text IS 'Original source text for reference';
 COMMENT ON COLUMN transliteration_results.confidence_score IS 'Confidence score for the transliteration (optional)';
+
+-- NER (Named Entity Recognition) Tables
+
+-- NER Requests table - tracks NER inference requests
+CREATE TABLE IF NOT EXISTS ner_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
+    session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    model_id VARCHAR(100) NOT NULL,
+    language VARCHAR(10) NOT NULL,
+    text_length INTEGER,
+    processing_time FLOAT,
+    status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
+    error_message TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE ner_requests IS 'NER requests table - tracks named entity recognition inference requests';
+COMMENT ON COLUMN ner_requests.model_id IS 'Identifier for the NER model used';
+COMMENT ON COLUMN ner_requests.language IS 'Language code for the input text (e.g., en, hi, ta)';
+COMMENT ON COLUMN ner_requests.text_length IS 'Length of input text in characters';
+COMMENT ON COLUMN ner_requests.processing_time IS 'Time taken to process the request in seconds';
+COMMENT ON COLUMN ner_requests.status IS 'Current status of the request: processing, completed, or failed';
+
+-- NER Results table - stores NER inference results
+CREATE TABLE IF NOT EXISTS ner_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id UUID REFERENCES ner_requests(id) ON DELETE CASCADE,
+    entities JSONB NOT NULL,
+    source_text TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMENT ON TABLE ner_results IS 'NER results table - stores named entity recognition inference results';
+COMMENT ON COLUMN ner_results.entities IS 'JSON structure containing extracted entities, labels, and offsets';
+COMMENT ON COLUMN ner_results.source_text IS 'Original source text for reference';
 
 -- Indexes for Language Detection tables
 CREATE INDEX IF NOT EXISTS idx_language_detection_requests_user_id ON language_detection_requests(user_id);
@@ -527,6 +617,19 @@ CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_requests_status_created ON a
 
 CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_results_request_id ON audio_lang_detection_results(request_id);
 CREATE INDEX IF NOT EXISTS idx_audio_lang_detection_results_created_at ON audio_lang_detection_results(created_at);
+-- Indexes for NER tables
+CREATE INDEX IF NOT EXISTS idx_ner_requests_user_id ON ner_requests(user_id);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_api_key_id ON ner_requests(api_key_id);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_session_id ON ner_requests(session_id);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_status ON ner_requests(status);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_language ON ner_requests(language);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_model_id ON ner_requests(model_id);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_created_at ON ner_requests(created_at);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_user_created ON ner_requests(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ner_requests_status_created ON ner_requests(status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_ner_results_request_id ON ner_results(request_id);
+CREATE INDEX IF NOT EXISTS idx_ner_results_created_at ON ner_results(created_at);
 
 -- Check if update_updated_at_column function exists, create if not
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -580,6 +683,13 @@ CREATE TRIGGER update_language_diarization_requests_updated_at
 
 CREATE TRIGGER update_audio_lang_detection_requests_updated_at
     BEFORE UPDATE ON audio_lang_detection_requests
+CREATE TRIGGER update_ocr_requests_updated_at
+    BEFORE UPDATE ON ocr_requests
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_ner_requests_updated_at
+    BEFORE UPDATE ON ner_requests
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
@@ -629,6 +739,20 @@ BEGIN
     WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
     
     DELETE FROM transliteration_requests 
+    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
+
+    -- Delete old OCR data
+    DELETE FROM ocr_results
+    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
+
+    DELETE FROM ocr_requests
+    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
+
+    -- Delete old NER data
+    DELETE FROM ner_results
+    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
+
+    DELETE FROM ner_requests
     WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * retention_days;
     
     -- Delete old Speaker Diarization data
