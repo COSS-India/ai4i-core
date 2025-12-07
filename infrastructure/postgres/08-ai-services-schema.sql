@@ -707,13 +707,6 @@ CREATE TRIGGER update_language_diarization_requests_updated_at
 
 CREATE TRIGGER update_audio_lang_detection_requests_updated_at
     BEFORE UPDATE ON audio_lang_detection_requests
-CREATE TRIGGER update_ocr_requests_updated_at
-    BEFORE UPDATE ON ocr_requests
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_ner_requests_updated_at
-    BEFORE UPDATE ON ner_requests
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
