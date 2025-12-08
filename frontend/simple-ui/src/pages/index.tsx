@@ -146,9 +146,15 @@ const HomePage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <VStack spacing={4} w="full" h="full" justify="center">
+        <VStack 
+          spacing={10} 
+          w="full" 
+          h="full" 
+          justify="center"
+          align="center"
+        >
           {/* Hero Section */}
-          <Box textAlign="center" pt={2} pb={2}>
+          <Box textAlign="center" w="full">
             <Heading size="lg" fontWeight="bold" color="gray.800" mb={2}>
               AI Accessibility Studio
             </Heading>
@@ -159,12 +165,12 @@ const HomePage: React.FC = () => {
 
           {/* Service Cards Grid */}
           <SimpleGrid
-            columns={{ base: 1, md: 2, lg: 3, xl: 3 }}
-            spacing={4}
+            columns={{ base: 1, sm: 2, md: 2, lg: 3, xl: 3 }}
+            spacing={6}
             w="full"
             maxW="1200px"
             mx="auto"
-            flex={1}
+            justifyItems="center"
           >
             {services.map((service) => (
               <Card
@@ -181,8 +187,11 @@ const HomePage: React.FC = () => {
                   borderColor: `${service.color}.300`,
                 }}
                 transition="all 0.3s ease"
-                h="full"
+                w={{ base: "100%", sm: "320px", md: "320px", lg: "320px", xl: "320px" }}
+                h="260px"
                 position="relative"
+                display="flex"
+                flexDirection="column"
               >
                 {/* Colored top border accent */}
                 <Box
@@ -194,13 +203,16 @@ const HomePage: React.FC = () => {
                   bgGradient={`linear(to-r, ${service.color}.400, ${service.color}.600)`}
                 />
                 
-                <CardHeader textAlign="center" pb={3} pt={4}>
-                  <VStack spacing={3}>
+                <CardHeader textAlign="center" pb={3} pt={4} flexShrink={0}>
+                  <VStack spacing={3} align="center">
                     <Box
                       p={3}
                       borderRadius="full"
                       bg={`${service.color}.50`}
                       _dark={{ bg: `${service.color}.900` }}
+                      display="flex"
+                      alignItems="center"
+                      justifyContent="center"
                     >
                       <Icon
                         as={service.icon}
@@ -208,20 +220,23 @@ const HomePage: React.FC = () => {
                         color={`${service.color}.600`}
                       />
                     </Box>
-                    <Heading size="sm" color="gray.800" fontWeight="semibold">
+                    <Heading size="sm" color="gray.800" fontWeight="semibold" textAlign="center">
                       {service.title}
                     </Heading>
                   </VStack>
                 </CardHeader>
-                <CardBody pt={0} pb={4} px={4}>
-                  <VStack spacing={3} h="full" justify="space-between">
+                <CardBody pt={0} pb={4} px={4} flex={1} display="flex" flexDirection="column" justifyContent="space-between">
+                  <VStack spacing={3} h="full" justify="space-between" align="center">
                     <Text
                       color="gray.600"
                       textAlign="center"
                       lineHeight="1.5"
-                      flex={1}
                       fontSize="sm"
                       noOfLines={3}
+                      flex={1}
+                      display="flex"
+                      alignItems="center"
+                      justifyContent="center"
                     >
                       {service.description}
                     </Text>
@@ -241,6 +256,7 @@ const HomePage: React.FC = () => {
                         boxShadow: "md",
                       }}
                       transition="all 0.2s"
+                      flexShrink={0}
                     >
                       Try it now
                     </Button>
