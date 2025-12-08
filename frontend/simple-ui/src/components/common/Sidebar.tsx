@@ -164,13 +164,12 @@ const Sidebar: React.FC = () => {
       w={isExpanded ? "240px" : "4.5rem"}
       bg={bgColor}
       boxShadow="md"
-      zIndex={40}
+      zIndex={60}
       transition="width 0.2s ease"
       onMouseEnter={() => setIsExpanded(true)}
       onMouseLeave={() => setIsExpanded(false)}
       borderRight="1px"
       borderColor={borderColor}
-      pt="3.5rem"
     >
       <VStack spacing={3} p={3} h="calc(100vh - 3.5rem)" overflowY="auto">
         {/* Logo Section */}
@@ -184,50 +183,20 @@ const Sidebar: React.FC = () => {
             alignItems="center"
             justifyContent="center"
           >
-            {isExpanded ? (
-              <Image
-                src="/AI4Inclusion_Logo.svg"
-                alt="AI4Inclusion Logo"
-                boxSize={16}
-                objectFit="contain"
-                fallback={
-                  <Box
-                    boxSize={12}
-                    bg="orange.500"
-                    borderRadius="md"
-                    display="flex"
-                    alignItems="center"
-                    justifyContent="center"
-                    color="white"
-                    fontWeight="bold"
-                    fontSize="md"
-                  >
-                    AI
-                  </Box>
-                }
-              />
-            ) : (
-              <Box
-                boxSize={10}
-                bg="orange.500"
-                borderRadius="md"
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-                color="white"
-                fontWeight="bold"
-                fontSize="sm"
-              >
-                AI
-              </Box>
-            )}
+            <Image
+              src="/AI4Inclusion_Logo.svg"
+              alt="AI4Inclusion Logo"
+              boxSize={isExpanded ? 16 : 10}
+              objectFit="contain"
+              transition="all 0.2s ease"
+            />
           </Box>
         </VStack>
 
         <Divider />
 
         {/* Navigation Items */}
-        <VStack spacing={2} w="full" align="stretch" flex={1}>
+        <VStack spacing={4} w="full" align="stretch" flex={1}>
           {navItems.map((item) => {
             const isActive = router.pathname === item.path;
             const requiresAuth = item.requiresAuth ?? false;

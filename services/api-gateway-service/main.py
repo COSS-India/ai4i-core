@@ -2759,46 +2759,44 @@ async def list_models(
 
 @app.post("/api/v1/model-management/models/publish", response_model=str, tags=["Model Management"])
 async def publish_model(
-    payload: ModelViewRequest,
     request: Request,
+    model_id: str = Query(..., description="Model ID to publish"),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Fetch metadata for a specific model."""
+    """Publish a model by ID."""
     ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
-    # Use model_dump with json mode to properly serialize datetime objects
-    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    payload = json.dumps({"modelId": model_id}).encode("utf-8")
     return await proxy_to_service(
         None,
         "/services/admin/publish/model",
         "model-management-service",
         method="POST",
-        body=body,
+        body=payload,
         headers=headers,
     )
 
 
 @app.post("/api/v1/model-management/models/unpublish", response_model=str, tags=["Model Management"])
 async def unpublish_model(
-    payload: ModelViewRequest,
     request: Request,
+    model_id: str = Query(..., description="Model ID to unpublish"),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Fetch metadata for a specific model."""
+    """Unpublish a model by ID."""
     ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
-    # Use model_dump with json mode to properly serialize datetime objects
-    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    payload = json.dumps({"modelId": model_id}).encode("utf-8")
     return await proxy_to_service(
         None,
         "/services/admin/unpublish/model",
         "model-management-service",
         method="POST",
-        body=body,
+        body=payload,
         headers=headers,
     )
 

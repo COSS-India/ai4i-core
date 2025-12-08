@@ -84,7 +84,7 @@ interface Model {
   inferenceEndPoint: InferenceEndPoint;
   source: string;
   task: Task;
-  is_published?: boolean;
+  isPublished?: boolean;
   version?: string;
   refUrl?: string;
 }
@@ -527,7 +527,11 @@ const ModelManagementPage: React.FC = () => {
     try {
       const model = await getModelById(modelId);
       setSelectedModel(model);
-      setUpdateFormData(model);
+      // Ensure task field is properly initialized
+      setUpdateFormData({
+        ...model,
+        task: model.task || { type: "" },
+      });
       setIsViewingModel(true);
       setActiveTab(2); // Switch to View Model tab
     } catch (error) {
@@ -784,7 +788,7 @@ const ModelManagementPage: React.FC = () => {
                                     >
                                       View
                                     </Button>
-                                    {model.is_published !== false ? (
+                                    {model.isPublished === true ? (
                                       <Button
                                         size="sm"
                                         colorScheme="red"
@@ -953,7 +957,7 @@ const ModelManagementPage: React.FC = () => {
                             Model Details: {selectedModel.name}
                           </Heading>
                           <HStack spacing={2}>
-                            {selectedModel.is_published === false && (
+                            {selectedModel.isPublished !== true && (
                               <Button
                                 size="sm"
                                 colorScheme="green"
@@ -965,7 +969,7 @@ const ModelManagementPage: React.FC = () => {
                                 Publish Model
                               </Button>
                             )}
-                            {selectedModel.is_published !== false && (
+                            {selectedModel.isPublished === true && (
                               <Button
                                 size="sm"
                                 colorScheme="red"
@@ -992,7 +996,10 @@ const ModelManagementPage: React.FC = () => {
                                 variant="outline"
                                 onClick={() => {
                                   setIsEditingModel(false);
-                                  setUpdateFormData(selectedModel);
+                                  setUpdateFormData({
+                                    ...selectedModel,
+                                    task: selectedModel.task || { type: "" },
+                                  });
                                 }}
                               >
                                 Cancel
@@ -1045,11 +1052,11 @@ const ModelManagementPage: React.FC = () => {
                                   Status
                                 </Text>
                                 <Badge
-                                  colorScheme={selectedModel.is_published === false ? "red" : "green"}
+                                  colorScheme={selectedModel.isPublished === true ? "green" : "red"}
                                   fontSize="sm"
                                   p={2}
                                 >
-                                  {selectedModel.is_published === false ? "Unpublished" : "Published"}
+                                  {selectedModel.isPublished === true ? "Published" : "Unpublished"}
                                 </Badge>
                               </Box>
                             </SimpleGrid>
@@ -1142,7 +1149,7 @@ const ModelManagementPage: React.FC = () => {
                                 <FormControl isRequired>
                                   <FormLabel fontWeight="semibold">Task Type</FormLabel>
                                   <Select
-                                    value={updateFormData.task?.type || ""}
+                                    value={updateFormData.task?.type || selectedModel?.task?.type || ""}
                                     onChange={(e) =>
                                       setUpdateFormData((prev) => ({
                                         ...prev,
@@ -1191,16 +1198,6 @@ const ModelManagementPage: React.FC = () => {
                               </FormControl>
 
                               <HStack justify="flex-end" spacing={4} pt={4}>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  onClick={() => {
-                                    setIsEditingModel(false);
-                                    setUpdateFormData(selectedModel);
-                                  }}
-                                >
-                                  Cancel
-                                </Button>
                                 <Button
                                   type="submit"
                                   colorScheme="blue"
