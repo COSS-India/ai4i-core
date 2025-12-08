@@ -30,6 +30,14 @@ import {
   TabPanels,
   Tab,
   TabPanel,
+  Table,
+  Thead,
+  Tbody,
+  Tr,
+  Th,
+  Td,
+  Badge,
+  TableContainer,
 } from "@chakra-ui/react";
 import { ViewIcon, ViewOffIcon, CopyIcon } from "@chakra-ui/icons";
 import { FiEdit2, FiCheck, FiX } from "react-icons/fi";
@@ -40,6 +48,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
 import { useApiKey } from "../hooks/useApiKey";
 import { User, UserUpdateRequest } from "../types/auth";
+import roleService, { Role, UserRole } from "../services/roleService";
 
 const ProfilePage: React.FC = () => {
   const router = useRouter();
@@ -57,6 +66,26 @@ const ProfilePage: React.FC = () => {
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const toast = useToast();
+  
+  // Role management state
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [selectedUser, setSelectedUser] = useState<{ id: number; email: string; username: string } | null>(null);
+  const [selectedUserRoles, setSelectedUserRoles] = useState<string[]>([]);
+  const [selectedRole, setSelectedRole] = useState<string>("");
+  const [isLoadingRoles, setIsLoadingRoles] = useState(false);
+  const [isLoadingUserRoles, setIsLoadingUserRoles] = useState(false);
+  const [isAssigningRole, setIsAssigningRole] = useState(false);
+  const [isRemovingRole, setIsRemovingRole] = useState(false);
+  
+  // Placeholder users list - TODO: Replace with API call to GET /api/v1/auth/users/list (when available)
+  // For now, using dummy data to handle errors and test the UI
+  const placeholderUsers = [
+    { id: 1, email: "admin@ai4i.com", username: "admin" },
+    { id: 2, email: "user@example.com", username: "user1" },
+    { id: 3, email: "moderator@example.com", username: "moderator1" },
+    { id: 4, email: "guest@example.com", username: "guest1" },
+    { id: 5, email: "test@example.com", username: "testuser" },
+  ];
 
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
@@ -259,6 +288,9 @@ const ProfilePage: React.FC = () => {
                 <Tab fontWeight="semibold">User Details</Tab>
                 <Tab fontWeight="semibold">Organization</Tab>
                 {/* <Tab fontWeight="semibold">API Key</Tab> */}
+                {(user?.roles?.includes('ADMIN') || user?.is_superuser) && (
+                  <Tab fontWeight="semibold">Roles</Tab>
+                )}
               </TabList>
 
               <TabPanels>
@@ -539,6 +571,299 @@ const ProfilePage: React.FC = () => {
                   </CardBody>
                 </Card>
                 </TabPanel> */}
+
+                {/* Roles Tab - Only visible to ADMIN users */}
+                {(user?.roles?.includes('ADMIN') || user?.is_superuser) && (
+                  <TabPanel px={0} pt={6}>
+                    <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
+                      <CardHeader>
+                        <Heading size="md" color="gray.700">
+                          Role-Based Access Control (RBAC)
+                        </Heading>
+                      </CardHeader>
+                      <CardBody>
+                        <VStack spacing={6} align="stretch">
+                          {/* Load Roles Button */}
+                          <HStack justify="space-between">
+                            <Text fontSize="sm" color="gray.600">
+                              Manage user roles and permissions
+                            </Text>
+                            <Button
+                              size="sm"
+                              colorScheme="blue"
+                              onClick={async () => {
+                                setIsLoadingRoles(true);
+                                try {
+                                  const allRoles = await roleService.listRoles();
+                                  setRoles(allRoles);
+                                  toast({
+                                    title: "Roles Loaded",
+                                    description: `Loaded ${allRoles.length} roles`,
+                                    status: "success",
+                                    duration: 2000,
+                                    isClosable: true,
+                                  });
+                                } catch (error) {
+                                  toast({
+                                    title: "Error",
+                                    description: error instanceof Error ? error.message : "Failed to load roles",
+                                    status: "error",
+                                    duration: 5000,
+                                    isClosable: true,
+                                  });
+                                } finally {
+                                  setIsLoadingRoles(false);
+                                }
+                              }}
+                              isLoading={isLoadingRoles}
+                              loadingText="Loading..."
+                            >
+                              Load Roles
+                            </Button>
+                          </HStack>
+
+                          {/* User Selection */}
+                          <Box>
+                            <Heading size="sm" mb={4} color="gray.700">
+                              Select User
+                            </Heading>
+                            <FormControl>
+                              <FormLabel fontWeight="semibold">User</FormLabel>
+                              <Select
+                                value={selectedUser?.id || ""}
+                                onChange={async (e) => {
+                                  const userId = parseInt(e.target.value);
+                                  // Find user from placeholder list (will be replaced with API call later)
+                                  const user = placeholderUsers.find(u => u.id === userId);
+                                  if (user) {
+                                    setSelectedUser(user);
+                                    setIsLoadingUserRoles(true);
+                                    try {
+                                      // API: GET /api/v1/auth/roles/user/{user_id}
+                                      const userRolesData = await roleService.getUserRoles(user.id);
+                                      setSelectedUserRoles(userRolesData.roles);
+                                    } catch (error) {
+                                      toast({
+                                        title: "Error",
+                                        description: error instanceof Error ? error.message : "Failed to load user roles",
+                                        status: "error",
+                                        duration: 5000,
+                                        isClosable: true,
+                                      });
+                                      setSelectedUserRoles([]);
+                                    } finally {
+                                      setIsLoadingUserRoles(false);
+                                    }
+                                  } else {
+                                    setSelectedUser(null);
+                                    setSelectedUserRoles([]);
+                                  }
+                                }}
+                                placeholder="Select a user"
+                                bg="white"
+                              >
+                                {placeholderUsers.map((u) => (
+                                  <option key={u.id} value={u.id}>
+                                    {u.username} ({u.email})
+                                  </option>
+                                ))}
+                              </Select>
+                              <Text fontSize="xs" color="gray.500" mt={1}>
+                                Using placeholder users - API integration pending
+                              </Text>
+                            </FormControl>
+                          </Box>
+
+                          {/* Current User Roles */}
+                          {selectedUser && (
+                            <Box>
+                              <Heading size="sm" mb={4} color="gray.700">
+                                Current Roles for {selectedUser.username}
+                              </Heading>
+                              {isLoadingUserRoles ? (
+                                <Center py={4}>
+                                  <Spinner size="md" color="blue.500" />
+                                </Center>
+                              ) : selectedUserRoles.length > 0 ? (
+                                <VStack spacing={2} align="stretch">
+                                  {selectedUserRoles.map((roleName) => (
+                                    <HStack key={roleName} justify="space-between" p={3} bg={useColorModeValue("gray.50", "gray.700")} borderRadius="md">
+                                      <Badge colorScheme="green" fontSize="sm" p={1}>
+                                        {roleName}
+                                      </Badge>
+                                      <Button
+                                        size="xs"
+                                        colorScheme="red"
+                                        variant="outline"
+                                        onClick={async () => {
+                                          setIsRemovingRole(true);
+                                          try {
+                                            await roleService.removeRole(selectedUser.id, roleName);
+                                            toast({
+                                              title: "Success",
+                                              description: `Role ${roleName} removed from user ${selectedUser.username}`,
+                                              status: "success",
+                                              duration: 3000,
+                                              isClosable: true,
+                                            });
+                                            // Refresh user roles
+                                            const userRolesData = await roleService.getUserRoles(selectedUser.id);
+                                            setSelectedUserRoles(userRolesData.roles);
+                                          } catch (error) {
+                                            toast({
+                                              title: "Error",
+                                              description: error instanceof Error ? error.message : "Failed to remove role",
+                                              status: "error",
+                                              duration: 5000,
+                                              isClosable: true,
+                                            });
+                                          } finally {
+                                            setIsRemovingRole(false);
+                                          }
+                                        }}
+                                        isLoading={isRemovingRole}
+                                        loadingText="Removing..."
+                                      >
+                                        Remove
+                                      </Button>
+                                    </HStack>
+                                  ))}
+                                </VStack>
+                              ) : (
+                                <Alert status="info" borderRadius="md">
+                                  <AlertIcon />
+                                  <AlertDescription>
+                                    This user has no roles assigned.
+                                  </AlertDescription>
+                                </Alert>
+                              )}
+                            </Box>
+                          )}
+
+                          {/* Assign Role Section */}
+                          {selectedUser && roles.length > 0 && (
+                            <Box>
+                              <Heading size="sm" mb={4} color="gray.700">
+                                Assign Role to {selectedUser.username}
+                              </Heading>
+                              <VStack spacing={4} align="stretch">
+                                <FormControl>
+                                  <FormLabel fontWeight="semibold">Select Role</FormLabel>
+                                  <Select
+                                    value={selectedRole}
+                                    onChange={(e) => setSelectedRole(e.target.value)}
+                                    placeholder="Select a role to assign"
+                                    bg="white"
+                                  >
+                                    {roles
+                                      .filter((role) => !selectedUserRoles.includes(role.name))
+                                      .map((role) => (
+                                        <option key={role.id} value={role.name}>
+                                          {role.name} - {role.description || "No description"}
+                                        </option>
+                                      ))}
+                                  </Select>
+                                  {selectedUserRoles.length > 0 && (
+                                    <Text fontSize="xs" color="gray.500" mt={1}>
+                                      Only showing roles not already assigned to this user
+                                    </Text>
+                                  )}
+                                </FormControl>
+                                <Button
+                                  colorScheme="green"
+                                  onClick={async () => {
+                                    if (!selectedRole) {
+                                      toast({
+                                        title: "Validation Error",
+                                        description: "Please select a role",
+                                        status: "error",
+                                        duration: 3000,
+                                        isClosable: true,
+                                      });
+                                      return;
+                                    }
+                                    setIsAssigningRole(true);
+                                    try {
+                                      await roleService.assignRole(selectedUser.id, selectedRole);
+                                      toast({
+                                        title: "Success",
+                                        description: `Role ${selectedRole} assigned to user ${selectedUser.username}`,
+                                        status: "success",
+                                        duration: 3000,
+                                        isClosable: true,
+                                      });
+                                      // Refresh user roles
+                                      const userRolesData = await roleService.getUserRoles(selectedUser.id);
+                                      setSelectedUserRoles(userRolesData.roles);
+                                      setSelectedRole("");
+                                    } catch (error) {
+                                      toast({
+                                        title: "Error",
+                                        description: error instanceof Error ? error.message : "Failed to assign role",
+                                        status: "error",
+                                        duration: 5000,
+                                        isClosable: true,
+                                      });
+                                    } finally {
+                                      setIsAssigningRole(false);
+                                    }
+                                  }}
+                                  isLoading={isAssigningRole}
+                                  loadingText="Assigning..."
+                                  isDisabled={!selectedRole}
+                                >
+                                  Assign Role
+                                </Button>
+                              </VStack>
+                            </Box>
+                          )}
+
+                          {/* Available Roles List */}
+                          {roles.length > 0 && (
+                            <Box>
+                              <Heading size="sm" mb={4} color="gray.700">
+                                Available Roles
+                              </Heading>
+                              <TableContainer>
+                                <Table variant="simple" size="sm">
+                                  <Thead>
+                                    <Tr>
+                                      <Th>Role Name</Th>
+                                      <Th>Description</Th>
+                                    </Tr>
+                                  </Thead>
+                                  <Tbody>
+                                    {roles.map((role) => (
+                                      <Tr key={role.id}>
+                                        <Td>
+                                          <Badge colorScheme="blue" fontSize="sm" p={1}>
+                                            {role.name}
+                                          </Badge>
+                                        </Td>
+                                        <Td>
+                                          <Text fontSize="sm" color="gray.600">
+                                            {role.description || "No description"}
+                                          </Text>
+                                        </Td>
+                                      </Tr>
+                                    ))}
+                                  </Tbody>
+                                </Table>
+                              </TableContainer>
+                            </Box>
+                          )}
+
+                          <Alert status="info" borderRadius="md">
+                            <AlertIcon />
+                            <AlertDescription>
+                              Only administrators can manage roles. Select a user to view and manage their roles.
+                            </AlertDescription>
+                          </Alert>
+                        </VStack>
+                      </CardBody>
+                    </Card>
+                  </TabPanel>
+                )}
               </TabPanels>
             </Tabs>
           </Card>
