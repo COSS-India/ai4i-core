@@ -54,7 +54,7 @@ export const apiEndpoints = {
 // Create Axios instance with standard timeout
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000, // 30 seconds for most requests
+  timeout: 300000, // 5 minutes for most requests
   headers: {
     'Content-Type': 'application/json',
   },
