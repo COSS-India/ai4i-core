@@ -770,6 +770,92 @@ services:
       - microservices-network
     restart: unless-stopped
 
+  speaker-diarization-service:
+    build:
+      context: .
+      dockerfile: services/speaker-diarization-service/Dockerfile
+    container_name: ai4v-speaker-diarization-service
+    ports:
+      - "8095:8095"
+    environment:
+      - ENV_FILE=.env
+      - TRITON_ENDPOINT=http://65.1.35.3:8700
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 30s
+    restart: unless-stopped
+
+  language-diarization-service:
+    build:
+      context: .
+      dockerfile: services/language-diarization-service/Dockerfile
+    container_name: ai4v-language-diarization-service
+    ports:
+      - "8094:8094"
+    environment:
+      - ENV_FILE=.env
+      - TRITON_ENDPOINT=65.1.35.3:8600
+    env_file:
+      - ./services/language-diarization-service/.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8094/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 30s
+    restart: unless-stopped
+
+  audio-lang-detection-service:
+    build:
+      context: .
+      dockerfile: services/audio-lang-detection-service/Dockerfile
+    container_name: ai4v-audio-lang-detection-service
+    ports:
+      - "8096:8096"
+    environment:
+      - ENV_FILE=.env
+      - TRITON_ENDPOINT=65.1.35.3:8100
+    env_file:
+      - ./services/audio-lang-detection-service/.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8096/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 30s
+    restart: unless-stopped
+
+
   simple-ui-frontend:
     build:
       context: ./frontend/simple-ui
