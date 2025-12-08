@@ -31,7 +31,7 @@ class UnleashFeatureProvider(AbstractProvider):
         Initialize Unleash provider
 
         Args:
-            url: Unleash server URL (e.g., http://unleash:4242/api)
+            url: Unleash server URL (e.g., http://unleash:4242/feature-flags/api)
             app_name: Application name
             instance_id: Instance identifier
             api_token: API token for authentication
