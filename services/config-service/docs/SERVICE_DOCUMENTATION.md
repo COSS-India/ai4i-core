@@ -308,7 +308,7 @@ All configuration is done via environment variables. See `env.template` for the 
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `UNLEASH_URL` | Unleash API URL | `http://unleash:4242/api` |
+| `UNLEASH_URL` | Unleash API URL | `http://unleash:4242/feature-flags/api` |
 | `UNLEASH_APP_NAME` | Application name | `config-service` |
 | `UNLEASH_INSTANCE_ID` | Instance identifier | `config-service-1` |
 | `UNLEASH_API_TOKEN` | API token (Admin token required) | `*:*.unleash-insecure-api-token` |
