@@ -255,40 +255,52 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         return None
     
     def _extract_customer_app(self, request: Request) -> tuple:
-        """Extract organization and app from request headers and JWT token."""
-        # First try to get customer from JWT token
-        organization = self._extract_customer_from_token(request)
-        
-        # If not found in token, fallback to header
-        if organization is None:
-            organization = request.headers.get("X-Customer-ID")
-        
-        # Extract organization from API key
+        """Extract organization and app from request headers and JWT token.
+
+        For consistency, whenever an API key or Authorization token is present,
+        we always derive the organization using `_get_organization_from_api_key`
+        (hash-based mapping). JWT claims and `X-Customer-ID` are only used as
+        fallbacks when no key is available.
+        """
+        organization: Optional[str] = None
+
+        # Determine API key source: prefer Authorization, fall back to X-API-Key
         auth_header = request.headers.get("authorization", "")
-        
-        if auth_header and organization is None:
+        api_key_header = request.headers.get("X-API-Key")
+
+        api_key: Optional[str] = None
+        if auth_header:
             # Extract the API key (remove "Bearer " prefix if present)
             api_key = auth_header
             if auth_header.startswith("Bearer "):
                 api_key = auth_header[7:]
-            
-            # Map API key to organization (overrides any previous value)
+        elif api_key_header:
+            api_key = api_key_header
+
+        if api_key:
+            # Always map API key to organization using consistent hashing
             organization = self._get_organization_from_api_key(api_key)
-            
+
             if self.config.debug:
-                print(f"🏢 Mapped API key to organization: {organization}")
-        
+                print(f"🏢 Mapped API key to organization using hash: {organization}")
+        else:
+            # No API key found; fall back to token claim or header if available
+            organization = self._extract_customer_from_token(request)
+
+            if organization is None:
+                organization = request.headers.get("X-Customer-ID")
+
         # If still no organization, use "unknown"
         if organization is None:
             organization = "unknown"
             if self.config.debug:
                 print(f"⚠️ No organization found,  using: {organization}")
-        
+
         # Get app from header or use "unknown"
         app = request.headers.get("X-App-ID")
         if app is None:
             app = "unknown"
-            
+
         return organization, app
     
     def _detect_service_type(self, path: str) -> str:
