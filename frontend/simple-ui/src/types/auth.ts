@@ -18,6 +18,7 @@ export interface User {
   last_login?: string;
   avatar_url?: string;
   preferences?: Record<string, any>;
+  roles?: string[];
 }
 
 export interface UserUpdateRequest {
