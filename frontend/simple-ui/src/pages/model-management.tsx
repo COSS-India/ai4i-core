@@ -30,6 +30,7 @@ import {
   useToast,
   Textarea,
   SimpleGrid,
+  Grid
 } from "@chakra-ui/react";
 import Head from "next/head";
 import React, { useState, useEffect } from "react";
@@ -673,12 +674,23 @@ const ModelManagementPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <Box maxW="7xl" mx="auto" py={8} px={4}>
-          <Heading size="xl" mb={8} color="gray.800">
-            Model Management
-          </Heading>
-
-          <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px">
+           <VStack spacing={6} w="full">
+                  {/* Page Header */}
+                  <Box textAlign="center" mb={2}>
+                    <Heading size="lg" color="gray.800" mb={1}>
+                     Model Management
+                    </Heading>
+                    <Text color="gray.600" fontSize="sm">
+                    Manage and configure AI models
+                    </Text>
+                  </Box>
+        
+                  <Grid
+                    gap={8}
+                    w="full"
+                  
+                    mx="auto"
+                  > <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px">
             <Tabs 
               colorScheme="blue" 
               variant="enclosed" 
@@ -1216,8 +1228,8 @@ const ModelManagementPage: React.FC = () => {
                 )}
               </TabPanels>
             </Tabs>
-          </Card>
-        </Box>
+          </Card></Grid>
+     </VStack>
       </ContentLayout>
     </>
   );
