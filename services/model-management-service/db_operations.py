@@ -578,7 +578,7 @@ async def save_service_to_db(payload: ServiceCreateRequest):
                 detail=f"Model with ID {payload.modelId} does not exist, cannot create service."
             )
         
-        payload_dict = _json_safe(payload)
+        payload_dict = _json_safe(payload.model_dump(by_alias=True))
 
         now_epoch = int(time.time())
         payload_dict["publishedOn"] = now_epoch
@@ -634,7 +634,7 @@ async def update_service(request: ServiceUpdateRequest):
             logger.warning("Missing serviceId in update request")
             return 0
 
-        request_dict = request.model_dump(exclude_none=True)
+        request_dict = request.model_dump(exclude_none=True,by_alias=True)
 
         # 1. Build DB update dict
         db_update = {}
