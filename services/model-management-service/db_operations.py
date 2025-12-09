@@ -403,6 +403,7 @@ async def get_model_details(model_id: str) -> Dict[str, Any]:
 
         return {
             "modelId": model.model_id,
+            "uuid": str(model.id),
             "name": model.name,
             "description": model.description,
             "languages": model.languages or [],
@@ -429,11 +430,7 @@ async def list_all_models(task_type: TaskTypeEnum | None) -> List[Dict[str, Any]
 
     db: AsyncSession = AppDatabase()
     try:
-        if not task_type:
-            return None
-
         query = select(Model)
-        # Filter JSONB → task.type
         if task_type:
             query = query.where(Model.task['type'].astext == task_type.value)
 
@@ -453,6 +450,7 @@ async def list_all_models(task_type: TaskTypeEnum | None) -> List[Dict[str, Any]
             # Build response object
             result.append({
                 "modelId": str(data.get("model_id")),
+                "uuid": str(data.get("id")),
                 "name": data.get("name"),
                 "description": data.get("description"),
                 "languages": data.get("languages") or [],
@@ -833,6 +831,7 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
         # Convert service SQLAlchemy → dict
         service_dict = {
             "serviceId": service.service_id,
+            "uuid": str(service.id),
             "name": service.name,
             "serviceDescription": service.service_description,
             "hardwareDescription": service.hardware_description,
@@ -952,9 +951,12 @@ async def list_all_services(task_type: TaskTypeEnum | None) -> List[Dict[str, An
                     f"[DB] Failed to get model details from db for service {service.service_id}"
                 )
                 return None
+            
+            
             services_list.append(
                 ServiceListResponse(
                     serviceId=str(service.service_id),
+                    uuid=str(service.id),
                     name=service.name,
                     serviceDescription=getattr(service, "service_description", None),
                     hardwareDescription=getattr(service, "hardware_description", None),
