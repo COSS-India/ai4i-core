@@ -84,6 +84,35 @@ FROM users u, roles r
 WHERE u.email = 'admin@ai4i.com' AND r.name = 'ADMIN'
 ON CONFLICT (user_id, role_id) DO NOTHING;
 
+-- Additional user_roles INSERT queries
+-- Assign USER role to regular users (example: if you have other users)
+-- INSERT INTO user_roles (user_id, role_id)
+-- SELECT u.id, r.id
+-- FROM users u, roles r
+-- WHERE u.email = 'user@example.com' AND r.name = 'USER'
+-- ON CONFLICT (user_id, role_id) DO NOTHING;
+
+-- Assign MODERATOR role to moderators (example)
+-- INSERT INTO user_roles (user_id, role_id)
+-- SELECT u.id, r.id
+-- FROM users u, roles r
+-- WHERE u.email = 'moderator@example.com' AND r.name = 'MODERATOR'
+-- ON CONFLICT (user_id, role_id) DO NOTHING;
+
+-- Assign GUEST role to guest users (example)
+-- INSERT INTO user_roles (user_id, role_id)
+-- SELECT u.id, r.id
+-- FROM users u, roles r
+-- WHERE u.email = 'guest@example.com' AND r.name = 'GUEST'
+-- ON CONFLICT (user_id, role_id) DO NOTHING;
+
+-- Assign multiple roles to a user (example: user with both USER and MODERATOR roles)
+-- INSERT INTO user_roles (user_id, role_id)
+-- SELECT u.id, r.id
+-- FROM users u, roles r
+-- WHERE u.email = 'poweruser@example.com' AND r.name IN ('USER', 'MODERATOR')
+-- ON CONFLICT (user_id, role_id) DO NOTHING;
+
 -- Connect to config_db and insert sample feature flags
 \c config_db;
 
