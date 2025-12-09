@@ -54,7 +54,7 @@ DATABASE_URL = os.getenv(
 )
 TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "13.200.133.97:8000")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "1b69e9a1a24466c85e4bbca3c5295f50")
-MODEL_MANAGEMENT_SERVICE_URL = os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8000")
+MODEL_MANAGEMENT_SERVICE_URL = os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091")
 MODEL_MANAGEMENT_SERVICE_API_KEY = os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY", None)
 MODEL_MANAGEMENT_CACHE_TTL = int(os.getenv("MODEL_MANAGEMENT_CACHE_TTL", "300"))  # 5 minutes default
 
@@ -169,11 +169,14 @@ async def lifespan(app: FastAPI):
     try:
         model_management_client = ModelManagementClient(
             base_url=MODEL_MANAGEMENT_SERVICE_URL,
-            api_key=MODEL_MANAGEMENT_SERVICE_API_KEY,
+            api_key=MODEL_MANAGEMENT_SERVICE_API_KEY,  # Optional: used as fallback if no auth headers in request
             cache_ttl_seconds=MODEL_MANAGEMENT_CACHE_TTL,
             timeout=10.0
         )
-        logger.info(f"Model Management Service client initialized: {MODEL_MANAGEMENT_SERVICE_URL}")
+        logger.info(
+            f"Model Management Service client initialized: {MODEL_MANAGEMENT_SERVICE_URL} "
+            f"(Auth: from request headers, fallback API key: {'configured' if MODEL_MANAGEMENT_SERVICE_API_KEY else 'not configured'})"
+        )
     except Exception as e:
         logger.warning(f"Failed to initialize Model Management Service client: {e}")
         model_management_client = None

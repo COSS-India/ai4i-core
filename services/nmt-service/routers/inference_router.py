@@ -34,6 +34,48 @@ inference_router = APIRouter(
 )
 
 
+def extract_auth_headers(request: Request) -> Dict[str, str]:
+    """Extract authentication headers from incoming request to forward to model management service"""
+    auth_headers = {}
+    
+    # FastAPI headers are case-insensitive, but we need to check both ways
+    # Check Authorization header (case-insensitive)
+    authorization = request.headers.get("Authorization") or request.headers.get("authorization")
+    if authorization:
+        auth_headers["Authorization"] = authorization
+        logger.debug(f"Extracted Authorization header: {authorization[:20]}...")
+    
+    # Check X-API-Key header (case-insensitive)
+    x_api_key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
+    if x_api_key:
+        auth_headers["X-API-Key"] = x_api_key
+        logger.debug(f"Extracted X-API-Key header: {x_api_key[:20]}...")
+    
+    # Check X-Auth-Source header (important for JWT vs API key authentication)
+    x_auth_source = request.headers.get("X-Auth-Source") or request.headers.get("x-auth-source")
+    if x_auth_source:
+        auth_headers["X-Auth-Source"] = x_auth_source
+        logger.debug(f"Extracted X-Auth-Source header: {x_auth_source}")
+    
+    # Also check all headers for case-insensitive variants
+    for key, value in request.headers.items():
+        key_lower = key.lower()
+        if key_lower == "authorization" and "Authorization" not in auth_headers:
+            auth_headers["Authorization"] = value
+            logger.debug(f"Found Authorization header via iteration: {value[:20]}...")
+        elif key_lower == "x-api-key" and "X-API-Key" not in auth_headers:
+            auth_headers["X-API-Key"] = value
+            logger.debug(f"Found X-API-Key header via iteration: {value[:20]}...")
+        elif key_lower == "x-auth-source" and "X-Auth-Source" not in auth_headers:
+            auth_headers["X-Auth-Source"] = value
+            logger.debug(f"Found X-Auth-Source header via iteration: {value}")
+    
+    if not auth_headers:
+        logger.warning("No auth headers found in request. Available headers: %s", list(request.headers.keys()))
+    
+    return auth_headers
+
+
 async def get_db_session(request: Request) -> AsyncSession:
     """Dependency to get database session"""
     return request.app.state.db_session_factory()
@@ -104,6 +146,9 @@ async def run_inference(
         api_key_id = getattr(http_request.state, 'api_key_id', None)
         session_id = getattr(http_request.state, 'session_id', None)
         
+        # Extract auth headers from incoming request to forward to model management service
+        auth_headers = extract_auth_headers(http_request)
+        
         # Log incoming request
         logger.info(f"Processing NMT inference request with {len(request.input)} texts")
         
@@ -112,7 +157,8 @@ async def run_inference(
             request=request,
             user_id=user_id,
             api_key_id=api_key_id,
-            session_id=session_id
+            session_id=session_id,
+            auth_headers=auth_headers
         )
         
         logger.info(f"NMT inference completed successfully")
@@ -149,11 +195,16 @@ async def list_models(request: Request) -> Dict[str, Any]:
         logger.warning("Model management client not available, returning empty list")
         return {"models": [], "total_models": 0}
     
+    # Extract auth headers from incoming request
+    auth_headers = extract_auth_headers(request)
+    
     try:
-        # Get all services and extract unique models from them
+        # Get all NMT services and extract unique models from them
         services = await model_management_client.list_services(
             use_cache=True,
-            redis_client=redis_client
+            redis_client=redis_client,
+            auth_headers=auth_headers,
+            task_type="nmt"  # Filter for NMT services only
         )
         
         # Build a map of unique models from services
@@ -182,7 +233,7 @@ async def list_models(request: Request) -> Dict[str, Any]:
         service_details_tasks = []
         for model_id, service_id in services_by_model.items():
             service_details_tasks.append(
-                model_management_client.get_service(service_id, use_cache=True, redis_client=redis_client)
+                model_management_client.get_service(service_id, use_cache=True, redis_client=redis_client, auth_headers=auth_headers)
             )
         
         service_details_list = await asyncio.gather(*service_details_tasks, return_exceptions=True)
@@ -250,10 +301,21 @@ async def list_services(request: Request) -> Dict[str, Any]:
         logger.warning("Model management client not available, returning empty list")
         return {"services": [], "total_services": 0}
     
+    # Extract auth headers from incoming request
+    auth_headers = extract_auth_headers(request)
+    logger.info(f"Extracted auth headers for list_services: {list(auth_headers.keys())}")
+    logger.info(f"All request headers: {list(request.headers.keys())}")
+    
+    if not auth_headers:
+        logger.warning("No auth headers extracted from request. This may cause 401 errors.")
+        logger.warning(f"Request headers available: {dict(request.headers)}")
+    
     try:
         services = await model_management_client.list_services(
             use_cache=True,
-            redis_client=redis_client
+            redis_client=redis_client,
+            auth_headers=auth_headers,
+            task_type="nmt"  # Filter for NMT services only
         )
         
         # Transform to response format
@@ -327,13 +389,18 @@ async def list_languages(
     # Log received parameters for debugging
     logger.info(f"list_languages called with service_id={service_id}, model_id={model_id}")
     
+    # Extract auth headers from incoming request
+    auth_headers = extract_auth_headers(request)
+    
     try:
         # Determine service_id - if model_id is provided, we need to find a service for that model
         if model_id and not service_id:
-            # Get all services and find one that uses this model
+            # Get all NMT services and find one that uses this model
             services = await model_management_client.list_services(
                 use_cache=True,
-                redis_client=redis_client
+                redis_client=redis_client,
+                auth_headers=auth_headers,
+                task_type="nmt"  # Filter for NMT services only
             )
             matching_service = None
             for svc in services:
@@ -363,7 +430,8 @@ async def list_languages(
         service_info = await model_management_client.get_service(
             service_id,
             use_cache=True,
-            redis_client=redis_client
+            redis_client=redis_client,
+            auth_headers=auth_headers
         )
         
         if not service_info:

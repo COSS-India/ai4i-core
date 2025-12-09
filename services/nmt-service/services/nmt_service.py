@@ -59,7 +59,7 @@ class NMTService:
         self._service_registry_cache: Dict[str, Tuple[str, str]] = {}  # Cache for service registry
         self._service_info_cache: Dict[str, ServiceInfo] = {}  # Cache for service info
     
-    async def _get_service_info(self, service_id: str) -> Optional[ServiceInfo]:
+    async def _get_service_info(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> Optional[ServiceInfo]:
         """Get service info from model management service with caching"""
         # Check cache first
         if service_id in self._service_info_cache:
@@ -71,7 +71,8 @@ class NMTService:
                 service_info = await self.model_management_client.get_service(
                     service_id,
                     use_cache=True,
-                    redis_client=self.redis_client
+                    redis_client=self.redis_client,
+                    auth_headers=auth_headers
                 )
                 if service_info:
                     self._service_info_cache[service_id] = service_info
@@ -94,14 +95,14 @@ class NMTService:
         
         return None
     
-    async def _get_service_registry_entry(self, service_id: str) -> Optional[Tuple[str, str]]:
+    async def _get_service_registry_entry(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> Optional[Tuple[str, str]]:
         """Get service registry entry (endpoint, model_name) for service_id"""
         # Check cache first
         if service_id in self._service_registry_cache:
             return self._service_registry_cache[service_id]
         
         # Fetch from model management service
-        service_info = await self._get_service_info(service_id)
+        service_info = await self._get_service_info(service_id, auth_headers)
         if service_info and service_info.endpoint:
             # Extract host:port from endpoint (remove http:// if present)
             endpoint = service_info.endpoint.replace("http://", "").replace("https://", "")
@@ -112,7 +113,7 @@ class NMTService:
         
         return None
     
-    async def get_triton_client(self, service_id: str) -> TritonClient:
+    async def get_triton_client(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> TritonClient:
         """Get Triton client for the given service ID with fallback to default"""
         # Check cache first
         if service_id in self._triton_clients:
@@ -120,7 +121,7 @@ class NMTService:
         
         # Get endpoint and model info from model management service
         try:
-            service_entry = await self._get_service_registry_entry(service_id)
+            service_entry = await self._get_service_registry_entry(service_id, auth_headers)
             if service_entry:
                 endpoint, _ = service_entry
                 # Create client using factory function if available
@@ -138,10 +139,10 @@ class NMTService:
         logger.debug(f"Using default Triton client for service {service_id}")
         return self.default_triton_client
     
-    async def get_model_name(self, service_id: str) -> str:
+    async def get_model_name(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> str:
         """Get Triton model name based on service ID with fallback"""
         try:
-            service_entry = await self._get_service_registry_entry(service_id)
+            service_entry = await self._get_service_registry_entry(service_id, auth_headers)
             if service_entry:
                 return service_entry[1]  # Return model name
         except Exception as e:
@@ -155,7 +156,8 @@ class NMTService:
         request: NMTInferenceRequest,
         user_id: Optional[int] = None,
         api_key_id: Optional[int] = None,
-        session_id: Optional[int] = None
+        session_id: Optional[int] = None,
+        auth_headers: Optional[Dict[str, str]] = None
     ) -> NMTInferenceResponse:
         """Run NMT inference on the given request"""
         start_time = time.time()
@@ -168,7 +170,7 @@ class NMTService:
             target_lang = request.config.language.targetLanguage
             
             # Get model name dynamically based on service ID
-            model_name = await self.get_model_name(service_id)
+            model_name = await self.get_model_name(service_id, auth_headers)
             
             # Store original languages for response
             original_source_lang = source_lang
@@ -212,10 +214,10 @@ class NMTService:
                 
                 try:
                     # Get appropriate Triton client for this service
-                    triton_client = await self.get_triton_client(service_id)
+                    triton_client = await self.get_triton_client(service_id, auth_headers)
                     
                     # Log the model name and endpoint for debugging
-                    service_entry = await self._get_service_registry_entry(service_id)
+                    service_entry = await self._get_service_registry_entry(service_id, auth_headers)
                     endpoint = service_entry[0] if service_entry else "default"
                     logger.info(f"Using Triton endpoint: {endpoint}, model: {model_name} for service: {service_id}")
                     
