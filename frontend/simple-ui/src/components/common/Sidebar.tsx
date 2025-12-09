@@ -12,7 +12,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { IconType } from "react-icons";
 import { FaMicrophone } from "react-icons/fa";
 import {
@@ -21,10 +21,10 @@ import {
   IoLanguageOutline,
   IoSparklesOutline,
   IoVolumeHighOutline,
+  IoServerOutline,
 } from "react-icons/io5";
 import { useAuth } from "../../hooks/useAuth";
 import { useFeatureFlag } from "../../hooks/useFeatureFlag";
-import AuthModal from "../auth/AuthModal";
 
 interface NavItem {
   id: string;
@@ -98,16 +98,22 @@ const baseNavItems: NavItem[] = [
     requiresAuth: true,
     featureFlag: "pipeline-enabled",
   },
+  {
+    id: "model-management",
+    label: "Model Management",
+    path: "/model-management",
+    icon: IoServerOutline,
+    iconSize: 10,
+    iconColor: "cyan.500",
+    requiresAuth: true,
+    featureFlag: "model-management-enabled",
+  },
 ];
 
 const Sidebar: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
   const [isExpanded, setIsExpanded] = useState(false);
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const [pendingNavigation, setPendingNavigation] = useState<string | null>(
-    null
-  );
   const [isMobile] = useMediaQuery("(max-width: 1080px)");
 
   // Feature flags for each service
@@ -116,6 +122,7 @@ const Sidebar: React.FC = () => {
   const nmtEnabled = useFeatureFlag({ flagName: "nmt-enabled" });
   const llmEnabled = useFeatureFlag({ flagName: "llm-enabled" });
   const pipelineEnabled = useFeatureFlag({ flagName: "pipeline-enabled" });
+  const modelManagementEnabled = useFeatureFlag({ flagName: "model-management-enabled" });
 
   // Map feature flags to service IDs
   const featureFlagMap: Record<string, boolean> = {
@@ -124,6 +131,7 @@ const Sidebar: React.FC = () => {
     "nmt-enabled": nmtEnabled.isEnabled,
     "llm-enabled": llmEnabled.isEnabled,
     "pipeline-enabled": pipelineEnabled.isEnabled,
+    "model-management-enabled": modelManagementEnabled.isEnabled,
   };
 
   // Filter nav items based on feature flags
@@ -137,34 +145,6 @@ const Sidebar: React.FC = () => {
     return true; // Show items without feature flags
   });
 
-  // Navigate when authenticated and there's a pending navigation
-  useEffect(() => {
-    console.log("Sidebar useEffect:", {
-      isAuthenticated,
-      isLoading,
-      pendingNavigation,
-      showAuthModal,
-    });
-    if (!isLoading && isAuthenticated && pendingNavigation) {
-      console.log(
-        "✅ Sidebar: Authentication detected, navigating to pending route:",
-        pendingNavigation
-      );
-      const navPath = pendingNavigation;
-      setPendingNavigation(null); // Clear before navigation
-      setShowAuthModal(false); // Close modal
-      // Navigate immediately - no delay needed
-      router.push(navPath);
-    }
-  }, [isAuthenticated, isLoading, pendingNavigation, router, showAuthModal]);
-
-  // Also handle case where user becomes authenticated but there's no pending navigation
-  useEffect(() => {
-    if (!isLoading && isAuthenticated && showAuthModal) {
-      console.log("Sidebar: User authenticated, closing modal");
-      setShowAuthModal(false);
-    }
-  }, [isAuthenticated, isLoading, showAuthModal]);
 
   const bgColor = useColorModeValue("light.100", "dark.100");
   const borderColor = useColorModeValue("gray.200", "gray.700");
@@ -181,17 +161,17 @@ const Sidebar: React.FC = () => {
       left={0}
       top={0}
       h="100vh"
-      w={isExpanded ? "300px" : "85px"}
+      w={isExpanded ? "240px" : "4.5rem"}
       bg={bgColor}
       boxShadow="md"
-      zIndex={50}
+      zIndex={60}
       transition="width 0.2s ease"
       onMouseEnter={() => setIsExpanded(true)}
       onMouseLeave={() => setIsExpanded(false)}
       borderRight="1px"
       borderColor={borderColor}
     >
-      <VStack spacing={4} p={4} h="full">
+      <VStack spacing={3} p={3} h="calc(100vh - 3.5rem)" overflowY="auto">
         {/* Logo Section */}
         <VStack spacing={2} w="full">
           <Box
@@ -199,27 +179,16 @@ const Sidebar: React.FC = () => {
             onClick={() => router.push("/")}
             _hover={{ opacity: 0.8 }}
             transition="opacity 0.2s"
+            display="flex"
+            alignItems="center"
+            justifyContent="center"
           >
             <Image
               src="/AI4Inclusion_Logo.svg"
               alt="AI4Inclusion Logo"
-              boxSize={24}
+              boxSize={isExpanded ? 16 : 10}
               objectFit="contain"
-              fallback={
-                <Box
-                  boxSize="40px"
-                  bg="orange.500"
-                  borderRadius="md"
-                  display="flex"
-                  alignItems="center"
-                  justifyContent="center"
-                  color="white"
-                  fontWeight="bold"
-                  fontSize="lg"
-                >
-                  AI
-                </Box>
-              }
+              transition="all 0.2s ease"
             />
           </Box>
         </VStack>
@@ -227,7 +196,7 @@ const Sidebar: React.FC = () => {
         <Divider />
 
         {/* Navigation Items */}
-        <VStack spacing={10} w="full" align="stretch">
+        <VStack spacing={4} w="full" align="stretch" flex={1}>
           {navItems.map((item) => {
             const isActive = router.pathname === item.path;
             const requiresAuth = item.requiresAuth ?? false;
@@ -243,29 +212,29 @@ const Sidebar: React.FC = () => {
 
               if (item.path === "/") {
                 router.push("/");
-              } else if (requiresAuth && !isAuthenticated) {
-                console.log(
-                  "Sidebar: User not authenticated, showing modal for:",
-                  item.path
-                );
-                setPendingNavigation(item.path);
-                setShowAuthModal(true);
-              } else if (isAuthenticated) {
-                // User is authenticated - navigate directly
-                console.log(
-                  "Sidebar: User authenticated, navigating to:",
-                  item.path
-                );
-                // Clear any pending navigation since we're navigating now
-                setPendingNavigation(null);
-                setShowAuthModal(false);
-                // Small delay to ensure state updates have propagated
-                await new Promise((resolve) => setTimeout(resolve, 50));
-                router.push(item.path);
-              } else {
-                console.log("Sidebar: Navigating to:", item.path);
-                router.push(item.path);
+                return;
               }
+
+              // If route requires auth and user is not authenticated, redirect to auth
+              if (requiresAuth && !isAuthenticated) {
+                console.log(
+                  "Sidebar: User not authenticated, redirecting to /auth for:",
+                  item.path
+                );
+                // Store the intended destination
+                if (typeof window !== 'undefined') {
+                  sessionStorage.setItem('redirectAfterAuth', item.path);
+                }
+                router.push("/auth");
+                return;
+              }
+
+              // Navigate to the route (either authenticated or route doesn't require auth)
+              console.log("Sidebar: Navigating to:", item.path, {
+                isAuthenticated,
+                requiresAuth
+              });
+              router.push(item.path);
             };
 
             return (
@@ -273,36 +242,38 @@ const Sidebar: React.FC = () => {
                 key={item.id}
                 variant="ghost"
                 size="sm"
-                h="40px"
+                h="3rem"
+                minH="3rem"
                 w="full"
                 justifyContent={isExpanded ? "flex-start" : "center"}
                 leftIcon={
                   isExpanded ? (
                     <Icon
                       as={item.icon}
-                      boxSize={10}
+                      boxSize={5}
                       color={`${item.iconColor}`}
                     />
                   ) : undefined
                 }
-                bg={isActive ? "gray.300" : "transparent"}
-                color={isActive ? "white" : "gray.700"}
-                boxShadow={isActive ? "md" : "none"}
+                bg={isActive ? "gray.200" : "transparent"}
+                color={isActive ? "gray.800" : "gray.700"}
+                boxShadow={isActive ? "sm" : "none"}
                 onClick={handleClick}
                 _hover={{
-                  bg: isActive ? "gray.300" : hoverBgColor,
+                  bg: isActive ? "gray.200" : hoverBgColor,
                   transform: "translateY(-1px)",
                 }}
                 transition="all 0.2s"
+                px={isExpanded ? 3 : 0}
               >
                 {isExpanded ? (
-                  <Heading size="md" color="gray.800">
+                  <Heading size="sm" color="gray.800" fontWeight="medium">
                     {item.label}
                   </Heading>
                 ) : (
                   <Icon
                     as={item.icon}
-                    boxSize={10}
+                    boxSize={6}
                     color={`${item.iconColor}`}
                   />
                 )}
@@ -311,16 +282,6 @@ const Sidebar: React.FC = () => {
           })}
         </VStack>
       </VStack>
-
-      {/* Auth Modal for protected routes */}
-      <AuthModal
-        isOpen={showAuthModal}
-        onClose={() => {
-          setShowAuthModal(false);
-          setPendingNavigation(null);
-        }}
-        initialMode="login"
-      />
     </Box>
   );
 };
