@@ -1,23 +1,22 @@
 from typing import Dict, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel , Field
 from datetime import datetime
 
 
 class BenchmarkEntry(BaseModel):
-    output_length: int = None
-    generated: int = None
-    actual: int = None
-    throughput: int = None
-    _50: int = None
-    _99: int = None
-    language: str = None
+    output_length: int | None = None
+    generated: int | None = None
+    actual: int | None = None
+    throughput: int | None = None
+
+    p50: int | None = Field(default=None, alias="50%")
+    p99: int | None = Field(default=None, alias="99%")
+
+    language: str | None = None
 
     model_config = {
         "populate_by_name": True,
-        "fields": {
-            "_50": "50%",
-            "_99": "99%",
-        },
+        "from_attributes": True,
     }
 
 class ServiceStatus(BaseModel):
