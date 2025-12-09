@@ -19,3 +19,6 @@ class ModelViewResponse(BaseModel):
     inferenceEndPoint: InferenceEndPoint
     source: Optional[str]  ## ask value for this field
     task: Task
+    isPublished: bool
+    publishedAt: Optional[str]
+    unpublishedAt: Optional[str]

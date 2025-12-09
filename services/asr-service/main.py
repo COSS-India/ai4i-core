@@ -30,6 +30,7 @@ from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
+from ai4icore_observability import ObservabilityPlugin, PluginConfig
 
 # Configure logging
 logging.basicConfig(
@@ -238,6 +239,19 @@ app = FastAPI(
     },
     lifespan=lifespan
 )
+    
+# Initialize AI4ICore Observability Plugin
+# Plugin automatically extracts metrics from request bodies - no manual recording needed!
+config = PluginConfig.from_env()
+config.enabled = True  # Enable plugin
+if not config.customers:
+    config.customers = []  # Will be extracted from JWT/headers automatically
+if not config.apps:
+    config.apps = ["asr"]  # Service name
+
+plugin = ObservabilityPlugin(config)
+plugin.register_plugin(app)
+logger.info("✅ AI4ICore Observability Plugin initialized for ASR service")
 
 # Add CORS middleware
 app.add_middleware(

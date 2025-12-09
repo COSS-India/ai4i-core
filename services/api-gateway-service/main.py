@@ -8,7 +8,7 @@ import uuid
 import time
 import json
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 from enum import Enum
 from urllib.parse import urlencode, urlparse, parse_qs
 from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security
@@ -165,6 +165,408 @@ class VoiceListResponse(BaseModel):
     page: int = Field(default=1, description="Current page number")
     pageSize: int = Field(default=50, description="Number of voices per page")
 
+
+
+# Pydantic models for OCR endpoints
+
+class OCRLanguageConfig(BaseModel):
+
+    """Language configuration for OCR."""
+
+
+
+    sourceLanguage: str = Field(
+
+        ..., description="Source language code (e.g., 'en', 'hi', 'ta')"
+
+    )
+
+
+
+
+
+class OCRImageInput(BaseModel):
+
+    """Image input for OCR processing."""
+
+
+
+    imageContent: Optional[str] = Field(
+
+        None, description="Base64 encoded image content"
+
+    )
+
+    imageUri: Optional[str] = Field(
+
+        None, description="URI to image file (will be downloaded and encoded)"
+
+    )
+
+
+
+
+
+class OCRInferenceConfig(BaseModel):
+
+    """Configuration for OCR inference."""
+
+
+
+    serviceId: str = Field(
+
+        ..., description="OCR service/model ID (e.g., ai4bharat/surya-ocr-v1--gpu--t4)"
+
+    )
+
+    language: OCRLanguageConfig = Field(..., description="Language configuration")
+
+    textDetection: Optional[bool] = Field(
+
+        False,
+
+        description=(
+
+            "Whether to enable advanced text detection (bounding boxes, lines, etc.)."
+
+        ),
+
+    )
+
+
+
+
+
+class OCRInferenceRequest(BaseModel):
+
+    """OCR inference request model."""
+
+
+
+    image: List[OCRImageInput] = Field(
+
+        ..., description="List of images to process", min_items=1
+
+    )
+
+    config: OCRInferenceConfig = Field(..., description="Inference configuration")
+
+
+
+
+
+class OCRTextOutput(BaseModel):
+
+    """OCR text output for a single image."""
+
+
+
+    source: str = Field(..., description="Extracted text from the image")
+
+    target: str = Field("", description="Reserved for future use")
+
+
+
+
+
+class OCRInferenceResponse(BaseModel):
+
+    """OCR inference response model."""
+
+
+
+    output: List[OCRTextOutput] = Field(
+
+        ..., description="List of OCR results (one per image input)"
+
+    )
+
+    config: Optional[Dict[str, Any]] = Field(
+
+        None, description="Response configuration metadata"
+
+    )
+
+
+# Pydantic models for NER endpoints
+
+class NERLanguageConfig(BaseModel):
+    """Language configuration for NER."""
+    sourceLanguage: str = Field(
+        ..., description="Source language code (e.g., 'en', 'hi', 'ta')"
+    )
+
+
+class NERTextInput(BaseModel):
+    """Text input for NER processing."""
+    source: str = Field(..., description="Input text to analyze for entities")
+
+
+class NERInferenceConfig(BaseModel):
+    """Configuration for NER inference."""
+    serviceId: str = Field(
+        ..., description="NER service/model ID (e.g., Dhruva NER)"
+    )
+    language: NERLanguageConfig = Field(..., description="Language configuration")
+
+
+class NERInferenceRequest(BaseModel):
+    """NER inference request model."""
+    input: List[NERTextInput] = Field(
+        ..., description="List of texts to process", min_items=1
+    )
+    config: NERInferenceConfig = Field(
+        ..., description="Configuration for NER inference"
+    )
+    controlConfig: Optional[Dict[str, Any]] = Field(
+        None, description="Additional control parameters"
+    )
+
+
+class NERTokenPrediction(BaseModel):
+    """Token-level NER prediction."""
+    token: Optional[str] = Field(None, description="Token text")
+    tag: str = Field(..., description="NER tag (e.g., PERSON, ORG, O)")
+    tokenIndex: Optional[int] = Field(
+        None, description="Index of token within the input text"
+    )
+    tokenStartIndex: int = Field(
+        ..., description="Character start index of token in the input text"
+    )
+    tokenEndIndex: int = Field(
+        ..., description="Character end index of token in the input text"
+    )
+
+
+class NERPrediction(BaseModel):
+    """NER prediction for a single input text."""
+    source: Optional[str] = Field(None, description="Original source text")
+    nerPrediction: List[NERTokenPrediction] = Field(
+        ..., description="List of token-level predictions"
+    )
+
+
+class NERInferenceResponse(BaseModel):
+    """NER inference response model."""
+    taskType: str = Field("ner", description="Type of task (always 'ner')")
+    output: List[NERPrediction] = Field(
+        ..., description="List of NER predictions (one per input text)"
+    )
+    config: Optional[Dict[str, Any]] = Field(
+        None, description="Response configuration metadata"
+    )
+
+
+
+
+
+class StreamingInfo(BaseModel):
+    """Streaming service information."""
+    endpoint: str = Field(..., description="WebSocket endpoint URL")
+    supported_formats: List[str] = Field(..., description="Supported audio formats")
+    max_connections: int = Field(..., description="Maximum concurrent connections")
+    response_frequency_ms: int = Field(..., description="Response frequency in milliseconds")
+
+# Pydantic models for Transliteration endpoints
+
+class TransliterationLanguagePair(BaseModel):
+    """Language pair configuration for transliteration."""
+    sourceLanguage: str = Field(..., description="Source language code (e.g., 'en', 'hi', 'ta')")
+    targetLanguage: str = Field(..., description="Target language code")
+    sourceScriptCode: Optional[str] = Field(None, description="Script code for source (e.g., 'Deva', 'Arab')")
+    targetScriptCode: Optional[str] = Field(None, description="Script code for target")
+
+
+class TransliterationTextInput(BaseModel):
+    """Text input for transliteration."""
+    source: str = Field(..., description="Input text to transliterate")
+
+
+class TransliterationInferenceConfig(BaseModel):
+    """Transliteration inference configuration."""
+    serviceId: str = Field(..., description="Identifier for transliteration service/model")
+    language: TransliterationLanguagePair = Field(..., description="Language pair configuration")
+    isSentence: bool = Field(True, description="True for sentence-level, False for word-level transliteration")
+    numSuggestions: int = Field(
+        0,
+        description="Number of top-k suggestions (0 for best, >0 for word-level only, max 10)",
+    )
+
+
+class TransliterationInferenceRequest(BaseModel):
+    """Transliteration inference request."""
+    input: List[TransliterationTextInput] = Field(
+        ...,
+        description="List of text inputs to transliterate",
+        min_items=1,
+        max_items=100,
+    )
+    config: TransliterationInferenceConfig = Field(..., description="Configuration for inference")
+    controlConfig: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Additional control parameters (optional)",
+    )
+
+
+# Pydantic models for Language Detection endpoints
+
+class LanguageDetectionTextInput(BaseModel):
+    """Text input for language detection."""
+    source: str = Field(..., description="Input text to detect language")
+
+
+class LanguageDetectionInferenceConfig(BaseModel):
+    """Configuration for language detection inference."""
+    serviceId: str = Field(..., description="Language detection service/model ID")
+
+
+class LanguageDetectionInferenceRequest(BaseModel):
+    """Request model for language detection inference."""
+    input: List[LanguageDetectionTextInput] = Field(
+        ...,
+        description="List of text inputs to detect language",
+        min_items=1,
+    )
+    config: LanguageDetectionInferenceConfig = Field(
+        ...,
+        description="Configuration for inference",
+    )
+    controlConfig: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Additional control parameters (optional)",
+    )
+
+# Pydantic models for Speaker Diarization endpoints
+class SpeakerDiarizationControlConfig(BaseModel):
+    """Control configuration for speaker diarization."""
+    dataTracking: Optional[bool] = Field(True, description="Whether to enable data tracking")
+
+class SpeakerDiarizationConfig(BaseModel):
+    """Configuration for speaker diarization inference."""
+    serviceId: str = Field(..., description="Identifier for speaker diarization service/model")
+
+class SpeakerDiarizationAudioInput(BaseModel):
+    """Audio input for speaker diarization."""
+    audioContent: Optional[str] = Field(None, description="Base64 encoded audio content")
+    audioUri: Optional[str] = Field(None, description="URL from which the audio can be downloaded")
+
+class SpeakerDiarizationInferenceRequest(BaseModel):
+    """Speaker diarization inference request model."""
+    controlConfig: Optional[SpeakerDiarizationControlConfig] = Field(None, description="Control configuration parameters")
+    config: SpeakerDiarizationConfig = Field(..., description="Configuration for speaker diarization inference")
+    audio: List[SpeakerDiarizationAudioInput] = Field(..., description="List of audio inputs to process", min_items=1)
+
+class SpeakerDiarizationSegment(BaseModel):
+    """A single speaker segment in the audio."""
+    start_time: float = Field(..., description="Start time in seconds")
+    end_time: float = Field(..., description="End time in seconds")
+    duration: float = Field(..., description="Duration in seconds")
+    speaker: str = Field(..., description="Speaker identifier (e.g., SPEAKER_00)")
+
+class SpeakerDiarizationOutput(BaseModel):
+    """Output for a single audio input."""
+    total_segments: int = Field(..., description="Total number of segments")
+    num_speakers: int = Field(..., description="Number of speakers detected")
+    speakers: List[str] = Field(..., description="List of speaker identifiers")
+    segments: List[SpeakerDiarizationSegment] = Field(..., description="List of speaker segments")
+
+class SpeakerDiarizationResponseConfig(BaseModel):
+    """Response configuration metadata."""
+    serviceId: str = Field(..., description="Service identifier")
+    language: Optional[str] = Field(None, description="Language code (if applicable)")
+
+class SpeakerDiarizationInferenceResponse(BaseModel):
+    """Speaker diarization inference response model."""
+    taskType: str = Field(default="speaker-diarization", description="Task type identifier")
+    output: List[SpeakerDiarizationOutput] = Field(..., description="List of speaker diarization results (one per audio input)")
+    config: Optional[SpeakerDiarizationResponseConfig] = Field(None, description="Response configuration metadata")
+
+# Pydantic models for Language Diarization endpoints
+class LanguageDiarizationControlConfig(BaseModel):
+    """Control configuration for language diarization."""
+    dataTracking: Optional[bool] = Field(True, description="Whether to enable data tracking")
+
+class LanguageDiarizationConfig(BaseModel):
+    """Configuration for language diarization inference."""
+    serviceId: str = Field(..., description="Identifier for language diarization service/model")
+
+class LanguageDiarizationAudioInput(BaseModel):
+    """Audio input for language diarization."""
+    audioContent: Optional[str] = Field(None, description="Base64 encoded audio content")
+    audioUri: Optional[str] = Field(None, description="URL from which the audio can be downloaded")
+
+class LanguageDiarizationInferenceRequest(BaseModel):
+    """Language diarization inference request model."""
+    controlConfig: Optional[LanguageDiarizationControlConfig] = Field(None, description="Control configuration parameters")
+    config: LanguageDiarizationConfig = Field(..., description="Configuration for language diarization inference")
+    audio: List[LanguageDiarizationAudioInput] = Field(..., description="List of audio inputs to process", min_items=1)
+
+class LanguageDiarizationSegment(BaseModel):
+    """A single language segment in the audio."""
+    start_time: float = Field(..., description="Start time in seconds")
+    end_time: float = Field(..., description="End time in seconds")
+    duration: float = Field(..., description="Duration in seconds")
+    language: str = Field(..., description="Language code with name (e.g., 'hi: Hindi')")
+    confidence: float = Field(..., description="Confidence score for the language detection")
+
+class LanguageDiarizationOutput(BaseModel):
+    """Output for a single audio input."""
+    total_segments: int = Field(..., description="Total number of segments")
+    segments: List[LanguageDiarizationSegment] = Field(..., description="List of language segments")
+    target_language: str = Field(..., description="Target language code (empty string for all languages)")
+
+class LanguageDiarizationResponseConfig(BaseModel):
+    """Response configuration metadata."""
+    serviceId: str = Field(..., description="Service identifier")
+
+class LanguageDiarizationInferenceResponse(BaseModel):
+    """Language diarization inference response model."""
+    taskType: str = Field(default="language-diarization", description="Task type identifier")
+    output: List[LanguageDiarizationOutput] = Field(..., description="List of language diarization results (one per audio input)")
+    config: Optional[LanguageDiarizationResponseConfig] = Field(None, description="Response configuration metadata")
+
+# Pydantic models for Audio Language Detection endpoints
+class AudioLangDetectionControlConfig(BaseModel):
+    """Control configuration for audio language detection."""
+    dataTracking: Optional[bool] = Field(True, description="Whether to enable data tracking")
+
+class AudioLangDetectionConfig(BaseModel):
+    """Configuration for audio language detection inference."""
+    serviceId: str = Field(..., description="Identifier for audio language detection service/model")
+
+class AudioLangDetectionAudioInput(BaseModel):
+    """Audio input for audio language detection."""
+    audioContent: Optional[str] = Field(None, description="Base64 encoded audio content")
+    audioUri: Optional[str] = Field(None, description="URL from which the audio can be downloaded")
+
+class AudioLangDetectionInferenceRequest(BaseModel):
+    """Audio language detection inference request model."""
+    controlConfig: Optional[AudioLangDetectionControlConfig] = Field(None, description="Control configuration parameters")
+    config: AudioLangDetectionConfig = Field(..., description="Configuration for audio language detection inference")
+    audio: List[AudioLangDetectionAudioInput] = Field(..., description="List of audio inputs to process", min_items=1)
+
+class AudioLangDetectionAllScores(BaseModel):
+    """All scores from language detection model."""
+    predicted_language: str = Field(..., description="Predicted language code with name")
+    confidence: float = Field(..., description="Confidence score")
+    top_scores: List[float] = Field(..., description="Top confidence scores")
+
+class AudioLangDetectionOutput(BaseModel):
+    """Output for a single audio input."""
+    language_code: str = Field(..., description="Detected language code with name (e.g., 'ta: Tamil')")
+    confidence: float = Field(..., description="Confidence score for the detected language")
+    all_scores: AudioLangDetectionAllScores = Field(..., description="All scores from the detection model")
+
+class AudioLangDetectionResponseConfig(BaseModel):
+    """Response configuration metadata."""
+    serviceId: str = Field(..., description="Service identifier")
+
+class AudioLangDetectionInferenceResponse(BaseModel):
+    """Audio language detection inference response model."""
+    taskType: str = Field(default="audio-lang-detection", description="Task type identifier")
+    output: List[AudioLangDetectionOutput] = Field(..., description="List of audio language detection results (one per audio input)")
+    config: Optional[AudioLangDetectionResponseConfig] = Field(None, description="Response configuration metadata")
+
 class StreamingInfo(BaseModel):
     """Streaming service information."""
     endpoint: str = Field(..., description="WebSocket endpoint URL")
@@ -284,6 +686,13 @@ class Submitter(BaseModel):
 class Task(BaseModel):
     """Task type."""
     type: str = Field(..., description="Task type")
+
+class ModelTaskTypeEnum(str, Enum):
+    
+    nmt = "nmt"
+    tts = "tts"
+    asr = "asr"
+    llm = "llm"
 
 class ModelCreateRequest(BaseModel):
     """Request model for creating a new model."""
@@ -640,7 +1049,14 @@ class RouteManager:
             '/api/v1/asr': 'asr-service',
             '/api/v1/tts': 'tts-service',
             '/api/v1/nmt': 'nmt-service',
+            '/api/v1/ocr': 'ocr-service',
+            '/api/v1/ner': 'ner-service',
+            '/api/v1/transliteration': 'transliteration-service',
+            '/api/v1/language-detection': 'language-detection-service',
             '/api/v1/model-management': 'model-management-service',
+            '/api/v1/speaker-diarization': 'speaker-diarization-service',
+            '/api/v1/language-diarization': 'language-diarization-service',
+            '/api/v1/audio-lang-detection': 'audio-lang-detection-service',
             '/api/v1/llm': 'llm-service',
             '/api/v1/pipeline': 'pipeline-service'
         }
@@ -693,6 +1109,30 @@ tags_metadata = [
     {
         "name": "TTS",
         "description": "Text-to-Speech service endpoints. Convert text to speech audio.",
+    },
+        {
+        "name": "OCR",
+        "description": "Optical Character Recognition service endpoints. Extract text from images.",
+    },
+    {
+        "name": "Transliteration",
+        "description": "Transliteration service endpoints. Convert text from one script to another.",
+    },
+    {
+        "name": "Language Detection",
+        "description": "Language detection service endpoints. Identify text language and script.",
+    },
+    {
+        "name": "Speaker Diarization",
+        "description": "Speaker Diarization inference endpoints"
+    },
+    {
+        "name": "Language Diarization",
+        "description": "Language Diarization inference endpoints"
+    },
+    {
+        "name": "Audio Language Detection",
+        "description": "Audio Language Detection inference endpoints"
     },
     {
         "name": "Model Management",
@@ -857,7 +1297,14 @@ def custom_openapi():
         ("/api/v1/asr", "ASR"),
         ("/api/v1/tts", "TTS"),
         ("/api/v1/nmt", "NMT"),
+        ("/api/v1/ocr", "OCR"),
+        ("/api/v1/ner", "NER"),
+        ("/api/v1/transliteration", "Transliteration"),
+        ("/api/v1/language-detection", "Language Detection"),
         ("/api/v1/model-management", "Model Management"),
+        ("/api/v1/speaker-diarization", "Speaker Diarization"),
+        ("/api/v1/language-diarization", "Language Diarization"),
+        ("/api/v1/audio-lang-detection", "Audio Language Detection"),
         ("/api/v1/pipeline", "Pipeline"),
         ("/api/v1/protected", "Protected"),
         ("/api/v1/status", "Status"),
@@ -982,6 +1429,12 @@ async def health_monitor():
                             health_endpoint = "/api/v1/nmt/health"
                         elif service_name == "asr-service":
                             health_endpoint = "/api/v1/asr/health"
+                        elif service_name == "speaker-diarization-service":
+                            health_endpoint = "/health"
+                        elif service_name == "language-diarization-service":
+                            health_endpoint = "/health"
+                        elif service_name == "audio-lang-detection-service":
+                            health_endpoint = "/health"
                         
                         response = await http_client.get(
                             f"{instance_url}{health_endpoint}",
@@ -1116,6 +1569,12 @@ async def api_status():
             "asr": os.getenv("ASR_SERVICE_URL", "http://asr-service:8087"),
             "tts": os.getenv("TTS_SERVICE_URL", "http://tts-service:8088"),
             "nmt": os.getenv("NMT_SERVICE_URL", "http://nmt-service:8089"),
+            "ocr": os.getenv("OCR_SERVICE_URL", "http://ocr-service:8099"),
+            "transliteration": os.getenv("TRANSLITERATION_SERVICE_URL", "http://transliteration-service:8090"),
+            "language-detection": os.getenv("LANGUAGE_DETECTION_SERVICE_URL", "http://language-detection-service:8090"),
+            "speaker-diarization": os.getenv("SPEAKER_DIARIZATION_SERVICE_URL", "http://speaker-diarization-service:8095"),
+            "language-diarization": os.getenv("LANGUAGE_DIARIZATION_SERVICE_URL", "http://language-diarization-service:8094"),
+            "audio-lang-detection": os.getenv("AUDIO_LANG_DETECTION_SERVICE_URL", "http://audio-lang-detection-service:8096"),
             "model-management": os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
             "llm": os.getenv("LLM_SERVICE_URL", "http://llm-service:8090"),
             "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8090")
@@ -1709,6 +2168,112 @@ async def get_tts_voices(
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, path, "tts-service", headers=headers)
 
+
+# Speaker Diarization Service Endpoints (Proxy to Speaker Diarization Service)
+
+@app.get("/api/v1/speaker-diarization/health", tags=["Speaker Diarization"])
+async def speaker_diarization_health(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Speaker Diarization service health check"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/health", "speaker-diarization-service", method="GET", headers=headers)
+
+
+@app.post("/api/v1/speaker-diarization/inference", response_model=SpeakerDiarizationInferenceResponse, tags=["Speaker Diarization"])
+async def speaker_diarization_inference(
+    payload: SpeakerDiarizationInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Perform speaker diarization inference on one or more audio inputs"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    import json
+
+    body = json.dumps(payload.dict()).encode()
+    headers: Dict[str, str] = {}
+    if credentials and credentials.credentials:
+        headers["Authorization"] = f"Bearer {credentials.credentials}"
+    if api_key:
+        headers["X-API-Key"] = api_key
+    return await proxy_to_service(
+        None, "/api/v1/speaker-diarization/inference", "speaker-diarization-service", method="POST", body=body, headers=headers
+    )
+
+# Language Diarization Service Endpoints (Proxy to Language Diarization Service)
+
+@app.get("/api/v1/language-diarization/health", tags=["Language Diarization"])
+async def language_diarization_health(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Language Diarization service health check"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/health", "language-diarization-service", method="GET", headers=headers)
+
+
+@app.post("/api/v1/language-diarization/inference", response_model=LanguageDiarizationInferenceResponse, tags=["Language Diarization"])
+async def language_diarization_inference(
+    payload: LanguageDiarizationInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Perform language diarization inference on one or more audio files"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    import json
+
+    body = json.dumps(payload.dict()).encode()
+    headers: Dict[str, str] = {}
+    if credentials and credentials.credentials:
+        headers["Authorization"] = f"Bearer {credentials.credentials}"
+    if api_key:
+        headers["X-API-Key"] = api_key
+    return await proxy_to_service(
+        None, "/api/v1/language-diarization/inference", "language-diarization-service", method="POST", body=body, headers=headers
+    )
+
+# Audio Language Detection Service Endpoints (Proxy to Audio Language Detection Service)
+
+@app.get("/api/v1/audio-lang-detection/health", tags=["Audio Language Detection"])
+async def audio_lang_detection_health(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Audio Language Detection service health check"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/health", "audio-lang-detection-service", method="GET", headers=headers)
+
+
+@app.post("/api/v1/audio-lang-detection/inference", response_model=AudioLangDetectionInferenceResponse, tags=["Audio Language Detection"])
+async def audio_lang_detection_inference(
+    payload: AudioLangDetectionInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Perform audio language detection inference on one or more audio files"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    import json
+
+    body = json.dumps(payload.dict()).encode()
+    headers: Dict[str, str] = {}
+    if credentials and credentials.credentials:
+        headers["Authorization"] = f"Bearer {credentials.credentials}"
+    if api_key:
+        headers["X-API-Key"] = api_key
+    return await proxy_to_service(
+        None, "/api/v1/audio-lang-detection/inference", "audio-lang-detection-service", method="POST", body=body, headers=headers
+    )
+
 # NMT Service Endpoints (Proxy to NMT Service)
 
 @app.post("/api/v1/nmt/inference", response_model=NMTInferenceResponse, tags=["NMT"])
@@ -1811,11 +2376,369 @@ async def nmt_health(
     ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/nmt/health", "nmt-service", headers=headers)
+# OCR Service Endpoints (Proxy to OCR Service)
+
+
+
+@app.get("/api/v1/ocr/health", tags=["OCR"])
+
+async def ocr_health(
+
+    request: Request,
+
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+
+    api_key: Optional[str] = Security(api_key_scheme),
+
+):
+
+    """OCR service health check"""
+
+    ensure_authenticated_for_request(request, credentials, api_key)
+
+    headers = build_auth_headers(request, credentials, api_key)
+
+    return await proxy_to_service(None, "/health", "ocr-service", headers=headers)
+
+
+
+
+
+@app.post("/api/v1/ocr/inference", response_model=OCRInferenceResponse, tags=["OCR"])
+async def ocr_inference(
+    payload: OCRInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Perform OCR inference on one or more images"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+
+    import json
+
+    body = json.dumps(payload.dict()).encode()
+
+    headers: Dict[str, str] = {}
+    if credentials and credentials.credentials:
+        headers["Authorization"] = f"Bearer {credentials.credentials}"
+    if api_key:
+        headers["X-API-Key"] = api_key
+
+    return await proxy_to_service(
+        None, "/api/v1/ocr/inference", "ocr-service", method="POST", body=body, headers=headers
+    )
+
+
+# NER Service Endpoints (Proxy to NER Service)
+
+@app.get("/api/v1/ner/health", tags=["NER"])
+async def ner_health(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """NER service health check"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/health", "ner-service", headers=headers)
+
+
+@app.post("/api/v1/ner/inference", response_model=NERInferenceResponse, tags=["NER"])
+async def ner_inference(
+    payload: NERInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Perform NER inference on one or more text inputs"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+
+    import json
+
+    body = json.dumps(payload.dict()).encode()
+
+    headers: Dict[str, str] = {}
+    if credentials and credentials.credentials:
+        headers["Authorization"] = f"Bearer {credentials.credentials}"
+    if api_key:
+        headers["X-API-Key"] = api_key
+
+    return await proxy_to_service(
+        None, "/api/v1/ner/inference", "ner-service", method="POST", body=body, headers=headers
+    )
+
+
+# Transliteration Service Endpoints (Proxy to Transliteration Service)
+
+@app.post(
+    "/api/v1/transliteration/inference",
+    tags=["Transliteration"],
+)
+async def transliteration_inference(
+    payload: TransliterationInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Perform transliteration inference"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(
+        payload.model_dump(mode="json", exclude_none=True)
+    ).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/api/v1/transliteration/inference",
+        "transliteration-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.get("/api/v1/transliteration/models", tags=["Transliteration"])
+async def get_transliteration_models(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get available transliteration models"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/transliteration/models", "transliteration-service", headers=headers)
+
+@app.get("/api/v1/transliteration/services", tags=["Transliteration"])
+async def get_transliteration_services(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get available transliteration services"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/transliteration/services", "transliteration-service", headers=headers)
+
+@app.get("/api/v1/transliteration/languages", tags=["Transliteration"])
+async def get_transliteration_languages(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get supported languages for transliteration"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/transliteration/languages", "transliteration-service", headers=headers)
+
+@app.get("/api/v1/transliteration/health", tags=["Transliteration"])
+async def transliteration_health(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Transliteration service health check"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/health", "transliteration-service", headers=headers)
+
+# Language Detection Service Endpoints (Proxy to Language Detection Service)
+
+@app.post(
+    "/api/v1/language-detection/inference",
+    tags=["Language Detection"],
+)
+async def language_detection_inference(
+    payload: LanguageDetectionInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Perform language detection inference"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(
+        payload.model_dump(mode="json", exclude_none=True)
+    ).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/api/v1/language-detection/inference",
+        "language-detection-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.get("/api/v1/language-detection/models", tags=["Language Detection"])
+async def get_language_detection_models(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get available language detection models"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/language-detection/models", "language-detection-service", headers=headers)
+
+@app.get("/api/v1/language-detection/languages", tags=["Language Detection"])
+async def get_language_detection_languages(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get supported languages for language detection"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/language-detection/languages", "language-detection-service", headers=headers)
+
+@app.get("/api/v1/language-detection/health", tags=["Language Detection"])
+async def language_detection_health(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Language detection service health check"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/language-detection/health", "language-detection-service", headers=headers)
+
+# Transliteration Service Endpoints (Proxy to Transliteration Service)
+
+@app.post(
+    "/api/v1/transliteration/inference",
+    tags=["Transliteration"],
+)
+async def transliteration_inference(
+    payload: TransliterationInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Perform transliteration inference"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(
+        payload.model_dump(mode="json", exclude_none=True)
+    ).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/api/v1/transliteration/inference",
+        "transliteration-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.get("/api/v1/transliteration/models", tags=["Transliteration"])
+async def get_transliteration_models(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get available transliteration models"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/transliteration/models", "transliteration-service", headers=headers)
+
+@app.get("/api/v1/transliteration/services", tags=["Transliteration"])
+async def get_transliteration_services(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get available transliteration services"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/transliteration/services", "transliteration-service", headers=headers)
+
+@app.get("/api/v1/transliteration/languages", tags=["Transliteration"])
+async def get_transliteration_languages(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get supported languages for transliteration"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/transliteration/languages", "transliteration-service", headers=headers)
+
+@app.get("/api/v1/transliteration/health", tags=["Transliteration"])
+async def transliteration_health(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Transliteration service health check"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/health", "transliteration-service", headers=headers)
+
+# Language Detection Service Endpoints (Proxy to Language Detection Service)
+
+@app.post(
+    "/api/v1/language-detection/inference",
+    tags=["Language Detection"],
+)
+async def language_detection_inference(
+    payload: LanguageDetectionInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Perform language detection inference"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(
+        payload.model_dump(mode="json", exclude_none=True)
+    ).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/api/v1/language-detection/inference",
+        "language-detection-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.get("/api/v1/language-detection/models", tags=["Language Detection"])
+async def get_language_detection_models(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get available language detection models"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/language-detection/models", "language-detection-service", headers=headers)
+
+@app.get("/api/v1/language-detection/languages", tags=["Language Detection"])
+async def get_language_detection_languages(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get supported languages for language detection"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/language-detection/languages", "language-detection-service", headers=headers)
+
+@app.get("/api/v1/language-detection/health", tags=["Language Detection"])
+async def language_detection_health(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Language detection service health check"""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/language-detection/health", "language-detection-service", headers=headers)
 
 # Model Management Service Endpoints
 
-@app.get("/api/v1/model-management/models", response_model=List[ModelViewResponse], tags=["Model Management"])
+@app.get("/api/v1/model-management/models/{task_type}", response_model=List[ModelViewResponse], tags=["Model Management"])
 async def list_models(
+    task_type: Union[ModelTaskTypeEnum,None],
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
@@ -1823,7 +2746,14 @@ async def list_models(
     """List all registered models."""
     ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/services/details/list_models", "model-management-service", headers=headers)
+    return await proxy_to_service_with_params(
+        None, 
+        "/services/details/list_models", 
+        "model-management-service",
+        {"task_type": task_type.value}, 
+        method="GET",
+        headers=headers
+        )
 
 
 
@@ -1962,8 +2892,9 @@ async def delete_model(
 
 
 
-@app.get("/api/v1/model-management/services", response_model=List[ServiceListResponse], tags=["Model Management"])
+@app.get("/api/v1/model-management/services/{task_type}", response_model=List[ServiceListResponse], tags=["Model Management"])
 async def list_services(
+    task_type: Union[ModelTaskTypeEnum,None],
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
@@ -1971,7 +2902,14 @@ async def list_services(
     """List all deployed services."""
     ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/services/details/list_services", "model-management-service", headers=headers)
+    return await proxy_to_service_with_params(
+        None, 
+        "/services/details/list_services", 
+        "model-management-service",
+        {"task_type": task_type.value}, 
+        method="GET", 
+        headers=headers
+        )
 
 
 @app.post("/api/v1/model-management/services/{service_id}", response_model=ServiceViewResponse, tags=["Model Management"])
@@ -2207,6 +3145,13 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'asr-service': os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
+        'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
+        'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),
+        'transliteration-service': os.getenv('TRANSLITERATION_SERVICE_URL', 'http://transliteration-service:8090'),
+        'language-detection-service': os.getenv('LANGUAGE_DETECTION_SERVICE_URL', 'http://language-detection-service:8090'),
+        'speaker-diarization-service': os.getenv('SPEAKER_DIARIZATION_SERVICE_URL', 'http://speaker-diarization-service:8095'),
+        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:8094'),
+        'audio-lang-detection-service': os.getenv('AUDIO_LANG_DETECTION_SERVICE_URL', 'http://audio-lang-detection-service:8096'),
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
         'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
@@ -2278,6 +3223,13 @@ async def proxy_to_service_with_params(
         'asr-service': os.getenv('ASR_SERVICE_URL', 'http://asr-service:8087'),
         'tts-service': os.getenv('TTS_SERVICE_URL', 'http://tts-service:8088'),
         'nmt-service': os.getenv('NMT_SERVICE_URL', 'http://nmt-service:8089'),
+        'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
+        'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),
+        'speaker-diarization-service': os.getenv('SPEAKER_DIARIZATION_SERVICE_URL', 'http://speaker-diarization-service:8095'),
+        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:8094'),
+        'audio-lang-detection-service': os.getenv('AUDIO_LANG_DETECTION_SERVICE_URL', 'http://audio-lang-detection-service:8096'),
+        'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
+        'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
         'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')

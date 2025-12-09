@@ -10,7 +10,8 @@ from db_operations import (
     list_all_services
 )
 from logger import logger
-from typing import List
+from typing import List , Union
+from models.type_enum import TaskTypeEnum
 
 
 router_details = APIRouter(
@@ -45,15 +46,18 @@ async def view_model_request(payload: ModelViewRequest):
 
 
 @router_details.get("/list_models" , response_model=List[ModelViewResponse])
-async def list_models_request():
+async def list_models_request(task_type: Union[TaskTypeEnum, None]):
     try:
-        data = await list_all_models()
-
-        if not data:
-            return []
+        data = await list_all_models(task_type)
+        if data is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No valid models found for task type: '{task_type.value}'"
+            )
 
         return data
-
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("Error while listing model details from DB.")
         raise HTTPException(
@@ -86,15 +90,19 @@ async def view_service_request(payload: ServiceViewRequest):
     
 
 @router_details.get("/list_services" , response_model=List[ServiceListResponse])
-async def list_services_request():
+async def list_services_request(task_type: Union[TaskTypeEnum, None]):
     try:
-        data = await list_all_services()
+        data = await list_all_services(task_type)
 
-        if not data:
-            return []
+        if data is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No valid models found for task type: '{task_type.value}'"
+            )
 
         return data
-
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("Error while listing service details from DB.")
         raise HTTPException(
