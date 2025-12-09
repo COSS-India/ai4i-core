@@ -410,7 +410,7 @@ async def get_model_details(model_id: str) -> Dict[str, Any]:
             "submitter": model.submitter,
             "license": model.license,
             "inferenceEndPoint": model.inference_endpoint,
-            "source": "",  ## ask value for this field
+            "source": model.ref_url or "",  ## ask value for this field
             "task": model.task,
             "isPublished": model.is_published,
             "publishedAt": datetime.fromtimestamp(model.published_at).isoformat() if model.published_at else None,
