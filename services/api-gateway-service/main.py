@@ -8,7 +8,7 @@ import uuid
 import time
 import json
 from datetime import datetime
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 from enum import Enum
 from urllib.parse import urlencode, urlparse, parse_qs
 from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security
@@ -549,6 +549,13 @@ class Submitter(BaseModel):
 class Task(BaseModel):
     """Task type."""
     type: str = Field(..., description="Task type")
+
+class ModelTaskTypeEnum(str, Enum):
+    
+    nmt = "nmt"
+    tts = "tts"
+    asr = "asr"
+    llm = "llm"
 
 class ModelCreateRequest(BaseModel):
     """Request model for creating a new model."""
@@ -2459,8 +2466,9 @@ async def language_detection_health(
 
 # Model Management Service Endpoints
 
-@app.get("/api/v1/model-management/models", response_model=List[ModelViewResponse], tags=["Model Management"])
+@app.get("/api/v1/model-management/models/{task_type}", response_model=List[ModelViewResponse], tags=["Model Management"])
 async def list_models(
+    task_type: Union[ModelTaskTypeEnum,None],
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
@@ -2468,7 +2476,14 @@ async def list_models(
     """List all registered models."""
     ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/services/details/list_models", "model-management-service", headers=headers)
+    return await proxy_to_service_with_params(
+        None, 
+        "/services/details/list_models", 
+        "model-management-service",
+        {"task_type": task_type.value}, 
+        method="GET",
+        headers=headers
+        )
 
 
 
@@ -2607,8 +2622,9 @@ async def delete_model(
 
 
 
-@app.get("/api/v1/model-management/services", response_model=List[ServiceListResponse], tags=["Model Management"])
+@app.get("/api/v1/model-management/services/{task_type}", response_model=List[ServiceListResponse], tags=["Model Management"])
 async def list_services(
+    task_type: Union[ModelTaskTypeEnum,None],
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
@@ -2616,7 +2632,14 @@ async def list_services(
     """List all deployed services."""
     ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/services/details/list_services", "model-management-service", headers=headers)
+    return await proxy_to_service_with_params(
+        None, 
+        "/services/details/list_services", 
+        "model-management-service",
+        {"task_type": task_type.value}, 
+        method="GET", 
+        headers=headers
+        )
 
 
 @app.post("/api/v1/model-management/services/{service_id}", response_model=ServiceViewResponse, tags=["Model Management"])
