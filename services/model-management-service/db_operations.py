@@ -14,6 +14,7 @@ from models.service_update import ServiceUpdateRequest
 from models.service_view import ServiceViewResponse
 from models.service_list import ServiceListResponse
 from models.service_health import ServiceHeartbeatRequest
+from models.type_enum import TaskTypeEnum
 
 from db_connection import AppDatabase
 from uuid import UUID
@@ -157,6 +158,8 @@ async def save_model_to_db(payload: ModelCreateRequest):
         await db.rollback()
         logger.exception("Error while saving model to DB.")
         raise Exception("Insert failed due to internal DB error") from e
+    finally:
+        await db.close()
     
 
 
@@ -209,6 +212,8 @@ async def update_by_filter(filters: Dict[str, Any], data: Dict[str, Any]) -> int
         await db.rollback()
         logger.exception("Failed to update records.")
         raise ValueError(f"Failed to update records: {e}") from e
+    finally:
+        await db.close()
 
 
 async def update_model(payload: ModelUpdateRequest):
@@ -332,40 +337,48 @@ async def delete_model_by_uuid(id_str: str) -> int:
 
     db: AsyncSession = AppDatabase()
 
-    # Convert to UUID
     try:
-        uuid = UUID(id_str)
-    except ValueError:
-        logger.warning(f"Invalid UUID provided for delete: {uuid}")
-        return 0
-    
-    result = await db.execute(select(Model).filter(Model.id == uuid))
-    model = result.scalars().first()
 
-    if not model:
-        logger.warning(f"Model with UUID {uuid} not found for delete.")
-        return 0
-    
-    model_id = model.model_id
+        # Convert to UUID
+        try:
+            uuid = UUID(id_str)
+        except ValueError:
+            logger.warning(f"Invalid UUID provided for delete: {id_str}")
+            return 0
 
-    # ---- Delete from Cache ----
-    try:
-        cache_entry = ModelCache.get(model_id)
+        result = await db.execute(select(Model).filter(Model.id == uuid))
+        model = result.scalars().first()
 
-        if cache_entry:
-            ModelCache.delete(model_id)
-            logger.info(f"Cache deleted for modelId='{model_id}'")
+        if not model:
+            logger.warning(f"Model with UUID {uuid} not found for delete.")
+            return 0
 
-    except Exception as cache_err:
-        logger.warning(f"ModelCache delete failed for {uuid}: {cache_err}")
+        model_id = model.model_id
+
+        # ---- Delete from Cache ----
+        try:
+            cache_entry = ModelCache.get(model_id)
+
+            if cache_entry:
+                ModelCache.delete(model_id)
+                logger.info(f"Cache deleted for modelId='{model_id}'")
+
+        except Exception as cache_err:
+            logger.warning(f"ModelCache delete failed for {uuid}: {cache_err}")
 
 
-    await db.execute(delete(Model).where(Model.id == uuid))
+        await db.execute(delete(Model).where(Model.id == uuid))
 
-    await db.commit()
-    logger.info(f"DB: Model with ID {uuid} deleted successfully.")
+        await db.commit()
+        logger.info(f"DB: Model with ID {uuid} deleted successfully.")
 
-    return 1
+        return 1
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Error deleting model from DB.")
+        raise Exception("Delete failed due to internal DB error") from e
+    finally:
+        await db.close()
 
 
 
@@ -389,30 +402,47 @@ async def get_model_details(model_id: str) -> Dict[str, Any]:
             return None
 
         return {
-             "modelId": model.model_id,
-             "name": model.name,
-             "description": model.description,
-             "languages": model.languages or [],
-             "domain": model.domain,
-             "submitter": model.submitter,
-             "license": model.license,
-             "inferenceEndPoint": model.inference_endpoint,
-             "source": "",  ## ask value for this field
-             "task": model.task
+            "modelId": model.model_id,
+            "name": model.name,
+            "description": model.description,
+            "languages": model.languages or [],
+            "domain": model.domain,
+            "submitter": model.submitter,
+            "license": model.license,
+            "inferenceEndPoint": model.inference_endpoint,
+            "source": "",  ## ask value for this field
+            "task": model.task,
+            "isPublished": model.is_published,
+            "publishedAt": datetime.fromtimestamp(model.published_at).isoformat() if model.published_at else None,
+            "unpublishedAt": datetime.fromtimestamp(model.unpublished_at).isoformat() if model.unpublished_at else None,
          }
      
     except Exception as e:
          logger.error(f"[DB] Error fetching model details: {str(e)}")
          raise
+    finally:
+         await db.close()
     
 
-async def list_all_models() -> List[Dict[str, Any]]:
+async def list_all_models(task_type: TaskTypeEnum | None) -> List[Dict[str, Any]]:
     """Fetch all model records from DB and convert to response format."""
 
     db: AsyncSession = AppDatabase()
     try:
-        result = await db.execute(select(Model))
+        if not task_type:
+            return None
+
+        query = select(Model)
+        # Filter JSONB → task.type
+        if task_type:
+            query = query.where(Model.task['type'].astext == task_type.value)
+
+        result = await db.execute(query)
         models = result.scalars().all()
+
+        if not models:
+            logger.info(f"[DB] No models found for type :{task_type}")
+            return None
 
         result = []
         for item in models:
@@ -431,13 +461,18 @@ async def list_all_models() -> List[Dict[str, Any]]:
                 "license": data.get("license"),
                 "inferenceEndPoint": data.get("inference_endpoint"),
                 "source": data.get("ref_url"),
-                "task": data.get("task", {})
+                "task": data.get("task", {}),
+                "isPublished": data.get("is_published", {}),
+                "publishedAt": datetime.fromtimestamp(data.get("published_at", None)).isoformat() if data.get("published_at", None) else None ,
+                "unpublishedAt": datetime.fromtimestamp( data.get("unpublished_at", None)).isoformat() if  data.get("unpublished_at", None) else None,
             })
 
         return result
     except Exception as e:
         logger.error(f"[DB] Error fetching model list: {str(e)}")
         raise
+    finally:
+        await db.close()
 
 
 async def publish_model(payload_modelId: str):
@@ -475,6 +510,8 @@ async def publish_model(payload_modelId: str):
         await db.rollback()
         logger.exception("Error while publishing model.")
         raise Exception("Publish failed due to internal DB error") from e
+    finally:
+        await db.close()
     
 async def unpublish_model(payload_modelId: str):
     """
@@ -510,6 +547,8 @@ async def unpublish_model(payload_modelId: str):
         await db.rollback()
         logger.exception("Error while unpublishing model.")
         raise Exception("Unpublish failed due to internal DB error") from e
+    finally:
+        await db.close()
 
 ####################################################### Service Functions #######################################################
 
@@ -527,7 +566,7 @@ async def save_service_to_db(payload: ServiceCreateRequest):
             logger.warning(f"Duplicate service_id: {payload.serviceId}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Model with ID {payload.serviceId} already exists."
+                detail=f"Service with ID {payload.serviceId} already exists."
             )
         
         # Check if associated model exists
@@ -539,7 +578,7 @@ async def save_service_to_db(payload: ServiceCreateRequest):
                 detail=f"Model with ID {payload.modelId} does not exist, cannot create service."
             )
         
-        payload_dict = _json_safe(payload)
+        payload_dict = _json_safe(payload.model_dump(by_alias=True))
 
         now_epoch = int(time.time())
         payload_dict["publishedOn"] = now_epoch
@@ -578,6 +617,8 @@ async def save_service_to_db(payload: ServiceCreateRequest):
         db.rollback()
         logger.exception("Error while saving service to DB.")
         raise Exception("Insert failed due to internal DB error") from e
+    finally:
+        await db.close()
 
 
 async def update_service(request: ServiceUpdateRequest):
@@ -593,7 +634,7 @@ async def update_service(request: ServiceUpdateRequest):
             logger.warning("Missing serviceId in update request")
             return 0
 
-        request_dict = request.model_dump(exclude_none=True)
+        request_dict = request.model_dump(exclude_none=True,by_alias=True)
 
         # 1. Build DB update dict
         db_update = {}
@@ -636,7 +677,7 @@ async def update_service(request: ServiceUpdateRequest):
                 status_code=400,
                 detail=f"Model with ID {request.modelId} does not exist, cannot update service."
             )
-
+        
         stmt_update = (
             update(Service)
             .where(Service.service_id == request.serviceId)
@@ -713,45 +754,53 @@ async def update_service(request: ServiceUpdateRequest):
         db.rollback()
         logger.exception("Error updating service")
         raise e
+    finally:
+        await db.close()
 
 async def delete_service_by_uuid(id_str: str) -> int:
     """Delete service by UUID (id)"""
    
     db: AsyncSession = AppDatabase()
 
-    # Convert to UUID
     try:
-        uuid = UUID(id_str)
-    except ValueError:
-        logger.warning(f"Invalid UUID provided for delete: {id_str}")
-        return 0
-    
-    result = await db.execute(select(Service).where(Service.id == uuid))
-    service = result.scalars().first()
+        try:
+            uuid = UUID(id_str)
+        except ValueError:
+            logger.warning(f"Invalid UUID provided for delete: {id_str}")
+            return 0
 
-    if not service:
-        logger.warning(f"Model with UUID {uuid} not found for delete.")
-        return 0
-    
-    service_id = service.service_id
+        result = await db.execute(select(Service).where(Service.id == uuid))
+        service = result.scalars().first()
 
-    try:
-        cache_entry = ServiceCache.get(service_id)
+        if not service:
+            logger.warning(f"Model with UUID {uuid} not found for delete.")
+            return 0
 
-        if cache_entry:
-            ModelCache.delete(service_id)
-            logger.info(f"Cache deleted for modelId='{service_id}'")
+        service_id = service.service_id
 
-    except Exception as cache_err:
-        logger.warning(f"ModelCache delete failed for {uuid}: {cache_err}")
+        try:
+            cache_entry = ServiceCache.get(service_id)
+
+            if cache_entry:
+                ModelCache.delete(service_id)
+                logger.info(f"Cache deleted for modelId='{service_id}'")
+
+        except Exception as cache_err:
+            logger.warning(f"ModelCache delete failed for {uuid}: {cache_err}")
 
 
-    await db.execute(delete(Service).where(Service.id == uuid))
-    await db.commit()
-    
-    logger.info(f"DB: Service with ID {uuid} deleted successfully.")
+        await db.execute(delete(Service).where(Service.id == uuid))
+        await db.commit()
 
-    return 1
+        logger.info(f"DB: Service with ID {uuid} deleted successfully.")
+
+        return 1
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Error deleting service from DB.")
+        raise Exception("Delete failed due to internal DB error") from e
+    finally:
+        await db.close()
 
 
 async def get_service_details(service_id: str) -> Dict[str, Any]:
@@ -868,49 +917,66 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
     except Exception as e:
         logger.exception(f"Error fetching service {service_id} details from DB.")
         raise e
+    finally:
+        await db.close()
 
 
 
-async def list_all_services() -> List[Dict[str, Any]]:
+async def list_all_services(task_type: TaskTypeEnum | None) -> List[Dict[str, Any]]:
     """Fetch all service records from DB and convert to response format."""
+
     db: AsyncSession = AppDatabase()
 
     try:
-        result = await db.execute(select(Service))
-        services = result.scalars().all()
-    except Exception as e:
-        logger.error(f"[DB] Failed to fetch all services: {str(e)}")
-        # raise BaseError(Errors.DHRUVA103.value, traceback.format_exc())
-        raise
+        query = select(Service, Model).join(Model, Model.model_id == Service.model_id)
 
-    result = []
-    for service in services:
+        if task_type:
+            query = query.where(Model.task['type'].astext == task_type.value)
 
         try:
-            model_result = await db.execute(select(Model).where(Model.model_id == service.model_id))
-            model = model_result.scalars().first()
-        except Exception:
-            # raise BaseError(Errors.DHRUVA105.value, traceback.format_exc())            
-            logger.error(f"[DB] Failed to get model details from db for service {service.service_id}")
-        
-        result.append(
-            ServiceListResponse(
-                serviceId=str(service.service_id),
-                name=service.name,
-                serviceDescription=getattr(service, "service_description", None),
-                hardwareDescription=getattr(service, "hardware_description", None),
-                publishedOn=getattr(service, "published_on", None),
-                modelId=service.model_id,
-                healthStatus=getattr(service, "health_status", None),
-                benchmarks=getattr(service, "benchmarks", None),
+            result = await db.execute(query)
+            rows = result.fetchall()
+        except Exception as e:
+            logger.error(f"[DB] Failed to fetch services: {str(e)}")
+            raise
 
-                # These two fields come from the MODEL table
-                task=getattr(model, "task", {}) if model else {},
-                languages=getattr(model, "languages", []) if model else [],
+        if not rows:
+            logger.info(f"[DB] No services found for type :{task_type.value}")
+            return None
+
+        services_list = []
+
+        for service, model in rows:
+            if not model:
+                logger.error(
+                    f"[DB] Failed to get model details from db for service {service.service_id}"
+                )
+                return None
+            services_list.append(
+                ServiceListResponse(
+                    serviceId=str(service.service_id),
+                    name=service.name,
+                    serviceDescription=getattr(service, "service_description", None),
+                    hardwareDescription=getattr(service, "hardware_description", None),
+                    publishedOn=getattr(service, "published_on", None),
+                    modelId=service.model_id,
+                    healthStatus=getattr(service, "health_status", None),
+                    benchmarks=getattr(service, "benchmarks", None),
+
+                    # From MODEL table
+                    task=getattr(model, "task", {}) if model else {},
+                    languages=getattr(model, "languages", []) if model else []
                 )
             )
 
-    return result
+        return services_list
+
+    except Exception as e:
+        logger.error(f"[DB] Error fetching service list: {str(e)}")
+        raise
+    finally:
+        await db.close()
+
 
 
 async def update_service_health(payload: ServiceHeartbeatRequest):
@@ -990,3 +1056,5 @@ async def update_service_health(payload: ServiceHeartbeatRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"kind": "DBError", "message": "Service health update not successful"}
         ) from e
+    finally:
+        await db.close()
