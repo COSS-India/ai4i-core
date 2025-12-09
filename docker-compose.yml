@@ -803,7 +803,7 @@ services:
       dockerfile: services/language-diarization-service/Dockerfile
     container_name: ai4v-language-diarization-service
     ports:
-      - "8094:8094"
+      - "9002:9002"
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=65.1.35.3:8600
@@ -819,7 +819,7 @@ services:
     networks:
       - microservices-network
     # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:8094/health"]
+    #   test: ["CMD", "curl", "-f", "http://localhost:9002/health"]
     #   interval: 30s
     #   timeout: 10s
     #   retries: 3
