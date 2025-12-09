@@ -40,7 +40,9 @@ services:
       - redis-data:/data
       - ./infrastructure/redis/redis.conf:/usr/local/etc/redis/redis.conf
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - redis
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -h localhost -p 6379 -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
@@ -316,7 +318,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - auth-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
       # interval: 30s
@@ -348,7 +352,9 @@ services:
       unleash:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - config-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
       # interval: 30s
@@ -494,7 +500,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - asr-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8087/health"]
       # interval: 30s
@@ -523,7 +531,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - tts-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
       # interval: 30s
@@ -551,7 +561,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - nmt-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8089/health"]
       # interval: 30s
@@ -651,7 +663,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - llm-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/llm/health"]
       # interval: 30s
@@ -689,7 +703,9 @@ services:
       tts-service:
         condition: service_started
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - pipeline-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       # interval: 30s
@@ -732,7 +748,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - model-management-service
     restart: unless-stopped
 
   transliteration-service:

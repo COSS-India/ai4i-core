@@ -6,7 +6,7 @@ import secrets
 import hashlib
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from passlib.hash import argon2
@@ -106,6 +106,75 @@ class AuthUtils:
     def hash_api_key(api_key: str) -> str:
         """Hash an API key for storage"""
         return hashlib.sha256(api_key.encode()).hexdigest()
+    
+    @staticmethod
+    async def validate_api_key(
+        db: AsyncSession,
+        api_key: str,
+        service: str,
+        action: str
+    ) -> Tuple[bool, Optional[APIKey], Optional[str]]:
+        """
+        Validate API key and check permissions for service and action
+        
+        Args:
+            db: Database session
+            api_key: The API key to validate
+            service: Service name (asr, tts, nmt, pipeline, model-management)
+            action: Action type (read, inference)
+        
+        Returns:
+            Tuple of (is_valid, api_key_obj, error_message)
+        """
+        # Hash the API key
+        api_key_hash = AuthUtils.hash_api_key(api_key)
+        
+        # Find API key in database
+        result = await db.execute(
+            select(APIKey).where(APIKey.key_hash == api_key_hash)
+        )
+        api_key_obj = result.scalar_one_or_none()
+        
+        if not api_key_obj:
+            return False, None, "Invalid API key"
+        
+        # Check if API key is active
+        if not api_key_obj.is_active:
+            return False, None, "API key has been revoked"
+        
+        # Check if API key has expired (use timezone-aware comparison)
+        now_utc = datetime.now(timezone.utc)
+        if api_key_obj.expires_at and api_key_obj.expires_at < now_utc:
+            return False, None, "API key has expired"
+        
+        # Update last_used timestamp
+        api_key_obj.last_used = now_utc
+        await db.commit()
+        
+        # Get permissions
+        permissions = api_key_obj.permissions or []
+        
+        # Build required permission string (e.g., "asr.inference", "tts.read")
+        required_permission = f"{service}.{action}"
+        
+        # Check if API key has the required permission
+        if required_permission not in permissions:
+            # Check if API key has any permission for this service
+            service_permissions = [p for p in permissions if p.startswith(f"{service}.")]
+            
+            if not service_permissions:
+                # No permissions for this service at all
+                return False, None, f"Invalid API key: This key does not have access to {service.upper()} service"
+            
+            # Check if it's a read-only key trying to access inference
+            if action == "inference" and f"{service}.read" in permissions:
+                return False, None, f"API key is restricted for read-only access. Inference operations require '{required_permission}' permission"
+            
+            # Has some permissions for service but not the required one
+            return False, None, f"Invalid API key: This key does not have '{required_permission}' permission. Available permissions: {', '.join(service_permissions)}"
+        
+        # Valid API key with required permission
+        return True, api_key_obj, None
     
     @staticmethod
     async def get_user_by_email(db: AsyncSession, email: str) -> Optional[User]:

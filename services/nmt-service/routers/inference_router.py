@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 inference_router = APIRouter(
     prefix="/api/v1/nmt",
     tags=["NMT Inference"],
-    # dependencies=[Depends(AuthProvider)]  # Commented out for testing
+    dependencies=[Depends(AuthProvider)]  # Enforce auth and permission checks on all routes
 )
 
 
