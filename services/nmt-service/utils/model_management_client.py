@@ -55,7 +55,7 @@ class ModelManagementClient:
         """
         self.base_url = base_url or os.getenv(
             "MODEL_MANAGEMENT_SERVICE_URL",
-            "http://model-management-service:8000"
+            "http://model-management-service:8091"
         )
         # Ensure base_url doesn't end with /
         self.base_url = self.base_url.rstrip("/")
@@ -104,17 +104,48 @@ class ModelManagementClient:
         expiry = datetime.now() + timedelta(seconds=self.cache_ttl_seconds)
         self._cache[cache_key] = (value, expiry)
     
-    def _get_headers(self) -> Dict[str, str]:
-        """Get request headers with authentication"""
+    def _get_headers(self, auth_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        """Get request headers with authentication
+        
+        Args:
+            auth_headers: Optional dict of auth headers from incoming request (Authorization, X-API-Key, etc.)
+        """
         headers = {"Content-Type": "application/json"}
-        if self.api_key:
+        
+        # Use auth headers from incoming request if provided (preferred)
+        if auth_headers:
+            logger.info(f"Processing auth_headers in _get_headers: {list(auth_headers.keys())}")
+            # Forward all auth-related headers
+            for key, value in auth_headers.items():
+                key_lower = key.lower()
+                # Forward Authorization, X-API-Key, and X-Auth-Source headers
+                if key_lower in ["authorization", "x-api-key", "x-auth-source"]:
+                    # Use proper header case
+                    header_name = "Authorization" if key_lower == "authorization" else \
+                                 "X-API-Key" if key_lower == "x-api-key" else \
+                                 "X-Auth-Source" if key_lower == "x-auth-source" else key
+                    headers[header_name] = value
+                    logger.info(f"Added {header_name} header to request")
+        else:
+            logger.warning("No auth_headers provided to _get_headers")
+        
+        # Fallback to static API key if no auth headers provided (for backward compatibility)
+        if self.api_key and "Authorization" not in headers and "X-API-Key" not in headers:
+            headers["X-API-Key"] = self.api_key
             headers["Authorization"] = f"Bearer {self.api_key}"
+            logger.debug("Using fallback static API key")
+        
+        if "Authorization" not in headers and "X-API-Key" not in headers:
+            logger.warning("No authentication headers will be sent to model management service!")
+        
         return headers
     
     async def list_services(
         self,
         use_cache: bool = True,
-        redis_client = None
+        redis_client = None,
+        auth_headers: Optional[Dict[str, str]] = None,
+        task_type: Optional[str] = None
     ) -> List[ServiceInfo]:
         """
         List all services from model management service
@@ -122,11 +153,17 @@ class ModelManagementClient:
         Args:
             use_cache: Whether to use cache
             redis_client: Optional Redis client for distributed caching
+            auth_headers: Optional auth headers from incoming request
+            task_type: Optional task type filter (e.g., "nmt")
             
         Returns:
             List of ServiceInfo objects
         """
-        cache_key = self._get_cache_key("list_services")
+        # Include task_type in cache key to cache different task types separately
+        cache_key_suffix = f"list_services"
+        if task_type:
+            cache_key_suffix = f"list_services:{task_type}"
+        cache_key = self._get_cache_key(cache_key_suffix)
         
         # Try Redis cache first if available
         if use_cache and redis_client:
@@ -150,10 +187,24 @@ class ModelManagementClient:
         try:
             client = await self._get_client()
             url = f"{self.base_url}/services/details/list_services"
-            headers = self._get_headers()
+            logger.info(f"About to call _get_headers with auth_headers: {auth_headers is not None}, keys: {list(auth_headers.keys()) if auth_headers else 'None'}")
+            headers = self._get_headers(auth_headers)
+            logger.info(f"After _get_headers, headers dict has keys: {list(headers.keys())}")
             
-            logger.debug(f"Fetching services from {url}")
-            response = await client.get(url, headers=headers)
+            # Add task_type as query parameter if provided
+            params = {}
+            if task_type:
+                params["task_type"] = task_type
+            
+            logger.info(f"Fetching services from {url} with params: {params}")
+            logger.info(f"Request headers keys: {list(headers.keys())}")
+            logger.info(f"Authorization header: {'present' if 'Authorization' in headers else 'missing'}")
+            logger.info(f"X-API-Key header: {'present' if 'X-API-Key' in headers else 'missing'}")
+            if 'Authorization' in headers:
+                logger.info(f"Authorization value (first 50 chars): {headers['Authorization'][:50]}...")
+            if 'X-API-Key' in headers:
+                logger.info(f"X-API-Key value (first 50 chars): {headers['X-API-Key'][:50]}...")
+            response = await client.get(url, headers=headers, params=params)
             response.raise_for_status()
             
             data = response.json()
@@ -209,7 +260,14 @@ class ModelManagementClient:
             return services
             
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error fetching services: {e.response.status_code} - {e.response.text}")
+            if e.response.status_code == 401:
+                logger.error(
+                    f"Authentication failed (401) when fetching services from model management service. "
+                    f"Please ensure the request includes valid Authorization or X-API-Key headers. "
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"HTTP error fetching services: {e.response.status_code} - {e.response.text}")
             raise
         except Exception as e:
             logger.error(f"Error fetching services: {e}", exc_info=True)
@@ -219,7 +277,8 @@ class ModelManagementClient:
         self,
         service_id: str,
         use_cache: bool = True,
-        redis_client = None
+        redis_client = None,
+        auth_headers: Optional[Dict[str, str]] = None
     ) -> Optional[ServiceInfo]:
         """
         Get service details by service ID
@@ -256,7 +315,7 @@ class ModelManagementClient:
         try:
             client = await self._get_client()
             url = f"{self.base_url}/services/details/view_service"
-            headers = self._get_headers()
+            headers = self._get_headers(auth_headers)
             payload = {"serviceId": service_id}
             
             logger.debug(f"Fetching service {service_id} from {url}")
@@ -316,7 +375,14 @@ class ModelManagementClient:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return None
-            logger.error(f"HTTP error fetching service {service_id}: {e.response.status_code} - {e.response.text}")
+            elif e.response.status_code == 401:
+                logger.error(
+                    f"Authentication failed (401) when fetching service {service_id} from model management service. "
+                    f"Please ensure the request includes valid Authorization or X-API-Key headers. "
+                    f"Response: {e.response.text}"
+                )
+            else:
+                logger.error(f"HTTP error fetching service {service_id}: {e.response.status_code} - {e.response.text}")
             raise
         except Exception as e:
             logger.error(f"Error fetching service {service_id}: {e}", exc_info=True)
