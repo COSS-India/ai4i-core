@@ -22,14 +22,15 @@ from utils.validation_utils import (
     validate_postprocessors
 )
 from middleware.exceptions import AuthenticationError, AuthorizationError
+from middleware.auth_provider import AuthProvider
 
 logger = logging.getLogger(__name__)
 
-# Create router
-# Authentication is handled by Kong + Auth Service, no need for AuthProvider here
+# Create router with authentication dependency
 inference_router = APIRouter(
-    prefix="/api/v1/asr", 
-    tags=["ASR Inference"]
+    prefix="/api/v1/asr",
+    tags=["ASR Inference"],
+    dependencies=[Depends(AuthProvider)]  # Enforce auth and permission checks on all routes
 )
 
 

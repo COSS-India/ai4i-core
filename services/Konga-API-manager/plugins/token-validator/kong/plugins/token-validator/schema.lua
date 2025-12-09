@@ -17,6 +17,14 @@ return {
             },
           },
           {
+            -- API key validation endpoint
+            auth_api_key_url = {
+              type = "string",
+              required = false,
+              default = "http://auth-service:8081/api/v1/auth/validate-api-key",
+            },
+          },
+          {
             -- Service-specific API key to inject as X-API-Key
             api_key = {
               type = "string",
@@ -46,7 +54,7 @@ return {
               type = "array",
               elements = { type = "string" },
               required = false,
-              default = { "Authorization", "Content-Type", "X-Requested-With" },
+              default = { "Authorization", "Content-Type", "X-Requested-With", "X-API-Key", "X-Auth-Source" },
             },
           },
           {

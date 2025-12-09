@@ -20,7 +20,8 @@ from models import (
     LoginRequest, LoginResponse, TokenRefreshRequest, TokenRefreshResponse,
     TokenValidationResponse, PasswordChangeRequest, PasswordResetRequest,
     PasswordResetConfirm, LogoutRequest, LogoutResponse, APIKeyCreate,
-    APIKeyResponse, OAuth2Provider, OAuth2Callback, Role, UserRole
+    APIKeyResponse, OAuth2Provider, OAuth2Callback, Role, UserRole,
+    APIKeyValidationRequest, APIKeyValidationResponse
 )
 from pydantic import BaseModel
 from auth_utils import AuthUtils
@@ -526,6 +527,68 @@ async def validate_token(
         username=current_user.username,
         permissions=permissions,
         roles=roles
+    )
+
+@app.post("/api/v1/auth/validate-api-key", response_model=APIKeyValidationResponse)
+async def validate_api_key(
+    validation_data: APIKeyValidationRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Validate API key with permission checking for service and action
+    
+    This endpoint validates:
+    1. API key exists and is active
+    2. API key has not expired
+    3. API key has the required permission (e.g., asr.inference)
+    4. If action is 'inference' but key only has 'read', returns appropriate error
+    
+    Examples:
+    - API key with ['asr.read', 'asr.inference'] can access asr.read and asr.inference
+    - API key with ['asr.read'] can only access asr.read, not asr.inference
+    - API key with ['asr.read', 'nmt.read', 'nmt.inference'] can access both ASR and NMT services
+    """
+    # Normalize service name (handle variations)
+    service = validation_data.service.lower().strip()
+    action = validation_data.action.lower().strip()
+    
+    # Validate service name
+    valid_services = ['asr', 'tts', 'nmt', 'pipeline', 'model-management', 'llm']
+    if service not in valid_services:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid service name. Must be one of: {', '.join(valid_services)}"
+        )
+    
+    # Validate action
+    valid_actions = ['read', 'inference']
+    if action not in valid_actions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid action. Must be one of: {', '.join(valid_actions)}"
+        )
+    
+    # Validate API key
+    is_valid, api_key_obj, error_message = await AuthUtils.validate_api_key(
+        db=db,
+        api_key=validation_data.api_key,
+        service=service,
+        action=action
+    )
+    
+    if not is_valid:
+        return APIKeyValidationResponse(
+            valid=False,
+            message=error_message,
+            permissions=[]
+        )
+    
+    # Return success with permissions
+    return APIKeyValidationResponse(
+        valid=True,
+        message="API key is valid and has required permissions",
+        user_id=api_key_obj.user_id,
+        permissions=api_key_obj.permissions or []
     )
 
 @app.get("/api/v1/auth/me", response_model=UserResponse)

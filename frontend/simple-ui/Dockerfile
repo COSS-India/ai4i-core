@@ -5,7 +5,7 @@ FROM node:18-alpine AS deps
 WORKDIR /app
 
 # Install libc6-compat for Alpine compatibility
-RUN apk add --no-cache libc6-compat
+RUN apk update && apk add --no-cache libc6-compat
 
 # Copy package files
 COPY package.json package-lock.json ./

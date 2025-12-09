@@ -1,5 +1,6 @@
 local http  = require "resty.http"
 local redis = require "resty.redis"
+local cjson = require "cjson"
 
 local kong  = kong
 local ngx   = ngx
@@ -128,6 +129,70 @@ local function validate_token(conf, token)
   return true, nil
 end
 
+-- API key permission validation via Auth Service
+local function validate_api_key_permissions(conf, api_key, service, action)
+  local httpc = http.new()
+  httpc:set_timeout(5000)
+
+  local url = conf.auth_api_key_url or "http://auth-service:8081/api/v1/auth/validate-api-key"
+
+  local res, err = httpc:request_uri(url, {
+    method  = "POST",
+    headers = {
+      ["Content-Type"]  = "application/json",
+    },
+    body    = cjson.encode({
+      api_key = api_key,
+      service = service,
+      action  = action,
+    }),
+    ssl_verify = false,
+  })
+
+  if not res then
+    kong.log.err("Auth service api-key validation error: ", err)
+    return nil, "auth_service_unavailable"
+  end
+
+  if res.status ~= 200 then
+    -- propagate message if present
+    local msg = "Invalid API key or insufficient permissions"
+    if res.body and res.body ~= "" then
+      local ok, body = pcall(cjson.decode, res.body)
+      if ok and body and (body.message or (body.detail and body.detail)) then
+        msg = body.message or body.detail
+      end
+    end
+    return false, msg
+  end
+
+  return true, nil
+end
+
+local function determine_service_and_action(path, method)
+  local p = string.lower(path or "")
+  local m = string.upper(method or "GET")
+
+  local service = "unknown"
+  local services = { "asr", "nmt", "tts", "pipeline", "model-management", "llm" }
+  for _, svc in ipairs(services) do
+    if string.find(p, "/api/v1/" .. svc) then
+      service = svc
+      break
+    end
+  end
+
+  local action = "read"
+  if string.find(p, "/inference") and m == "POST" then
+    action = "inference"
+  elseif m ~= "GET" then
+    -- treat other write methods as inference/modify operations
+    action = "inference"
+  end
+
+  return service, action
+end
+
 function TokenValidator:access(conf)
   local method = kong.request.get_method()
   local path   = kong.request.get_path()
@@ -161,28 +226,66 @@ function TokenValidator:access(conf)
 
   -- 3) Auth for protected paths
   if not is_public then
-    local token = get_bearer_token()
-    if not token or token == "" then
-      return kong.response.exit(401, {
-        message = "Missing or invalid Authorization header",
-      }, {
-        ["WWW-Authenticate"] = "Bearer",
-        ["Content-Type"]     = "application/json",
-      })
-    end
+    -- Check if X-API-Key header is present
+    local api_key = kong.request.get_header("X-API-Key")
+    
+    if api_key and api_key ~= "" then
+      -- Validate API key permissions via auth service (centralized)
+      local service, action = determine_service_and_action(path, method)
+      local ok, err = validate_api_key_permissions(conf, api_key, service, action)
 
-    local ok, err = validate_token(conf, token)
-    if err == "auth_service_unavailable" then
-      return kong.response.exit(503, { message = "Authentication service unavailable" }, {
-        ["Content-Type"] = "application/json",
-      })
-    end
+      if err == "auth_service_unavailable" then
+        return kong.response.exit(503, { message = "Authentication service unavailable" }, {
+          ["Content-Type"] = "application/json",
+        })
+      end
 
-    if not ok then
-      return kong.response.exit(401, { message = "Invalid or expired token" }, {
-        ["WWW-Authenticate"] = "Bearer",
-        ["Content-Type"]     = "application/json",
-      })
+      if not ok then
+        return kong.response.exit(403, { message = err or "Invalid API key or insufficient permissions" }, {
+          ["Content-Type"] = "application/json",
+        })
+      end
+
+      -- X-API-Key is valid; ensure X-Auth-Source is set
+      local auth_source = kong.request.get_header("X-Auth-Source")
+      if auth_source and auth_source ~= "" then
+        kong.service.request.set_header("X-Auth-Source", auth_source)
+      else
+        kong.service.request.set_header("X-Auth-Source", "API_KEY")
+      end
+    else
+      -- No X-API-Key, validate Bearer token (existing flow)
+      local token = get_bearer_token()
+      if not token or token == "" then
+        return kong.response.exit(401, {
+          message = "Missing or invalid Authorization header",
+        }, {
+          ["WWW-Authenticate"] = "Bearer",
+          ["Content-Type"]     = "application/json",
+        })
+      end
+
+      local ok, err = validate_token(conf, token)
+      if err == "auth_service_unavailable" then
+        return kong.response.exit(503, { message = "Authentication service unavailable" }, {
+          ["Content-Type"] = "application/json",
+        })
+      end
+
+      if not ok then
+        return kong.response.exit(401, { message = "Invalid or expired token" }, {
+          ["WWW-Authenticate"] = "Bearer",
+          ["Content-Type"]     = "application/json",
+        })
+      end
+      
+      -- Set X-Auth-Source for Bearer token
+      local auth_source = kong.request.get_header("X-Auth-Source")
+      if auth_source and auth_source ~= "" then
+        kong.service.request.set_header("X-Auth-Source", auth_source)
+      else
+        kong.service.request.set_header("X-Auth-Source", "AUTH_TOKEN")
+      end
     end
   end
 
@@ -199,9 +302,12 @@ function TokenValidator:access(conf)
   kong.service.request.set_header("X-Gateway-Timestamp", now_iso)
   kong.service.request.set_header("X-Forwarded-For", kong.client.get_ip() or "")
 
-  -- 6) X-API-Key injection (per service)
-  if conf.api_key and conf.api_key ~= "" then
-    kong.service.request.set_header("X-API-Key", conf.api_key)
+  -- 6) X-API-Key injection (per service) - only if not already set from request
+  local existing_api_key = kong.service.request.get_header("X-API-Key")
+  if not existing_api_key or existing_api_key == "" then
+    if conf.api_key and conf.api_key ~= "" then
+      kong.service.request.set_header("X-API-Key", conf.api_key)
+    end
   end
 end
 

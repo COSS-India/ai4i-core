@@ -251,3 +251,14 @@ class OAuth2Callback(BaseModel):
     code: str
     state: str
     provider: str
+
+class APIKeyValidationRequest(BaseModel):
+    api_key: str
+    service: str = Field(..., description="Service name: asr, tts, nmt, pipeline, model-management")
+    action: str = Field(..., description="Action type: read, inference")
+
+class APIKeyValidationResponse(BaseModel):
+    valid: bool
+    message: Optional[str] = None
+    user_id: Optional[int] = None
+    permissions: List[str] = []
