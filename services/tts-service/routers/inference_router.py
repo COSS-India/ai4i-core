@@ -96,7 +96,6 @@ async def run_inference(
         # Log request
         logger.info(f"Processing TTS inference request with {len(request.input)} text inputs - user_id={user_id} api_key_id={api_key_id}")
         
-        # Run inference with auth context
         response = await tts_service.run_inference(
             request=request,
             user_id=user_id,
