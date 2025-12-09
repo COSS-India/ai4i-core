@@ -5,7 +5,7 @@ Main NMT service containing core inference logic
 
 import time
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Tuple
 from uuid import UUID
 
 import numpy as np
@@ -15,6 +15,7 @@ from models.nmt_response import NMTInferenceResponse, TranslationOutput
 from repositories.nmt_repository import NMTRepository
 from services.text_service import TextService
 from utils.triton_client import TritonClient
+from utils.model_management_client import ModelManagementClient, ServiceInfo
 
 logger = logging.getLogger(__name__)
 
@@ -39,59 +40,115 @@ class NMTService:
         "mr": "Deva", "pa": "Guru", "or": "Orya", "as": "Beng"
     }
     
-    # Service registry mapping serviceId to (triton_endpoint, triton_model_name)
-    # Each entry: service_id -> (endpoint, model_name)
-    # Note: Triton HTTP client expects host:port format (without http://), and model names should not contain special characters
-    # Note: Both endpoints use "nmt" as the model name (verified via test_triton_models.py)
-    SERVICE_REGISTRY = {
-        "ai4bharat/indictrans--gpu-t4": ("13.200.133.97:8000", "nmt"),
-        "indictrans-v2-all": ("13.200.133.97:8000", "nmt"),
-        "ai4bharat/indictrans-v2-all-gpu": ("13.200.133.97:8000", "nmt"),
-        "facebook/nllb-200-1.3B": ("3.110.118.163:8000", "nmt")  # NLLB model - uses "nmt" as model name
-    }
-    
-    # Default Triton endpoint (from environment)
-    DEFAULT_TRITON_ENDPOINT = "13.200.133.97:8000"
-    DEFAULT_TRITON_API_KEY = "1b69e9a1a24466c85e4bbca3c5295f50"
-    
-    def __init__(self, repository: NMTRepository, text_service: TextService, 
-                 default_triton_client: TritonClient, 
-                 get_triton_client_func=None):
+    def __init__(
+        self, 
+        repository: NMTRepository, 
+        text_service: TextService, 
+        default_triton_client: TritonClient, 
+        get_triton_client_func=None,
+        model_management_client: Optional[ModelManagementClient] = None,
+        redis_client = None
+    ):
         self.repository = repository
         self.text_service = text_service
         self.default_triton_client = default_triton_client
         self.get_triton_client_func = get_triton_client_func
+        self.model_management_client = model_management_client
+        self.redis_client = redis_client
         self._triton_clients = {}  # Cache for Triton clients
+        self._service_registry_cache: Dict[str, Tuple[str, str]] = {}  # Cache for service registry
+        self._service_info_cache: Dict[str, ServiceInfo] = {}  # Cache for service info
     
-    def get_triton_client(self, service_id: str) -> TritonClient:
-        """Get Triton client for the given service ID"""
+    async def _get_service_info(self, service_id: str) -> Optional[ServiceInfo]:
+        """Get service info from model management service with caching"""
+        # Check cache first
+        if service_id in self._service_info_cache:
+            return self._service_info_cache[service_id]
+        
+        # Fetch from model management service if client is available
+        if self.model_management_client:
+            try:
+                service_info = await self.model_management_client.get_service(
+                    service_id,
+                    use_cache=True,
+                    redis_client=self.redis_client
+                )
+                if service_info:
+                    self._service_info_cache[service_id] = service_info
+                    # Also update registry cache
+                    if service_info.endpoint:
+                        # Extract host:port from endpoint (remove http:// if present)
+                        endpoint = service_info.endpoint.replace("http://", "").replace("https://", "")
+                        model_name = service_info.triton_model or "nmt"
+                        self._service_registry_cache[service_id] = (endpoint, model_name)
+                return service_info
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch service info for {service_id} from model management service: {e}. "
+                    "Will use default Triton client as fallback."
+                )
+                # Fallback to default behavior - return None to use default client
+                return None
+        else:
+            logger.debug("Model management client not available, using default Triton client")
+        
+        return None
+    
+    async def _get_service_registry_entry(self, service_id: str) -> Optional[Tuple[str, str]]:
+        """Get service registry entry (endpoint, model_name) for service_id"""
+        # Check cache first
+        if service_id in self._service_registry_cache:
+            return self._service_registry_cache[service_id]
+        
+        # Fetch from model management service
+        service_info = await self._get_service_info(service_id)
+        if service_info and service_info.endpoint:
+            # Extract host:port from endpoint (remove http:// if present)
+            endpoint = service_info.endpoint.replace("http://", "").replace("https://", "")
+            model_name = service_info.triton_model or "nmt"
+            entry = (endpoint, model_name)
+            self._service_registry_cache[service_id] = entry
+            return entry
+        
+        return None
+    
+    async def get_triton_client(self, service_id: str) -> TritonClient:
+        """Get Triton client for the given service ID with fallback to default"""
         # Check cache first
         if service_id in self._triton_clients:
             return self._triton_clients[service_id]
         
-        # Get endpoint and model info from registry
-        service_info = self.SERVICE_REGISTRY.get(service_id)
-        if service_info:
-            endpoint, _ = service_info
-        else:
-            # Use default client if service not in registry
-            return self.default_triton_client
+        # Get endpoint and model info from model management service
+        try:
+            service_entry = await self._get_service_registry_entry(service_id)
+            if service_entry:
+                endpoint, _ = service_entry
+                # Create client using factory function if available
+                if self.get_triton_client_func:
+                    client = self.get_triton_client_func(endpoint)
+                    self._triton_clients[service_id] = client
+                    return client
+        except Exception as e:
+            logger.warning(
+                f"Error getting service registry entry for {service_id}: {e}. "
+                "Falling back to default Triton client."
+            )
         
-        # Create client using factory function if available
-        if self.get_triton_client_func:
-            client = self.get_triton_client_func(endpoint)
-            self._triton_clients[service_id] = client
-            return client
-        else:
-            # Fallback to default client
-            return self.default_triton_client
+        # Fallback to default client if service not found or error occurred
+        logger.debug(f"Using default Triton client for service {service_id}")
+        return self.default_triton_client
     
-    def get_model_name(self, service_id: str) -> str:
-        """Get Triton model name based on service ID"""
-        service_info = self.SERVICE_REGISTRY.get(service_id)
-        if service_info:
-            return service_info[1]  # Return model name
-        return "nmt"  # Default to "nmt" if not found
+    async def get_model_name(self, service_id: str) -> str:
+        """Get Triton model name based on service ID with fallback"""
+        try:
+            service_entry = await self._get_service_registry_entry(service_id)
+            if service_entry:
+                return service_entry[1]  # Return model name
+        except Exception as e:
+            logger.debug(f"Error getting model name for {service_id}: {e}, using default 'nmt'")
+        
+        # Default to "nmt" if not found or error occurred
+        return "nmt"
     
     async def run_inference(
         self,
@@ -111,7 +168,7 @@ class NMTService:
             target_lang = request.config.language.targetLanguage
             
             # Get model name dynamically based on service ID
-            model_name = self.get_model_name(service_id)
+            model_name = await self.get_model_name(service_id)
             
             # Store original languages for response
             original_source_lang = source_lang
@@ -155,11 +212,11 @@ class NMTService:
                 
                 try:
                     # Get appropriate Triton client for this service
-                    triton_client = self.get_triton_client(service_id)
+                    triton_client = await self.get_triton_client(service_id)
                     
                     # Log the model name and endpoint for debugging
-                    service_info = self.SERVICE_REGISTRY.get(service_id)
-                    endpoint = service_info[0] if service_info else "default"
+                    service_entry = await self._get_service_registry_entry(service_id)
+                    endpoint = service_entry[0] if service_entry else "default"
                     logger.info(f"Using Triton endpoint: {endpoint}, model: {model_name} for service: {service_id}")
                     
                     # Prepare Triton inputs
