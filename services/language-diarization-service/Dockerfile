@@ -61,12 +61,12 @@ RUN chown -R app:app /app /home/app/.local \
 USER app
 
 # Expose port
-EXPOSE 8094
+EXPOSE 9002
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8094/health || exit 1
+    CMD curl -f http://localhost:9002/health || exit 1
 
 # Run the application
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8094"]
+ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9002"]
 
