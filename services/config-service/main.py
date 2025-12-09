@@ -133,7 +133,7 @@ async def periodic_flag_sync():
         try:
             from services.feature_flag_service import FeatureFlagService
             
-            unleash_url = os.getenv('UNLEASH_URL', 'http://unleash:4242/api')
+            unleash_url = os.getenv('UNLEASH_URL', 'http://unleash:4242/feature-flags/api')
             unleash_api_token = os.getenv('UNLEASH_API_TOKEN', '*:*.unleash-insecure-api-token')
             kafka_topic = os.getenv("FEATURE_FLAG_KAFKA_TOPIC", "feature-flag-events")
             cache_ttl = int(os.getenv("FEATURE_FLAG_CACHE_TTL", "300"))
@@ -288,7 +288,7 @@ async def startup_event():
             from providers.unleash_provider import UnleashFeatureProvider
             from openfeature.evaluation_context import EvaluationContext
             
-            unleash_url = os.getenv('UNLEASH_URL', 'http://unleash:4242/api')
+            unleash_url = os.getenv('UNLEASH_URL', 'http://unleash:4242/feature-flags/api')
             unleash_app_name = os.getenv('UNLEASH_APP_NAME', 'config-service')
             unleash_instance_id = os.getenv('UNLEASH_INSTANCE_ID', 'config-service-1')
             unleash_api_token = os.getenv('UNLEASH_API_TOKEN', '*:*.unleash-insecure-api-token')

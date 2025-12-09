@@ -10,7 +10,7 @@ import aiohttp
 
 async def test_unleash_api():
     """Test Unleash API and print response structure"""
-    unleash_url = os.getenv('UNLEASH_URL', 'http://unleash:4242/api')
+    unleash_url = os.getenv('UNLEASH_URL', 'http://unleash:4242/feature-flags/api')
     unleash_api_token = os.getenv('UNLEASH_API_TOKEN', '*:*.unleash-insecure-api-token')
     environment = os.getenv('UNLEASH_ENVIRONMENT', 'development')
     
