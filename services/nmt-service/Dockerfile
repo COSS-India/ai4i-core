@@ -12,9 +12,13 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# Copy AI4ICore Observability Plugin
+COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+
+COPY services/nmt-service/requirements.txt .
 
 RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 
 
 # Stage 2: Final Runtime
@@ -41,8 +45,11 @@ RUN useradd --create-home --shell /bin/bash app
 COPY --from=builder /root/.local /home/app/.local
 ENV PATH=/home/app/.local/bin:$PATH
 
+# Copy AI4ICore Observability Plugin
+COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+
 # Copy app code
-COPY . .
+COPY services/nmt-service .
 
 RUN chown -R app:app /app /home/app/.local \
     && chmod +x /home/app/.local/bin/*
