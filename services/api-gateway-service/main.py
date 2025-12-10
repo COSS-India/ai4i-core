@@ -735,6 +735,7 @@ class ModelViewRequest(BaseModel):
 class ModelViewResponse(BaseModel):
     """Response model for model view."""
     modelId: str = Field(..., description="Unique model identifier")
+    uuid: str = Field(..., description="Model UUID")
     name: str = Field(..., description="Model name")
     description: str = Field(..., description="Model description")
     languages: List[Dict[str, Any]] = Field(..., description="Supported languages")
@@ -833,6 +834,7 @@ class ServiceResponse(BaseModel):
 class ServiceViewResponse(BaseModel):
     """Response model for service view."""
     serviceId: str = Field(..., description="Unique service identifier")
+    uuid: str = Field(..., description="Service UUID")
     name: str = Field(..., description="Service name")
     serviceDescription: str = Field(..., description="Service description")
     hardwareDescription: str = Field(..., description="Hardware description")
@@ -2736,10 +2738,10 @@ async def language_detection_health(
 
 # Model Management Service Endpoints
 
-@app.get("/api/v1/model-management/models/{task_type}", response_model=List[ModelViewResponse], tags=["Model Management"])
+@app.get("/api/v1/model-management/models", response_model=List[ModelViewResponse], tags=["Model Management"])
 async def list_models(
-    task_type: Union[ModelTaskTypeEnum,None],
     request: Request,
+    task_type: Union[ModelTaskTypeEnum,None] = None,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
@@ -2750,7 +2752,7 @@ async def list_models(
         None, 
         "/services/details/list_models", 
         "model-management-service",
-        {"task_type": task_type.value}, 
+        {"task_type": task_type.value if task_type else None}, 
         method="GET",
         headers=headers
         )
@@ -2890,10 +2892,10 @@ async def delete_model(
 
 
 
-@app.get("/api/v1/model-management/services/{task_type}", response_model=List[ServiceListResponse], tags=["Model Management"])
+@app.get("/api/v1/model-management/services/", response_model=List[ServiceListResponse], tags=["Model Management"])
 async def list_services(
-    task_type: Union[ModelTaskTypeEnum,None],
     request: Request,
+    task_type: Union[ModelTaskTypeEnum,None] = None,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
@@ -2904,7 +2906,7 @@ async def list_services(
         None, 
         "/services/details/list_services", 
         "model-management-service",
-        {"task_type": task_type.value}, 
+        {"task_type": task_type.value if task_type else None}, 
         method="GET", 
         headers=headers
         )
