@@ -118,11 +118,11 @@ CREATE TABLE IF NOT EXISTS api_keys (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     key_hash VARCHAR(255) UNIQUE NOT NULL,
-    name VARCHAR(100) NOT NULL,
+    key_name VARCHAR(100) NOT NULL,
     is_active BOOLEAN DEFAULT true,
     expires_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    last_used_at TIMESTAMP WITH TIME ZONE
+    last_used TIMESTAMP WITH TIME ZONE
 );
 
 -- Create sequence for user_sessions if it doesn't exist
@@ -362,6 +362,76 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_key_hash ON api_keys(key_hash);
 CREATE INDEX IF NOT EXISTS idx_api_keys_active ON api_keys(is_active);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
+
+-- ============================================================================
+-- Migration: Update api_keys table column names for existing databases
+-- ============================================================================
+-- These migrations handle renaming columns in existing tables:
+-- - name -> key_name
+-- - last_used_at -> last_used
+-- They are idempotent and safe to run multiple times
+
+-- Migration 1: Rename api_keys.name to api_keys.key_name
+DO $$
+BEGIN
+    -- Check if 'name' column exists and 'key_name' doesn't exist
+    IF EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+        AND table_name = 'api_keys' 
+        AND column_name = 'name'
+    ) AND NOT EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+        AND table_name = 'api_keys' 
+        AND column_name = 'key_name'
+    ) THEN
+        -- Rename the column from 'name' to 'key_name'
+        ALTER TABLE api_keys RENAME COLUMN name TO key_name;
+        RAISE NOTICE 'Migrated: Renamed api_keys.name to api_keys.key_name';
+    END IF;
+END $$;
+
+-- Migration 2: Add permissions column and rename last_used_at to last_used
+DO $$
+BEGIN
+    -- Add permissions column if it doesn't exist
+    IF NOT EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+        AND table_name = 'api_keys' 
+        AND column_name = 'permissions'
+    ) THEN
+        ALTER TABLE api_keys ADD COLUMN permissions JSONB DEFAULT '[]'::jsonb;
+        RAISE NOTICE 'Migrated: Added api_keys.permissions column';
+    END IF;
+    
+    -- Check if 'last_used_at' column exists and 'last_used' doesn't exist
+    IF EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+        AND table_name = 'api_keys' 
+        AND column_name = 'last_used_at'
+    ) AND NOT EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+        AND table_name = 'api_keys' 
+        AND column_name = 'last_used'
+    ) THEN
+        -- Rename the column from 'last_used_at' to 'last_used'
+        ALTER TABLE api_keys RENAME COLUMN last_used_at TO last_used;
+        RAISE NOTICE 'Migrated: Renamed api_keys.last_used_at to api_keys.last_used';
+    END IF;
+END $$;
+
+-- Add comments to document the changes
+COMMENT ON COLUMN api_keys.key_name IS 'Name/label for the API key';
+COMMENT ON COLUMN api_keys.permissions IS 'Array of permission strings for the API key';
 CREATE INDEX IF NOT EXISTS idx_user_sessions_session_token ON user_sessions(session_token);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_refresh_token ON user_sessions(refresh_token);
