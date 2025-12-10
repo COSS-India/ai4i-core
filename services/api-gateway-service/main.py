@@ -745,6 +745,9 @@ class ModelViewResponse(BaseModel):
     inferenceEndPoint: InferenceEndPoint = Field(..., description="Inference endpoint configuration")
     source: Optional[str] = Field(None, description="Source information")
     task: Task = Field(..., description="Task type")
+    isPublished: bool = Field(..., description="Publication status")
+    publishedAt: Optional[str] = Field(None, description="Publication timestamp")
+    unpublishedAt: Optional[str] = Field(None, description="Unpublication timestamp")
 
 class BenchmarkEntry(BaseModel):
     """Benchmark entry for service."""
