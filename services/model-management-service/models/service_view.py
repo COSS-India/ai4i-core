@@ -9,6 +9,7 @@ class ServiceViewRequest(BaseModel):
 
 class ServiceResponse(BaseModel):
     serviceId: str
+    uuid: str
     name: str
     serviceDescription: str
     hardwareDescription: str
