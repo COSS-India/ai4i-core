@@ -235,6 +235,8 @@ export const useAuth = () => {
       // Broadcast auth update so UI reflects logout without manual refresh
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
+        // Redirect to auth page after logout
+        window.location.href = '/auth';
       }
     } catch (error) {
       console.error('Logout failed:', error);
@@ -251,6 +253,8 @@ export const useAuth = () => {
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
+        // Redirect to auth page after logout
+        window.location.href = '/auth';
       }
     }
   }, []);

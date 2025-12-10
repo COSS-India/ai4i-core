@@ -25,8 +25,8 @@ import {
   IoLanguageOutline,
   IoSparklesOutline,
   IoVolumeHighOutline,
+  IoServerOutline,
 } from "react-icons/io5";
-import AuthModal from "../components/auth/AuthModal";
 import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
 import { useFeatureFlag } from "../hooks/useFeatureFlag";
@@ -34,45 +34,10 @@ import { useFeatureFlag } from "../hooks/useFeatureFlag";
 const HomePage: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const [pendingNavigation, setPendingNavigation] = useState<string | null>(
-    null
-  );
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
   const hoverBg = useColorModeValue("gray.50", "gray.700");
 
-  // Navigate when authenticated and there's a pending navigation
-  React.useEffect(() => {
-    console.log("HomePage useEffect:", {
-      isAuthenticated,
-      isLoading,
-      pendingNavigation,
-      showAuthModal,
-    });
-    if (!isLoading && isAuthenticated && pendingNavigation) {
-      console.log(
-        "✅ Authentication detected, navigating to pending route:",
-        pendingNavigation
-      );
-      const navPath = pendingNavigation;
-      setPendingNavigation(null); // Clear before navigation
-      setShowAuthModal(false); // Close modal
-      router.push(navPath);
-    }
-  }, [isAuthenticated, isLoading, pendingNavigation, router, showAuthModal]);
-
-  // Handle case where user becomes authenticated but there's no pending navigation
-  React.useEffect(() => {
-    if (!isLoading && isAuthenticated && showAuthModal) {
-      console.log("HomePage: User authenticated, closing modal");
-      setShowAuthModal(false);
-      if (!pendingNavigation && router.pathname !== "/") {
-        console.log("HomePage: Redirecting to home after login");
-        router.push("/");
-      }
-    }
-  }, [isAuthenticated, isLoading, showAuthModal, pendingNavigation, router]);
 
   const handleServiceClick = async (path: string) => {
     console.log("handleServiceClick called:", {
@@ -86,21 +51,20 @@ const HomePage: React.FC = () => {
       return;
     }
 
-    if (isAuthenticated) {
-      console.log("HomePage: User authenticated, navigating to:", path);
-      setPendingNavigation(null);
-      setShowAuthModal(false);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      router.push(path);
-    } else {
-      console.log("HomePage: User not authenticated, showing modal for:", path);
-      setPendingNavigation(path);
-      setShowAuthModal(true);
+    // All services require authentication, so check if user is authenticated
+    if (!isAuthenticated) {
+      console.log("HomePage: User not authenticated, redirecting to /auth");
+      // Store the intended destination in sessionStorage to redirect after login
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('redirectAfterAuth', path);
+      }
+      router.push("/auth");
+      return;
     }
-  };
 
-  const handleAuthModalClose = () => {
-    setShowAuthModal(false);
+    // User is authenticated - navigate to the service
+    console.log("HomePage: User authenticated, navigating to:", path);
+    router.push(path);
   };
 
   // Feature flags for each service
@@ -109,6 +73,7 @@ const HomePage: React.FC = () => {
   const nmtEnabled = useFeatureFlag({ flagName: "nmt-enabled" });
   const llmEnabled = useFeatureFlag({ flagName: "llm-enabled" });
   const pipelineEnabled = useFeatureFlag({ flagName: "pipeline-enabled" });
+  const modelManagementEnabled = useFeatureFlag({ flagName: "model-management-enabled" });
 
   const services = [
     {
@@ -142,7 +107,7 @@ const HomePage: React.FC = () => {
     {
       id: "llm",
       title: "LLM",
-      description: "Enable contextual translation with GPT OSS 20B",
+      description: "Enable contextual translation",
       icon: IoSparklesOutline,
       path: "/llm",
       color: "pink",
@@ -158,6 +123,16 @@ const HomePage: React.FC = () => {
       color: "purple",
       enabled: pipelineEnabled.isEnabled,
     },
+    {
+      id: "model-management",
+      title: "Model Management",
+      description:
+        "Manage and configure AI models.",
+      icon: IoServerOutline,
+      path: "/model-management",
+      color: "cyan",
+      enabled: modelManagementEnabled.isEnabled,
+    },
   ].filter((service) => service.enabled); // Filter out disabled services
 
   return (
@@ -171,24 +146,31 @@ const HomePage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <VStack spacing={12} w="full">
+        <VStack 
+          spacing={10} 
+          w="full" 
+          h="full" 
+          justify="center"
+          align="center"
+        >
           {/* Hero Section */}
-          <Box textAlign="center" pt="2rem" pb="4rem">
-            <Heading size="xl" fontWeight="bold" color="gray.800" mb={4}>
+          <Box textAlign="center" w="full">
+            <Heading size="lg" fontWeight="bold" color="gray.800" mb={2}>
               AI Accessibility Studio
             </Heading>
-            <Text fontSize="lg" color="gray.600" maxW="600px" mx="auto">
+            <Text fontSize="sm" color="gray.600" maxW="600px" mx="auto">
               Test and explore NLP and LLM models
             </Text>
           </Box>
 
           {/* Service Cards Grid */}
           <SimpleGrid
-            columns={{ base: 1, md: 2, lg: 2, xl: 5 }}
+            columns={{ base: 1, sm: 2, md: 2, lg: 3, xl: 3 }}
             spacing={6}
             w="full"
-            maxW="1600px"
+            maxW="1200px"
             mx="auto"
+            justifyItems="center"
           >
             {services.map((service) => (
               <Card
@@ -196,36 +178,65 @@ const HomePage: React.FC = () => {
                 bg={cardBg}
                 border="1px"
                 borderColor={cardBorder}
-                borderRadius="lg"
-                boxShadow="md"
+                borderRadius="xl"
+                boxShadow="lg"
+                overflow="hidden"
                 _hover={{
-                  transform: "translateY(-4px)",
-                  boxShadow: "xl",
-                  bg: hoverBg,
+                  transform: "translateY(-6px)",
+                  boxShadow: "2xl",
+                  borderColor: `${service.color}.300`,
                 }}
-                transition="all 0.2s"
-                h="full"
+                transition="all 0.3s ease"
+                w={{ base: "100%", sm: "320px", md: "320px", lg: "320px", xl: "320px" }}
+                h="260px"
+                position="relative"
+                display="flex"
+                flexDirection="column"
               >
-                <CardHeader textAlign="center" pb={4}>
-                  <VStack spacing={3}>
-                    <Icon
-                      as={service.icon}
-                      boxSize={10}
-                      color={`${service.color}.500`}
-                    />
-                    <Heading size="md" color="gray.800">
+                {/* Colored top border accent */}
+                <Box
+                  position="absolute"
+                  top={0}
+                  left={0}
+                  right={0}
+                  h="4px"
+                  bgGradient={`linear(to-r, ${service.color}.400, ${service.color}.600)`}
+                />
+                
+                <CardHeader textAlign="center" pb={3} pt={4} flexShrink={0}>
+                  <VStack spacing={3} align="center">
+                    <Box
+                      p={3}
+                      borderRadius="full"
+                      bg={`${service.color}.50`}
+                      _dark={{ bg: `${service.color}.900` }}
+                      display="flex"
+                      alignItems="center"
+                      justifyContent="center"
+                    >
+                      <Icon
+                        as={service.icon}
+                        boxSize={7}
+                        color={`${service.color}.600`}
+                      />
+                    </Box>
+                    <Heading size="sm" color="gray.800" fontWeight="semibold" textAlign="center">
                       {service.title}
                     </Heading>
                   </VStack>
                 </CardHeader>
-                <CardBody pt={0}>
-                  <VStack spacing={4} h="full">
+                <CardBody pt={0} pb={4} px={4} flex={1} display="flex" flexDirection="column" justifyContent="space-between">
+                  <VStack spacing={3} h="full" justify="space-between" align="center">
                     <Text
                       color="gray.600"
                       textAlign="center"
                       lineHeight="1.5"
-                      flex={1}
                       fontSize="sm"
+                      noOfLines={3}
+                      flex={1}
+                      display="flex"
+                      alignItems="center"
+                      justifyContent="center"
                     >
                       {service.description}
                     </Text>
@@ -235,13 +246,17 @@ const HomePage: React.FC = () => {
                       colorScheme={service.color}
                       size="md"
                       w="full"
+                      fontWeight="semibold"
                       onClick={(e) => {
                         e.preventDefault();
                         handleServiceClick(service.path);
                       }}
                       _hover={{
-                        transform: "translateY(-1px)",
+                        transform: "translateY(-2px)",
+                        boxShadow: "md",
                       }}
+                      transition="all 0.2s"
+                      flexShrink={0}
                     >
                       Try it now
                     </Button>
@@ -283,13 +298,6 @@ const HomePage: React.FC = () => {
           {/* Getting Started section removed per requirements */}
         </VStack>
       </ContentLayout>
-
-      {/* Auth Modal for service access */}
-      <AuthModal
-        isOpen={showAuthModal}
-        onClose={handleAuthModalClose}
-        initialMode="login"
-      />
     </>
   );
 };
