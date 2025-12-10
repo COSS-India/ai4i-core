@@ -10,6 +10,7 @@ class ModelViewRequest(BaseModel):
 
 class ModelViewResponse(BaseModel):
     modelId: str
+    uuid: str
     name: str
     description: str
     languages: List[Dict[str, Any]]

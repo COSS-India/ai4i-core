@@ -1,4 +1,4 @@
-from fastapi import HTTPException, status , APIRouter , Depends
+from fastapi import HTTPException, status , APIRouter , Depends , Query
 from middleware.auth_provider import AuthProvider
 from models.model_view import ModelViewRequest , ModelViewResponse
 from models.service_view import ServiceViewRequest , ServiceViewResponse
@@ -17,7 +17,7 @@ from models.type_enum import TaskTypeEnum
 router_details = APIRouter(
     prefix="/services/details", 
     tags=["Model Management"],
-    dependencies=[Depends(AuthProvider)] 
+    dependencies=[Depends(AuthProvider)]
     )
 
 
@@ -46,13 +46,18 @@ async def view_model_request(payload: ModelViewRequest):
 
 
 @router_details.get("/list_models" , response_model=List[ModelViewResponse])
-async def list_models_request(task_type: Union[TaskTypeEnum, None]):
+async def list_models_request(task_type: Union[str, None] = None):
     try:
-        data = await list_all_models(task_type)
+        if not task_type or task_type.lower() == "none":
+            task_type_enum = None
+        else:
+            task_type_enum = TaskTypeEnum(task_type)
+
+        data = await list_all_models(task_type_enum)
         if data is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"No valid models found for task type: '{task_type.value}'"
+                detail=f"No valid models found for task type: '{task_type_enum.value if task_type_enum else None}'"
             )
 
         return data
@@ -90,14 +95,19 @@ async def view_service_request(payload: ServiceViewRequest):
     
 
 @router_details.get("/list_services" , response_model=List[ServiceListResponse])
-async def list_services_request(task_type: Union[TaskTypeEnum, None]):
+async def list_services_request(task_type: Union[str, None] = None):
     try:
-        data = await list_all_services(task_type)
+        if not task_type or task_type.lower() == "none":
+            task_type_enum = None
+        else:
+            task_type_enum = TaskTypeEnum(task_type)
+
+        data = await list_all_services(task_type_enum)
 
         if data is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"No valid models found for task type: '{task_type.value}'"
+                detail=f"No valid models found for task type: '{task_type_enum.value if task_type_enum else None}'"
             )
 
         return data
