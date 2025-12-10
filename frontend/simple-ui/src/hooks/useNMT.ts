@@ -126,7 +126,7 @@ export const useNMT = (): UseNMTReturn => {
     } catch (err) {
       console.error('Inference error:', err);
     }
-  }, [nmtMutation, languagePair, toast]);
+  }, [nmtMutation, languagePair, toast, selectedServiceId]);
 
   // Set input text with validation
   const setInputTextWithValidation = useCallback((text: string) => {

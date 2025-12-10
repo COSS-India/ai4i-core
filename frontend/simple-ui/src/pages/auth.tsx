@@ -27,6 +27,7 @@ const AuthPage: React.FC = () => {
   const [mode, setMode] = useState<"login" | "register">("login");
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
+  const pageBg = useColorModeValue("gray.50", "gray.900");
 
   // Redirect to home if already authenticated
   useEffect(() => {
@@ -95,7 +96,7 @@ const AuthPage: React.FC = () => {
 
       <Box
         minH="100vh"
-        bg={useColorModeValue("gray.50", "gray.900")}
+        bg={pageBg}
         display="flex"
         alignItems="center"
         justifyContent="center"

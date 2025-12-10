@@ -59,11 +59,11 @@ class ApiKeyDB(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     key_hash = Column(String(255), unique=True, index=True, nullable=False)
-    name = Column(String(100), nullable=False)
+    name = Column("key_name", String(100), nullable=False)  # Maps to 'key_name' column in database
     is_active = Column(Boolean, default=True, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    last_used_at = Column("last_used", DateTime(timezone=True), nullable=True)  # Maps to 'last_used' column in database
     
     # Relationships
     user = relationship("UserDB", back_populates="api_keys")
