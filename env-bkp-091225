@@ -1,0 +1,82 @@
+# Global Environment Configuration
+COMPOSE_PROJECT_NAME=dhruva-microservices
+ENVIRONMENT=development
+
+# Database Configuration
+POSTGRES_USER=dhruva_user
+POSTGRES_PASSWORD=dhruva_secure_password_2024
+POSTGRES_DB=dhruva_platform
+
+# Redis Configuration
+REDIS_PASSWORD=redis_secure_password_2024
+
+# InfluxDB Configuration
+INFLUXDB_ADMIN_USER=admin
+INFLUXDB_ADMIN_PASSWORD=influx_secure_password_2024
+INFLUXDB_ORG=dhruva-org
+INFLUXDB_BUCKET=metrics
+INFLUXDB_ADMIN_TOKEN=dhruva-influx-token-2024
+
+# Elasticsearch Configuration
+ELASTIC_PASSWORD=elastic_secure_password_2024
+ELASTIC_USERNAME=elastic
+
+# Kafka Configuration
+KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+
+# JWT Configuration
+JWT_SECRET_KEY=dhruva-jwt-secret-key-2024-super-secure
+JWT_REFRESH_SECRET_KEY=dhruva-refresh-secret-key-2024-super-secure
+
+# Service URLs
+API_GATEWAY_URL=http://api-gateway-service:8080
+AUTH_SERVICE_URL=http://auth-service:8081
+CONFIG_SERVICE_URL=http://config-service:8082
+METRICS_SERVICE_URL=http://metrics-service:8083
+TELEMETRY_SERVICE_URL=http://telemetry-service:8084
+ALERTING_SERVICE_URL=http://alerting-service:8085
+DASHBOARD_SERVICE_URL=http://dashboard-service:8086
+ASR_SERVICE_URL=http://asr-service:8087
+TTS_SERVICE_URL=http://tts-service:8088
+NMT_SERVICE_URL=http://nmt-service:8089
+
+# Logging Configuration
+LOG_LEVEL=INFO
+
+# Timezone
+TZ=UTC
+
+ASR_SERVICE_URL=http://asr-service:8087
+TTS_SERVICE_URL=http://tts-service:8088
+NMT_SERVICE_URL=http://nmt-service:8089
+
+KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+# Vault Configuration
+VAULT_ROOT_TOKEN=dev-root-token
+
+
+REDIS_PORT_NUMBER  : 6379
+ 
+ 
+# Enable plugin in the service
+OBSERVE_UTIL_ENABLED=true
+OBSERVE_UTIL_DEBUG=false
+ 
+# Endpoint paths (only change if you intentionally customize)
+OBSERVE_UTIL_METRICS_PATH=/enterprise/metrics
+OBSERVE_UTIL_HEALTH_PATH=/enterprise/health
+ 
+# Multi‑tenant labels (optional but recommended)
+OBSERVE_UTIL_CUSTOMERS=irctc,beml,kisanmitra       # example
+OBSERVE_UTIL_APPS=nmt,tts,asr,llm                  # app/service ids to appear in metrics
+ 
+ 
+ 
+ 
+# Grafana admin (used by docker-compose via GRAFANA_ADMIN_* → GF_SECURITY_*)
+GRAFANA_ADMIN_USER=user_admin
+GRAFANA_ADMIN_PASSWORD=password_admin
+ 
+# Optional: public root URL if running behind ingress / different host
+GF_SERVER_ROOT_URL=http://<public-host-or-ingress>/grafana
