@@ -636,7 +636,7 @@ services:
       - "8093:8090"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=http://13.220.11.146:8000
+      - TRITON_ENDPOINT=http://3.235.56.233:8001
       - TRITON_TIMEOUT=300
     env_file:
       - ./services/llm-service/.env
@@ -803,7 +803,7 @@ services:
       dockerfile: services/language-diarization-service/Dockerfile
     container_name: ai4v-language-diarization-service
     ports:
-      - "8094:8094"
+      - "9002:9002"
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=65.1.35.3:8600
@@ -819,7 +819,7 @@ services:
     networks:
       - microservices-network
     # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:8094/health"]
+    #   test: ["CMD", "curl", "-f", "http://localhost:9002/health"]
     #   interval: 30s
     #   timeout: 10s
     #   retries: 3
@@ -896,8 +896,8 @@ services:
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--storage.tsdb.retention.time=30d'
-      - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
-      # - '--web.external-url=http://localhost:9090'
+      # - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
+      - '--web.external-url=http://localhost:9090'
 
       - '--web.route-prefix=/'
     networks:
@@ -923,8 +923,8 @@ services:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_INSTALL_PLUGINS=
-      - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
-      # - GF_SERVER_ROOT_URL=http://localhost:3001
+      # - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
+      - GF_SERVER_ROOT_URL=http://localhost:3001
 
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
     volumes:

@@ -156,7 +156,7 @@ async def lifespan(app: FastAPI):
     try:
         registry_client = ServiceRegistryHttpClient()
         service_name = os.getenv("SERVICE_NAME", "language-diarization-service")
-        service_port = int(os.getenv("SERVICE_PORT", "8094"))
+        service_port = int(os.getenv("SERVICE_PORT", "9002"))
         public_base_url = os.getenv("SERVICE_PUBLIC_URL")
         if public_base_url:
             service_url = public_base_url.rstrip("/")
@@ -333,7 +333,7 @@ async def health(request: Request):
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("SERVICE_PORT", "8094"))
+    port = int(os.getenv("SERVICE_PORT", "9002"))
     log_level = os.getenv("LOG_LEVEL", "info").lower()
 
     uvicorn.run(

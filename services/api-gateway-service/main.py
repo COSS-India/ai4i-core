@@ -1573,7 +1573,7 @@ async def api_status():
             "transliteration": os.getenv("TRANSLITERATION_SERVICE_URL", "http://transliteration-service:8090"),
             "language-detection": os.getenv("LANGUAGE_DETECTION_SERVICE_URL", "http://language-detection-service:8090"),
             "speaker-diarization": os.getenv("SPEAKER_DIARIZATION_SERVICE_URL", "http://speaker-diarization-service:8095"),
-            "language-diarization": os.getenv("LANGUAGE_DIARIZATION_SERVICE_URL", "http://language-diarization-service:8094"),
+            "language-diarization": os.getenv("LANGUAGE_DIARIZATION_SERVICE_URL", "http://language-diarization-service:9002"),
             "audio-lang-detection": os.getenv("AUDIO_LANG_DETECTION_SERVICE_URL", "http://audio-lang-detection-service:8096"),
             "model-management": os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
             "llm": os.getenv("LLM_SERVICE_URL", "http://llm-service:8090"),
@@ -2747,46 +2747,44 @@ async def list_models(
 
 @app.post("/api/v1/model-management/models/publish", response_model=str, tags=["Model Management"])
 async def publish_model(
-    payload: ModelViewRequest,
     request: Request,
+    model_id: str = Query(..., description="Model ID to publish"),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Fetch metadata for a specific model."""
+    """Publish a model by ID."""
     ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
-    # Use model_dump with json mode to properly serialize datetime objects
-    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    payload = json.dumps({"modelId": model_id}).encode("utf-8")
     return await proxy_to_service(
         None,
         "/services/admin/publish/model",
         "model-management-service",
         method="POST",
-        body=body,
+        body=payload,
         headers=headers,
     )
 
 
 @app.post("/api/v1/model-management/models/unpublish", response_model=str, tags=["Model Management"])
 async def unpublish_model(
-    payload: ModelViewRequest,
     request: Request,
+    model_id: str = Query(..., description="Model ID to unpublish"),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Fetch metadata for a specific model."""
+    """Unpublish a model by ID."""
     ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
-    # Use model_dump with json mode to properly serialize datetime objects
-    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    payload = json.dumps({"modelId": model_id}).encode("utf-8")
     return await proxy_to_service(
         None,
         "/services/admin/unpublish/model",
         "model-management-service",
         method="POST",
-        body=body,
+        body=payload,
         headers=headers,
     )
 
@@ -3138,7 +3136,7 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'transliteration-service': os.getenv('TRANSLITERATION_SERVICE_URL', 'http://transliteration-service:8090'),
         'language-detection-service': os.getenv('LANGUAGE_DETECTION_SERVICE_URL', 'http://language-detection-service:8090'),
         'speaker-diarization-service': os.getenv('SPEAKER_DIARIZATION_SERVICE_URL', 'http://speaker-diarization-service:8095'),
-        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:8094'),
+        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:9002'),
         'audio-lang-detection-service': os.getenv('AUDIO_LANG_DETECTION_SERVICE_URL', 'http://audio-lang-detection-service:8096'),
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
@@ -3214,7 +3212,7 @@ async def proxy_to_service_with_params(
         'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
         'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),
         'speaker-diarization-service': os.getenv('SPEAKER_DIARIZATION_SERVICE_URL', 'http://speaker-diarization-service:8095'),
-        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:8094'),
+        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:9002'),
         'audio-lang-detection-service': os.getenv('AUDIO_LANG_DETECTION_SERVICE_URL', 'http://audio-lang-detection-service:8096'),
         'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
         'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),

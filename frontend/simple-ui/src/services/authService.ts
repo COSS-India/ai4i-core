@@ -66,31 +66,63 @@ class AuthService {
     }
   }
 
-  // Token management
-  public getAccessToken(): string | null {
-    if (typeof window === 'undefined') return null;
-    return localStorage.getItem('access_token');
+  // Token management with remember me support
+  private getStorage(): Storage {
+    if (typeof window === 'undefined') return localStorage;
+    // Check if remember_me preference is stored
+    const rememberMe = localStorage.getItem('remember_me') === 'true';
+    return rememberMe ? localStorage : sessionStorage;
   }
 
-  public setAccessToken(token: string): void {
+  public getAccessToken(): string | null {
+    if (typeof window === 'undefined') return null;
+    // Check both storages (for backward compatibility and migration)
+    return localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+  }
+
+  public setAccessToken(token: string, rememberMe: boolean = true): void {
     if (typeof window === 'undefined') return;
-    localStorage.setItem('access_token', token);
+    // Store remember_me preference
+    localStorage.setItem('remember_me', rememberMe ? 'true' : 'false');
+    // Clear from both storages first
+    localStorage.removeItem('access_token');
+    sessionStorage.removeItem('access_token');
+    // Store in appropriate storage
+    if (rememberMe) {
+      localStorage.setItem('access_token', token);
+    } else {
+      sessionStorage.setItem('access_token', token);
+    }
   }
 
   public getRefreshToken(): string | null {
     if (typeof window === 'undefined') return null;
-    return localStorage.getItem('refresh_token');
+    // Check both storages (for backward compatibility and migration)
+    return localStorage.getItem('refresh_token') || sessionStorage.getItem('refresh_token');
   }
 
-  public setRefreshToken(token: string): void {
+  public setRefreshToken(token: string, rememberMe: boolean = true): void {
     if (typeof window === 'undefined') return;
-    localStorage.setItem('refresh_token', token);
+    // Store remember_me preference
+    localStorage.setItem('remember_me', rememberMe ? 'true' : 'false');
+    // Clear from both storages first
+    localStorage.removeItem('refresh_token');
+    sessionStorage.removeItem('refresh_token');
+    // Store in appropriate storage
+    if (rememberMe) {
+      localStorage.setItem('refresh_token', token);
+    } else {
+      sessionStorage.setItem('refresh_token', token);
+    }
   }
 
   private clearTokens(): void {
     if (typeof window === 'undefined') return;
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
+    sessionStorage.removeItem('access_token');
+    sessionStorage.removeItem('refresh_token');
+    localStorage.removeItem('remember_me');
   }
 
   public clearAuthTokens(): void {
@@ -113,9 +145,10 @@ class AuthService {
       body: JSON.stringify(data),
     });
 
-    // Store tokens
-    this.setAccessToken(response.access_token);
-    this.setRefreshToken(response.refresh_token);
+    // Store tokens with remember_me preference
+    const rememberMe = data.remember_me ?? true; // Default to true for backward compatibility
+    this.setAccessToken(response.access_token, rememberMe);
+    this.setRefreshToken(response.refresh_token, rememberMe);
 
     return response;
   }
@@ -236,13 +269,16 @@ class AuthService {
       throw new Error('No refresh token available');
     }
 
-    const response = await this.request<TokenRefreshResponse>('/refresh', {
+    // Use requestWithoutAuth for refresh endpoint - it doesn't need Authorization header
+    // The refresh_token in the body is sufficient
+    const response = await this.requestWithoutAuth<TokenRefreshResponse>('/refresh', {
       method: 'POST',
       body: JSON.stringify({ refresh_token: refreshToken }),
     });
 
-    // Update access token
-    this.setAccessToken(response.access_token);
+    // Update access token with same remember_me preference
+    const rememberMe = localStorage.getItem('remember_me') === 'true';
+    this.setAccessToken(response.access_token, rememberMe);
 
     return response;
   }
@@ -321,18 +357,29 @@ class AuthService {
 
   getStoredUser(): User | null {
     if (typeof window === 'undefined') return null;
-    const userStr = localStorage.getItem('user');
+    // Check both storages (for backward compatibility)
+    const userStr = localStorage.getItem('user') || sessionStorage.getItem('user');
     return userStr ? JSON.parse(userStr) : null;
   }
 
   setStoredUser(user: User): void {
     if (typeof window === 'undefined') return;
-    localStorage.setItem('user', JSON.stringify(user));
+    const rememberMe = localStorage.getItem('remember_me') === 'true';
+    // Clear from both storages first
+    localStorage.removeItem('user');
+    sessionStorage.removeItem('user');
+    // Store in appropriate storage
+    if (rememberMe) {
+      localStorage.setItem('user', JSON.stringify(user));
+    } else {
+      sessionStorage.setItem('user', JSON.stringify(user));
+    }
   }
 
   clearStoredUser(): void {
     if (typeof window === 'undefined') return;
     localStorage.removeItem('user');
+    sessionStorage.removeItem('user');
   }
 
   // Auto-refresh token
