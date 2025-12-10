@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel
+from pydantic import BaseModel , field_validator
+from models.type_enum import TaskTypeEnum
 from datetime import datetime
 
 class ModelProcessingType(BaseModel):
@@ -79,3 +80,19 @@ class ModelCreateRequest(BaseModel):
         "from_attributes": True     # replaces orm_mode
     }
 
+    @field_validator("task", mode="before")
+    def normalize_and_validate_task(cls, v):
+        if not v:
+            return v
+    
+        if "type" in v and isinstance(v["type"], str):
+            v["type"] = v["type"].lower()
+    
+        valid_types = [e.value for e in TaskTypeEnum]
+    
+        if v["type"] not in valid_types:
+            raise ValueError(
+                f"Invalid task type '{v['type']}'. Valid types are: {', '.join(valid_types)}"
+            )
+    
+        return v
