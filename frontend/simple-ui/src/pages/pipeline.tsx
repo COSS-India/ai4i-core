@@ -48,9 +48,7 @@ const PipelinePage: React.FC = () => {
   const [sourceLanguage, setSourceLanguage] = useState("hi");
   const [targetLanguage, setTargetLanguage] = useState("mr");
   const [asrServiceId, setAsrServiceId] = useState("asr_am_ensemble");
-  const [nmtServiceId, setNmtServiceId] = useState(
-    "ai4bharat/indictrans-v2-all-gpu"
-  );
+  const [nmtServiceId, setNmtServiceId] = useState<string>("");
   const [ttsServiceId, setTtsServiceId] = useState(
     "indic-tts-coqui-indo_aryan"
   );
@@ -79,6 +77,14 @@ const PipelinePage: React.FC = () => {
     queryFn: listNMTServices,
     staleTime: 5 * 60 * 1000,
   });
+
+  // Auto-select first available NMT service when list loads
+  React.useEffect(() => {
+    if (!nmtServices || nmtServices.length === 0) return;
+    if (!nmtServiceId) {
+      setNmtServiceId(nmtServices[0].service_id);
+    }
+  }, [nmtServices, nmtServiceId]);
 
   const { data: ttsVoices } = useQuery({
     queryKey: ["tts-voices"],
@@ -256,9 +262,6 @@ const PipelinePage: React.FC = () => {
                     value={nmtServiceId}
                     onChange={(e) => setNmtServiceId(e.target.value)}
                   >
-                    <option value="ai4bharat/indictrans-v2-all-gpu">
-                      ai4bharat/indictrans-v2-all-gpu (Default)
-                    </option>
                     {nmtServices
                       ?.filter(
                         (service) =>

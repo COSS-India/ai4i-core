@@ -219,8 +219,10 @@ export interface NMTServiceDetailsResponse {
   model_id: string;
   triton_endpoint: string;
   triton_model: string;
-  provider: string;
-  description: string;
+  provider: string; // Keep for backward compatibility
+  description: string; // Keep for backward compatibility
+  name: string;
+  serviceDescription: string;
   supported_languages: string[];
   supported_language_pairs?: Array<{
     sourceLanguage: string;

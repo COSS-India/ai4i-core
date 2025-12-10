@@ -2294,68 +2294,6 @@ async def nmt_inference(
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/nmt/inference", "nmt-service", method="POST", body=body, headers=headers)
 
-@app.post("/api/v1/nmt/batch-translate", tags=["NMT"])
-async def batch_translate(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
-):
-    """Batch translate multiple texts using NMT service"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/nmt/batch-translate", "nmt-service", headers=headers)
-
-@app.get("/api/v1/nmt/languages", response_model=Dict[str, Any], tags=["NMT"])
-async def get_nmt_languages(
-    request: Request,
-    model_id: Optional[str] = Query(None, description="Model ID to get languages for"),
-    service_id: Optional[str] = Query(None, description="Service ID to get languages for"),
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
-):
-    """Get supported languages for NMT service"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
-    headers = build_auth_headers(request, credentials, api_key)
-    
-    # Build query parameters dict
-    query_params = {}
-    if service_id:
-        query_params["service_id"] = service_id
-    elif model_id:
-        query_params["model_id"] = model_id
-    # If neither provided, service will default to AI4Bharat
-    
-    # Build path and pass params separately to avoid httpx param conflicts
-    path = "/api/v1/nmt/languages"
-    
-    # Create a custom proxy call that handles params correctly
-    return await proxy_to_service_with_params(None, path, "nmt-service", query_params, headers=headers)
-
-@app.get("/api/v1/nmt/models", response_model=Dict[str, Any], tags=["NMT"])
-async def get_nmt_models(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
-):
-    """Get available NMT models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
-    headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/nmt/models", "nmt-service", headers=headers)
-
-@app.get("/api/v1/nmt/services", response_model=Dict[str, Any], tags=["NMT"])
-async def get_nmt_services(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
-):
-    """Get available NMT services"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
-    headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/nmt/services", "nmt-service", headers=headers)
-
 @app.get("/api/v1/nmt/health", tags=["NMT"])
 async def nmt_health(
     request: Request,
