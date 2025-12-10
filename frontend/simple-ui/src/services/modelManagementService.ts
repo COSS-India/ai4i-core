@@ -137,3 +137,25 @@ export const publishModel = async (modelId: string): Promise<string> => {
   }
 };
 
+/**
+ * List services by task type
+ * @param taskType - The task type to filter by (e.g., 'nmt', 'asr', 'tts')
+ * @returns Promise with list of services
+ */
+export const listServices = async (taskType?: string): Promise<any[]> => {
+  try {
+    const url = '/api/v1/model-management/services/';
+    const params = taskType ? { task_type: taskType } : {};
+    const response = await apiClient.get<any[]>(url, { params });
+    return response.data;
+  } catch (error: any) {
+    console.error('List services error:', error);
+    const errorMessage =
+      error.response?.data?.detail ||
+      error.response?.data?.message ||
+      error.message ||
+      'Failed to fetch services';
+    throw new Error(errorMessage);
+  }
+};
+
