@@ -75,7 +75,7 @@ const OAuthCallback = () => {
     if (router.isReady) {
       handleOAuthCallback();
     }
-  }, [router.isReady, router.query]);
+  }, [router.isReady, router.query, router]);
 
   return (
     <Box
