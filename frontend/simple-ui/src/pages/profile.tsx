@@ -89,6 +89,7 @@ const ProfilePage: React.FC = () => {
 
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
+  const inputReadOnlyBg = useColorModeValue("gray.50", "gray.700");
 
   // Initialize form data when user data is available
   useEffect(() => {
@@ -345,7 +346,7 @@ const ProfilePage: React.FC = () => {
                       value={isEditingUser ? (userFormData.full_name || "") : (user.full_name || user.username || "N/A")}
                       isReadOnly={!isEditingUser}
                       onChange={(e) => handleInputChange("full_name", e.target.value)}
-                      bg={isEditingUser ? "white" : useColorModeValue("gray.50", "gray.700")}
+                      bg={isEditingUser ? "white" : inputReadOnlyBg}
                       placeholder="Enter your full name"
                     />
                   </FormControl>
@@ -355,7 +356,7 @@ const ProfilePage: React.FC = () => {
                     <Input
                       value={user.username || "N/A"}
                       isReadOnly
-                      bg={useColorModeValue("gray.50", "gray.700")}
+                      bg={inputReadOnlyBg}
                     />
                     <Text fontSize="xs" color="gray.500" mt={1}>
                       Username cannot be changed
@@ -367,7 +368,7 @@ const ProfilePage: React.FC = () => {
                     <Input
                       value={user.email || "N/A"}
                       isReadOnly
-                      bg={useColorModeValue("gray.50", "gray.700")}
+                      bg={inputReadOnlyBg}
                     />
                     <Text fontSize="xs" color="gray.500" mt={1}>
                       Email cannot be changed
@@ -380,7 +381,7 @@ const ProfilePage: React.FC = () => {
                       value={isEditingUser ? (userFormData.phone_number || "") : (user.phone_number || "")}
                       isReadOnly={!isEditingUser}
                       onChange={(e) => handleInputChange("phone_number", e.target.value)}
-                      bg={isEditingUser ? "white" : useColorModeValue("gray.50", "gray.700")}
+                      bg={isEditingUser ? "white" : inputReadOnlyBg}
                       placeholder="Enter your phone number"
                     />
                     {errors.phone_number && (
@@ -407,7 +408,7 @@ const ProfilePage: React.FC = () => {
                         <Input
                           value={user.timezone || "N/A"}
                           isReadOnly
-                          bg={useColorModeValue("gray.50", "gray.700")}
+                          bg={inputReadOnlyBg}
                         />
                       )}
                     </FormControl>
@@ -430,7 +431,7 @@ const ProfilePage: React.FC = () => {
                         <Input
                           value={languages.find((l) => l.value === user.language)?.label || user.language || "N/A"}
                           isReadOnly
-                          bg={useColorModeValue("gray.50", "gray.700")}
+                          bg={inputReadOnlyBg}
                         />
                       )}
                     </FormControl>
@@ -442,7 +443,7 @@ const ProfilePage: React.FC = () => {
                       <Input
                         value={user.is_active ? "Active" : "Inactive"}
                         isReadOnly
-                        bg={useColorModeValue("gray.50", "gray.700")}
+                        bg={inputReadOnlyBg}
                       />
                     </FormControl>
 
@@ -451,7 +452,7 @@ const ProfilePage: React.FC = () => {
                       <Input
                         value={user.is_verified ? "Yes" : "No"}
                         isReadOnly
-                        bg={useColorModeValue("gray.50", "gray.700")}
+                        bg={inputReadOnlyBg}
                       />
                     </FormControl>
                   </HStack>
@@ -462,7 +463,7 @@ const ProfilePage: React.FC = () => {
                       <Input
                         value={new Date(user.created_at).toLocaleDateString()}
                         isReadOnly
-                        bg={useColorModeValue("gray.50", "gray.700")}
+                        bg={inputReadOnlyBg}
                       />
                     </FormControl>
                   )}
@@ -493,7 +494,7 @@ const ProfilePage: React.FC = () => {
                     <Input
                       value="Not Available"
                       isReadOnly
-                      bg={useColorModeValue("gray.50", "gray.700")}
+                      bg={inputReadOnlyBg}
                     />
                   </FormControl>
 
@@ -502,7 +503,7 @@ const ProfilePage: React.FC = () => {
                     <Input
                       value="Not Available"
                       isReadOnly
-                      bg={useColorModeValue("gray.50", "gray.700")}
+                      bg={inputReadOnlyBg}
                     />
                   </FormControl>
 
@@ -511,7 +512,7 @@ const ProfilePage: React.FC = () => {
                     <Input
                       value="Not Available"
                       isReadOnly
-                      bg={useColorModeValue("gray.50", "gray.700")}
+                      bg={inputReadOnlyBg}
                     />
                   </FormControl>
                     </VStack>
@@ -536,7 +537,7 @@ const ProfilePage: React.FC = () => {
                         type={showApiKey ? "text" : "password"}
                         value={showApiKey ? (apiKey || "") : maskedApiKey}
                         isReadOnly
-                        bg={useColorModeValue("gray.50", "gray.700")}
+                        bg={inputReadOnlyBg}
                         placeholder={apiKey ? undefined : "No API key set"}
                       />
                       <InputRightElement width="8rem">
@@ -687,7 +688,7 @@ const ProfilePage: React.FC = () => {
                               ) : selectedUserRoles.length > 0 ? (
                                 <VStack spacing={2} align="stretch">
                                   {selectedUserRoles.map((roleName) => (
-                                    <HStack key={roleName} justify="space-between" p={3} bg={useColorModeValue("gray.50", "gray.700")} borderRadius="md">
+                                    <HStack key={roleName} justify="space-between" p={3} bg={inputReadOnlyBg} borderRadius="md">
                                       <Badge colorScheme="green" fontSize="sm" p={1}>
                                         {roleName}
                                       </Badge>

@@ -416,6 +416,7 @@ const ModelManagementPage: React.FC = () => {
   const cardBorder = useColorModeValue("gray.200", "gray.700");
   const tableBg = useColorModeValue("white", "gray.800");
   const tableHeaderBg = useColorModeValue("gray.50", "gray.700");
+  const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
 
   const getTaskColor = (taskType: string) => {
     switch (taskType.toLowerCase()) {
@@ -744,7 +745,7 @@ const ModelManagementPage: React.FC = () => {
                               {models.map((model) => (
                               <Tr 
                                 key={model.modelId} 
-                                _hover={{ bg: useColorModeValue("gray.50", "gray.700"), cursor: "pointer" }}
+                                _hover={{ bg: tableRowHoverBg, cursor: "pointer" }}
                                 onClick={() => handleViewModel(model.modelId)}
                               >
                                 <Td>
