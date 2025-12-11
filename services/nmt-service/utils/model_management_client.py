@@ -129,14 +129,16 @@ class ModelManagementClient:
         else:
             logger.warning("No auth_headers provided to _get_headers")
         
-        # Fallback to static API key if no auth headers provided (for backward compatibility)
-        if self.api_key and "Authorization" not in headers and "X-API-Key" not in headers:
-            headers["X-API-Key"] = self.api_key
-            headers["Authorization"] = f"Bearer {self.api_key}"
-            logger.debug("Using fallback static API key")
-        
+        # Do not inject fallback API keys here; rely on forwarded request auth only
         if "Authorization" not in headers and "X-API-Key" not in headers:
             logger.warning("No authentication headers will be sent to model management service!")
+        else:
+            # If Authorization is present but X-Auth-Source is missing, assume AUTH_TOKEN
+            if "Authorization" in headers and "X-Auth-Source" not in headers:
+                headers["X-Auth-Source"] = "AUTH_TOKEN"
+            # If only X-API-Key is present, mark source as API_KEY
+            if "Authorization" not in headers and "X-API-Key" in headers and "X-Auth-Source" not in headers:
+                headers["X-Auth-Source"] = "API_KEY"
         
         return headers
     
