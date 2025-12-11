@@ -745,6 +745,9 @@ class ModelViewResponse(BaseModel):
     inferenceEndPoint: InferenceEndPoint = Field(..., description="Inference endpoint configuration")
     source: Optional[str] = Field(None, description="Source information")
     task: Task = Field(..., description="Task type")
+    isPublished: bool = Field(..., description="Publication status")
+    publishedAt: Optional[str] = Field(None, description="Publication timestamp")
+    unpublishedAt: Optional[str] = Field(None, description="Unpublication timestamp")
 
 class BenchmarkEntry(BaseModel):
     """Benchmark entry for service."""
@@ -2729,7 +2732,7 @@ async def unpublish_model(
     )
 
 
-@app.post("/api/v1/model-management/models/{model_id}", response_model=ModelViewResponse, tags=["Model Management"])
+@app.post("/api/v1/model-management/models/{model_id:path}", response_model=ModelViewResponse, tags=["Model Management"])
 async def get_model(
     model_id: str,
     request: Request,
@@ -2838,7 +2841,7 @@ async def list_services(
         )
 
 
-@app.post("/api/v1/model-management/services/{service_id}", response_model=ServiceViewResponse, tags=["Model Management"])
+@app.post("/api/v1/model-management/services/{service_id:path}", response_model=ServiceViewResponse, tags=["Model Management"])
 async def get_service_details(
     service_id: str,
     request: Request,
