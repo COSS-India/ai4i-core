@@ -23,7 +23,7 @@ from middleware.auth_provider import AuthProvider
 router_admin = APIRouter(
     prefix="/services/admin", 
     tags=["Model Management"],
-    dependencies=[Depends(AuthProvider)]
+    # dependencies=[Depends(AuthProvider)]
     )
 
 

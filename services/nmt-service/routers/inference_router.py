@@ -51,10 +51,12 @@ async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_db_se
     text_service = TextService()
     
     # Default Triton client
-    default_triton_client = TritonClient(
-        triton_url=request.app.state.triton_endpoint,
-        api_key=request.app.state.triton_api_key
-    )
+    default_triton_client = None
+    if getattr(request.app.state, "triton_endpoint", None):
+        default_triton_client = TritonClient(
+            triton_url=request.app.state.triton_endpoint,
+            api_key=request.app.state.triton_api_key
+        )
     
     # Factory function to create Triton clients for different endpoints
     def get_triton_client_for_endpoint(endpoint: str) -> TritonClient:
@@ -68,6 +70,7 @@ async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_db_se
     # Get model management client from app state
     model_management_client = getattr(request.app.state, "model_management_client", None)
     redis_client = getattr(request.app.state, "redis_client", None)
+    cache_ttl = getattr(request.app.state, "triton_endpoint_cache_ttl", 300)
     
     return NMTService(
         repository, 
@@ -75,7 +78,8 @@ async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_db_se
         default_triton_client,
         get_triton_client_for_endpoint,
         model_management_client=model_management_client,
-        redis_client=redis_client
+        redis_client=redis_client,
+        cache_ttl_seconds=cache_ttl
     )
 
 
