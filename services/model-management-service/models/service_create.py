@@ -9,8 +9,8 @@ class BenchmarkEntry(BaseModel):
     actual: int | None = None
     throughput: int | None = None
 
-    p50: int | None = Field(default=None, alias="50%")
-    p99: int | None = Field(default=None, alias="99%")
+    p50: float | int | None = Field(default=None, alias="50%")
+    p99: float | int |None = Field(default=None, alias="99%")
 
     language: str | None = None
 
