@@ -21,7 +21,8 @@ from models import (
     TokenValidationResponse, PasswordChangeRequest, PasswordResetRequest,
     PasswordResetConfirm, LogoutRequest, LogoutResponse, APIKeyCreate,
     APIKeyResponse, OAuth2Provider, OAuth2Callback, Role, UserRole,
-    APIKeyValidationRequest, APIKeyValidationResponse
+    APIKeyValidationRequest, APIKeyValidationResponse, Permission,
+    UserDetailResponse, PermissionResponse, UserListResponse
 )
 from pydantic import BaseModel
 from auth_utils import AuthUtils
@@ -553,7 +554,11 @@ async def validate_api_key(
     action = validation_data.action.lower().strip()
     
     # Validate service name
-    valid_services = ['asr', 'tts', 'nmt', 'pipeline', 'model-management', 'llm']
+    valid_services = [
+        'asr', 'tts', 'nmt', 'pipeline', 'model-management', 'llm',
+        'audio-lang-detection', 'language-detection', 'language-diarization',
+        'ner', 'ocr', 'speaker-diarization', 'transliteration'
+    ]
     if service not in valid_services:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -568,11 +573,31 @@ async def validate_api_key(
             detail=f"Invalid action. Must be one of: {', '.join(valid_actions)}"
         )
     
+    # Map service names to permission resource names (for compatibility)
+    # Permissions use resource names like "audio-lang" but services may send "audio-lang-detection"
+    service_to_resource = {
+        'audio-lang-detection': 'audio-lang',
+        'language-detection': 'language-detection',
+        'language-diarization': 'language-diarization',
+        'ner': 'ner',
+        'ocr': 'ocr',
+        'speaker-diarization': 'speaker-diarization',
+        'transliteration': 'transliteration',
+        'asr': 'asr',
+        'tts': 'tts',
+        'nmt': 'nmt',
+        'pipeline': 'pipeline',
+        'model-management': 'model-management',
+        'llm': 'llm'
+    }
+    # Use mapped resource name for permission checking
+    resource_name = service_to_resource.get(service, service)
+    
     # Validate API key
     is_valid, api_key_obj, error_message = await AuthUtils.validate_api_key(
         db=db,
         api_key=validation_data.api_key,
-        service=service,
+        service=resource_name,
         action=action
     )
     
@@ -1166,6 +1191,123 @@ async def list_roles(
     result = await db.execute(select(Role))
     roles = result.scalars().all()
     return [{"id": role.id, "name": role.name, "description": role.description} for role in roles]
+
+
+# Helper function to check admin role
+async def require_admin(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """Dependency to ensure current user is an admin"""
+    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    if "ADMIN" not in user_roles and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can access this endpoint"
+        )
+    return current_user
+
+
+# Admin endpoints
+@app.get("/api/v1/auth/users/{user_id}", response_model=UserDetailResponse, tags=["Admin"])
+async def get_user_details(
+    user_id: int,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get user details by user ID (Admin only)
+    
+    Returns user information including:
+    - userid
+    - username
+    - emailid
+    - phonenumber
+    - full_name
+    - is_active
+    - is_verified
+    - is_superuser
+    - created_at
+    - last_login
+    """
+    user = await AuthUtils.get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with ID {user_id} not found"
+        )
+    
+    return UserDetailResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        phone_number=user.phone_number,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        is_verified=user.is_verified,
+        is_superuser=user.is_superuser,
+        created_at=user.created_at,
+        last_login=user.last_login
+    )
+
+
+@app.get("/api/v1/auth/permissions", response_model=List[PermissionResponse], tags=["Admin"])
+async def get_all_permissions(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all permissions from the permissions table (Admin only)
+    
+    Returns a list of all permissions with:
+    - id
+    - name
+    - resource
+    - action
+    - created_at
+    """
+    result = await db.execute(select(Permission).order_by(Permission.name))
+    permissions = result.scalars().all()
+    
+    return [
+        PermissionResponse(
+            id=perm.id,
+            name=perm.name,
+            resource=perm.resource,
+            action=perm.action,
+            created_at=perm.created_at
+        )
+        for perm in permissions
+    ]
+
+
+@app.get("/api/v1/auth/users", response_model=List[UserListResponse], tags=["Admin"])
+async def get_all_users(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all users (Admin only)
+    
+    Returns a list of all users with:
+    - userid
+    - username
+    - emailid
+    - phonenumber
+    """
+    result = await db.execute(select(User).order_by(User.id))
+    users = result.scalars().all()
+    
+    return [
+        UserListResponse(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            phone_number=user.phone_number
+        )
+        for user in users
+    ]
+
 
 if __name__ == "__main__":
     import uvicorn

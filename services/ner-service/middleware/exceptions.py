@@ -12,4 +12,15 @@ class RateLimitExceeded(Exception):
     pass
 
 
+class AuthenticationError(Exception):
+    """Raised when authentication fails."""
+
+    pass
+
+
+class AuthorizationError(Exception):
+    """Raised when authorization/permission checks fail."""
+
+    pass
+
 

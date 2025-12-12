@@ -78,45 +78,69 @@ def determine_service_and_action(request: Request) -> Tuple[str, str]:
 
 
 async def authenticate_bearer_token(request: Request, authorization: Optional[str]) -> Dict[str, Any]:
-    """Validate JWT access token via auth service."""
+    """
+    Validate JWT access token locally (signature + expiry check).
+    Kong already validated the token, this is a defense-in-depth check.
+    """
+    import os
+    from jose import JWTError, jwt
+    
     if not authorization or not authorization.startswith("Bearer "):
         raise AuthenticationError("Missing bearer token")
 
     token = authorization.split(" ", 1)[1]
-    headers = {"Authorization": f"Bearer {token}"}
+    
+    # JWT Configuration for local verification
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
+    JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 
     try:
-        async with httpx.AsyncClient(timeout=AUTH_HTTP_TIMEOUT) as client:
-            response = await client.get(f"{AUTH_SERVICE_URL}/api/v1/auth/validate", headers=headers)
-    except Exception as exc:
-        logger.error(f"Auth service validation failed: {exc}")
-        raise AuthenticationError("Failed to validate access token")
+        # Verify JWT signature and expiry locally
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM],
+            options={"verify_signature": True, "verify_exp": True}
+        )
+        
+        # Extract user info from JWT claims
+        user_id = payload.get("sub") or payload.get("user_id")
+        email = payload.get("email", "")
+        username = payload.get("username") or payload.get("email", "")
+        roles = payload.get("roles", [])
+        token_type = payload.get("type", "")
+        
+        # Ensure this is an access token
+        if token_type != "access":
+            raise AuthenticationError("Invalid token type")
+        
+        if not user_id:
+            raise AuthenticationError("User ID not found in token")
 
-    if response.status_code != 200:
-        logger.warning("Auth service rejected token with status %s", response.status_code)
+        # Populate request state
+        request.state.user_id = int(user_id) if isinstance(user_id, (str, int)) else user_id
+        request.state.api_key_id = None
+        request.state.api_key_name = None
+        request.state.user_email = email
+        request.state.is_authenticated = True
+
+        return {
+            "user_id": int(user_id) if isinstance(user_id, (str, int)) else user_id,
+            "api_key_id": None,
+            "user": {
+                "username": username,
+                "email": email,
+                "roles": roles,
+            },
+            "api_key": None,
+        }
+        
+    except JWTError as e:
+        logger.warning(f"JWT verification failed: {e}")
         raise AuthenticationError("Invalid or expired token")
-
-    data = response.json() if response.content else {}
-
-    user_id = data.get("user_id") or data.get("sub")
-    username = data.get("username") or data.get("email")
-
-    request.state.user_id = user_id
-    request.state.api_key_id = None
-    request.state.api_key_name = None
-    request.state.user_email = data.get("email")
-    request.state.is_authenticated = True
-
-    return {
-        "user_id": user_id,
-        "api_key_id": None,
-        "user": {
-            "username": username,
-            "email": data.get("email"),
-            "permissions": data.get("permissions"),
-        },
-        "api_key": None,
-    }
+    except Exception as e:
+        logger.error(f"Unexpected error during JWT verification: {e}")
+        raise AuthenticationError("Failed to verify token")
 
 
 async def validate_api_key_permissions(api_key: str, service: str, action: str) -> bool:
@@ -275,6 +299,29 @@ async def AuthProvider(
     # Handle Bearer token authentication (user tokens - no permission check needed)
     if auth_source == "AUTH_TOKEN":
         return await authenticate_bearer_token(request, authorization)
+    
+    # Handle BOTH Bearer token AND API key (already validated by API Gateway)
+    if auth_source == "BOTH":
+        # Validate Bearer token to get user info
+        bearer_result = await authenticate_bearer_token(request, authorization)
+        
+        # Extract API key
+        api_key = x_api_key or get_api_key_from_header(authorization)
+        if not api_key:
+            raise AuthenticationError("Missing API key")
+        
+        # Validate API key permissions via auth-service (skip database lookup)
+        service, action = determine_service_and_action(request)
+        await validate_api_key_permissions(api_key, service, action)
+        
+        # Populate request state with auth context from Bearer token
+        request.state.user_id = bearer_result.get("user_id")
+        request.state.api_key_id = None  # Not needed when using BOTH
+        request.state.api_key_name = None
+        request.state.user_email = bearer_result.get("user", {}).get("email")
+        request.state.is_authenticated = True
+        
+        return bearer_result
     
     # Handle API key authentication (requires permission check)
     try:

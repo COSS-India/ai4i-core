@@ -34,7 +34,7 @@ def get_api_key_from_header(authorization: Optional[str]) -> Optional[str]:
 def determine_service_and_action(request: Request) -> Tuple[str, str]:
     path = request.url.path.lower()
     method = request.method.upper()
-    service = "language-detection"
+    service = "audio-lang-detection"
     if "/inference" in path and method == "POST":
         action = "inference"
     elif method == "GET":
@@ -141,10 +141,11 @@ async def AuthProvider(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     x_auth_source: str = Header(default="API_KEY", alias="X-Auth-Source"),
 ) -> Dict[str, Any]:
-    """Authentication provider dependency with permission checks."""
+    """Authentication provider dependency for FastAPI routes with permission checks."""
     auth_source = (x_auth_source or "API_KEY").upper()
 
     if auth_source == "AUTH_TOKEN":
+        # Enforce API key requirement for this service
         raise AuthenticationError("Missing API key")
 
     api_key = x_api_key or get_api_key_from_header(authorization)
@@ -183,3 +184,5 @@ async def OptionalAuthProvider(
     except AuthenticationError:
         # Return None for optional auth
         return None
+
+
