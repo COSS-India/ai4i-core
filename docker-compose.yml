@@ -572,7 +572,6 @@ services:
       # start_period: 30s
     restart: unless-stopped
 
-
   ocr-service:
 
     build:
@@ -608,17 +607,12 @@ services:
 
       - microservices-network
 
-    # healthcheck:
-
-    #   test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
-
-    #   interval: 30s
-
-    #   timeout: 10s
-
-    #   retries: 3
-
-    #   start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8099/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
     restart: unless-stopped
 
@@ -642,6 +636,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   llm-service:
@@ -773,6 +773,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   language-detection-service:
@@ -795,6 +801,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/language-detection/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   speaker-diarization-service:
@@ -816,12 +828,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   language-diarization-service:
@@ -845,12 +857,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:9002/health"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   audio-lang-detection-service:
@@ -874,12 +886,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:8096/health"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8096/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
 
