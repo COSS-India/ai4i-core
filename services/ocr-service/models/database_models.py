@@ -122,3 +122,4 @@ class OCRResultDB(Base):
         return f"<OCRResultDB(id={self.id}, request_id={self.request_id})>"
 
 
+
