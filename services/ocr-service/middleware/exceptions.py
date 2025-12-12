@@ -26,6 +26,20 @@ class AuthorizationError(HTTPException):
         super().__init__(status_code=status_code, detail=message)
 
 
+class InvalidAPIKeyError(AuthenticationError):
+    """Exception raised for invalid API key."""
+
+    def __init__(self, message: str = "Invalid API key"):
+        super().__init__(message=message, status_code=401)
+
+
+class ExpiredAPIKeyError(AuthenticationError):
+    """Exception raised for expired API key."""
+
+    def __init__(self, message: str = "API key has expired"):
+        super().__init__(message=message, status_code=401)
+
+
 class RateLimitExceededError(HTTPException):
     """Exception raised when rate limit is exceeded."""
 
@@ -37,6 +51,13 @@ class RateLimitExceededError(HTTPException):
             detail=message,
             headers={"Retry-After": str(retry_after)},
         )
+
+
+class InvalidTokenError(AuthenticationError):
+    """Exception raised for invalid authentication token."""
+
+    def __init__(self, message: str = "Invalid authentication token"):
+        super().__init__(message=message, status_code=401)
 
 
 class ErrorDetail(BaseModel):
