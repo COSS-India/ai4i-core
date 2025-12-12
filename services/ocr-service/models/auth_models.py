@@ -68,4 +68,3 @@ class SessionDB(Base):
 
     # Relationships
     user = relationship("UserDB", back_populates="sessions")
-
