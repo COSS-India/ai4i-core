@@ -12,12 +12,14 @@ from models.ner_request import NerInferenceRequest
 from models.ner_response import NerInferenceResponse
 from services.ner_service import NerService, TritonInferenceError
 from utils.triton_client import TritonClient
+from middleware.auth_provider import AuthProvider
 
 logger = logging.getLogger(__name__)
 
 inference_router = APIRouter(
     prefix="/api/v1/ner",
     tags=["NER Inference"],
+    dependencies=[Depends(AuthProvider)]  # Enforce auth and permission checks on all routes
 )
 
 

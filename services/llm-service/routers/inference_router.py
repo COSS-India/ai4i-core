@@ -14,6 +14,7 @@ from models.llm_response import LLMInferenceResponse
 from repositories.llm_repository import LLMRepository
 from services.llm_service import LLMService
 from utils.triton_client import TritonClient
+from middleware.auth_provider import AuthProvider
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 inference_router = APIRouter(
     prefix="/api/v1/llm",
     tags=["LLM Inference"],
-    # dependencies=[Depends(AuthProvider)]  # Commented out for testing
+    dependencies=[Depends(AuthProvider)]
 )
 
 
@@ -82,7 +83,8 @@ async def run_inference(
     "/models",
     response_model=Dict[str, Any],
     summary="List available LLM models",
-    description="Get list of supported LLM models"
+    description="Get list of supported LLM models",
+    dependencies=[Depends(AuthProvider)]
 )
 async def list_models() -> Dict[str, Any]:
     """List available LLM models"""

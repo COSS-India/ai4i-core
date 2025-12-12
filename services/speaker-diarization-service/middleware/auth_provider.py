@@ -1,5 +1,6 @@
 """
 Authentication provider for FastAPI routes - supports JWT, API key, and BOTH with permission checks.
+Performs local JWT verification and calls auth-service for API key permission validation.
 """
 import os
 import logging
@@ -34,7 +35,7 @@ def get_api_key_from_header(authorization: Optional[str]) -> Optional[str]:
 def determine_service_and_action(request: Request) -> Tuple[str, str]:
     path = request.url.path.lower()
     method = request.method.upper()
-    service = "language-detection"
+    service = "speaker-diarization"
     if "/inference" in path and method == "POST":
         action = "inference"
     elif method == "GET":
@@ -56,13 +57,8 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
             if result.get("valid"):
                 return
             raise AuthorizationError(result.get("message", "Permission denied"))
-
-        try:
-            err_msg = response.json().get("message", response.text)
-        except Exception:
-            err_msg = response.text
-        logger.error(f"Auth service returned status {response.status_code}: {err_msg}")
-        raise AuthorizationError(err_msg or "Failed to validate API key permissions")
+        logger.error(f"Auth service returned status {response.status_code}: {response.text}")
+        raise AuthorizationError("Failed to validate API key permissions")
     except httpx.TimeoutException:
         logger.error("Timeout calling auth-service for permission validation")
         raise AuthorizationError("Permission validation service unavailable")
@@ -183,3 +179,5 @@ async def OptionalAuthProvider(
     except AuthenticationError:
         # Return None for optional auth
         return None
+
+

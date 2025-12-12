@@ -5,7 +5,7 @@ import os
 import secrets
 import hashlib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Tuple
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -145,6 +145,10 @@ class AuthUtils:
         # Check if API key has expired (use timezone-aware comparison)
         now_utc = datetime.now(timezone.utc)
         if api_key_obj.expires_at and api_key_obj.expires_at < now_utc:
+            # Automatically deactivate expired keys for data consistency
+            if api_key_obj.is_active:
+                api_key_obj.is_active = False
+                await db.commit()
             return False, None, "API key has expired"
         
         # Update last_used timestamp
