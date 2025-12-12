@@ -21,16 +21,16 @@ from utils.validation_utils import (
     validate_preprocessors,
     validate_postprocessors
 )
-from middleware.auth_provider import AuthProvider
 from middleware.exceptions import AuthenticationError, AuthorizationError
+from middleware.auth_provider import AuthProvider
 
 logger = logging.getLogger(__name__)
 
-# Create router
+# Create router with authentication dependency
 inference_router = APIRouter(
-    prefix="/api/v1/asr", 
+    prefix="/api/v1/asr",
     tags=["ASR Inference"],
-    dependencies=[Depends(AuthProvider)]  # Add authentication dependency
+    dependencies=[Depends(AuthProvider)]  # Enforce auth and permission checks on all routes
 )
 
 

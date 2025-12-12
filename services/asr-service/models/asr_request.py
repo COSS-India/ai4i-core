@@ -64,14 +64,34 @@ class ASRInferenceConfig(BaseModel):
     bestTokenCount: int = Field(0, description="Number of n-best tokens", ge=0, le=10)
     
     @validator('preProcessors')
-    def validate_preprocessors(cls, v):
-        """Validate preprocessor names."""
-        if v is not None:
-            valid_preprocessors = ["vad", "denoiser"]
-            for processor in v:
-                if processor not in valid_preprocessors:
-                    raise ValueError(f"Invalid preprocessor: {processor}. Valid options: {valid_preprocessors}")
-        return v
+    def normalize_and_validate_preprocessors(cls, v):
+        """
+        Normalize and validate preprocessor names.
+
+        Note:
+            The frontend currently sends "denoise" while the backend expects "denoiser".
+            To remain backward compatible without forcing UI changes, we map "denoise"
+            to "denoiser" here before validation.
+        """
+        if v is None:
+            return v
+
+        # Normalize known aliases
+        normalized = []
+        for processor in v:
+            if processor == "denoise":
+                normalized.append("denoiser")
+            else:
+                normalized.append(processor)
+
+        valid_preprocessors = ["vad", "denoiser"]
+        for processor in normalized:
+            if processor not in valid_preprocessors:
+                raise ValueError(
+                    f"Invalid preprocessor: {processor}. Valid options: {valid_preprocessors}"
+                )
+
+        return normalized
     
     @validator('postProcessors')
     def validate_postprocessors(cls, v):

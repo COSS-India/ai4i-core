@@ -48,11 +48,17 @@ async def run_pipeline_inference(
     Example: ASR → Translation → TTS for Speech-to-Speech translation
     """
     try:
-        # Extract API key from request headers
+        # Extract JWT token and API key from request headers
+        jwt_token = None
         api_key = None
+        
         auth_header = http_request.headers.get('Authorization')
-        if auth_header:
-            api_key = auth_header.replace('Bearer ', '').replace('ApiKey ', '')
+        if auth_header and auth_header.startswith('Bearer '):
+            jwt_token = auth_header.replace('Bearer ', '')
+        
+        api_key_header = http_request.headers.get('X-API-Key')
+        if api_key_header:
+            api_key = api_key_header
         
         # Get pipeline service
         pipeline_service = get_pipeline_service()
@@ -60,6 +66,7 @@ async def run_pipeline_inference(
         # Execute pipeline
         response = await pipeline_service.run_pipeline_inference(
             request=request,
+            jwt_token=jwt_token,
             api_key=api_key
         )
         

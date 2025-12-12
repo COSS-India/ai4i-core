@@ -79,12 +79,17 @@ class ServiceClient:
             # Mark as attempted to avoid re-discovery per request; TTL/refresh can be added later if needed
             self._discovered = True
     
-    async def call_asr_service(self, request_data: Dict[str, Any], api_key: Optional[str] = None) -> Dict[str, Any]:
+    async def call_asr_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:
         """Call ASR service for speech-to-text conversion."""
         await self._ensure_urls()
         headers = {}
+        if jwt_token:
+            headers['Authorization'] = f'Bearer {jwt_token}'
         if api_key:
-            headers['Authorization'] = f'Bearer {api_key}'
+            headers['X-API-Key'] = api_key
+        # Set X-Auth-Source to BOTH when both JWT and API key are present
+        if jwt_token and api_key:
+            headers['X-Auth-Source'] = 'BOTH'
         
         logger.info(f"Calling ASR service: {self.asr_service_url}/api/v1/asr/inference")
         
@@ -100,12 +105,17 @@ class ServiceClient:
             logger.error(f"ASR service error: {e}")
             raise ValueError(f"ASR service error: {str(e)}") from e
     
-    async def call_nmt_service(self, request_data: Dict[str, Any], api_key: Optional[str] = None) -> Dict[str, Any]:
+    async def call_nmt_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:
         """Call NMT service for translation."""
         await self._ensure_urls()
         headers = {}
+        if jwt_token:
+            headers['Authorization'] = f'Bearer {jwt_token}'
         if api_key:
-            headers['Authorization'] = f'Bearer {api_key}'
+            headers['X-API-Key'] = api_key
+        # Set X-Auth-Source to BOTH when both JWT and API key are present
+        if jwt_token and api_key:
+            headers['X-Auth-Source'] = 'BOTH'
         
         logger.info(f"Calling NMT service: {self.nmt_service_url}/api/v1/nmt/inference")
         
@@ -121,12 +131,17 @@ class ServiceClient:
             logger.error(f"NMT service error: {e}")
             raise ValueError(f"NMT service error: {str(e)}") from e
     
-    async def call_tts_service(self, request_data: Dict[str, Any], api_key: Optional[str] = None) -> Dict[str, Any]:
+    async def call_tts_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:
         """Call TTS service for text-to-speech conversion."""
         await self._ensure_urls()
         headers = {}
+        if jwt_token:
+            headers['Authorization'] = f'Bearer {jwt_token}'
         if api_key:
-            headers['Authorization'] = f'Bearer {api_key}'
+            headers['X-API-Key'] = api_key
+        # Set X-Auth-Source to BOTH when both JWT and API key are present
+        if jwt_token and api_key:
+            headers['X-Auth-Source'] = 'BOTH'
         
         logger.info(f"Calling TTS service: {self.tts_service_url}/api/v1/tts/inference")
         

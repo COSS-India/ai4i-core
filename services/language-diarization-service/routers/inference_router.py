@@ -16,12 +16,14 @@ from models.language_diarization_response import LanguageDiarizationInferenceRes
 from repositories.language_diarization_repository import LanguageDiarizationRepository, get_db_session
 from services.language_diarization_service import LanguageDiarizationService
 from utils.triton_client import TritonClient, TritonInferenceError
+from middleware.auth_provider import AuthProvider
 
 logger = logging.getLogger(__name__)
 
 inference_router = APIRouter(
     prefix="/api/v1/language-diarization",
     tags=["Language Diarization Inference"],
+    dependencies=[Depends(AuthProvider)]  # Enforce auth and permission checks on all routes
 )
 
 

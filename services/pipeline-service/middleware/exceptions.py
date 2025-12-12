@@ -69,3 +69,9 @@ class ErrorResponse(BaseModel):
     detail: ErrorDetail
     status_code: int
 
+
+
+
+
+
+

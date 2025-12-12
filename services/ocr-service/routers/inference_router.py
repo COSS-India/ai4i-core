@@ -15,13 +15,14 @@ from models.ocr_response import OCRInferenceResponse
 from services.ocr_service import OCRService
 from utils.triton_client import TritonClient, TritonInferenceError
 from middleware.auth_provider import AuthProvider
+from middleware.auth_provider import AuthProvider
 
 logger = logging.getLogger(__name__)
 
 inference_router = APIRouter(
     prefix="/api/v1/ocr",
     tags=["OCR Inference"],
-    dependencies=[Depends(AuthProvider)],
+    dependencies=[Depends(AuthProvider)]  # Enforce auth and permission checks on all routes
 )
 
 
