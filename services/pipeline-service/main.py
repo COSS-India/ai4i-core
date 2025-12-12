@@ -10,9 +10,14 @@ import os
 from contextlib import asynccontextmanager
 from typing import Dict, Any
 
+import redis.asyncio as redis
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from utils.service_registry_client import ServiceRegistryHttpClient
+
+# Import middleware components
+from middleware.rate_limit_middleware import RateLimitMiddleware
+from middleware.error_handler_middleware import add_error_handlers
 
 # Configure logging
 logging.basicConfig(
@@ -21,6 +26,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Global variable for Redis connection
+redis_client: redis.Redis = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -28,7 +36,31 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Pipeline Service...")
     
+    global redis_client
     try:
+        # Initialize Redis connection
+        if redis_client is None:
+            try:
+                redis_host = os.getenv("REDIS_HOST", "redis")
+                redis_port = int(os.getenv("REDIS_PORT_NUMBER", "6379"))
+                redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+                
+                redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
+                redis_client = redis.from_url(redis_url, encoding="utf-8", decode_responses=True)
+                
+                # Test Redis connection
+                await redis_client.ping()
+                logger.info("Redis connection established successfully")
+            except Exception as e:
+                logger.warning(f"Redis connection failed: {e}. Rate limiting will be disabled.")
+                redis_client = None
+        
+        # Store Redis client in app state for middleware access
+        app.state.redis_client = redis_client
+        
+        # Register error handlers
+        add_error_handlers(app)
+        
         # Register service into the central registry via config-service
         registry_client = ServiceRegistryHttpClient()
         service_name = os.getenv("SERVICE_NAME", "pipeline-service")
@@ -71,6 +103,11 @@ async def lifespan(app: FastAPI):
                 await registry_client.deregister(service_name, instance_id)
         except Exception:
             pass
+        
+        # Close Redis connection
+        if redis_client:
+            await redis_client.close()
+            logger.info("Redis connection closed")
     finally:
         logger.info("Pipeline Service shutdown complete")
 
@@ -105,6 +142,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add rate limiting middleware
+# Redis client will be initialized in lifespan and stored in app.state
+# The middleware will access it from app.state
+rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+app.add_middleware(
+    RateLimitMiddleware,
+    redis_client=None,  # Will be accessed from app.state in middleware
+    requests_per_minute=rate_limit_per_minute,
+    requests_per_hour=rate_limit_per_hour
+)
+logger.info("Rate limiting middleware added (Redis will be initialized in lifespan)")
+
 
 @app.get("/")
 async def root() -> Dict[str, Any]:
@@ -125,12 +175,25 @@ async def health_check() -> Dict[str, Any]:
         "service": "pipeline-service",
         "version": "1.0.0",
         "timestamp": None,
+        "redis": "unhealthy",
         "dependencies": {}
     }
     
     try:
         import time
         health_status["timestamp"] = time.time()
+        
+        # Check Redis connectivity
+        global redis_client
+        if redis_client:
+            try:
+                await redis_client.ping()
+                health_status["redis"] = "healthy"
+            except Exception as e:
+                logger.error(f"Redis health check failed: {e}")
+                health_status["redis"] = "unhealthy"
+        else:
+            health_status["redis"] = "unavailable"
         
         # Resolve service URLs via registry (no hardcoded fallbacks)
         registry = ServiceRegistryHttpClient()
