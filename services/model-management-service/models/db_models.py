@@ -8,7 +8,6 @@ from db_connection import AppDBBase
 
 
 class Model(AppDBBase):
-    """Model model - replaces MongoDB 'model' collection"""
     __tablename__ = "models"
     # __table_args__ = {'schema': DB_SCHEMA}
     
@@ -38,7 +37,6 @@ class Model(AppDBBase):
 
 
 class Service(AppDBBase):
-    """Service model - replaces MongoDB 'service' collection"""
     __tablename__ = "services"
     # __table_args__ = {'schema': DB_SCHEMA}
     
