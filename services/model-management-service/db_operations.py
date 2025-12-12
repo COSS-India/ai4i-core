@@ -962,6 +962,8 @@ async def list_all_services(task_type: TaskTypeEnum | None) -> List[Dict[str, An
                     hardwareDescription=getattr(service, "hardware_description", None),
                     publishedOn=getattr(service, "published_on", None),
                     modelId=service.model_id,
+                    # Persist service endpoint and api key details
+                    endpoint=getattr(service, "endpoint", None),
                     healthStatus=getattr(service, "health_status", None),
                     benchmarks=getattr(service, "benchmarks", None),
 
