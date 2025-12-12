@@ -46,6 +46,8 @@ export const apiEndpoints = {
   tts: {
     inference: '/api/v1/tts/inference',
     voices: '/api/v1/tts/voices',
+    services: '/api/v1/tts/services',
+    languages: '/api/v1/tts/languages',
     health: '/api/v1/tts/health',
   },
   nmt: {

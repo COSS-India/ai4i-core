@@ -1,13 +1,16 @@
 // TTS service API client with typed methods
 
 import { apiClient, apiEndpoints } from './api';
+import { listServices } from './modelManagementService';
 import { 
   TTSInferenceRequest, 
   TTSInferenceResponse, 
   Voice, 
   TTSHealthResponse,
   VoiceListResponse,
-  VoiceFilterOptions
+  VoiceFilterOptions,
+  TTSServiceDetailsResponse,
+  TTSLanguagesResponse
 } from '../types/tts';
 
 /**
@@ -185,5 +188,167 @@ export const getSupportedLanguages = async (): Promise<string[]> => {
   } catch (error) {
     console.error('Failed to fetch supported languages:', error);
     throw new Error('Failed to fetch supported languages');
+  }
+};
+
+/**
+ * Get list of available TTS services from model management service
+ * @returns Promise with TTS services response
+ */
+export const listTTSServices = async (): Promise<TTSServiceDetailsResponse[]> => {
+  try {
+    // Fetch services from model management service filtered by task_type='tts'
+    const services = await listServices('tts');
+    const seen = new Set<string>();
+
+    // Transform model management service response to TTSServiceDetailsResponse format
+    const normalized = services.map((service: any) => {
+      // Extract languages from service.languages array
+      const supportedLanguages: string[] = [];
+      if (service.languages && Array.isArray(service.languages)) {
+        service.languages.forEach((lang: any) => {
+          if (typeof lang === 'string') {
+            supportedLanguages.push(lang);
+          } else if (lang && typeof lang === 'object') {
+            // Handle different language object formats
+            const langCode = lang.code || lang.sourceLanguage || lang.language;
+            if (langCode) {
+              supportedLanguages.push(langCode);
+            }
+          }
+        });
+      }
+      
+      // Extract endpoint and clean it
+      let endpoint = service.endpoint || '';
+      if (endpoint) {
+        endpoint = endpoint.replace('http://', '').replace('https://', '');
+      }
+      
+      return {
+        service_id: service.serviceId || service.service_id,
+        model_id: service.modelId || service.model_id,
+        triton_endpoint: endpoint,
+        triton_model: 'tts', // Default value
+        provider: service.name || service.serviceId || 'unknown', // Keep for backward compatibility
+        description: service.serviceDescription || service.description || '', // Keep for backward compatibility
+        name: service.name || '',
+        serviceDescription: service.serviceDescription || service.description || '',
+        supported_languages: Array.from(new Set(supportedLanguages)), // Remove duplicates
+      } as TTSServiceDetailsResponse;
+    });
+
+    // Deduplicate by service_id in case API returns duplicates
+    const uniqueServices: TTSServiceDetailsResponse[] = [];
+    for (const svc of normalized) {
+      if (!svc.service_id) continue;
+      if (seen.has(svc.service_id)) continue;
+      seen.add(svc.service_id);
+      uniqueServices.push(svc);
+    }
+
+    return uniqueServices;
+  } catch (error) {
+    console.error('Failed to fetch TTS services:', error);
+    throw new Error('Failed to fetch TTS services');
+  }
+};
+
+/**
+ * Get supported languages for a specific TTS service from model management service
+ * @param serviceId - Service ID to get languages for
+ * @returns Promise with TTS languages response
+ */
+export const getTTSLanguagesForService = async (
+  serviceId: string
+): Promise<TTSLanguagesResponse | null> => {
+  try {
+    // Fetch all TTS services from model management service
+    const services = await listServices('tts');
+    
+    // Find the service by serviceId
+    const service = services.find((s: any) => 
+      (s.serviceId || s.service_id) === serviceId
+    );
+    
+    if (!service) {
+      console.warn(`Service ${serviceId} not found`);
+      return null;
+    }
+    
+    // Extract languages from service.languages array
+    const supportedLanguages: string[] = [];
+    const languageDetails: Array<{code: string; name: string}> = [];
+    
+    if (service.languages && Array.isArray(service.languages)) {
+      service.languages.forEach((lang: any) => {
+        if (typeof lang === 'string') {
+          supportedLanguages.push(lang);
+          languageDetails.push({ code: lang, name: lang });
+        } else if (lang && typeof lang === 'object') {
+          // Handle different language object formats
+          const langCode = lang.code || lang.sourceLanguage || lang.language;
+          const langName = lang.name || langCode;
+          if (langCode) {
+            supportedLanguages.push(langCode);
+            languageDetails.push({ code: langCode, name: langName });
+          }
+        }
+      });
+    }
+    
+    // Remove duplicates
+    const uniqueLanguages = Array.from(new Set(supportedLanguages));
+    const uniqueLanguageDetails = languageDetails.filter((lang, index, self) =>
+      index === self.findIndex((l) => l.code === lang.code)
+    );
+    
+    return {
+      model_id: service.modelId || service.model_id || '',
+      provider: service.name || service.serviceId || 'unknown',
+      supported_languages: uniqueLanguages,
+      language_details: uniqueLanguageDetails,
+      total_languages: uniqueLanguages.length,
+    };
+  } catch (error) {
+    console.error('Failed to fetch TTS languages for service:', error);
+    throw new Error('Failed to fetch TTS languages for service');
+  }
+};
+
+/**
+ * Get TTS service by language
+ * @param language - Language code to find service for
+ * @returns Promise with matching service
+ */
+export const getServiceByLanguage = async (
+  language: string
+): Promise<TTSServiceDetailsResponse | null> => {
+  try {
+    const services = await listTTSServices();
+    
+    const matchingService = services.find(service =>
+      service.supported_languages.includes(language)
+    );
+    
+    return matchingService || null;
+  } catch (error) {
+    console.error('Failed to find service for language:', error);
+    throw new Error('Failed to find service for language');
+  }
+};
+
+/**
+ * Check if language is supported by any TTS service
+ * @param language - Language code to check
+ * @returns Promise with support status
+ */
+export const isLanguageSupported = async (language: string): Promise<boolean> => {
+  try {
+    const service = await getServiceByLanguage(language);
+    return service !== null;
+  } catch (error) {
+    console.error('Failed to check language support:', error);
+    return false;
   }
 };
