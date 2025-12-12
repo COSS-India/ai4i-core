@@ -631,6 +631,65 @@ class PipelineInfo(BaseModel):
     example_pipelines: Dict[str, Any] = Field(..., description="Example pipeline configurations")
     task_sequence_rules: Dict[str, List[str]] = Field(..., description="Task sequence rules")
 
+# Pydantic models for Feature Flag endpoints
+class FeatureFlagEvaluationRequest(BaseModel):
+    """Request model for feature flag evaluation"""
+    flag_name: str = Field(..., description="Feature flag identifier", min_length=1)
+    user_id: Optional[str] = Field(None, description="User identifier for targeting")
+    context: Optional[Dict[str, Any]] = Field(None, description="Additional context attributes")
+    default_value: Union[bool, str, int, float, dict] = Field(..., description="Fallback value if flag evaluation fails")
+    environment: Optional[str] = Field(None, description="Environment name (development|staging|production).")
+
+class BulkEvaluationRequest(BaseModel):
+    """Request model for bulk feature flag evaluation"""
+    flag_names: List[str] = Field(..., description="List of flag names to evaluate", min_items=1)
+    user_id: Optional[str] = Field(None, description="User identifier for targeting")
+    context: Optional[Dict[str, Any]] = Field(None, description="Additional context attributes")
+    environment: Optional[str] = Field(None, description="Environment name (development|staging|production).")
+
+class FeatureFlagEvaluationResponse(BaseModel):
+    """Response model for feature flag evaluation"""
+    flag_name: str
+    value: Union[bool, str, int, float, dict]
+    variant: Optional[str] = None
+    reason: str = Field(..., description="Evaluation reason (TARGETING_MATCH, DEFAULT, ERROR)")
+    evaluated_at: str
+
+class FeatureFlagResponse(BaseModel):
+    """Response model for feature flag details"""
+    name: str
+    description: Optional[str] = None
+    is_enabled: bool
+    environment: str
+    rollout_percentage: Optional[str] = None
+    target_users: Optional[List[str]] = None
+    unleash_flag_name: Optional[str] = None
+    last_synced_at: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+class FeatureFlagListResponse(BaseModel):
+    """Response model for feature flag list"""
+    items: List[FeatureFlagResponse]
+    total: int
+    limit: int
+    offset: int
+
+class BooleanEvaluationResponse(BaseModel):
+    """Response model for boolean feature flag evaluation"""
+    flag_name: str
+    value: bool
+    reason: str
+
+class BulkEvaluationResponse(BaseModel):
+    """Response model for bulk feature flag evaluation"""
+    results: Dict[str, Dict[str, Any]]
+
+class SyncResponse(BaseModel):
+    """Response model for feature flag sync"""
+    synced_count: int
+    environment: str
+
 # Pydantic models for Model Management endpoints
 class ModelProcessingType(BaseModel):
     """Model processing type."""
@@ -1148,6 +1207,10 @@ tags_metadata = [
         "description": "Pipeline service endpoints. Execute multi-step AI processing pipelines.",
     },
     {
+        "name": "Feature Flags",
+        "description": "Feature flag management endpoints. Evaluate, list, and manage feature flags using Unleash.",
+    },
+    {
         "name": "Status",
         "description": "Service status and health check endpoints.",
     },
@@ -1311,6 +1374,7 @@ def custom_openapi():
         ("/api/v1/language-diarization", "Language Diarization"),
         ("/api/v1/audio-lang-detection", "Audio Language Detection"),
         ("/api/v1/pipeline", "Pipeline"),
+        ("/api/v1/feature-flags", "Feature Flags"),
         ("/api/v1/protected", "Protected"),
         ("/api/v1/status", "Status"),
         ("/health", "Status"),
@@ -2293,83 +2357,9 @@ async def nmt_inference(
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    return await proxy_to_service(None, "/api/v1/nmt/inference", "nmt-service", method="POST", body=body, headers=headers)
-
-@app.post("/api/v1/nmt/batch-translate", tags=["NMT"])
-async def batch_translate(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
-):
-    """Batch translate multiple texts using NMT service"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
     headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/nmt/batch-translate", "nmt-service", headers=headers)
-
-@app.get("/api/v1/nmt/languages", response_model=Dict[str, Any], tags=["NMT"])
-async def get_nmt_languages(
-    request: Request,
-    model_id: Optional[str] = Query(None, description="Model ID to get languages for"),
-    service_id: Optional[str] = Query(None, description="Service ID to get languages for"),
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
-):
-    """Get supported languages for NMT service"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    
-    # Build query parameters dict
-    query_params = {}
-    if service_id:
-        query_params["service_id"] = service_id
-    elif model_id:
-        query_params["model_id"] = model_id
-    # If neither provided, service will default to AI4Bharat
-    
-    # Build path and pass params separately to avoid httpx param conflicts
-    path = "/api/v1/nmt/languages"
-    
-    # Create a custom proxy call that handles params correctly
-    return await proxy_to_service_with_params(None, path, "nmt-service", query_params, headers=headers)
-
-@app.get("/api/v1/nmt/models", response_model=Dict[str, Any], tags=["NMT"])
-async def get_nmt_models(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
-):
-    """Get available NMT models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    return await proxy_to_service(None, "/api/v1/nmt/models", "nmt-service", headers=headers)
-
-@app.get("/api/v1/nmt/services", response_model=Dict[str, Any], tags=["NMT"])
-async def get_nmt_services(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
-):
-    """Get available NMT services"""
-    ensure_authenticated_for_request(request, credentials, api_key)
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
-    return await proxy_to_service(None, "/api/v1/nmt/services", "nmt-service", headers=headers)
+    return await proxy_to_service(None, "/api/v1/nmt/inference", "nmt-service", method="POST", body=body, headers=headers)
 
 @app.get("/api/v1/nmt/health", tags=["NMT"])
 async def nmt_health(
@@ -3076,6 +3066,125 @@ async def pipeline_health(
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "pipeline-service", headers=headers)
 
+# Feature Flag Service Endpoints (Proxy to Config Service)
+
+@app.post("/api/v1/feature-flags/evaluate", response_model=FeatureFlagEvaluationResponse, tags=["Feature Flags"])
+async def evaluate_feature_flag(
+    payload: FeatureFlagEvaluationRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Evaluate a single feature flag. Supports boolean, string, integer, float, and object (dict) flag types."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    import json
+    body = json.dumps(payload.dict()).encode()
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/feature-flags/evaluate", "config-service", method="POST", body=body, headers=headers)
+
+@app.post("/api/v1/feature-flags/evaluate/boolean", response_model=BooleanEvaluationResponse, tags=["Feature Flags"])
+async def evaluate_boolean_feature_flag(
+    payload: FeatureFlagEvaluationRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Evaluate a boolean feature flag. Returns a simple boolean value indicating if the flag is enabled."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    import json
+    body = json.dumps(payload.dict()).encode()
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/feature-flags/evaluate/boolean", "config-service", method="POST", body=body, headers=headers)
+
+@app.post("/api/v1/feature-flags/evaluate/bulk", response_model=BulkEvaluationResponse, tags=["Feature Flags"])
+async def bulk_evaluate_feature_flags(
+    payload: BulkEvaluationRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Bulk evaluate multiple feature flags. Evaluates all specified flags in parallel and returns results as a dictionary."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    import json
+    body = json.dumps(payload.dict()).encode()
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(None, "/api/v1/feature-flags/evaluate/bulk", "config-service", method="POST", body=body, headers=headers)
+
+@app.get("/api/v1/feature-flags/{name}", response_model=FeatureFlagResponse, tags=["Feature Flags"])
+async def get_feature_flag(
+    name: str,
+    request: Request,
+    environment: Optional[str] = Query(None, description="Environment name"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get feature flag by name from Unleash. Retrieves flag details from Unleash API (cached in Redis)."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    # Use default environment if not provided (config service will also default, but we pass it for consistency)
+    env = environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
+    # Build query string with required parameters
+    from urllib.parse import urlencode
+    query_params = {"environment": env}
+    query_string = urlencode(query_params)
+    path_with_params = f"/api/v1/feature-flags/{name}?{query_string}"
+    return await proxy_to_service(None, path_with_params, "config-service", method="GET", headers=headers)
+
+# NOTE: config-service exposes list endpoint at "/api/v1/feature-flags/" (trailing slash).
+# We expose the same trailing-slash route to avoid downstream 307 redirects to http://config-service:8082/...
+@app.get("/api/v1/feature-flags/", response_model=FeatureFlagListResponse, tags=["Feature Flags"])
+async def list_feature_flags(
+    request: Request,
+    environment: Optional[str] = Query(None, description="Environment name"),
+    limit: int = Query(50, ge=1, le=100, description="Page size"),
+    offset: int = Query(0, ge=0, description="Page offset"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """List feature flags from Unleash. Returns paginated list of feature flags from Unleash (cached in Redis)."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    # Use default environment if not provided (config service will also default, but we pass it for consistency)
+    env = environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
+    # Build query string with required parameters
+    from urllib.parse import urlencode
+    query_params = {"environment": env, "limit": str(limit), "offset": str(offset)}
+    query_string = urlencode(query_params)
+    path_with_params = f"/api/v1/feature-flags/?{query_string}"
+    return await proxy_to_service(None, path_with_params, "config-service", method="GET", headers=headers)
+
+
+# Backwards-compatible no-trailing-slash route: redirect to gateway (not config-service)
+@app.get("/api/v1/feature-flags", include_in_schema=False)
+async def list_feature_flags_redirect(request: Request):
+    """Redirect /api/v1/feature-flags -> /api/v1/feature-flags/ (preserve query string)."""
+    url = str(request.url)
+    if "?" in url:
+        base, qs = url.split("?", 1)
+        target = f"{base}/?{qs}"
+    else:
+        target = f"{url}/"
+    return RedirectResponse(url=target, status_code=307)
+
+@app.post("/api/v1/feature-flags/sync", response_model=SyncResponse, tags=["Feature Flags"])
+async def sync_feature_flags(
+    request: Request,
+    environment: Optional[str] = Query(None, description="Environment name"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Refresh feature flags cache from Unleash (admin). Invalidates Redis cache and fetches fresh data from Unleash API."""
+    ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    # Use default environment if not provided (config service will also default, but we pass it for consistency)
+    env = environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
+    # Build query string with required parameters
+    from urllib.parse import urlencode
+    query_params = {"environment": env}
+    query_string = urlencode(query_params)
+    path_with_params = f"/api/v1/feature-flags/sync?{query_string}"
+    return await proxy_to_service(None, path_with_params, "config-service", method="POST", headers=headers)
+
 # Protected Endpoints (Require Authentication)
 
 @app.get("/api/v1/protected/status")
@@ -3174,7 +3283,9 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             headers = dict(request.headers)
             params = request.query_params
         else:
-            params = {}
+            # IMPORTANT: leave params as None so any querystring already present
+            # in the URL (e.g. "/path?x=1") is not overwritten by an empty dict.
+            params = None
             if headers is None:
                 headers = {}
         
@@ -3186,6 +3297,7 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             headers=headers,
             params=params,
             content=body,
+            follow_redirects=True,
             timeout=timeout_value
         )
         
@@ -3247,8 +3359,8 @@ async def proxy_to_service_with_params(
         if headers is None:
             headers = {}
         
-        # Use provided query_params directly
-        params = query_params if query_params else {}
+        # Use provided query_params directly, filtering out None values
+        params = {k: v for k, v in (query_params or {}).items() if v is not None}
         
         # Forward request to service
         timeout_value = 300.0
@@ -3258,6 +3370,7 @@ async def proxy_to_service_with_params(
             headers=headers,
             params=params,
             content=body,
+            follow_redirects=True,
             timeout=timeout_value
         )
         
