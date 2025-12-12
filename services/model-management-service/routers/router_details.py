@@ -17,7 +17,7 @@ from models.type_enum import TaskTypeEnum
 router_details = APIRouter(
     prefix="/services/details", 
     tags=["Model Management"],
-    dependencies=[Depends(AuthProvider)]
+    # dependencies=[Depends(AuthProvider)]
     )
 
 

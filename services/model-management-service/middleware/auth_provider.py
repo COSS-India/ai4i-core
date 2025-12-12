@@ -205,14 +205,20 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
     headers = {"Authorization": f"Bearer {token}"}
 
     try:
+        logger.debug(f"Validating JWT token via auth service: {AUTH_SERVICE_URL}/api/v1/auth/validate")
         async with httpx.AsyncClient(timeout=AUTH_HTTP_TIMEOUT) as client:
             response = await client.get(f"{AUTH_SERVICE_URL}/api/v1/auth/validate", headers=headers)
+        logger.debug(f"Auth service validation response: status={response.status_code}")
+    except httpx.ConnectError as exc:
+        logger.error(f"Auth service connection failed: {exc}. URL: {AUTH_SERVICE_URL}/api/v1/auth/validate")
+        raise AuthenticationError("Failed to connect to auth service for token validation")
     except Exception as exc:
         logger.error(f"Auth service validation failed: {exc}")
         raise AuthenticationError("Failed to validate access token")
 
     if response.status_code != 200:
-        logger.warning("Auth service rejected token with status %s", response.status_code)
+        error_detail = response.text if hasattr(response, 'text') else "No error details"
+        logger.warning(f"Auth service rejected token with status {response.status_code}. Response: {error_detail}")
         raise AuthenticationError("Invalid or expired token")
 
     data = response.json() if response.content else {}
