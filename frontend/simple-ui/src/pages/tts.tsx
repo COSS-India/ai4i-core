@@ -16,7 +16,7 @@ import {
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { FaRegFileAudio } from "react-icons/fa";
 import ContentLayout from "../components/common/ContentLayout";
 import LoadingSpinner from "../components/common/LoadingSpinner";
@@ -24,7 +24,7 @@ import TextInput from "../components/tts/TextInput";
 import TTSResults from "../components/tts/TTSResults";
 import VoiceSelector from "../components/tts/VoiceSelector";
 import { useTTS } from "../hooks/useTTS";
-import { listVoices } from "../services/ttsService";
+import { listVoices, listTTSServices, getTTSLanguagesForService } from "../services/ttsService";
 
 const TTSPage: React.FC = () => {
   const toast = useToast();
@@ -49,14 +49,69 @@ const TTSPage: React.FC = () => {
     setAudioFormat,
     setSamplingRate,
     clearResults,
-  } = useTTS();
+  } = useTTS(serviceId);
 
-  // Fetch available voices
-  const { data: voicesData, isLoading: voicesLoading } = useQuery({
-    queryKey: ["tts-voices", language, gender],
-    queryFn: () => listVoices({ language, gender }),
-    staleTime: 5 * 60 * 1000, // 5 minutes
+  // Fetch available services from Model Management
+  const { data: services, isLoading: servicesLoading } = useQuery({
+    queryKey: ["tts-services"],
+    queryFn: listTTSServices,
+    staleTime: 10 * 60 * 1000, // 10 minutes
   });
+
+  // Clear serviceId if it doesn't exist in services list
+  useEffect(() => {
+    if (services && services.length > 0 && serviceId) {
+      const serviceExists = services.some(s => s.service_id === serviceId);
+      if (!serviceExists) {
+        setServiceId("");
+      }
+    } else if (services && services.length === 0 && serviceId) {
+      // Clear serviceId if no services available
+      setServiceId("");
+    }
+  }, [services, serviceId]);
+
+  // Check if we should fetch languages - only when services are loaded and service exists
+  const shouldFetchLanguages = !servicesLoading && 
+                                !!services && 
+                                Array.isArray(services) &&
+                                services.length > 0 && 
+                                !!serviceId &&
+                                services.some(s => s.service_id === serviceId);
+
+  // Fetch available languages for selected service
+  const { data: serviceLanguages, isLoading: languagesLoading, isFetching: languagesFetching } = useQuery({
+    queryKey: ["tts-languages", serviceId, services?.length],
+    queryFn: () => getTTSLanguagesForService(serviceId),
+    enabled: shouldFetchLanguages, // Only fetch if all conditions are met
+    retry: false, // Don't retry if service not found
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    refetchOnWindowFocus: false, // Don't refetch on window focus
+  });
+  
+  // Only show loading if query is actually enabled and fetching
+  const isLanguagesActuallyLoading = shouldFetchLanguages && (languagesLoading || languagesFetching);
+
+  // Check if we should fetch voices - only when service exists and is valid
+  const shouldFetchVoices = !servicesLoading && 
+                            !!services && 
+                            Array.isArray(services) &&
+                            services.length > 0 && 
+                            !!serviceId &&
+                            services.some(s => s.service_id === serviceId);
+
+  // Fetch available voices (only when service is selected and valid)
+  const { data: voicesData, isLoading: voicesLoading, isFetching: voicesFetching } = useQuery({
+    queryKey: ["tts-voices", language, gender, serviceId, services?.length],
+    queryFn: () => listVoices({ language, gender }),
+    enabled: shouldFetchVoices, // Only fetch voices when service is valid
+    retry: false,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    refetchOnWindowFocus: false,
+  });
+  
+  // Only show loading if query is actually enabled and fetching
+  const isVoicesActuallyLoading = shouldFetchVoices && (voicesLoading || voicesFetching);
 
   const handleGenerate = () => {
     if (!inputText.trim()) {
@@ -69,11 +124,24 @@ const TTSPage: React.FC = () => {
       });
       return;
     }
+    if (!serviceId) {
+      toast({
+        title: "Service Required",
+        description: "Please select a TTS service.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     performInference(inputText);
   };
 
-  // Restrict available languages to Indo-Aryan list requested
-  const indoAryanLanguages = ["hi", "mr", "as", "bn", "gu", "or", "pa"];
+  // Get languages from selected service or empty array
+  const availableLanguages = serviceLanguages?.supported_languages || [];
+  
+  // Get selected service details
+  const selectedService = services?.find((s) => s.service_id === serviceId);
 
   return (
     <>
@@ -108,21 +176,29 @@ const TTSPage: React.FC = () => {
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
-                {/* Service Selection (fixed to Indo-Aryan model) */}
+                {/* Service Selection */}
                 <Box>
                   <FormControl>
                     <FormLabel className="dview-service-try-option-title">
-                      Translation Service:
+                      TTS Service:
                     </FormLabel>
-                    <Select
-                      placeholder="Select a model"
-                      value={serviceId}
-                      onChange={(e) => setServiceId(e.target.value)}
-                    >
-                      <option value="indic-tts-coqui-indo_aryan">
-                        indic-tts-coqui-indo_aryan
-                      </option>
-                    </Select>
+                    {servicesLoading ? (
+                      <Box textAlign="center" p={4}>
+                        <LoadingSpinner label="Loading services..." />
+                      </Box>
+                    ) : (
+                      <Select
+                        placeholder="Select a TTS service"
+                        value={serviceId}
+                        onChange={(e) => setServiceId(e.target.value)}
+                      >
+                        {services?.map((service) => (
+                          <option key={service.service_id} value={service.service_id}>
+                            {service.name || service.service_id}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
                   </FormControl>
 
                   <Text
@@ -130,7 +206,7 @@ const TTSPage: React.FC = () => {
                     mt={4}
                     mb={2}
                   >
-                    Language Configuration
+                    Service Configuration
                   </Text>
 
                   {!serviceId ? (
@@ -141,21 +217,39 @@ const TTSPage: React.FC = () => {
                       textAlign="center"
                     >
                       <Text fontSize="sm" color="gray.600">
-                        No model selected
+                        No service selected
                       </Text>
                     </Box>
-                  ) : (
+                  ) : selectedService ? (
                     <Box p={3} bg="gray.50" borderRadius="md">
                       <Text fontSize="sm" color="gray.600" mb={1}>
-                        <strong>Provider:</strong> AI4Bharat
+                        <strong>Provider:</strong> {selectedService.provider || "Unknown"}
+                      </Text>
+                      <Text fontSize="sm" color="gray.600" mb={1}>
+                        <strong>Description:</strong> {selectedService.serviceDescription || selectedService.description || "No description"}
                       </Text>
                       <Text fontSize="sm" color="gray.600" mb={1}>
                         <strong>Supported Languages:</strong>{" "}
-                        {indoAryanLanguages.length}
+                        {languagesLoading ? "Loading..." : availableLanguages.length}
                       </Text>
                       <Text fontSize="sm" color="gray.600" mb={1}>
-                        <strong>Service ID:</strong>{" "}
-                        ai4bharat/indic-tts-coqui-indo_aryan-gpu--t4
+                        <strong>Service ID:</strong> {selectedService.service_id}
+                      </Text>
+                      {selectedService.triton_endpoint && (
+                        <Text fontSize="sm" color="gray.600">
+                          <strong>Endpoint:</strong> {selectedService.triton_endpoint}
+                        </Text>
+                      )}
+                    </Box>
+                  ) : (
+                    <Box
+                      p={3}
+                      bg="yellow.50"
+                      borderRadius="md"
+                      textAlign="center"
+                    >
+                      <Text fontSize="sm" color="yellow.700">
+                        Service not found
                       </Text>
                     </Box>
                   )}
@@ -175,9 +269,9 @@ const TTSPage: React.FC = () => {
                     onGenderChange={setGender}
                     onFormatChange={setAudioFormat}
                     onSampleRateChange={setSamplingRate}
-                    availableLanguages={serviceId ? indoAryanLanguages : []}
+                    availableLanguages={serviceId ? availableLanguages : []}
                     availableVoices={voicesData?.voices}
-                    loading={voicesLoading}
+                    loading={isVoicesActuallyLoading || isLanguagesActuallyLoading}
                   />
                 </Box>
 
@@ -280,10 +374,20 @@ const TTSPage: React.FC = () => {
             </GridItem>
           </Grid>
 
-          {/* Voices Loading Indicator */}
-          {voicesLoading && (
+          {/* Loading Indicators */}
+          {(isVoicesActuallyLoading || servicesLoading || isLanguagesActuallyLoading) && (
             <Box textAlign="center">
-              <LoadingSpinner label="Loading voice options..." />
+              <LoadingSpinner 
+                label={
+                  servicesLoading 
+                    ? "Loading services..." 
+                    : isLanguagesActuallyLoading
+                    ? "Loading languages..." 
+                    : isVoicesActuallyLoading
+                    ? "Loading voice options..."
+                    : ""
+                } 
+              />
             </Box>
           )}
         </VStack>

@@ -194,3 +194,31 @@ export interface AudioPlayerState {
   volume: number;
   playbackRate: number;
 }
+
+// TTS Service Details Response (from Model Management)
+export interface TTSServiceDetailsResponse {
+  service_id: string;
+  model_id: string;
+  triton_endpoint: string;
+  triton_model: string;
+  provider: string; // Keep for backward compatibility
+  description: string; // Keep for backward compatibility
+  name: string;
+  serviceDescription: string;
+  supported_languages: string[];
+  supported_genders?: string[];
+  supported_audio_formats?: string[];
+  supported_sample_rates?: number[];
+}
+
+// TTS Languages Response
+export interface TTSLanguagesResponse {
+  model_id: string;
+  provider: string;
+  supported_languages: string[];
+  language_details: Array<{
+    code: string;
+    name: string;
+  }>;
+  total_languages: number;
+}

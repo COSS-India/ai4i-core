@@ -54,11 +54,9 @@ async def list_models_request(task_type: Union[str, None] = None):
             task_type_enum = TaskTypeEnum(task_type)
 
         data = await list_all_models(task_type_enum)
+        # Return empty list instead of 404 when no models found
         if data is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No valid models found for task type: '{task_type_enum.value if task_type_enum else None}'"
-            )
+            return []
 
         return data
     except HTTPException:
@@ -104,11 +102,9 @@ async def list_services_request(task_type: Union[str, None] = None):
 
         data = await list_all_services(task_type_enum)
 
+        # Return empty list instead of 404 when no services found
         if data is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No valid models found for task type: '{task_type_enum.value if task_type_enum else None}'"
-            )
+            return []
 
         return data
     except HTTPException:

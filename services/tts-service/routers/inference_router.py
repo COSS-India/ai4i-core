@@ -3,6 +3,7 @@ FastAPI router for TTS inference endpoints.
 """
 
 import logging
+import os
 import time
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Request
@@ -15,6 +16,8 @@ from services.tts_service import TTSService
 from services.audio_service import AudioService
 from services.text_service import TextService
 from utils.triton_client import TritonClient
+from utils.model_management_client import ModelManagementClient
+from utils.auth_utils import extract_auth_headers
 from utils.validation_utils import (
     validate_language_code,
     validate_service_id,
@@ -37,7 +40,10 @@ inference_router = APIRouter(
 )
 
 
-async def get_tts_service(db: AsyncSession = Depends(get_db_session)) -> TTSService:
+async def get_tts_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db_session)
+) -> TTSService:
     """Dependency to get configured TTS service."""
     try:
         # Create repository
@@ -47,17 +53,36 @@ async def get_tts_service(db: AsyncSession = Depends(get_db_session)) -> TTSServ
         audio_service = AudioService()
         text_service = TextService()
         
-        # Create Triton client
-        import os
-        triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-        # Strip http:// or https:// scheme from URL (like ASR service)
-        if triton_url.startswith(('http://', 'https://')):
-            triton_url = triton_url.split('://', 1)[1]
-        triton_api_key = os.getenv("TRITON_API_KEY")
-        triton_client = TritonClient(triton_url, triton_api_key)
+        # Get Redis client from app state
+        redis_client = getattr(request.app.state, 'redis_client', None)
         
-        # Create TTS service
-        tts_service = TTSService(repository, audio_service, text_service, triton_client)
+        # Get model management client from app state
+        model_management_client = getattr(request.app.state, 'model_management_client', None)
+        
+        # Get Triton client factory from app state
+        get_triton_client_func = getattr(request.app.state, 'get_triton_client_func', None)
+        
+        # Create default Triton client (fallback)
+        default_triton_client = None
+        triton_url = os.getenv("TRITON_ENDPOINT")
+        if triton_url:
+            triton_api_key = os.getenv("TRITON_API_KEY")
+            default_triton_client = TritonClient(triton_url, triton_api_key)
+        
+        # Get cache TTL
+        cache_ttl_seconds = int(os.getenv("TRITON_ENDPOINT_CACHE_TTL", "300"))
+        
+        # Create TTS service with model management integration
+        tts_service = TTSService(
+            repository=repository,
+            audio_service=audio_service,
+            text_service=text_service,
+            default_triton_client=default_triton_client,
+            get_triton_client_func=get_triton_client_func,
+            model_management_client=model_management_client,
+            redis_client=redis_client,
+            cache_ttl_seconds=cache_ttl_seconds
+        )
         
         return tts_service
         
@@ -82,13 +107,15 @@ async def run_inference(
 ) -> TTSInferenceResponse:
     """Run TTS inference on text inputs."""
     start_time = time.time()
-    request_id = None
     
     try:
         # Extract auth context from request.state
         user_id = getattr(http_request.state, 'user_id', None)
         api_key_id = getattr(http_request.state, 'api_key_id', None)
         session_id = getattr(http_request.state, 'session_id', None)
+        
+        # Extract auth headers for forwarding to model management service
+        auth_headers = extract_auth_headers(http_request)
         
         # Validate request
         await validate_request(request)
@@ -100,7 +127,8 @@ async def run_inference(
             request=request,
             user_id=user_id,
             api_key_id=api_key_id,
-            session_id=session_id
+            session_id=session_id,
+            auth_headers=auth_headers
         )
         
         # Log completion

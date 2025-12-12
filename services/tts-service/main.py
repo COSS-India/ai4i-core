@@ -23,6 +23,7 @@ from services.audio_service import AudioService
 from services.text_service import TextService
 from services.voice_service import VoiceService
 from utils.triton_client import TritonClient
+from utils.model_management_client import ModelManagementClient
 from repositories.tts_repository import TTSRepository
 
 # Try to import streaming service, but make it optional
@@ -109,10 +110,27 @@ async def lifespan(app: FastAPI):
             await conn.execute(text("SELECT 1"))
         logger.info("PostgreSQL connection established successfully")
         
+        # Initialize model management client
+        model_mgmt_url = os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091")
+        model_mgmt_cache_ttl = int(os.getenv("MODEL_MANAGEMENT_CACHE_TTL", "300"))
+        model_management_client = ModelManagementClient(
+            base_url=model_mgmt_url,
+            cache_ttl_seconds=model_mgmt_cache_ttl
+        )
+        logger.info(f"Model Management client initialized with URL: {model_mgmt_url}")
+        
+        # Create Triton client factory function
+        def get_triton_client_func(endpoint: str) -> TritonClient:
+            """Factory function to create Triton clients for different endpoints"""
+            triton_api_key = os.getenv("TRITON_API_KEY")
+            return TritonClient(endpoint, triton_api_key)
+        
         # Store connections in app state for middleware access
         app.state.redis_client = redis_client
         app.state.db_session_factory = db_session_factory
         app.state.db_engine = db_engine
+        app.state.model_management_client = model_management_client
+        app.state.get_triton_client_func = get_triton_client_func
         
         # Update rate limiting middleware with Redis client
         for middleware in app.user_middleware:
@@ -127,9 +145,6 @@ async def lifespan(app: FastAPI):
             text_service = TextService()
             voice_service = VoiceService()
             triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-            # Strip http:// or https:// scheme from URL (like ASR service)
-            if triton_url.startswith(('http://', 'https://')):
-                triton_url = triton_url.split('://', 1)[1]
             triton_api_key = os.getenv("TRITON_API_KEY")
             triton_client = TritonClient(triton_url, triton_api_key)
             
@@ -207,6 +222,12 @@ async def lifespan(app: FastAPI):
                 await registry_client.deregister(service_name, registered_instance_id)
         except Exception as e:
             logger.warning("Service registry deregistration error: %s", e)
+
+        # Close model management client
+        model_management_client = getattr(app.state, 'model_management_client', None)
+        if model_management_client:
+            await model_management_client.close()
+            logger.info("Model Management client closed")
 
         # Close Redis client
         if redis_client:
@@ -385,9 +406,6 @@ async def health_check() -> Dict[str, Any]:
         try:
             from utils.triton_client import TritonClient
             triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-            # Strip http:// or https:// scheme from URL (like ASR service)
-            if triton_url.startswith(('http://', 'https://')):
-                triton_url = triton_url.split('://', 1)[1]
             triton_api_key = os.getenv("TRITON_API_KEY")
             triton_client = TritonClient(triton_url, triton_api_key)
             

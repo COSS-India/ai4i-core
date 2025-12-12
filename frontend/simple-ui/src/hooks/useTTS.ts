@@ -8,27 +8,12 @@ import { getWordCount } from '../utils/helpers';
 import { UseTTSReturn, TTSInferenceRequest, Gender, AudioFormat, SampleRate } from '../types/tts';
 import { DEFAULT_TTS_CONFIG, MAX_TEXT_LENGTH } from '../config/constants';
 
-// Helper function to get the correct service ID based on language
-const getServiceIdForLanguage = (language: string): string => {
-  // Dravidian languages
-  if (['kn', 'ml', 'ta', 'te'].includes(language)) {
-    return 'indic-tts-coqui-dravidian';
-  }
-  // Indo-Aryan languages (expanded as requested)
-  if (['hi', 'bn', 'gu', 'mr', 'pa', 'as', 'or'].includes(language)) {
-    return 'indic-tts-coqui-indo_aryan';
-  }
-  // Miscellaneous languages (English, etc.)
-  return 'indic-tts-coqui-misc';
-};
-
-export const useTTS = (): UseTTSReturn => {
+export const useTTS = (serviceId?: string): UseTTSReturn => {
   // State
   const [language, setLanguage] = useState<string>(DEFAULT_TTS_CONFIG.language);
   const [gender, setGender] = useState<Gender>(DEFAULT_TTS_CONFIG.gender);
   const [audioFormat, setAudioFormat] = useState<AudioFormat>(DEFAULT_TTS_CONFIG.audioFormat);
   const [samplingRate, setSamplingRate] = useState<SampleRate>(DEFAULT_TTS_CONFIG.sampleRate);
-  const [modelId, setModelId] = useState<string>(getServiceIdForLanguage(DEFAULT_TTS_CONFIG.language));
   const [inputText, setInputText] = useState<string>('');
   const [audio, setAudio] = useState<string>('');
   const [fetching, setFetching] = useState<boolean>(false);
@@ -47,9 +32,13 @@ export const useTTS = (): UseTTSReturn => {
   // TTS inference mutation
   const ttsMutation = useMutation({
     mutationFn: async (text: string) => {
+      if (!serviceId) {
+        throw new Error('Service ID is required');
+      }
+      
       const config: TTSInferenceRequest['config'] = {
         language: { sourceLanguage: language },
-        serviceId: getServiceIdForLanguage(language),
+        serviceId: serviceId,
         gender,
         samplingRate,
         audioFormat,
@@ -151,7 +140,6 @@ export const useTTS = (): UseTTSReturn => {
   // Set language with validation
   const setLanguageWithValidation = useCallback((newLanguage: string) => {
     setLanguage(newLanguage);
-    setModelId(getServiceIdForLanguage(newLanguage));
     setInputText('');
     setAudio('');
     setFetched(false);
@@ -222,7 +210,7 @@ export const useTTS = (): UseTTSReturn => {
     gender,
     audioFormat,
     samplingRate,
-    modelId,
+    modelId: serviceId || '', // Return the serviceId passed in
     inputText,
     audio,
     fetching,
