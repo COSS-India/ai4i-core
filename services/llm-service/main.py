@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from routers.health_router import health_router
 from routers.inference_router import inference_router
 from utils.triton_client import TritonClient
+from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
@@ -48,6 +49,8 @@ TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT", "300.0"))
 redis_client: Optional[redis.Redis] = None
 db_engine: Optional[AsyncEngine] = None
 db_session_factory: Optional[async_sessionmaker] = None
+registry_client: Optional[ServiceRegistryHttpClient] = None
+registered_instance_id: Optional[str] = None
 
 # Initialize Redis client early for middleware
 try:
@@ -72,7 +75,7 @@ except Exception as e:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager for startup and shutdown"""
-    global redis_client, db_engine, db_session_factory
+    global redis_client, db_engine, db_session_factory, registry_client, registered_instance_id
     
     # Startup
     logger.info("Starting LLM Service...")
@@ -119,6 +122,33 @@ async def lifespan(app: FastAPI):
         app.state.triton_api_key = TRITON_API_KEY
         app.state.triton_timeout = TRITON_TIMEOUT
         
+        # Register service into the central registry via config-service
+        try:
+            registry_client = ServiceRegistryHttpClient()
+            service_name = os.getenv("SERVICE_NAME", "llm-service")
+            service_port = int(os.getenv("SERVICE_PORT", "8090"))
+            # Prefer explicit public base URL if provided
+            public_base_url = os.getenv("SERVICE_PUBLIC_URL")
+            if public_base_url:
+                service_url = public_base_url.rstrip("/")
+            else:
+                service_host = os.getenv("SERVICE_HOST", service_name)
+                service_url = f"http://{service_host}:{service_port}"
+            health_url = service_url + "/health"
+            instance_id = os.getenv("SERVICE_INSTANCE_ID", f"{service_name}-{os.getpid()}")
+            registered_instance_id = await registry_client.register(
+                service_name=service_name,
+                service_url=service_url,
+                health_check_url=health_url,
+                service_metadata={"instance_id": instance_id, "status": "healthy"},
+            )
+            if registered_instance_id:
+                logger.info("Registered %s with service registry as instance %s", service_name, registered_instance_id)
+            else:
+                logger.warning("Service registry registration skipped/failed for %s", service_name)
+        except Exception as e:
+            logger.warning("Service registry registration error: %s", e)
+        
         logger.info("LLM Service started successfully")
         
     except Exception as e:
@@ -131,6 +161,14 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down LLM Service...")
     
     try:
+        # Deregister from registry if previously registered
+        try:
+            if registry_client and registered_instance_id:
+                service_name = os.getenv("SERVICE_NAME", "llm-service")
+                await registry_client.deregister(service_name, registered_instance_id)
+        except Exception as e:
+            logger.warning("Service registry deregistration error: %s", e)
+        
         if redis_client:
             await redis_client.close()
             logger.info("Redis connection closed")
