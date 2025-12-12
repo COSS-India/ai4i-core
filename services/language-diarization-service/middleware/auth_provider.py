@@ -1,5 +1,6 @@
 """
 Authentication provider for FastAPI routes - supports JWT, API key, and BOTH with permission checks.
+Performs local JWT verification and calls auth-service for API key permission validation.
 """
 import os
 import logging
@@ -34,7 +35,7 @@ def get_api_key_from_header(authorization: Optional[str]) -> Optional[str]:
 def determine_service_and_action(request: Request) -> Tuple[str, str]:
     path = request.url.path.lower()
     method = request.method.upper()
-    service = "language-detection"
+    service = "language-diarization"
     if "/inference" in path and method == "POST":
         action = "inference"
     elif method == "GET":
@@ -77,39 +78,31 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
 
 
 async def authenticate_bearer_token(request: Request, authorization: Optional[str]) -> Dict[str, Any]:
-    """
-    Validate JWT access token locally (signature + expiry check).
-    Kong already validated the token, this is a defense-in-depth check.
-    """
+    """Validate JWT access token locally (signature + expiry check)."""
     if not authorization or not authorization.startswith("Bearer "):
         raise AuthenticationError("Missing bearer token")
 
     token = authorization.split(" ", 1)[1]
 
     try:
-        # Verify JWT signature and expiry locally
         payload = jwt.decode(
             token,
             JWT_SECRET_KEY,
             algorithms=[JWT_ALGORITHM],
-            options={"verify_signature": True, "verify_exp": True}
+            options={"verify_signature": True, "verify_exp": True},
         )
-        
-        # Extract user info from JWT claims
+
         user_id = payload.get("sub") or payload.get("user_id")
         email = payload.get("email", "")
         username = payload.get("username") or payload.get("email", "")
         roles = payload.get("roles", [])
         token_type = payload.get("type", "")
-        
-        # Ensure this is an access token
+
         if token_type != "access":
             raise AuthenticationError("Invalid token type")
-        
         if not user_id:
             raise AuthenticationError("User ID not found in token")
 
-        # Populate request state
         request.state.user_id = int(user_id) if isinstance(user_id, (str, int)) else user_id
         request.state.api_key_id = None
         request.state.api_key_name = None
@@ -119,14 +112,10 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
         return {
             "user_id": int(user_id) if isinstance(user_id, (str, int)) else user_id,
             "api_key_id": None,
-            "user": {
-                "username": username,
-                "email": email,
-                "roles": roles,
-            },
+            "user": {"username": username, "email": email, "roles": roles},
             "api_key": None,
         }
-        
+
     except JWTError as e:
         logger.warning(f"JWT verification failed: {e}")
         raise AuthenticationError("Invalid or expired token")
@@ -183,3 +172,4 @@ async def OptionalAuthProvider(
     except AuthenticationError:
         # Return None for optional auth
         return None
+

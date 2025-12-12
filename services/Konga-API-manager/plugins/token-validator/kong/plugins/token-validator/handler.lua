@@ -166,6 +166,23 @@ local function validate_api_key_permissions(conf, api_key, service, action)
     return false, msg
   end
 
+  -- Check response body for valid field (even if status is 200)
+  if res.body and res.body ~= "" then
+    local ok, body = pcall(cjson.decode, res.body)
+    if ok and body then
+      -- Check if valid field is false
+      if body.valid == false then
+        local msg = body.message or "Invalid API key or insufficient permissions"
+        return false, msg
+      end
+      -- If valid is true or not present, consider it valid
+      if body.valid == true then
+        return true, nil
+      end
+    end
+  end
+
+  -- Default to valid if status is 200 and no body validation
   return true, nil
 end
 
@@ -191,6 +208,18 @@ local function determine_service_and_action(path, method)
   end
 
   return service, action
+end
+
+-- Check if service requires both Bearer token AND API key
+local function requires_both_auth_and_api_key(path)
+  local p = string.lower(path or "")
+  local services_requiring_both = { "asr", "nmt", "tts", "pipeline", "llm" }
+  for _, svc in ipairs(services_requiring_both) do
+    if string.find(p, "/api/v1/" .. svc) then
+      return true
+    end
+  end
+  return false
 end
 
 function TokenValidator:access(conf)
@@ -226,45 +255,34 @@ function TokenValidator:access(conf)
 
   -- 3) Auth for protected paths
   if not is_public then
-    -- Check if X-API-Key header is present
     local api_key = kong.request.get_header("X-API-Key")
+    local token = get_bearer_token()
+    local requires_both = requires_both_auth_and_api_key(path)
     
-    if api_key and api_key ~= "" then
-      -- Validate API key permissions via auth service (centralized)
-      local service, action = determine_service_and_action(path, method)
-      local ok, err = validate_api_key_permissions(conf, api_key, service, action)
-
-      if err == "auth_service_unavailable" then
-        return kong.response.exit(503, { message = "Authentication service unavailable" }, {
-          ["Content-Type"] = "application/json",
-        })
-      end
-
-      if not ok then
-        return kong.response.exit(403, { message = err or "Invalid API key or insufficient permissions" }, {
-          ["Content-Type"] = "application/json",
-        })
-      end
-
-      -- X-API-Key is valid; ensure X-Auth-Source is set
-      local auth_source = kong.request.get_header("X-Auth-Source")
-      if auth_source and auth_source ~= "" then
-        kong.service.request.set_header("X-Auth-Source", auth_source)
-      else
-        kong.service.request.set_header("X-Auth-Source", "API_KEY")
-      end
-    else
-      -- No X-API-Key, validate Bearer token (existing flow)
-      local token = get_bearer_token()
+    -- For ASR, NMT, TTS, Pipeline, LLM: require BOTH Bearer token AND API key
+    if requires_both then
+      -- Check if Bearer token is missing
       if not token or token == "" then
         return kong.response.exit(401, {
-          message = "Missing or invalid Authorization header",
+          error = "AUTHENTICATION_REQUIRED",
+          message = "Authorization token is required."
         }, {
           ["WWW-Authenticate"] = "Bearer",
           ["Content-Type"]     = "application/json",
         })
       end
-
+      
+      -- Check if API key is missing
+      if not api_key or api_key == "" then
+        return kong.response.exit(401, {
+          error = "API_KEY_MISSING",
+          message = "API key is required to access this service."
+        }, {
+          ["Content-Type"] = "application/json",
+        })
+      end
+      
+      -- Validate Bearer token first
       local ok, err = validate_token(conf, token)
       if err == "auth_service_unavailable" then
         return kong.response.exit(503, { message = "Authentication service unavailable" }, {
@@ -273,18 +291,99 @@ function TokenValidator:access(conf)
       end
 
       if not ok then
-        return kong.response.exit(401, { message = "Invalid or expired token" }, {
+        return kong.response.exit(401, {
+          error = "AUTHENTICATION_REQUIRED",
+          message = "Authorization token is required."
+        }, {
           ["WWW-Authenticate"] = "Bearer",
           ["Content-Type"]     = "application/json",
         })
       end
       
-      -- Set X-Auth-Source for Bearer token
+      -- Validate API key permissions
+      local service, action = determine_service_and_action(path, method)
+      ok, err = validate_api_key_permissions(conf, api_key, service, action)
+
+      if err == "auth_service_unavailable" then
+        return kong.response.exit(503, { message = "Authentication service unavailable" }, {
+          ["Content-Type"] = "application/json",
+        })
+      end
+
+      if not ok then
+        return kong.response.exit(401, {
+          error = "API_KEY_MISSING",
+          message = "API key is required to access this service."
+        }, {
+          ["Content-Type"] = "application/json",
+        })
+      end
+      
+      -- Both are valid; set headers
       local auth_source = kong.request.get_header("X-Auth-Source")
       if auth_source and auth_source ~= "" then
         kong.service.request.set_header("X-Auth-Source", auth_source)
       else
         kong.service.request.set_header("X-Auth-Source", "AUTH_TOKEN")
+      end
+    else
+      -- For other services: existing logic (either Bearer OR API key)
+      if api_key and api_key ~= "" then
+        -- Validate API key permissions via auth service (centralized)
+        local service, action = determine_service_and_action(path, method)
+        local ok, err = validate_api_key_permissions(conf, api_key, service, action)
+
+        if err == "auth_service_unavailable" then
+          return kong.response.exit(503, { message = "Authentication service unavailable" }, {
+            ["Content-Type"] = "application/json",
+          })
+        end
+
+        if not ok then
+          return kong.response.exit(403, { message = err or "Invalid API key or insufficient permissions" }, {
+            ["Content-Type"] = "application/json",
+          })
+        end
+
+        -- X-API-Key is valid; ensure X-Auth-Source is set
+        local auth_source = kong.request.get_header("X-Auth-Source")
+        if auth_source and auth_source ~= "" then
+          kong.service.request.set_header("X-Auth-Source", auth_source)
+        else
+          kong.service.request.set_header("X-Auth-Source", "API_KEY")
+        end
+      else
+        -- No X-API-Key, validate Bearer token (existing flow)
+        if not token or token == "" then
+          return kong.response.exit(401, {
+            message = "Missing or invalid Authorization header",
+          }, {
+            ["WWW-Authenticate"] = "Bearer",
+            ["Content-Type"]     = "application/json",
+          })
+        end
+
+        local ok, err = validate_token(conf, token)
+        if err == "auth_service_unavailable" then
+          return kong.response.exit(503, { message = "Authentication service unavailable" }, {
+            ["Content-Type"] = "application/json",
+          })
+        end
+
+        if not ok then
+          return kong.response.exit(401, { message = "Invalid or expired token" }, {
+            ["WWW-Authenticate"] = "Bearer",
+            ["Content-Type"]     = "application/json",
+          })
+        end
+        
+        -- Set X-Auth-Source for Bearer token
+        local auth_source = kong.request.get_header("X-Auth-Source")
+        if auth_source and auth_source ~= "" then
+          kong.service.request.set_header("X-Auth-Source", auth_source)
+        else
+          kong.service.request.set_header("X-Auth-Source", "AUTH_TOKEN")
+        end
       end
     end
   end
@@ -303,11 +402,10 @@ function TokenValidator:access(conf)
   kong.service.request.set_header("X-Forwarded-For", kong.client.get_ip() or "")
 
   -- 6) X-API-Key injection (per service) - only if not already set from request
-  local existing_api_key = kong.service.request.get_header("X-API-Key")
-  if not existing_api_key or existing_api_key == "" then
-    if conf.api_key and conf.api_key ~= "" then
-      kong.service.request.set_header("X-API-Key", conf.api_key)
-    end
+  -- Check original request header, not service request (which doesn't support get_header)
+  local existing_api_key = kong.request.get_header("X-API-Key")
+  if (not existing_api_key or existing_api_key == "") and conf.api_key and conf.api_key ~= "" then
+    kong.service.request.set_header("X-API-Key", conf.api_key)
   end
 end
 

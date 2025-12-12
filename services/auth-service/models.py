@@ -262,3 +262,41 @@ class APIKeyValidationResponse(BaseModel):
     message: Optional[str] = None
     user_id: Optional[int] = None
     permissions: List[str] = []
+
+
+# Admin endpoints response models
+class UserDetailResponse(BaseModel):
+    """User details response for admin endpoints"""
+    userid: int = Field(..., alias="id")
+    username: str
+    emailid: str = Field(..., alias="email")
+    phonenumber: Optional[str] = Field(None, alias="phone_number")
+    full_name: Optional[str] = None
+    is_active: bool
+    is_verified: bool
+    is_superuser: bool
+    created_at: datetime
+    last_login: Optional[datetime] = None
+    
+    class Config:
+        populate_by_name = True
+
+
+class PermissionResponse(BaseModel):
+    """Permission response model"""
+    id: int
+    name: str
+    resource: str
+    action: str
+    created_at: datetime
+
+
+class UserListResponse(BaseModel):
+    """User list response for admin endpoints"""
+    userid: int = Field(..., alias="id")
+    username: str
+    emailid: str = Field(..., alias="email")
+    phonenumber: Optional[str] = Field(None, alias="phone_number")
+    
+    class Config:
+        populate_by_name = True

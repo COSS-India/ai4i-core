@@ -1,12 +1,13 @@
 """
 Authentication provider for FastAPI routes - supports JWT, API key, and BOTH with permission checks.
+Uses local JWT signature + expiry verification (no auth-service calls for JWT).
+Uses auth-service for API key permission validation.
 """
 import os
-import logging
+from fastapi import Request, Header, HTTPException
 from typing import Optional, Dict, Any, Tuple
-
+import logging
 import httpx
-from fastapi import Request, Header
 from jose import JWTError, jwt
 
 from middleware.exceptions import AuthenticationError, AuthorizationError
@@ -17,24 +18,30 @@ logger = logging.getLogger(__name__)
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 
+# Auth service configuration
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
 AUTH_HTTP_TIMEOUT = float(os.getenv("AUTH_HTTP_TIMEOUT", "5.0"))
 
 
-def get_api_key_from_header(authorization: Optional[str]) -> Optional[str]:
+def get_api_key_from_header(authorization: Optional[str] = Header(None)) -> Optional[str]:
+    """Extract API key from Authorization header."""
     if not authorization:
         return None
+    
+    # Support formats: "Bearer <key>", "<key>", "ApiKey <key>"
     if authorization.startswith("Bearer "):
+        return None  # Bearer is JWT, not API key
+    elif authorization.startswith("ApiKey "):
         return authorization[7:]
-    if authorization.startswith("ApiKey "):
-        return authorization[7:]
-    return authorization
+    else:
+        return authorization
 
 
 def determine_service_and_action(request: Request) -> Tuple[str, str]:
+    """Determine service name and action from request path and method."""
     path = request.url.path.lower()
     method = request.method.upper()
-    service = "language-detection"
+    service = "ocr"
     if "/inference" in path and method == "POST":
         action = "inference"
     elif method == "GET":
@@ -45,6 +52,7 @@ def determine_service_and_action(request: Request) -> Tuple[str, str]:
 
 
 async def validate_api_key_permissions(api_key: str, service: str, action: str) -> None:
+    """Validate API key has required permissions by calling auth-service."""
     try:
         validate_url = f"{AUTH_SERVICE_URL}/api/v1/auth/validate-api-key"
         async with httpx.AsyncClient(timeout=AUTH_HTTP_TIMEOUT) as client:
@@ -55,10 +63,15 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
             result = response.json()
             if result.get("valid"):
                 return
-            raise AuthorizationError(result.get("message", "Permission denied"))
+            # Extract error message from auth-service response
+            error_msg = result.get("message", "Permission denied")
+            raise AuthorizationError(error_msg)
 
+        # Handle non-200 responses - extract error from detail or message field
         try:
-            err_msg = response.json().get("message", response.text)
+            error_data = response.json()
+            # FastAPI HTTPException uses "detail" field, auth-service uses "message"
+            err_msg = error_data.get("detail") or error_data.get("message") or response.text
         except Exception:
             err_msg = response.text
         logger.error(f"Auth service returned status {response.status_code}: {err_msg}")
@@ -141,13 +154,14 @@ async def AuthProvider(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     x_auth_source: str = Header(default="API_KEY", alias="X-Auth-Source"),
 ) -> Dict[str, Any]:
-    """Authentication provider dependency with permission checks."""
+    """Authentication provider for OCR - supports AUTH_TOKEN, API_KEY, BOTH."""
     auth_source = (x_auth_source or "API_KEY").upper()
 
     if auth_source == "AUTH_TOKEN":
-        raise AuthenticationError("Missing API key")
+        return await authenticate_bearer_token(request, authorization)
 
     api_key = x_api_key or get_api_key_from_header(authorization)
+
     if auth_source == "BOTH":
         bearer_result = await authenticate_bearer_token(request, authorization)
         if not api_key:
@@ -156,6 +170,7 @@ async def AuthProvider(
         await validate_api_key_permissions(api_key, service, action)
         return bearer_result
 
+    # Default: API_KEY
     if not api_key:
         raise AuthenticationError("Missing API key")
 
@@ -168,7 +183,7 @@ async def AuthProvider(
     request.state.user_email = None
     request.state.is_authenticated = True
 
-    return {"user_id": None, "api_key_id": None, "user": None, "api_key": {"masked": True}}
+    return {"user_id": None, "api_key_id": None, "user": None, "api_key": None}
 
 
 async def OptionalAuthProvider(
@@ -183,3 +198,4 @@ async def OptionalAuthProvider(
     except AuthenticationError:
         # Return None for optional auth
         return None
+    

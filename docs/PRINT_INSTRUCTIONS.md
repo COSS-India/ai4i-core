@@ -42,3 +42,6 @@ If colors still don't appear:
    - https://md2pdf.netlify.app/
    - VS Code extension: "Markdown PDF"
 
+
+
+

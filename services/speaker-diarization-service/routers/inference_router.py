@@ -16,12 +16,14 @@ from models.speaker_diarization_response import SpeakerDiarizationInferenceRespo
 from repositories.speaker_diarization_repository import SpeakerDiarizationRepository, get_db_session
 from services.speaker_diarization_service import SpeakerDiarizationService
 from utils.triton_client import TritonClient, TritonInferenceError
+from middleware.auth_provider import AuthProvider
 
 logger = logging.getLogger(__name__)
 
 inference_router = APIRouter(
     prefix="/api/v1/speaker-diarization",
     tags=["Speaker Diarization Inference"],
+    dependencies=[Depends(AuthProvider)]  # Enforce auth and permission checks on all routes
 )
 
 

@@ -12,7 +12,7 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from enum import Enum
 from urllib.parse import urlencode, urlparse, parse_qs
 from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
@@ -1216,47 +1216,197 @@ async def spa_pipeline_builder_trailing():
 # OpenAPI/Swagger security scheme (Bearer auth)
 bearer_scheme = HTTPBearer(auto_error=False)
 api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
+AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
+
+def determine_service_and_action(request: Request) -> Tuple[str, str]:
+    """Infer service and action from path and method."""
+    path = request.url.path.lower()
+    method = request.method.upper()
+    service = "unknown"
+    for svc in ["asr", "nmt", "tts", "pipeline", "model-management", "llm"]:
+        if f"/api/v1/{svc}" in path:
+            service = svc
+            break
+    action = "read"
+    if "/inference" in path and method == "POST":
+        action = "inference"
+    elif method != "GET":
+        action = "inference"
+    return service, action
+
+def requires_both_auth_and_api_key(request: Request) -> bool:
+    """Check if service requires both Bearer token AND API key."""
+    path = request.url.path.lower()
+    services_requiring_both = ["asr", "nmt", "tts", "pipeline", "llm"]
+    for svc in services_requiring_both:
+        if f"/api/v1/{svc}" in path:
+            return True
+    return False
+
+async def validate_api_key_permissions(api_key: str, service: str, action: str) -> None:
+    """Call auth-service to validate API key permissions."""
+    url = f"{AUTH_SERVICE_URL}/api/v1/auth/validate-api-key"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(
+                url,
+                json={"api_key": api_key, "service": service, "action": action},
+            )
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="Authentication service unavailable")
+
+    # If auth-service returns non-200, try to extract error message
+    if resp.status_code != 200:
+        error_message = "API key is required to access this service."
+        try:
+            error_data = resp.json()
+            if isinstance(error_data, dict) and "message" in error_data:
+                error_message = error_data["message"]
+            elif isinstance(error_data, dict) and "detail" in error_data:
+                if isinstance(error_data["detail"], str):
+                    error_message = error_data["detail"]
+                elif isinstance(error_data["detail"], dict) and "message" in error_data["detail"]:
+                    error_message = error_data["detail"]["message"]
+        except Exception:
+            pass
+        
+        raise HTTPException(
+            status_code=resp.status_code if resp.status_code in [401, 403] else 401,
+            detail={
+                "error": "INVALID_API_KEY",
+                "message": error_message
+            }
+        )
+
+    # status 200: check body.valid if present
+    try:
+        data = resp.json()
+        if data.get("valid") is False:
+            # Extract the actual error message from auth-service
+            error_message = data.get("message", "Invalid API key or insufficient permissions")
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "INVALID_API_KEY",
+                    "message": error_message
+                }
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        # If body can't be parsed but status was 200, allow
+        pass
 
 def build_auth_headers(request: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> Dict[str, str]:
     headers: Dict[str, str] = {}
-    # Copy incoming headers except hop-by-hop and content-length/host
+    # Copy incoming headers except hop-by-hop, content-length, host, and x-auth-source (we'll set it ourselves)
     for k, v in request.headers.items():
-        if k.lower() not in ['content-length', 'host'] and not is_hop_by_hop_header(k):
+        k_lower = k.lower()
+        if k_lower not in ['content-length', 'host', 'x-auth-source'] and not is_hop_by_hop_header(k):
             headers[k] = v
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
     if api_key:
         headers['X-API-Key'] = api_key
+    
+    # Set X-Auth-Source based on what's present (API Gateway has already validated)
+    # Always overwrite X-Auth-Source for services requiring both (don't trust incoming header)
+    if requires_both_auth_and_api_key(request):
+        if credentials and credentials.credentials and api_key:
+            headers['X-Auth-Source'] = 'BOTH'  # Always set to BOTH when both are present
+        elif api_key:
+            headers['X-Auth-Source'] = 'API_KEY'
+        elif credentials and credentials.credentials:
+            headers['X-Auth-Source'] = 'AUTH_TOKEN'
+    else:
+        # For other services, preserve original X-Auth-Source or set based on what's present
+        incoming_auth_source = request.headers.get('x-auth-source') or request.headers.get('X-Auth-Source')
+        if incoming_auth_source:
+            headers['X-Auth-Source'] = incoming_auth_source
+        elif api_key:
+            headers['X-Auth-Source'] = 'API_KEY'
+        elif credentials and credentials.credentials:
+            headers['X-Auth-Source'] = 'AUTH_TOKEN'
+    
     return headers
 
 async def ensure_authenticated_for_request(req: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> None:
-    """Enforce authentication - always require valid JWT token in Authorization header.
+    """Enforce authentication - require BOTH Bearer token AND API key for ASR, NMT, TTS, Pipeline, LLM services."""
     
-    - Kong handles X-API-Key authentication (service-level)
-    - API Gateway requires valid JWT token in Authorization header (user-level)
-    - X-API-Key presence does NOT bypass JWT token validation
-    """
-    # Always require a Bearer token in Authorization header
-    if not credentials or not credentials.credentials:
-        raise HTTPException(
-            status_code=401, 
-            detail="Not authenticated: Bearer access token required (Authorization header)",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
+    requires_both = requires_both_auth_and_api_key(req)
     
-    # Verify the JWT token is valid
-    token = credentials.credentials
-    payload = await auth_middleware.verify_token(token)
-    
-    if payload is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"}
-        )
-    
-    # Token is valid - authentication successful
-    # Note: X-API-Key is only used by Kong for service-level authentication, not by API Gateway
+    if requires_both:
+        # For ASR, NMT, TTS, Pipeline, LLM: require BOTH Bearer token AND API key
+        token = credentials.credentials if credentials else None
+        
+        # Check if Bearer token is missing
+        if not token:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": "AUTHENTICATION_REQUIRED",
+                    "message": "Authorization token is required."
+                },
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+        
+        # Validate Bearer token
+        payload = await auth_middleware.verify_token(token)
+        if payload is None:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": "AUTHENTICATION_REQUIRED",
+                    "message": "Invalid or expired token"
+                },
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+        
+        # Check if API key is missing
+        if not api_key:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": "API_KEY_MISSING",
+                    "message": "API key is required to access this service."
+                }
+            )
+        
+        # Validate API key permissions
+        service, action = determine_service_and_action(req)
+        try:
+            await validate_api_key_permissions(api_key, service, action)
+        except HTTPException as e:
+            # Re-raise with the specific error message from auth-service
+            raise
+    else:
+        # For other services: existing logic (either Bearer OR API key)
+        auth_source = (req.headers.get("x-auth-source") or "").upper()
+        use_api_key = api_key is not None and auth_source == "API_KEY"
+
+        if use_api_key:
+            # Validate API key permissions via auth-service
+            service, action = determine_service_and_action(req)
+            await validate_api_key_permissions(api_key, service, action)
+            return
+
+        # Default: require Bearer token
+        if not credentials or not credentials.credentials:
+            raise HTTPException(
+                status_code=401, 
+                detail="Not authenticated: Bearer access token required (Authorization header)",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+        
+        token = credentials.credentials
+        payload = await auth_middleware.verify_token(token)
+        
+        if payload is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid or expired token",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
 
 # --- OpenAPI customization: add x-auth-source dropdown param globally ---
 def custom_openapi():
@@ -1268,6 +1418,15 @@ def custom_openapi():
         description=app.description,
         routes=app.routes,
     )
+
+    # Point Swagger to API Gateway (port 8080) - same permission logic as Kong
+    server_url = os.getenv("SWAGGER_SERVER_URL", "http://localhost:8080")
+    openapi_schema["servers"] = [
+        {
+            "url": server_url,
+            "description": "API Gateway (with API Key Permission Validation)",
+        }
+    ]
 
     # Ensure top-level tags are set explicitly for Swagger UI grouping
     openapi_schema["tags"] = [{"name": t["name"], "description": t.get("description", "")} for t in tags_metadata]
@@ -2003,6 +2162,63 @@ async def list_roles(
     """List all available roles (Admin only)"""
     return await proxy_to_auth_service(request, "/api/v1/auth/roles/list")
 
+# Admin Endpoints
+@app.get("/api/v1/auth/users/{user_id}", tags=["Admin"])
+async def get_user_details(
+    user_id: int,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """
+    Get user details by user ID (Admin only)
+    
+    Returns user information including:
+    - userid
+    - username
+    - emailid
+    - phonenumber
+    - full_name
+    - is_active
+    - is_verified
+    - is_superuser
+    - created_at
+    - last_login
+    """
+    return await proxy_to_auth_service(request, f"/api/v1/auth/users/{user_id}")
+
+@app.get("/api/v1/auth/permissions", tags=["Admin"])
+async def get_all_permissions(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """
+    Get all permissions from the permissions table (Admin only)
+    
+    Returns a list of all permissions with:
+    - id
+    - name
+    - resource
+    - action
+    - created_at
+    """
+    return await proxy_to_auth_service(request, "/api/v1/auth/permissions")
+
+@app.get("/api/v1/auth/users", tags=["Admin"])
+async def get_all_users(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """
+    Get all users (Admin only)
+    
+    Returns a list of all users with:
+    - userid
+    - username
+    - emailid
+    - phonenumber
+    """
+    return await proxy_to_auth_service(request, "/api/v1/auth/users")
+
     # ASR Service Endpoints (Proxy to ASR Service)
 
 @app.post("/api/v1/asr/transcribe", response_model=ASRInferenceResponse, tags=["ASR"])
@@ -2051,11 +2267,7 @@ async def get_streaming_info(
 ):
     """Get WebSocket streaming endpoint information"""
     await ensure_authenticated_for_request(request, credentials, api_key)
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
+    headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/streaming/info", "asr-service", headers=headers)
 
 @app.get("/api/v1/asr/models", tags=["ASR"])
@@ -2066,11 +2278,7 @@ async def get_asr_models(
 ):
     """Get available ASR models"""
     await ensure_authenticated_for_request(request, credentials, api_key)
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
+    headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/asr/models", "asr-service", headers=headers)
 
 @app.get("/api/v1/asr/health", tags=["ASR"])
@@ -2327,11 +2535,7 @@ async def get_nmt_languages(
 ):
     """Get supported languages for NMT service"""
     await ensure_authenticated_for_request(request, credentials, api_key)
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
+    headers = build_auth_headers(request, credentials, api_key)
     
     # Build query parameters dict
     query_params = {}
@@ -2355,11 +2559,7 @@ async def get_nmt_models(
 ):
     """Get available NMT models"""
     await ensure_authenticated_for_request(request, credentials, api_key)
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
+    headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/nmt/models", "nmt-service", headers=headers)
 
 @app.get("/api/v1/nmt/services", response_model=Dict[str, Any], tags=["NMT"])
@@ -2370,11 +2570,7 @@ async def get_nmt_services(
 ):
     """Get available NMT services"""
     await ensure_authenticated_for_request(request, credentials, api_key)
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
+    headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/nmt/services", "nmt-service", headers=headers)
 
 @app.get("/api/v1/nmt/health", tags=["NMT"])
