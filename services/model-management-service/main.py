@@ -53,14 +53,6 @@ async def lifespan(app: FastAPI):
 
 
     logger.info("Shutting down FastAPI app...")
-
-    # Close async Redis client (for auth/rate limiting)
-    try:
-        if redis_client:
-            await redis_client.close()
-            logger.info("Async Redis connection closed.")
-    except Exception as e:
-        logger.error(f"Error closing async Redis: {e}")
     
     # Close sync Redis client (for redis_om caching)
     try:

@@ -30,6 +30,7 @@ from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from models import database_models
+from models import auth_models  # Import to ensure auth tables are created
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
