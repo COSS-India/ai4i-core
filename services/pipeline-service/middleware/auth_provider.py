@@ -1,20 +1,14 @@
 """
-Authentication provider for FastAPI routes with API key validation and Redis caching.
+Authentication provider for FastAPI routes with API key validation via auth-service.
+Pipeline service is stateless and uses auth-service for all validation.
 """
-from fastapi import Request, Header, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Request, Header, Depends
 from typing import Optional, Dict, Any, Tuple
-import hashlib
-import json
 import logging
 import httpx
 import os
 
-from repositories.api_key_repository import ApiKeyRepository
-from repositories.user_repository import UserRepository
-from repositories.asr_repository import get_db_session
-from models.auth_models import ApiKeyDB, UserDB
-from middleware.exceptions import AuthenticationError, InvalidAPIKeyError, ExpiredAPIKeyError, AuthorizationError
+from middleware.exceptions import AuthenticationError, AuthorizationError
 
 logger = logging.getLogger(__name__)
 
@@ -37,42 +31,29 @@ def get_api_key_from_header(authorization: Optional[str] = Header(None)) -> Opti
         return authorization
 
 
-def hash_api_key(api_key: str) -> str:
-    """Hash API key using SHA256."""
-    return hashlib.sha256(api_key.encode()).hexdigest()
-
-
 def determine_service_and_action(request: Request) -> Tuple[str, str]:
     """
     Determine service name and action from request path and method.
     
     Returns:
         Tuple of (service_name, action)
-        service_name: asr, nmt, tts, pipeline, model-management, llm
+        service_name: pipeline
         action: read or inference
     """
     path = request.url.path.lower()
     method = request.method.upper()
     
-    # Extract service name from path (e.g., /api/v1/asr/... -> asr)
-    service = None
-    for svc in ["asr", "nmt", "tts", "pipeline", "model-management", "llm"]:
-        if f"/api/v1/{svc}/" in path or path.endswith(f"/api/v1/{svc}"):
-            service = svc
-            break
-    
-    if not service:
-        # Default to asr for this service
-        service = "asr"
+    # Pipeline service
+    service = "pipeline"
     
     # Determine action based on path and method
     if "/inference" in path and method == "POST":
         action = "inference"
-    elif method == "GET" or "/services" in path or "/models" in path or "/languages" in path:
+    elif method == "GET" or "/info" in path:
         action = "read"
     else:
-        # Default to read for other operations
-        action = "read"
+        # Default to inference for POST requests
+        action = "inference" if method == "POST" else "read"
     
     return service, action
 
@@ -82,7 +63,6 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
     Validate JWT access token locally (signature + expiry check).
     Kong already validated the token, this is a defense-in-depth check.
     """
-    import os
     from jose import JWTError, jwt
     
     if not authorization or not authorization.startswith("Bearer "):
@@ -149,7 +129,7 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
     
     Args:
         api_key: The API key to validate
-        service: Service name (asr, nmt, tts, etc.)
+        service: Service name (pipeline)
         action: Action type (read, inference)
     
     Returns:
@@ -196,104 +176,13 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
         raise AuthorizationError("Permission validation failed")
 
 
-async def validate_api_key(api_key: str, db: AsyncSession, redis_client) -> Tuple[ApiKeyDB, UserDB]:
-    """Validate API key and return user and API key data."""
-    try:
-        # Hash the API key
-        key_hash = hash_api_key(api_key)
-        
-        # First check Redis cache
-        cache_key = f"api_key:{key_hash}"
-        cached_data = await redis_client.get(cache_key)
-        
-        if cached_data:
-            try:
-                cache_data = json.loads(cached_data)
-                api_key_id = cache_data.get("api_key_id")
-                user_id = cache_data.get("user_id")
-                is_active = cache_data.get("is_active", False)
-                
-                if is_active:
-                    # Get fresh data from database
-                    api_key_repo = ApiKeyRepository(db)
-                    api_key_db = await api_key_repo.find_by_id(api_key_id)
-                    
-                    if api_key_db and await api_key_repo.is_key_valid(api_key_db):
-                        # Update last used
-                        await api_key_repo.update_last_used(api_key_id)
-                        return api_key_db, api_key_db.user
-            except (json.JSONDecodeError, KeyError) as e:
-                logger.warning(f"Invalid cache data for API key: {e}")
-        
-        # If not in cache or invalid, query database
-        api_key_repo = ApiKeyRepository(db)
-        api_key_db = await api_key_repo.find_by_key_hash(key_hash)
-        
-        if not api_key_db:
-            raise InvalidAPIKeyError("API key not found")
-        
-        # Validate API key
-        if not await api_key_repo.is_key_valid(api_key_db):
-            if not api_key_db.is_active:
-                raise InvalidAPIKeyError("API key is inactive")
-            else:
-                raise ExpiredAPIKeyError("API key has expired")
-        
-        # Cache the result
-        cache_data = {
-            "api_key_id": api_key_db.id,
-            "user_id": api_key_db.user_id,
-            "is_active": api_key_db.is_active
-        }
-        await redis_client.setex(cache_key, 300, json.dumps(cache_data))  # 5 minute TTL
-        
-        # Update last used
-        await api_key_repo.update_last_used(api_key_db.id)
-        
-        return api_key_db, api_key_db.user
-        
-    except (InvalidAPIKeyError, ExpiredAPIKeyError):
-        raise
-    except Exception as e:
-        logger.error(f"Error validating API key: {e}")
-        raise AuthenticationError("Failed to validate API key")
-
-
 async def AuthProvider(
     request: Request,
     authorization: Optional[str] = Header(None, alias="Authorization"),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     x_auth_source: str = Header(default="API_KEY", alias="X-Auth-Source"),
-    db: AsyncSession = Depends(get_db_session)
 ) -> Dict[str, Any]:
     """Authentication provider dependency for FastAPI routes."""
-    import os
-    
-    # Check if authentication is disabled
-    auth_enabled = os.getenv("AUTH_ENABLED", "true").lower() == "true"
-    require_api_key = os.getenv("REQUIRE_API_KEY", "true").lower() == "true"
-    allow_anonymous = os.getenv("ALLOW_ANONYMOUS_ACCESS", "false").lower() == "true"
-    
-    # Debug logging
-    logger.info(f"Auth config - AUTH_ENABLED: {os.getenv('AUTH_ENABLED')}, REQUIRE_API_KEY: {os.getenv('REQUIRE_API_KEY')}, ALLOW_ANONYMOUS_ACCESS: {os.getenv('ALLOW_ANONYMOUS_ACCESS')}")
-    logger.info(f"Parsed values - auth_enabled: {auth_enabled}, require_api_key: {require_api_key}, allow_anonymous: {allow_anonymous}")
-    
-    # If authentication is disabled or anonymous access is allowed, skip auth
-    if not auth_enabled or (allow_anonymous and not require_api_key):
-        # Populate request state with anonymous context
-        request.state.user_id = None
-        request.state.api_key_id = None
-        request.state.api_key_name = None
-        request.state.user_email = None
-        request.state.is_authenticated = False
-        
-        return {
-            "user_id": None,
-            "api_key_id": None,
-            "user": None,
-            "api_key": None
-        }
-    
     auth_source = (x_auth_source or "API_KEY").upper()
     
     # Handle Bearer token authentication (user tokens - no permission check needed)
@@ -323,7 +212,7 @@ async def AuthProvider(
         
         return bearer_result
     
-    # Handle API key authentication (requires permission check)
+    # Handle API key authentication (requires permission check via auth-service)
     try:
         # Extract API key from X-API-Key header first, then Authorization header
         api_key = x_api_key or get_api_key_from_header(authorization)
@@ -331,34 +220,29 @@ async def AuthProvider(
         if not api_key:
             raise AuthenticationError("Missing API key")
         
-        # Get Redis client from app state
-        redis_client = request.app.state.redis_client
-        
-        # Validate API key exists and is active
-        api_key_db, user_db = await validate_api_key(api_key, db, redis_client)
-        
         # Determine service and action from request
         service, action = determine_service_and_action(request)
         
-        # Validate API key has required permissions
+        # Validate API key permissions via auth-service
         await validate_api_key_permissions(api_key, service, action)
         
-        # Populate request state with auth context
-        request.state.user_id = user_db.id
-        request.state.api_key_id = api_key_db.id
-        request.state.api_key_name = api_key_db.name
-        request.state.user_email = user_db.email
+        # For API key only, we don't have user info from database
+        # Set minimal state
+        request.state.user_id = None
+        request.state.api_key_id = None
+        request.state.api_key_name = None
+        request.state.user_email = None
         request.state.is_authenticated = True
         
         # Return auth context
         return {
-            "user_id": user_db.id,
-            "api_key_id": api_key_db.id,
-            "user": user_db,
-            "api_key": api_key_db
+            "user_id": None,
+            "api_key_id": None,
+            "user": None,
+            "api_key": None
         }
         
-    except (AuthenticationError, InvalidAPIKeyError, ExpiredAPIKeyError, AuthorizationError):
+    except (AuthenticationError, AuthorizationError):
         raise
     except Exception as e:
         logger.error(f"Authentication error: {e}")
@@ -370,11 +254,16 @@ async def OptionalAuthProvider(
     authorization: Optional[str] = Header(None, alias="Authorization"),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     x_auth_source: str = Header(default="API_KEY", alias="X-Auth-Source"),
-    db: AsyncSession = Depends(get_db_session)
 ) -> Optional[Dict[str, Any]]:
     """Optional authentication provider that doesn't raise exception if no auth provided."""
     try:
-        return await AuthProvider(request, authorization, x_api_key, x_auth_source, db)
+        return await AuthProvider(request, authorization, x_api_key, x_auth_source)
     except AuthenticationError:
         # Return None for optional auth
         return None
+
+
+
+
+
+
