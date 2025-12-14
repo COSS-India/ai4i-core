@@ -1,0 +1,735 @@
+_format_version: "3.0"
+_transform: true
+
+# ============================================
+# NEW ARCHITECTURE: Kong → Auth Service → Backend Services
+# ============================================
+# Frontend → Kong → (Token Validation via Auth Service) → Backend Services
+# API Gateway Service is bypassed
+# ============================================
+
+# ============================================
+# UPSTREAMS - Direct backend service connections
+# ============================================
+upstreams:
+  - name: auth-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: asr-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: tts-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: nmt-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: pipeline-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: model-management-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: llm-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        # Use the real LLM health endpoint so Kong marks the target healthy
+        http_path: /api/v1/llm/health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: config-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: audio-lang-detection-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: language-detection-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: language-diarization-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: speaker-diarization-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: ner-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: ocr-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+  - name: transliteration-service-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        http_path: /health
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+        timeout: 5
+
+# ============================================
+# TARGETS - Backend service instances
+# ============================================
+targets:
+  - target: auth-service:8081
+    upstream: auth-service-upstream
+    weight: 100
+
+  - target: asr-service:8087
+    upstream: asr-service-upstream
+    weight: 100
+
+  - target: tts-service:8088
+    upstream: tts-service-upstream
+    weight: 100
+
+  - target: nmt-service:8089
+    upstream: nmt-service-upstream
+    weight: 100
+
+  - target: pipeline-service:8090
+    upstream: pipeline-service-upstream
+    weight: 100
+
+  - target: model-management-service:8091
+    upstream: model-management-service-upstream
+    weight: 100
+
+  - target: llm-service:8090
+    upstream: llm-service-upstream
+    weight: 100
+
+  - target: config-service:8082
+    upstream: config-service-upstream
+    weight: 100
+
+  - target: audio-lang-detection-service:8096
+    upstream: audio-lang-detection-service-upstream
+    weight: 100
+
+  - target: language-detection-service:8090
+    upstream: language-detection-service-upstream
+    weight: 100
+
+  - target: language-diarization-service:9002
+    upstream: language-diarization-service-upstream
+    weight: 100
+
+  - target: speaker-diarization-service:8095
+    upstream: speaker-diarization-service-upstream
+    weight: 100
+
+  - target: ner-service:9001
+    upstream: ner-service-upstream
+    weight: 100
+
+  - target: ocr-service:8099
+    upstream: ocr-service-upstream
+    weight: 100
+
+  - target: transliteration-service:8090
+    upstream: transliteration-service-upstream
+    weight: 100
+
+# ============================================
+# SERVICES - API service definitions
+# ============================================
+
+# ============================================
+# AUTH SERVICE - Public endpoints (no token validation)
+# ============================================
+services:
+  - name: auth-service
+    url: http://auth-service-upstream
+    routes:
+      - name: auth-login-route
+        paths:
+          - /api/v1/auth/login
+        strip_path: false
+        methods:
+          - POST
+          - OPTIONS
+
+      - name: auth-register-route
+        paths:
+          - /api/v1/auth/register
+        strip_path: false
+        methods:
+          - POST
+          - OPTIONS
+
+      - name: auth-validate-route
+        paths:
+          - /api/v1/auth/validate
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - OPTIONS
+
+      - name: auth-route
+        paths:
+          - /api/v1/auth
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - PATCH
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+
+# ============================================
+# ASR SERVICE - Protected endpoint
+# ============================================
+  - name: asr-service
+    url: http://asr-service-upstream
+    routes:
+      - name: asr-route
+        paths:
+          - /api/v1/asr
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              api_key: "${ASR_API_KEY}"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+              enable_rate_limit: true
+              rate_limit: 100
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+
+# ============================================
+# TTS SERVICE - Protected endpoint
+# ============================================
+  - name: tts-service
+    url: http://tts-service-upstream
+    routes:
+      - name: tts-route
+        paths:
+          - /api/v1/tts
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              api_key: "${TTS_API_KEY}"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+              enable_rate_limit: true
+              rate_limit: 100
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+
+# ============================================
+# NMT SERVICE - Protected endpoint
+# ============================================
+  - name: nmt-service
+    url: http://nmt-service-upstream
+    routes:
+      - name: nmt-route
+        paths:
+          - /api/v1/nmt
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              api_key: "${NMT_API_KEY}"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+              enable_rate_limit: true
+              rate_limit: 150
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+
+# ============================================
+# PIPELINE SERVICE - Protected endpoint
+# ============================================
+  - name: pipeline-service
+    url: http://pipeline-service-upstream
+    routes:
+      - name: pipeline-route
+        paths:
+          - /api/v1/pipeline
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              api_key: "${PIPELINE_API_KEY}"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+              enable_rate_limit: true
+              rate_limit: 50
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+
+# ============================================
+# MODEL MANAGEMENT SERVICE - Protected endpoint
+# ============================================
+  - name: model-management-service
+    url: http://model-management-service-upstream
+    routes:
+      - name: model-management-route
+        paths:
+          - /api/v1/model-management
+        strip_path: true
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              api_key: "${MODEL_MANAGEMENT_API_KEY}"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+              enable_rate_limit: true
+              rate_limit: 50
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+
+# ============================================
+# LLM SERVICE - Protected endpoint
+# ============================================
+  - name: llm-service
+    url: http://llm-service-upstream
+    routes:
+      - name: llm-route
+        paths:
+          - /api/v1/llm
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              api_key: "${LLM_API_KEY}"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+              enable_rate_limit: true
+              rate_limit: 50
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+
+# ============================================
+# CONFIG SERVICE (Feature Flags) - Protected endpoint
+# ============================================
+  - name: config-service
+    url: http://config-service-upstream
+    routes:
+      - name: config-route
+        paths:
+          - /api/v1/config
+          - /api/v1/feature-flags
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+              enable_rate_limit: true
+              rate_limit: 200
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+
+# ============================================
+# AUDIO LANGUAGE DETECTION SERVICE - Protected endpoint (JWT only, no API key)
+# ============================================
+  - name: audio-lang-detection-service
+    url: http://audio-lang-detection-service-upstream
+    routes:
+      - name: audio-lang-detection-route
+        paths:
+          - /api/v1/audio-lang-detection
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+              enable_rate_limit: true
+              rate_limit: 100
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+
+# ============================================
+# LANGUAGE DETECTION SERVICE - Protected endpoint (JWT only, no API key)
+# ============================================
+  - name: language-detection-service
+    url: http://language-detection-service-upstream
+    routes:
+      - name: language-detection-route
+        paths:
+          - /api/v1/language-detection
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+              enable_rate_limit: true
+              rate_limit: 100
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+
+# ============================================
+# LANGUAGE DIARIZATION SERVICE - Protected endpoint (JWT only, no API key)
+# ============================================
+  - name: language-diarization-service
+    url: http://language-diarization-service-upstream
+    routes:
+      - name: language-diarization-route
+        paths:
+          - /api/v1/language-diarization
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+              enable_rate_limit: true
+              rate_limit: 100
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+
+# ============================================
+# SPEAKER DIARIZATION SERVICE - Protected endpoint (JWT only, no API key)
+# ============================================
+  - name: speaker-diarization-service
+    url: http://speaker-diarization-service-upstream
+    routes:
+      - name: speaker-diarization-route
+        paths:
+          - /api/v1/speaker-diarization
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+              enable_rate_limit: true
+              rate_limit: 100
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+
+# ============================================
+# NER SERVICE - Protected endpoint (JWT only, no API key)
+# ============================================
+  - name: ner-service
+    url: http://ner-service-upstream
+    routes:
+      - name: ner-route
+        paths:
+          - /api/v1/ner
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+              enable_rate_limit: true
+              rate_limit: 100
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+
+# ============================================
+# OCR SERVICE - Protected endpoint (JWT only, no API key)
+# ============================================
+  - name: ocr-service
+    url: http://ocr-service-upstream
+    routes:
+      - name: ocr-route
+        paths:
+          - /api/v1/ocr
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+              enable_rate_limit: true
+              rate_limit: 100
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+
+# ============================================
+# TRANSLITERATION SERVICE - Protected endpoint (JWT only, no API key)
+# ============================================
+  - name: transliteration-service
+    url: http://transliteration-service-upstream
+    routes:
+      - name: transliteration-route
+        paths:
+          - /api/v1/transliteration
+        strip_path: false
+        methods:
+          - GET
+          - POST
+          - PUT
+          - OPTIONS
+        plugins:
+          - name: token-validator
+            config:
+              auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
+              cors_allowed_origins:
+                - "http://localhost:3000"
+              enable_rate_limit: true
+              rate_limit: 100
+              rate_window: 60
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+
+# ============================================
+# GLOBAL PLUGINS
+# ============================================
+# Removed prometheus and correlation-id plugins as they're not available in Kong 3.4
+# Can be re-enabled if using Kong Enterprise or if plugins are installed
+

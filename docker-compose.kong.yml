@@ -1,0 +1,115 @@
+version: "3.8"
+
+services:
+  # PostgreSQL for Konga (Kong Manager UI)
+  postgres-konga:
+    image: postgres:11-alpine
+    container_name: ai4v-postgres-konga
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: konga
+    ports:
+      - "5435:5432"
+    volumes:
+      - kong-postgres-konga-data:/var/lib/postgresql/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d konga"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # Kong API Gateway (DB-less, using declarative config)
+  kong:
+    image: kong:3.4-ubuntu
+    container_name: ai4v-kong-gateway
+    ports:
+      - "8000:8000"
+      - "8443:8443"
+      - "8001:8001"
+      - "8444:8444"
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /tmp/kong-substituted.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_ADMIN_GUI_URL: http://localhost:8002
+      # Load only our custom plugin
+      KONG_PLUGINS: token-validator
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      AI4VOICE_API_KEY: ${AI4VOICE_API_KEY}
+      ASR_API_KEY: ${ASR_API_KEY}
+      TTS_API_KEY: ${TTS_API_KEY}
+      NMT_API_KEY: ${NMT_API_KEY}
+      PIPELINE_API_KEY: ${PIPELINE_API_KEY}
+      DEVELOPER_API_KEY: ${DEVELOPER_API_KEY}
+      MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
+      LLM_API_KEY: ${LLM_API_KEY}
+    env_file:
+      - ./.env
+    volumes:
+      - ./services/Konga-API-manager/kong-new-architecture.yml:/kong/kong-new-architecture.yml:ro
+      - ./services/Konga-API-manager/substitute-env.sh:/kong/substitute-env.sh:ro
+      - ./services/Konga-API-manager/plugins/token-validator/kong/plugins:/usr/local/share/lua/5.1/kong/plugins:ro
+    command: >
+      sh -c "
+        sh /kong/substitute-env.sh &&
+        /docker-entrypoint.sh kong docker-start
+      "
+    dns:
+      - 127.0.0.11
+    dns_search: []
+    networks:
+      - microservices-network
+    depends_on:
+      postgres-konga:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # Konga (Kong Manager UI)
+  kong-manager:
+    image: pantsel/konga:latest
+    container_name: ai4v-kong-manager
+    ports:
+      - "8002:1337"
+    environment:
+      NODE_ENV: production
+      DB_ADAPTER: postgres
+      DB_HOST: postgres-konga
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_DATABASE: konga
+      KONGA_HOOK_TIMEOUT: 120000
+      TOKEN_SECRET: ${KONG_MANAGER_TOKEN_SECRET}
+    depends_on:
+      kong:
+        condition: service_healthy
+      postgres-konga:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+volumes:
+  kong-postgres-konga-data:
+    driver: local
+
+networks:
+  microservices-network:
+    external: true
+    name: dhruva-microservices_microservices-network
+

@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 inference_router = APIRouter(
     prefix="/api/v1/transliteration",
     tags=["Transliteration Inference"],
-    # dependencies=[Depends(AuthProvider)]  # Commented out for testing
+    dependencies=[Depends(AuthProvider)]  # Enforce auth and permission checks on all routes
 )
 
 

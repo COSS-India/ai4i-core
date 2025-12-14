@@ -14,6 +14,7 @@ from typing import List , Union
 from models.type_enum import TaskTypeEnum
 
 
+# Authentication is handled by Kong + Auth Service, no need for AuthProvider here
 router_details = APIRouter(
     prefix="/services/details", 
     tags=["Model Management"],
