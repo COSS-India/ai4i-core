@@ -16,12 +16,14 @@ RUN apt-get update && apt-get install -y \
 # Copy shared libraries
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY libs/ai4icore_auth /app/libs/ai4icore_auth
+COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 
 # Copy requirements and install Python dependencies
 COPY services/ocr-service/requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 
 
 # Final runtime image
@@ -51,6 +53,7 @@ ENV PATH=/home/app/.local/bin:$PATH
 # Copy shared libraries
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
+COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 
 # Copy application code
 COPY services/ocr-service .
