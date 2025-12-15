@@ -11,7 +11,7 @@ import traceback
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from middleware.exceptions import (
+from ai4icore_auth import (
     AuthenticationError,
     AuthorizationError,
     ErrorDetail,

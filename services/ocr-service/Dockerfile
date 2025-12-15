@@ -13,13 +13,15 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy AI4ICore Observability Plugin
+# Copy shared libraries
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY libs/ai4icore_auth /app/libs/ai4icore_auth
 
 # Copy requirements and install Python dependencies
 COPY services/ocr-service/requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
 
 
 # Final runtime image
@@ -46,8 +48,9 @@ RUN useradd --create-home --shell /bin/bash app
 COPY --from=builder /root/.local /home/app/.local
 ENV PATH=/home/app/.local/bin:$PATH
 
-# Copy AI4ICore Observability Plugin
+# Copy shared libraries
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
 
 # Copy application code
 COPY services/ocr-service .

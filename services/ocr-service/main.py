@@ -23,9 +23,11 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_auth import attach_auth
 
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
+from utils.auth_validator import OcrAuthValidator
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
@@ -54,12 +56,13 @@ redis_client: Optional[redis.Redis] = None
 db_engine: Optional[AsyncEngine] = None
 db_session_factory: Optional[async_sessionmaker] = None
 registry_client: Optional[ServiceRegistryHttpClient] = None
+auth_validator: Optional[OcrAuthValidator] = None
 registered_instance_id: Optional[str] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global redis_client, db_engine, db_session_factory, registry_client, registered_instance_id
+    global redis_client, db_engine, db_session_factory, registry_client, registered_instance_id, auth_validator
 
     logger.info("Starting OCR Service...")
 
@@ -148,6 +151,10 @@ async def lifespan(app: FastAPI):
     app.state.db_session_factory = db_session_factory
     app.state.triton_endpoint = TRITON_ENDPOINT
     app.state.triton_api_key = TRITON_API_KEY
+
+    # Auth validator (shared library)
+    auth_validator = OcrAuthValidator()
+    attach_auth(app, auth_validator)
 
     # Service registry
     try:

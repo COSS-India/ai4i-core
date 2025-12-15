@@ -12,8 +12,7 @@ from models.ner_request import NerInferenceRequest
 from models.ner_response import NerInferenceResponse
 from services.ner_service import NerService, TritonInferenceError
 from utils.triton_client import TritonClient
-from middleware.auth_provider import AuthProvider
-from middleware.auth_provider import AuthProvider
+from ai4icore_auth import AuthProvider
 
 logger = logging.getLogger(__name__)
 

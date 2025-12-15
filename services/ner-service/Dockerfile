@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
 
 # Copy AI4ICore Observability Plugin from monorepo
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY libs/ai4icore_auth /app/libs/ai4icore_auth
 
 # Copy service requirements
 COPY services/ner-service/requirements.txt .
@@ -20,6 +21,7 @@ COPY services/ner-service/requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir --user -r requirements.txt
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
 
 
 FROM python:3.11-slim
@@ -45,8 +47,10 @@ RUN useradd --create-home --shell /bin/bash app
 COPY --from=builder /root/.local /home/app/.local
 ENV PATH=/home/app/.local/bin:$PATH
 
-# Copy AI4ICore Observability Plugin
+# Create libs directory and copy shared libraries
+RUN mkdir -p /app/libs
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
 
 # Copy service code
 COPY services/ner-service .

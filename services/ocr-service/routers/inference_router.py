@@ -14,8 +14,7 @@ from models.ocr_request import OCRInferenceRequest
 from models.ocr_response import OCRInferenceResponse
 from services.ocr_service import OCRService
 from utils.triton_client import TritonClient, TritonInferenceError
-from middleware.auth_provider import AuthProvider
-from middleware.auth_provider import AuthProvider
+from ai4icore_auth import AuthProvider
 
 logger = logging.getLogger(__name__)
 
