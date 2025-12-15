@@ -104,8 +104,23 @@ export const transcribeAudio = async (
  */
 export const listASRModels = async (): Promise<ASRModelsResponse> => {
   try {
+    const apiKeyEnv = process.env.NEXT_PUBLIC_API_KEY;
+    const apiKey =
+      apiKeyEnv && apiKeyEnv.trim() !== '' && apiKeyEnv !== 'your_api_key_here'
+        ? apiKeyEnv.trim()
+        : null;
+
+    const headers: Record<string, string> = {};
+    if (apiKey) {
+      // Send in both styles to match your expectation and Kong plugin
+      headers['X-API-Key'] = apiKey;
+      headers['X_API_Key'] = apiKey;
+      headers['X-Auth-Source'] = 'BOTH';
+    }
+
     const response = await asrApiClient.get<ASRModelsResponse>(
-      apiEndpoints.asr.models
+      apiEndpoints.asr.models,
+      { headers }
     );
 
     return response.data;

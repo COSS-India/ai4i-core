@@ -451,7 +451,8 @@ services:
       - name: model-management-route
         paths:
           - /api/v1/model-management
-        strip_path: true
+        # Keep full path so the API Gateway sees /api/v1/model-management/...
+        strip_path: false
         methods:
           - GET
           - POST

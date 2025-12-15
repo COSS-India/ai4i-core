@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from contextlib import asynccontextmanager
 from logger import logger
 from db_connection import create_tables , auth_db_engine, AuthDBSessionLocal , app_db_engine , AppDBSessionLocal
@@ -18,6 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
+from models.service_list import ServiceListResponse
+from models.type_enum import TaskTypeEnum
+from db_operations import list_all_services
+from typing import List, Union
 
 
 
@@ -135,6 +139,41 @@ async def root():
         "status": "running",
         "description": "Model Management microservice"
     }
+
+
+@app.get(
+    "/api/v1/model-management/services/",
+    response_model=List[ServiceListResponse],
+    tags=["Model Management RESTful"],
+)
+async def list_services_frontend_bridge(
+    task_type: Union[str, None] = Query(None, description="Filter services by task type"),
+):
+    """
+    Bridge endpoint for frontend and Kong:
+    Matches `/api/v1/model-management/services/` and delegates to the internal
+    service listing logic.
+    """
+    try:
+        if not task_type or task_type.lower() == "none":
+            task_type_enum = None
+        else:
+            task_type_enum = TaskTypeEnum(task_type)
+
+        data = await list_all_services(task_type_enum)
+        if data is None:
+            # Return empty list instead of 404 to be friendlier to the UI
+            return []
+
+        return data
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error while listing service details from DB (frontend bridge).")
+        raise HTTPException(
+            status_code=500,
+            detail={"kind": "DBError", "message": "Error listing service details"},
+        )
 
 
 
