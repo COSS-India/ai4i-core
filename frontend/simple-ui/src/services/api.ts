@@ -5,9 +5,13 @@ import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestCo
 // API Base URL from environment.
 // For production this should be set to the browser-facing API gateway URL
 // (for example, https://dev.ai4inclusion.org or a dedicated API domain).
-// Default to localhost:8080 for local development if not set.
-// const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+// Default to Kong on localhost:8000 for local development if not set or empty.
+const API_BASE_URL =
+  (process.env.NEXT_PUBLIC_API_URL &&
+    process.env.NEXT_PUBLIC_API_URL.trim() !== '' &&
+    process.env.NEXT_PUBLIC_API_URL !== 'undefined') ?
+  process.env.NEXT_PUBLIC_API_URL :
+  'http://localhost:8000';
 
 // Debug: Log the API base URL in development
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
@@ -28,19 +32,25 @@ const getAuthToken = (): string | null => {
   return null;
 };
 
-// Get API key from localStorage (user-provided) or environment variable (fallback)
-// Priority: localStorage > env file
+// Get API key from environment variable (primary) or localStorage (override if set)
 const getApiKey = (): string | null => {
+  // 1) Primary source: .env (NEXT_PUBLIC_API_KEY)
+  const envApiKey = process.env.NEXT_PUBLIC_API_KEY;
+  if (envApiKey && envApiKey.trim() !== '' && envApiKey !== 'your_api_key_here') {
+    return envApiKey.trim();
+  }
+
+  // 2) Fallback: hard-coded key provided for now (keeps behavior even if env not loaded)
+  const fallbackKey = 'ak_WtuFmDV_1co5x83pDMCztRsHQsv4XuwuRGwfuzbHIGs';
+  if (fallbackKey && fallbackKey.trim() !== '') {
+    return fallbackKey;
+  }
+
+  // 3) Optional override: localStorage (if you ever allow user-entered key)
   if (typeof window !== 'undefined') {
-    // First check localStorage (user-provided via "manage API key")
-    const storedApiKey = localStorage.getItem('api_key');
+    const storedApiKey = window.localStorage.getItem('api_key');
     if (storedApiKey && storedApiKey.trim() !== '') {
       return storedApiKey.trim();
-    }
-    // Fallback to environment variable if no API key is provided
-    const envApiKey = process.env.NEXT_PUBLIC_API_KEY;
-    if (envApiKey && envApiKey.trim() !== '' && envApiKey !== 'your_api_key_here') {
-      return envApiKey.trim();
     }
   }
   return null;
@@ -129,13 +139,16 @@ llmApiClient.interceptors.request.use(
         // Set X-Auth-Source to BOTH when both JWT and API key are present
         if (jwtToken) {
           config.headers['X-Auth-Source'] = 'BOTH';
+        } else {
+          config.headers['X-Auth-Source'] = 'API_KEY';
         }
       }
     } else if (!isAuthEndpoint) {
-      // For other endpoints (legacy), use API key if available
+      // For other (non-JWT) endpoints, send API key header as well
       const apiKey = getApiKey();
       if (apiKey) {
-        config.headers['Authorization'] = `Bearer ${apiKey}`;
+        config.headers['X-API-Key'] = apiKey;
+        config.headers['X_API_Key'] = apiKey;
       }
     }
     
@@ -183,6 +196,11 @@ asrApiClient.interceptors.request.use(
     const apiKey = getApiKey();
     if (apiKey) {
       config.headers['X-API-Key'] = apiKey;
+      // Debug: log what we are actually sending from the browser
+      if (typeof window !== 'undefined') {
+        // eslint-disable-next-line no-console
+        console.debug('[ASR] request', config.url, 'X-API-Key present:', !!apiKey);
+      }
     }
     return config;
   },
@@ -274,18 +292,24 @@ apiClient.interceptors.request.use(
       if (jwtToken) {
         config.headers['Authorization'] = `Bearer ${jwtToken}`;
         if (isModelManagementEndpoint) {
+          // Model management is JWT-only: mark auth source as AUTH_TOKEN
         config.headers['x-auth-source'] = 'AUTH_TOKEN';
       }
       }
       
-      // ASR, NMT, TTS, Pipeline, LLM require BOTH JWT token AND API key
-      if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint) {
+      // For protected backend services, ALSO send X-API-Key
+      // BUT: skip API key for model-management (JWT-only)
+      if (!isModelManagementEndpoint) {
         const apiKey = getApiKey();
         if (apiKey) {
+          // Header names exactly as required by gateway
           config.headers['X-API-Key'] = apiKey;
+          config.headers['X_API_Key'] = apiKey;
           // Set X-Auth-Source to BOTH when both JWT and API key are present
           if (jwtToken) {
             config.headers['X-Auth-Source'] = 'BOTH';
+          } else {
+            config.headers['X-Auth-Source'] = 'API_KEY';
           }
         }
       }

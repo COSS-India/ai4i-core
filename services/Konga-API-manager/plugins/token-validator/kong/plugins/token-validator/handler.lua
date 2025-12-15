@@ -258,6 +258,47 @@ function TokenValidator:access(conf)
     local api_key = kong.request.get_header("X-API-Key")
     local token = get_bearer_token()
     local requires_both = requires_both_auth_and_api_key(path)
+    local path_lower = string.lower(path or "")
+
+    -- ******************************************************************
+    -- Special case: MODEL-MANAGEMENT should be **JWT-only**
+    -- Ignore X-API-Key completely and only validate the Bearer token.
+    -- ******************************************************************
+    if string.find(path_lower, "/api/v1/model%-management") then
+      if not token or token == "" then
+        return kong.response.exit(401, {
+          message = "Missing or invalid Authorization header",
+        }, {
+          ["WWW-Authenticate"] = "Bearer",
+          ["Content-Type"]     = "application/json",
+        })
+      end
+
+      local ok, err = validate_token(conf, token)
+      if err == "auth_service_unavailable" then
+        return kong.response.exit(503, { message = "Authentication service unavailable" }, {
+          ["Content-Type"] = "application/json",
+        })
+      end
+
+      if not ok then
+        return kong.response.exit(401, { message = "Invalid or expired token" }, {
+          ["WWW-Authenticate"] = "Bearer",
+          ["Content-Type"]     = "application/json",
+        })
+      end
+
+      -- JWT is valid; propagate auth source as AUTH_TOKEN
+      local auth_source = kong.request.get_header("X-Auth-Source")
+      if auth_source and auth_source ~= "" then
+        kong.service.request.set_header("X-Auth-Source", auth_source)
+      else
+        kong.service.request.set_header("X-Auth-Source", "AUTH_TOKEN")
+      end
+
+      -- Skip all API key logic for model-management
+      goto done_auth
+    end
     
     -- For ASR, NMT, TTS, Pipeline, LLM: require BOTH Bearer token AND API key
     if requires_both then
@@ -327,10 +368,49 @@ function TokenValidator:access(conf)
         kong.service.request.set_header("X-Auth-Source", "AUTH_TOKEN")
       end
     else
-      -- For other services: existing logic (either Bearer OR API key)
-      if api_key and api_key ~= "" then
-        -- Validate API key permissions via auth service (centralized)
+      -- For other services: default logic (either Bearer OR API key)
+      -- First determine logical service/action from path
         local service, action = determine_service_and_action(path, method)
+      local p_lower = string.lower(path or "")
+
+      -- Special case: any model-management path should be JWT-only (no API key permission check),
+      -- even if X-API-Key is present.
+      if string.find(p_lower, "model%-management") then
+        -- Ignore any X-API-Key header and just validate the Bearer token
+        if not token or token == "" then
+          return kong.response.exit(401, {
+            message = "Missing or invalid Authorization header",
+          }, {
+            ["WWW-Authenticate"] = "Bearer",
+            ["Content-Type"]     = "application/json",
+          })
+        end
+
+        local ok, err = validate_token(conf, token)
+        if err == "auth_service_unavailable" then
+          return kong.response.exit(503, { message = "Authentication service unavailable" }, {
+            ["Content-Type"] = "application/json",
+          })
+        end
+
+        if not ok then
+          return kong.response.exit(401, { message = "Invalid or expired token" }, {
+            ["WWW-Authenticate"] = "Bearer",
+            ["Content-Type"]     = "application/json",
+          })
+        end
+
+        -- For model-management, mark auth source as JWT
+        local auth_source = kong.request.get_header("X-Auth-Source")
+        if auth_source and auth_source ~= "" then
+          kong.service.request.set_header("X-Auth-Source", auth_source)
+        else
+          kong.service.request.set_header("X-Auth-Source", "AUTH_TOKEN")
+        end
+
+        -- Skip API key validation entirely for model-management
+      elseif api_key and api_key ~= "" then
+        -- For other services, if an API key is present, validate it via auth service
         local ok, err = validate_api_key_permissions(conf, api_key, service, action)
 
         if err == "auth_service_unavailable" then
@@ -353,7 +433,7 @@ function TokenValidator:access(conf)
           kong.service.request.set_header("X-Auth-Source", "API_KEY")
         end
       else
-        -- No X-API-Key, validate Bearer token (existing flow)
+        -- No (or ignored) X-API-Key, validate Bearer token (existing flow)
         if not token or token == "" then
           return kong.response.exit(401, {
             message = "Missing or invalid Authorization header",
@@ -387,6 +467,8 @@ function TokenValidator:access(conf)
       end
     end
   end
+
+  ::done_auth::
 
   -- 4) Optional rate limit (per IP)
   check_rate_limit(conf)

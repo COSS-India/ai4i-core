@@ -277,8 +277,8 @@ services:
   # Microservices
   api-gateway-service:
     build:
-      context: ./services/api-gateway-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/api-gateway-service/Dockerfile
     container_name: ai4v-api-gateway
     ports:
       - "8080:8080"
@@ -303,8 +303,8 @@ services:
 
   auth-service:
     build:
-      context: ./services/auth-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/auth-service/Dockerfile
     container_name: ai4v-auth-service
     ports:
       - "8081:8081"
@@ -331,8 +331,8 @@ services:
 
   config-service:
     build:
-      context: ./services/config-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/config-service/Dockerfile
     container_name: ai4v-config-service
     ports:
       - "8082:8082"
@@ -646,8 +646,8 @@ services:
 
   llm-service:
     build:
-      context: ./services/llm-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/llm-service/Dockerfile
     container_name: ai4v-llm-service
     ports:
       - "8093:8090"
@@ -716,8 +716,8 @@ services:
 
   model-management-service:
     build:
-      context: ./services/model-management-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/model-management-service/Dockerfile
     container_name: ai4v-model-management-service
     ports:
       - "8094:8091"
