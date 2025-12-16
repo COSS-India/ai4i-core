@@ -20,7 +20,9 @@ from models import (
     LoginRequest, LoginResponse, TokenRefreshRequest, TokenRefreshResponse,
     TokenValidationResponse, PasswordChangeRequest, PasswordResetRequest,
     PasswordResetConfirm, LogoutRequest, LogoutResponse, APIKeyCreate,
-    APIKeyResponse, OAuth2Provider, OAuth2Callback, Role, UserRole
+    APIKeyResponse, OAuth2Provider, OAuth2Callback, Role, UserRole,
+    APIKeyValidationRequest, APIKeyValidationResponse, Permission,
+    UserDetailResponse, PermissionResponse, UserListResponse
 )
 from pydantic import BaseModel
 from auth_utils import AuthUtils
@@ -511,11 +513,12 @@ async def logout(
     )
 
 @app.get("/api/v1/auth/validate", response_model=TokenValidationResponse)
+@app.post("/api/v1/auth/validate", response_model=TokenValidationResponse)
 async def validate_token(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Validate token and return user info"""
+    """Validate token and return user info (supports both GET and POST for Kong introspection)"""
     permissions = await AuthUtils.get_user_permissions(db, current_user.id)
     roles = await AuthUtils.get_user_roles(db, current_user.id)
     
@@ -525,6 +528,92 @@ async def validate_token(
         username=current_user.username,
         permissions=permissions,
         roles=roles
+    )
+
+@app.post("/api/v1/auth/validate-api-key", response_model=APIKeyValidationResponse)
+async def validate_api_key(
+    validation_data: APIKeyValidationRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Validate API key with permission checking for service and action
+    
+    This endpoint validates:
+    1. API key exists and is active
+    2. API key has not expired
+    3. API key has the required permission (e.g., asr.inference)
+    4. If action is 'inference' but key only has 'read', returns appropriate error
+    
+    Examples:
+    - API key with ['asr.read', 'asr.inference'] can access asr.read and asr.inference
+    - API key with ['asr.read'] can only access asr.read, not asr.inference
+    - API key with ['asr.read', 'nmt.read', 'nmt.inference'] can access both ASR and NMT services
+    """
+    # Normalize service name (handle variations)
+    service = validation_data.service.lower().strip()
+    action = validation_data.action.lower().strip()
+    
+    # Validate service name
+    valid_services = [
+        'asr', 'tts', 'nmt', 'pipeline', 'model-management', 'llm',
+        'audio-lang-detection', 'language-detection', 'language-diarization',
+        'ner', 'ocr', 'speaker-diarization', 'transliteration'
+    ]
+    if service not in valid_services:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid service name. Must be one of: {', '.join(valid_services)}"
+        )
+    
+    # Validate action
+    valid_actions = ['read', 'inference']
+    if action not in valid_actions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid action. Must be one of: {', '.join(valid_actions)}"
+        )
+    
+    # Map service names to permission resource names (for compatibility)
+    # Permissions use resource names like "audio-lang" but services may send "audio-lang-detection"
+    service_to_resource = {
+        'audio-lang-detection': 'audio-lang',
+        'language-detection': 'language-detection',
+        'language-diarization': 'language-diarization',
+        'ner': 'ner',
+        'ocr': 'ocr',
+        'speaker-diarization': 'speaker-diarization',
+        'transliteration': 'transliteration',
+        'asr': 'asr',
+        'tts': 'tts',
+        'nmt': 'nmt',
+        'pipeline': 'pipeline',
+        'model-management': 'model-management',
+        'llm': 'llm'
+    }
+    # Use mapped resource name for permission checking
+    resource_name = service_to_resource.get(service, service)
+    
+    # Validate API key
+    is_valid, api_key_obj, error_message = await AuthUtils.validate_api_key(
+        db=db,
+        api_key=validation_data.api_key,
+        service=resource_name,
+        action=action
+    )
+    
+    if not is_valid:
+        return APIKeyValidationResponse(
+            valid=False,
+            message=error_message,
+            permissions=[]
+        )
+    
+    # Return success with permissions
+    return APIKeyValidationResponse(
+        valid=True,
+        message="API key is valid and has required permissions",
+        user_id=api_key_obj.user_id,
+        permissions=api_key_obj.permissions or []
     )
 
 @app.get("/api/v1/auth/me", response_model=UserResponse)
@@ -1102,6 +1191,139 @@ async def list_roles(
     result = await db.execute(select(Role))
     roles = result.scalars().all()
     return [{"id": role.id, "name": role.name, "description": role.description} for role in roles]
+
+
+# Helper function to check admin role
+async def require_admin(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """Dependency to ensure current user is an admin"""
+    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    if "ADMIN" not in user_roles and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can access this endpoint"
+        )
+    return current_user
+
+
+# Admin endpoints
+@app.get("/api/v1/auth/users/{user_id}", response_model=UserDetailResponse, tags=["Admin"])
+async def get_user_details(
+    user_id: int,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get user details by user ID (Admin only)
+    
+    Returns user information including:
+    - userid
+    - username
+    - emailid
+    - phonenumber
+    - full_name
+    - is_active
+    - is_verified
+    - is_superuser
+    - created_at
+    - last_login
+    """
+    user = await AuthUtils.get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with ID {user_id} not found"
+        )
+    
+    return UserDetailResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        phone_number=user.phone_number,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        is_verified=user.is_verified,
+        is_superuser=user.is_superuser,
+        created_at=user.created_at,
+        last_login=user.last_login
+    )
+
+
+@app.get("/api/v1/auth/permissions", response_model=List[PermissionResponse], tags=["Admin"])
+async def get_all_permissions(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all permissions from the permissions table (Admin only)
+    
+    Returns a list of all permissions with:
+    - id
+    - name
+    - resource
+    - action
+    - created_at
+    """
+    result = await db.execute(select(Permission).order_by(Permission.name))
+    permissions = result.scalars().all()
+    
+    return [
+        PermissionResponse(
+            id=perm.id,
+            name=perm.name,
+            resource=perm.resource,
+            action=perm.action,
+            created_at=perm.created_at
+        )
+        for perm in permissions
+    ]
+
+
+@app.get("/api/v1/auth/permission/list", response_model=List[str], tags=["Role Management"])
+async def get_permission_list(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get list of all permission names from the permissions table
+    
+    Returns a list of permission names only
+    """
+    result = await db.execute(select(Permission.name).order_by(Permission.name))
+    permission_names = result.scalars().all()
+    
+    return list(permission_names)
+
+
+@app.get("/api/v1/auth/users", response_model=List[UserListResponse], tags=["Admin"])
+async def get_all_users(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all users (Admin only)
+    
+    Returns a list of all users with:
+    - userid
+    - username
+    - emailid
+    - phonenumber
+    """
+    result = await db.execute(select(User).order_by(User.id))
+    users = result.scalars().all()
+    
+    return [
+        UserListResponse(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            phone_number=user.phone_number
+        )
+        for user in users
+    ]
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -40,7 +40,9 @@ services:
       - redis-data:/data
       - ./infrastructure/redis/redis.conf:/usr/local/etc/redis/redis.conf
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - redis
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -h localhost -p 6379 -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
@@ -153,7 +155,9 @@ services:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: ${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP}
+      # Default map if KAFKA_LISTENER_SECURITY_PROTOCOL_MAP is not set:
+      # map both PLAINTEXT and PLAINTEXT_INTERNAL to PLAINTEXT.
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:-PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT}"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -174,7 +178,7 @@ services:
     restart: unless-stopped
 
   kong:
-    image: kong:3.4
+    image: kong:3.4-ubuntu
     container_name: ai4v-kong-gateway
     ports:
       - "8000:8000"
@@ -190,6 +194,8 @@ services:
       KONG_ADMIN_ERROR_LOG: /dev/stderr
       KONG_ADMIN_LISTEN: 0.0.0.0:8001
       KONG_ADMIN_GUI_URL: http://localhost:8002
+      # Load only our custom plugin to avoid missing bundled plugins issues
+      KONG_PLUGINS: token-validator
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       AI4VOICE_API_KEY: ${AI4VOICE_API_KEY}
       ASR_API_KEY: ${ASR_API_KEY}
@@ -197,11 +203,14 @@ services:
       NMT_API_KEY: ${NMT_API_KEY}
       PIPELINE_API_KEY: ${PIPELINE_API_KEY}
       DEVELOPER_API_KEY: ${DEVELOPER_API_KEY}
+      MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
+      LLM_API_KEY: ${LLM_API_KEY}
     env_file:
       - ./.env
     volumes:
-      - ./services/Konga-API-manager/kong.yml:/kong/kong.yml:ro
+      - ./services/Konga-API-manager/kong-new-architecture.yml:/kong/kong-new-architecture.yml:ro
       - ./services/Konga-API-manager/substitute-env.sh:/kong/substitute-env.sh:ro
+      - ./services/Konga-API-manager/plugins/token-validator/kong/plugins:/usr/local/share/lua/5.1/kong/plugins:ro
     command: >
       sh -c "
         sh /kong/substitute-env.sh &&
@@ -267,6 +276,24 @@ services:
       - microservices-network
     restart: unless-stopped
 
+  # Swagger UI for Kong-facing API documentation
+  swagger-kong-ui:
+    image: swaggerapi/swagger-ui
+    container_name: ai4v-swagger-kong-ui
+    ports:
+      - "8085:8080"
+    volumes:
+      # Generated OpenAPI spec that points to Kong and includes all endpoints.
+      # Mount it at a custom path; the swagger-ui entrypoint will copy it into
+      # /usr/share/nginx/html/openapi.json on startup.
+      - ./docs/kong-openapi.json:/kong-openapi.json:ro
+    environment:
+      SWAGGER_JSON: /kong-openapi.json
+    networks:
+      - microservices-network
+    depends_on:
+      - kong
+
   # Microservices
   api-gateway-service:
     build:
@@ -311,7 +338,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - auth-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
       # interval: 30s
@@ -343,7 +372,9 @@ services:
       unleash:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - config-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
       # interval: 30s
@@ -489,7 +520,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - asr-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8087/health"]
       # interval: 30s
@@ -518,7 +551,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - tts-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
       # interval: 30s
@@ -546,7 +581,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - nmt-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8089/health"]
       # interval: 30s
@@ -554,7 +591,6 @@ services:
       # retries: 3
       # start_period: 30s
     restart: unless-stopped
-
 
   ocr-service:
 
@@ -591,17 +627,12 @@ services:
 
       - microservices-network
 
-    # healthcheck:
-
-    #   test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
-
-    #   interval: 30s
-
-    #   timeout: 10s
-
-    #   retries: 3
-
-    #   start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8099/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
     restart: unless-stopped
 
@@ -625,6 +656,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   llm-service:
@@ -646,7 +683,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - llm-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/llm/health"]
       # interval: 30s
@@ -664,6 +703,10 @@ services:
       - "8092:8090"
     environment:
       - ENV_FILE=.env
+      # Direct service URLs to bypass registry discovery failures
+      - ASR_SERVICE_URL=http://asr-service:8087
+      - NMT_SERVICE_URL=http://nmt-service:8089
+      - TTS_SERVICE_URL=http://tts-service:8088
     env_file:
       - ./services/pipeline-service/.env
     depends_on:
@@ -680,7 +723,9 @@ services:
       tts-service:
         condition: service_started
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - pipeline-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       # interval: 30s
@@ -723,7 +768,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - model-management-service
     restart: unless-stopped
 
   transliteration-service:
@@ -746,6 +793,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   language-detection-service:
@@ -768,6 +821,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/language-detection/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   speaker-diarization-service:
@@ -789,12 +848,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   language-diarization-service:
@@ -818,12 +877,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:9002/health"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   audio-lang-detection-service:
@@ -847,12 +906,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:8096/health"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8096/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
 
@@ -860,12 +919,29 @@ services:
     build:
       context: ./frontend/simple-ui
       dockerfile: Dockerfile
+      args:
+        # Browser talks to Kong via host port 8000
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+        # Service-specific API keys from .env file (no hardcoding)
+        NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
+        NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
+        NEXT_PUBLIC_TTS_API_KEY: ${TTS_API_KEY}
+        NEXT_PUBLIC_NMT_API_KEY: ${NMT_API_KEY}
+        NEXT_PUBLIC_PIPELINE_API_KEY: ${PIPELINE_API_KEY}
+        NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
     container_name: ai4v-simple-ui
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://api-gateway-service:8080
-      - NEXT_PUBLIC_API_KEY=ak_xBy1d54a2F56_8lhh1kMPyab7jEUNzx4ot2FLy4pf4ks
+      # Route all frontend API calls through Kong Gateway on host
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
+      # Service-specific API keys for Kong authentication
+      - NEXT_PUBLIC_ASR_API_KEY=${ASR_API_KEY}
+      - NEXT_PUBLIC_TTS_API_KEY=${TTS_API_KEY}
+      - NEXT_PUBLIC_NMT_API_KEY=${NMT_API_KEY}
+      - NEXT_PUBLIC_PIPELINE_API_KEY=${PIPELINE_API_KEY}
+      - NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${MODEL_MANAGEMENT_API_KEY}
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
       - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
     depends_on:
@@ -922,11 +998,13 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
-      - GF_INSTALL_PLUGINS=
-      - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
-      # - GF_SERVER_ROOT_URL=http://localhost:3001
 
+      # Combined from both HEAD and remote commits
+      - GF_INSTALL_PLUGINS=
+      - GF_SERVER_DOMAIN=core-v1.ai4inclusion.org
+      - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
+
     volumes:
       - grafana-data:/var/lib/grafana
       - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning
@@ -940,6 +1018,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+
 
 volumes:
   postgres-data:

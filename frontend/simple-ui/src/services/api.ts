@@ -1,12 +1,12 @@
 // Axios API client with interceptors for authentication and request tracking
 
-import axios, { AxiosInstance, AxiosResponse, AxiosError } from 'axios';
-import { useToast } from '@chakra-ui/react';
+import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestConfig } from 'axios';
 
 // API Base URL from environment.
 // For production this should be set to the browser-facing API gateway URL
 // (for example, https://dev.ai4inclusion.org or a dedicated API domain).
 // Default to localhost:8080 for local development if not set.
+// const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 // Debug: Log the API base URL in development
@@ -15,7 +15,21 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
   console.log('NEXT_PUBLIC_API_URL from env:', process.env.NEXT_PUBLIC_API_URL);
 }
 
-// API Key from localStorage (user-provided) or environment (fallback)
+// Get JWT access token from localStorage or sessionStorage (stored after login)
+// This is used for Authorization: Bearer header
+const getAuthToken = (): string | null => {
+  if (typeof window !== 'undefined') {
+    // Check both localStorage and sessionStorage (same logic as getJwtToken)
+    const accessToken = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    if (accessToken && accessToken.trim() !== '') {
+      return accessToken.trim();
+    }
+  }
+  return null;
+};
+
+// Get API key from localStorage (user-provided) or environment variable (fallback)
+// Priority: localStorage > env file
 const getApiKey = (): string | null => {
   if (typeof window !== 'undefined') {
     // First check localStorage (user-provided via "manage API key")
@@ -31,6 +45,9 @@ const getApiKey = (): string | null => {
   }
   return null;
 };
+
+// Note: X-API-Key is now injected by Kong automatically based on route
+// Frontend only needs to send Authorization: Bearer <token>
 
 // API Endpoints
 export const apiEndpoints = {
@@ -90,16 +107,41 @@ const asrApiClient: AxiosInstance = axios.create({
 
 // Apply same interceptors to LLM client
 llmApiClient.interceptors.request.use(
-  (config) => {
+  (config: InternalAxiosRequestConfig) => {
+    // Add request start time for timing calculation
     config.headers['request-startTime'] = new Date().getTime().toString();
-    // Use getApiKey() to respect priority: localStorage first, then env
-    const apiKey = getApiKey();
-    if (apiKey) {
-      config.headers['Authorization'] = `Bearer ${apiKey}`;
+    
+    // Check endpoint type to determine authentication method
+    const url = config.url || '';
+    const isLLMEndpoint = url.includes('/api/v1/llm');
+    const isAuthEndpoint = url.includes('/api/v1/auth');
+    
+    if (isLLMEndpoint && !isAuthEndpoint) {
+      // LLM requires BOTH JWT token AND API key
+      const jwtToken = getJwtToken();
+      if (jwtToken) {
+        config.headers['Authorization'] = `Bearer ${jwtToken}`;
     }
+      
+      const apiKey = getApiKey();
+      if (apiKey) {
+        config.headers['X-API-Key'] = apiKey;
+        // Set X-Auth-Source to BOTH when both JWT and API key are present
+        if (jwtToken) {
+          config.headers['X-Auth-Source'] = 'BOTH';
+        }
+      }
+    } else if (!isAuthEndpoint) {
+      // For other endpoints (legacy), use API key if available
+      const apiKey = getApiKey();
+      if (apiKey) {
+        config.headers['Authorization'] = `Bearer ${apiKey}`;
+      }
+    }
+    
     return config;
   },
-  (error) => {
+  (error: AxiosError) => {
     return Promise.reject(error);
   }
 );
@@ -118,7 +160,9 @@ llmApiClient.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response;
       if (status === 401 && typeof window !== 'undefined') {
-        localStorage.removeItem('api_key');
+        // Clear JWT tokens on 401 (unauthorized)
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
         window.location.href = '/';
       }
     }
@@ -128,16 +172,21 @@ llmApiClient.interceptors.response.use(
 
 // Apply same interceptors to ASR client
 asrApiClient.interceptors.request.use(
-  (config) => {
+  (config: InternalAxiosRequestConfig) => {
     config.headers['request-startTime'] = new Date().getTime().toString();
-    // Use getApiKey() to respect priority: localStorage first, then env
+    // ASR requires BOTH JWT token AND API key
+    const authToken = getAuthToken();
+    if (authToken) {
+      config.headers['Authorization'] = `Bearer ${authToken}`;
+    }
+    // Also send API key for ASR service
     const apiKey = getApiKey();
     if (apiKey) {
-      config.headers['Authorization'] = `Bearer ${apiKey}`;
+      config.headers['X-API-Key'] = apiKey;
     }
     return config;
   },
-  (error) => {
+  (error: AxiosError) => {
     return Promise.reject(error);
   }
 );
@@ -156,7 +205,9 @@ asrApiClient.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response;
       if (status === 401 && typeof window !== 'undefined') {
-        localStorage.removeItem('api_key');
+        // Clear JWT tokens on 401 (unauthorized)
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
         window.location.href = '/';
       }
     }
@@ -192,22 +243,54 @@ const processQueue = (error: any, token: string | null = null) => {
 
 // Request interceptor for authentication and timing
 apiClient.interceptors.request.use(
-  (config) => {
+  (config: InternalAxiosRequestConfig) => {
     // Add request start time for timing calculation
     config.headers['request-startTime'] = new Date().getTime().toString();
     
-    // Check if this is a model-management endpoint
-    const isModelManagementEndpoint = config.url?.includes('/model-management');
+    // Check endpoint type to determine authentication method
+    const url = config.url || '';
+    const isModelManagementEndpoint = url.includes('/model-management');
+    const isASREndpoint = url.includes('/api/v1/asr');
+    const isNMSEndpoint = url.includes('/api/v1/nmt');
+    const isTTSEndpoint = url.includes('/api/v1/tts');
+    const isLLMEndpoint = url.includes('/api/v1/llm');
+    const isPipelineEndpoint = url.includes('/api/v1/pipeline');
+    const isAuthEndpoint = url.includes('/api/v1/auth');
     
-    if (isModelManagementEndpoint) {
-      // For model-management endpoints, use JWT token with AUTH_TOKEN source
+    // Services that require JWT tokens (routed via Kong with token-validator)
+    const requiresJWT = isModelManagementEndpoint || isASREndpoint || isNMSEndpoint || 
+                        isTTSEndpoint || isLLMEndpoint || isPipelineEndpoint ||
+                        url.includes('/api/v1/audio-lang-detection') ||
+                        url.includes('/api/v1/language-detection') ||
+                        url.includes('/api/v1/language-diarization') ||
+                        url.includes('/api/v1/speaker-diarization') ||
+                        url.includes('/api/v1/ner') ||
+                        url.includes('/api/v1/ocr') ||
+                        url.includes('/api/v1/transliteration');
+    
+    if (requiresJWT && !isAuthEndpoint) {
+      // For services that require JWT tokens, use JWT token
       const jwtToken = getJwtToken();
       if (jwtToken) {
         config.headers['Authorization'] = `Bearer ${jwtToken}`;
+        if (isModelManagementEndpoint) {
         config.headers['x-auth-source'] = 'AUTH_TOKEN';
       }
-    } else {
-      // For other endpoints, use API key if available
+      }
+      
+      // ASR, NMT, TTS, Pipeline, LLM require BOTH JWT token AND API key
+      if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint) {
+        const apiKey = getApiKey();
+        if (apiKey) {
+          config.headers['X-API-Key'] = apiKey;
+          // Set X-Auth-Source to BOTH when both JWT and API key are present
+          if (jwtToken) {
+            config.headers['X-Auth-Source'] = 'BOTH';
+          }
+        }
+      }
+    } else if (!isAuthEndpoint) {
+      // For other endpoints (legacy), use API key if available
       const apiKey = getApiKey();
       if (apiKey) {
         config.headers['Authorization'] = `Bearer ${apiKey}`;
@@ -216,7 +299,7 @@ apiClient.interceptors.request.use(
     
     return config;
   },
-  (error) => {
+  (error: AxiosError) => {
     return Promise.reject(error);
   }
 );
