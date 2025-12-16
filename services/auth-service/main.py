@@ -1281,6 +1281,22 @@ async def get_all_permissions(
     ]
 
 
+@app.get("/api/v1/auth/permission/list", response_model=List[str], tags=["Role Management"])
+async def get_permission_list(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get list of all permission names from the permissions table
+    
+    Returns a list of permission names only
+    """
+    result = await db.execute(select(Permission.name).order_by(Permission.name))
+    permission_names = result.scalars().all()
+    
+    return list(permission_names)
+
+
 @app.get("/api/v1/auth/users", response_model=List[UserListResponse], tags=["Admin"])
 async def get_all_users(
     current_user: User = Depends(require_admin),
