@@ -5,13 +5,16 @@ from sqlalchemy.exc import IntegrityError , NoResultFound
 from db_connection import get_tenant_db_session
 from models.billing_update import BillingUpdateRequest, BillingUpdateResponse
 
-from tenant_service import create_new_tenant , update_billing_plan
+from tenant_service import update_billing_plan
 from logger import logger
+from middleware.auth_provider import AuthProvider
 
 
-
-
-router = APIRouter(prefix="/billing", tags=["Tenants Billing"])
+router = APIRouter(
+    prefix="/billing", 
+    tags=["Tenants Billing"],
+    dependencies=[Depends(AuthProvider)]
+)
 
 
 @router.post("/update/plan",response_model=BillingUpdateResponse,status_code=status.HTTP_200_OK)

@@ -12,19 +12,21 @@ from fastapi.exceptions import RequestValidationError
 from fastapi import HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-# from middleware.rate_limit_middleware import RateLimitMiddleware
-# from middleware.request_logging import RequestLoggingMiddleware
-# from middleware.error_handler_middleware import add_error_handlers
+from middleware.rate_limit_middleware import RateLimitMiddleware
+from middleware.request_logging import RequestLoggingMiddleware
+from middleware.error_handler_middleware import add_error_handlers
+from cache.app_cache import get_cache_connection, get_async_cache_connection
 
+import os
 
-# RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-# RATE_LIMIT_PER_HOUR = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+RATE_LIMIT_PER_HOUR = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
 
-# # Sync Redis client for redis_om (model/service caching)
-# redis_cache_client = get_cache_connection()
+# Sync Redis client for redis_om (model/service caching)
+redis_cache_client = get_cache_connection()
 
-# # Async Redis client for auth and rate limiting
-# redis_client = get_async_cache_connection()
+# Async Redis client for auth and rate limiting
+redis_client = get_async_cache_connection()
 
 
 @asynccontextmanager
@@ -45,12 +47,12 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down FastAPI app...")
 
     # Close async Redis client (for auth/rate limiting)
-    # try:
-    #     if redis_client:
-    #         await redis_client.close()
-    #         logger.info("Async Redis connection closed.")
-    # except Exception as e:
-    #     logger.error(f"Error closing async Redis: {e}")
+    try:
+        if redis_client:
+            await redis_client.close()
+            logger.info("Async Redis connection closed.")
+    except Exception as e:
+        logger.error(f"Error closing async Redis: {e}")
 
     # Dispose async auth engine
     try:
@@ -80,34 +82,34 @@ app = FastAPI(
 )
 
 # Add CORS middleware
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
-# # Add request logging middleware
-# app.add_middleware(RequestLoggingMiddleware)
+# Add request logging middleware
+app.add_middleware(RequestLoggingMiddleware)
 
-# # Add rate limiting middleware (if Redis is available)
-# if redis_client:
-#     rate_limit_per_minute = RATE_LIMIT_PER_MINUTE
-#     rate_limit_per_hour = RATE_LIMIT_PER_HOUR
-#     app.add_middleware(
-#         RateLimitMiddleware,
-#         redis_client=redis_client,
-#         requests_per_minute=rate_limit_per_minute,
-#         requests_per_hour=rate_limit_per_hour
-#     )
-#     logger.info("Rate limiting middleware added")
-# else:
-#     logger.warning("Rate limiting middleware skipped - Redis not available")
+# Add rate limiting middleware (if Redis is available)
+if redis_client:
+    rate_limit_per_minute = RATE_LIMIT_PER_MINUTE
+    rate_limit_per_hour = RATE_LIMIT_PER_HOUR
+    app.add_middleware(
+        RateLimitMiddleware,
+        redis_client=redis_client,
+        requests_per_minute=rate_limit_per_minute,
+        requests_per_hour=rate_limit_per_hour
+    )
+    logger.info("Rate limiting middleware added")
+else:
+    logger.warning("Rate limiting middleware skipped - Redis not available")
 
-# # Register error handlers
-# add_error_handlers(app)
+# Register error handlers
+add_error_handlers(app)
 
 # Register routers
 app.include_router(tenant_router)
