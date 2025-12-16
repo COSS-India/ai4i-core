@@ -27,7 +27,36 @@ end
 
 -- Utility: basic CORS headers
 local function build_cors_headers(conf)
-  local origins = table.concat(conf.cors_allowed_origins or { "*" }, ", ")
+  local allowed_origins = conf.cors_allowed_origins or { "*" }
+  local request_origin = kong.request.get_header("origin")
+
+  -- CORS spec: Access-Control-Allow-Origin must be a single origin or "*"
+  local origin_header
+  local wildcard = false
+  for _, o in ipairs(allowed_origins) do
+    if o == "*" then
+      wildcard = true
+      break
+    end
+  end
+
+  if wildcard then
+    origin_header = "*"
+  elseif request_origin then
+    -- echo back the request origin only if it's in the allowed list
+    for _, o in ipairs(allowed_origins) do
+      if o == request_origin then
+        origin_header = request_origin
+        break
+      end
+    end
+  end
+
+  -- Fallback: if no match, pick first configured origin (helps non-browser clients)
+  if not origin_header and #allowed_origins > 0 then
+    origin_header = allowed_origins[0] or allowed_origins[1]
+  end
+
   local methods = table.concat(conf.cors_allowed_methods or { "GET", "POST", "OPTIONS" }, ", ")
   -- If browser sent Access-Control-Request-Headers, echo them back so custom headers pass preflight
   local requested_headers = kong.request.get_header("access-control-request-headers")
@@ -39,7 +68,7 @@ local function build_cors_headers(conf)
   end
 
   local h = {
-    ["Access-Control-Allow-Origin"]  = origins,
+    ["Access-Control-Allow-Origin"]  = origin_header or "*",
     ["Access-Control-Allow-Methods"] = methods,
     ["Access-Control-Allow-Headers"] = headers,
   }
