@@ -1,9 +1,9 @@
-# Stage 1: Builder
-FROM python:3.11-slim as builder
+# ---------------- Stage 1: Builder ----------------
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
+# Build dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -12,17 +12,18 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# ✅ FIX: copy requirements from correct monorepo path
+COPY services/model-management-service/requirements.txt .
 
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Install dependencies (NO --user)
+RUN pip install --no-cache-dir -r requirements.txt
 
-
-# Stage 2: Runtime
+# ---------------- Stage 2: Runtime ----------------
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install runtime libs needed for psycopg2 / redis
+# Runtime libraries
 RUN apt-get update && apt-get install -y \
     curl \
     libpq5 \
@@ -34,25 +35,22 @@ RUN apt-get update && apt-get install -y \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-# Create user
+# Create non-root user
 RUN useradd --create-home --shell /bin/bash app
 
-# Copy installed packages
-COPY --from=builder /root/.local /home/app/.local
-ENV PATH=/home/app/.local/bin:$PATH
+# Copy installed Python packages
+COPY --from=builder /usr/local /usr/local
 
-# Copy application
-COPY . .
+# Copy application code
+COPY services/model-management-service/ .
 
-RUN chown -R app:app /app /home/app/.local \
-    && chmod +x /home/app/.local/bin/*
-
+# Fix permissions
+RUN chown -R app:app /app
 USER app
-
 
 EXPOSE 8091
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8091/health || exit 1
+  CMD curl -f http://localhost:8091/health || exit 1
 
 ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8091"]

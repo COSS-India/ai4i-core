@@ -137,7 +137,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
           >
             {services?.map((service) => (
               <option key={service.service_id} value={service.service_id}>
-                {service.service_id} ({service.provider})
+                {service.name || service.service_id}
               </option>
             ))}
           </Select>
@@ -146,13 +146,13 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
         {selectedService && (
           <Box mt={2} p={3} bg="gray.50" borderRadius="md">
             <Text fontSize="sm" color="gray.600" mb={1}>
-              <strong>Provider:</strong> {selectedService.provider}
+              <strong>Service ID:</strong> {selectedService.service_id}
             </Text>
             <Text fontSize="sm" color="gray.600" mb={1}>
-              <strong>Supported Languages:</strong> {selectedService.supported_languages.length}
+              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
             </Text>
             <Text fontSize="sm" color="gray.600" mb={1}>
-              <strong>Service ID:</strong> {selectedService.provider}/{selectedService.model_id}
+              <strong>Description:</strong> {selectedService.serviceDescription || selectedService.description || 'No description available'}
             </Text>
           </Box>
         )}

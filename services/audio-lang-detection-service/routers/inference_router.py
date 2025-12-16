@@ -16,12 +16,14 @@ from models.audio_lang_detection_response import AudioLangDetectionInferenceResp
 from repositories.audio_lang_detection_repository import AudioLangDetectionRepository, get_db_session
 from services.audio_lang_detection_service import AudioLangDetectionService
 from utils.triton_client import TritonClient, TritonInferenceError
+from middleware.auth_provider import AuthProvider
 
 logger = logging.getLogger(__name__)
 
 inference_router = APIRouter(
     prefix="/api/v1/audio-lang-detection",
     tags=["Audio Language Detection Inference"],
+    dependencies=[Depends(AuthProvider)]  # Enforce auth and permission checks on all routes
 )
 
 
