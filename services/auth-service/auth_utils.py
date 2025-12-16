@@ -14,6 +14,7 @@ import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from models import User, UserSession, APIKey, Role, Permission, UserRole, RolePermission, OAuthProvider
+from casbin_enforcer import check_apikey_permission
 
 logger = logging.getLogger(__name__)
 
@@ -157,26 +158,42 @@ class AuthUtils:
         
         # Get permissions
         permissions = api_key_obj.permissions or []
-        
+
         # Build required permission string (e.g., "asr.inference", "tts.read")
         required_permission = f"{service}.{action}"
-        
-        # Check if API key has the required permission
-        if required_permission not in permissions:
-            # Check if API key has any permission for this service
+
+        # Use Casbin to evaluate permissions in a tenant-ready way.
+        # Domain/tenant is "default" for now; this can be made dynamic later
+        # without changing this call site.
+        allowed = await check_apikey_permission(
+            api_key_id=api_key_obj.id,
+            permissions=permissions,
+            obj=service,
+            act=action,
+            tenant="default",
+        )
+
+        if not allowed:
+            # Preserve existing detailed error semantics for callers
             service_permissions = [p for p in permissions if p.startswith(f"{service}.")]
-            
+
             if not service_permissions:
                 # No permissions for this service at all
                 return False, None, f"Invalid API key: This key does not have access to {service.upper()} service"
-            
+
             # Check if it's a read-only key trying to access inference
             if action == "inference" and f"{service}.read" in permissions:
-                return False, None, f"API key is restricted for read-only access. Inference operations require '{required_permission}' permission"
-            
+                return False, None, (
+                    f"API key is restricted for read-only access. Inference operations "
+                    f"require '{required_permission}' permission"
+                )
+
             # Has some permissions for service but not the required one
-            return False, None, f"Invalid API key: This key does not have '{required_permission}' permission. Available permissions: {', '.join(service_permissions)}"
-        
+            return False, None, (
+                f"Invalid API key: This key does not have '{required_permission}' permission. "
+                f"Available permissions: {', '.join(service_permissions)}"
+            )
+
         # Valid API key with required permission
         return True, api_key_obj, None
     
