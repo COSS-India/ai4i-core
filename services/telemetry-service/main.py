@@ -41,14 +41,15 @@ FastAPIInstrumentor.instrument_app(app)
 redis_client = None
 db_engine = None
 db_session = None
-es_client = None
+es_client = None  # Legacy Elasticsearch (for other team)
+os_client = None  # OpenSearch (for telemetry)
 kafka_producer = None
 kafka_consumer = None
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections on startup"""
-    global redis_client, db_engine, db_session, es_client, kafka_producer, kafka_consumer
+    global redis_client, db_engine, db_session, es_client, os_client, kafka_producer, kafka_consumer
     
     try:
         # Initialize Redis connection
@@ -77,18 +78,38 @@ async def startup_event():
         )
         logger.info("Connected to PostgreSQL")
         
-        # Initialize Elasticsearch client
+        # Initialize OpenSearch client (for telemetry)
+        os_url = os.getenv('OPENSEARCH_URL', 'http://opensearch:9200')
+        # Security disabled for local development
+        os_username = os.getenv('OPENSEARCH_USERNAME', None)
+        os_password = os.getenv('OPENSEARCH_PASSWORD', None)
+        
+        # Only use auth if credentials are provided
+        auth = (os_username, os_password) if os_username and os_password else None
+        os_client = AsyncElasticsearch(
+            [os_url],
+            basic_auth=auth,
+            verify_certs=False
+        )
+        await os_client.ping()
+        logger.info("Connected to OpenSearch")
+        
+        # Initialize Elasticsearch client (legacy - kept for other team)
         es_url = os.getenv('ELASTICSEARCH_URL', 'http://elasticsearch:9200')
         es_username = os.getenv('ELASTICSEARCH_USERNAME', 'elastic')
         es_password = os.getenv('ELASTICSEARCH_PASSWORD', 'elastic_secure_password_2024')
         
-        es_client = AsyncElasticsearch(
-            [es_url],
-            basic_auth=(es_username, es_password),
-            verify_certs=False
-        )
-        await es_client.ping()
-        logger.info("Connected to Elasticsearch")
+        try:
+            es_client = AsyncElasticsearch(
+                [es_url],
+                basic_auth=(es_username, es_password),
+                verify_certs=False
+            )
+            await es_client.ping()
+            logger.info("Connected to Elasticsearch (legacy)")
+        except Exception as e:
+            logger.warning(f"Elasticsearch connection failed (may not be needed): {e}")
+            es_client = None
         
         # Initialize Kafka producer
         kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
@@ -125,6 +146,10 @@ async def shutdown_event():
     if db_engine:
         await db_engine.dispose()
         logger.info("PostgreSQL connection closed")
+    
+    if os_client:
+        await os_client.close()
+        logger.info("OpenSearch connection closed")
     
     if es_client:
         await es_client.close()
@@ -167,7 +192,17 @@ async def health_check():
         else:
             postgres_status = "unhealthy"
         
-        # Check Elasticsearch connectivity
+        # Check OpenSearch connectivity
+        if os_client:
+            try:
+                await os_client.ping()
+                opensearch_status = "healthy"
+            except:
+                opensearch_status = "unhealthy"
+        else:
+            opensearch_status = "unhealthy"
+        
+        # Check Elasticsearch connectivity (legacy)
         if es_client:
             try:
                 await es_client.ping()
@@ -175,7 +210,7 @@ async def health_check():
             except:
                 elasticsearch_status = "unhealthy"
         else:
-            elasticsearch_status = "unhealthy"
+            elasticsearch_status = "not_configured"
         
         # Check Kafka connectivity
         if kafka_producer and kafka_consumer:
@@ -186,7 +221,7 @@ async def health_check():
         overall_status = "healthy" if all([
             redis_status == "healthy", 
             postgres_status == "healthy",
-            elasticsearch_status == "healthy",
+            opensearch_status == "healthy",
             kafka_status == "healthy"
         ]) else "unhealthy"
         
@@ -195,6 +230,7 @@ async def health_check():
             "service": "telemetry-service",
             "redis": redis_status,
             "postgres": postgres_status,
+            "opensearch": opensearch_status,
             "elasticsearch": elasticsearch_status,
             "kafka": kafka_status,
             "timestamp": asyncio.get_event_loop().time()

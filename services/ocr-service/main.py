@@ -28,6 +28,8 @@ from ai4icore_logging import (
     CorrelationMiddleware,
     configure_logging,
 )
+from ai4icore_telemetry import setup_tracing
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
@@ -256,6 +258,17 @@ if not config.apps:
 plugin = ObservabilityPlugin(config)
 plugin.register_plugin(app)
 logger.info("AI4ICore Observability Plugin initialized for OCR service")
+
+# Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+tracer = setup_tracing("ocr-service")
+if tracer:
+    logger.info("✅ Distributed tracing initialized for OCR service")
+    # Instrument FastAPI to automatically create spans for all requests
+    FastAPIInstrumentor.instrument_app(app)
+    logger.info("✅ FastAPI instrumentation enabled for tracing")
+else:
+    logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
 
 # CORS
 app.add_middleware(
