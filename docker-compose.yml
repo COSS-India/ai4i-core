@@ -155,7 +155,9 @@ services:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: ${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP}
+      # Default map if KAFKA_LISTENER_SECURITY_PROTOCOL_MAP is not set:
+      # map both PLAINTEXT and PLAINTEXT_INTERNAL to PLAINTEXT.
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:-PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT}"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -273,6 +275,24 @@ services:
     networks:
       - microservices-network
     restart: unless-stopped
+
+  # Swagger UI for Kong-facing API documentation
+  swagger-kong-ui:
+    image: swaggerapi/swagger-ui
+    container_name: ai4v-swagger-kong-ui
+    ports:
+      - "8085:8080"
+    volumes:
+      # Generated OpenAPI spec that points to Kong and includes all endpoints.
+      # Mount it at a custom path; the swagger-ui entrypoint will copy it into
+      # /usr/share/nginx/html/openapi.json on startup.
+      - ./docs/kong-openapi.json:/kong-openapi.json:ro
+    environment:
+      SWAGGER_JSON: /kong-openapi.json
+    networks:
+      - microservices-network
+    depends_on:
+      - kong
 
   # Microservices
   api-gateway-service:

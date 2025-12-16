@@ -325,6 +325,7 @@ services:
               auth_service_url: "http://auth-service:8081/api/v1/auth/validate"
               cors_allowed_origins:
                 - "http://localhost:3000"
+                - "http://localhost:8085"
 
 # ============================================
 # ASR SERVICE - Protected endpoint
@@ -348,6 +349,7 @@ services:
               api_key: "${ASR_API_KEY}"
               cors_allowed_origins:
                 - "http://localhost:3000"
+                - "http://localhost:8085"
               enable_rate_limit: true
               rate_limit: 100
               rate_window: 60
@@ -377,6 +379,7 @@ services:
               api_key: "${TTS_API_KEY}"
               cors_allowed_origins:
                 - "http://localhost:3000"
+                - "http://localhost:8085"
               enable_rate_limit: true
               rate_limit: 100
               rate_window: 60
@@ -406,6 +409,7 @@ services:
               api_key: "${NMT_API_KEY}"
               cors_allowed_origins:
                 - "http://localhost:3000"
+                - "http://localhost:8085"
               enable_rate_limit: true
               rate_limit: 150
               rate_window: 60
@@ -435,6 +439,7 @@ services:
               api_key: "${PIPELINE_API_KEY}"
               cors_allowed_origins:
                 - "http://localhost:3000"
+                - "http://localhost:8085"
               enable_rate_limit: true
               rate_limit: 50
               rate_window: 60
@@ -465,6 +470,7 @@ services:
               api_key: "${MODEL_MANAGEMENT_API_KEY}"
               cors_allowed_origins:
                 - "http://localhost:3000"
+                - "http://localhost:8085"
               enable_rate_limit: true
               rate_limit: 50
               rate_window: 60
@@ -494,6 +500,7 @@ services:
               api_key: "${LLM_API_KEY}"
               cors_allowed_origins:
                 - "http://localhost:3000"
+                - "http://localhost:8085"
               enable_rate_limit: true
               rate_limit: 50
               rate_window: 60
