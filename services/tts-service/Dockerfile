@@ -6,23 +6,28 @@ FROM python:3.11-slim AS builder
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc g++ curl \
+    gcc \
+    g++ \
+    curl \
     libpq-dev \
     libsndfile1-dev \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only what is needed for dependency install
+# Copy requirements first (better Docker cache)
 COPY services/tts-service/requirements.txt .
 
-# Upgrade pip tools
+# Upgrade pip tooling
 RUN pip install --upgrade pip setuptools wheel
 
-# Install deps to user site-packages (smaller & cleaner)
+# Install Python deps to user site-packages
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Copy observability plugin
+# Copy observability plugin source
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+
+# IMPORTANT:
+# Install plugin as editable (expects source to exist at runtime)
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 
 
@@ -44,11 +49,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash app
 
-# Copy ONLY python dependencies (not entire /usr/local)
+# Copy Python dependencies installed in builder
 COPY --from=builder /root/.local /home/app/.local
 
+# 🔑 COPY observability plugin SOURCE (FIXES ModuleNotFoundError)
+COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+
+# Environment
 ENV PATH="/home/app/.local/bin:$PATH"
-ENV PYTHONPATH="/app"
+ENV PYTHONPATH="/app:/app/libs"
+ENV PYTHONUNBUFFERED=1
 
 # Copy application code
 COPY services/tts-service /app
