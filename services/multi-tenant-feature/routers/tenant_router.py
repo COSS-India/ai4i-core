@@ -8,10 +8,14 @@ from models.tenant_email import TenantResendEmailVerificationRequest, TenantRese
 from tenant_service import create_new_tenant , verify_email_token , resend_verification_email
 
 from logger import logger
+from middleware.auth_provider import AuthProvider
 
 
-router = APIRouter(prefix="/tenant", tags=["Tenants registeration"])
-
+router = APIRouter(
+    prefix="/tenant", 
+    tags=["Tenants registeration"],
+    dependencies=[Depends(AuthProvider)]
+)
 
 @router.post("/register", response_model=TenantRegisterResponse, status_code=status.HTTP_201_CREATED)
 async def register_tenant(
