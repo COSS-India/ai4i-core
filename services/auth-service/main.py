@@ -554,10 +554,24 @@ async def validate_api_key(
     action = validation_data.action.lower().strip()
     
     # Validate service name
+    # Accept multiple variants (with/without "-service", underscores) but map them
+    # to canonical names for permission checks.
     valid_services = [
-        'asr', 'tts', 'nmt', 'pipeline', 'model-management', 'llm',
-        'audio-lang-detection', 'language-detection', 'language-diarization',
-        'ner', 'ocr', 'speaker-diarization', 'transliteration'
+        # Core services
+        'asr', 'asr-service',
+        'tts', 'tts-service',
+        'nmt', 'nmt-service',
+        'pipeline', 'pipeline-service',
+        'model-management', 'model_management', 'model-management-service',
+        'llm', 'llm-service',
+        # AI task services
+        'audio-lang-detection', 'audio_lang_detection', 'audio-lang-detection-service',
+        'language-detection', 'language_detection', 'language-detection-service',
+        'language-diarization', 'language_diarization', 'language-diarization-service',
+        'ner', 'ner-service',
+        'ocr', 'ocr-service',
+        'speaker-diarization', 'speaker_diarization', 'speaker-diarization-service',
+        'transliteration', 'transliteration-service',
     ]
     if service not in valid_services:
         raise HTTPException(
@@ -573,22 +587,55 @@ async def validate_api_key(
             detail=f"Invalid action. Must be one of: {', '.join(valid_actions)}"
         )
     
-    # Map service names to permission resource names (for compatibility)
-    # Permissions use resource names like "audio-lang" but services may send "audio-lang-detection"
+    # Map service names (including variants) to permission resource names
+    # Permissions use resource names like "audio-lang" but services and callers may
+    # send values like "audio-lang-detection" or "audio_lang_detection".
     service_to_resource = {
+        # Canonical mappings for AI task services
         'audio-lang-detection': 'audio-lang',
+        'audio_lang_detection': 'audio-lang',
+        'audio-lang-detection-service': 'audio-lang',
+
         'language-detection': 'language-detection',
+        'language_detection': 'language-detection',
+        'language-detection-service': 'language-detection',
+
         'language-diarization': 'language-diarization',
+        'language_diarization': 'language-diarization',
+        'language-diarization-service': 'language-diarization',
+
         'ner': 'ner',
+        'ner-service': 'ner',
+
         'ocr': 'ocr',
+        'ocr-service': 'ocr',
+
         'speaker-diarization': 'speaker-diarization',
+        'speaker_diarization': 'speaker-diarization',
+        'speaker-diarization-service': 'speaker-diarization',
+
         'transliteration': 'transliteration',
+        'transliteration-service': 'transliteration',
+
+        # Core services (various name styles)
         'asr': 'asr',
+        'asr-service': 'asr',
+
         'tts': 'tts',
+        'tts-service': 'tts',
+
         'nmt': 'nmt',
+        'nmt-service': 'nmt',
+
         'pipeline': 'pipeline',
+        'pipeline-service': 'pipeline',
+
         'model-management': 'model-management',
-        'llm': 'llm'
+        'model_management': 'model-management',
+        'model-management-service': 'model-management',
+
+        'llm': 'llm',
+        'llm-service': 'llm',
     }
     # Use mapped resource name for permission checking
     resource_name = service_to_resource.get(service, service)

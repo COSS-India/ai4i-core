@@ -190,8 +190,24 @@ local function determine_service_and_action(path, method)
   local p = string.lower(path or "")
   local m = string.upper(method or "GET")
 
+  -- Map URL path prefixes to logical service names used by auth-service
   local service = "unknown"
-  local services = { "asr", "nmt", "tts", "pipeline", "model-management", "llm" }
+  local services = {
+    "asr",
+    "nmt",
+    "tts",
+    "pipeline",
+    "model-management",
+    "llm",
+    "ocr",
+    "transliteration",
+    "audio-lang-detection",
+    "language-detection",
+    "language-diarization",
+    "ner",
+    "speaker-diarization",
+  }
+
   for _, svc in ipairs(services) do
     if string.find(p, "/api/v1/" .. svc) then
       service = svc
@@ -213,7 +229,23 @@ end
 -- Check if service requires both Bearer token AND API key
 local function requires_both_auth_and_api_key(path)
   local p = string.lower(path or "")
-  local services_requiring_both = { "asr", "nmt", "tts", "pipeline", "llm" }
+
+  -- All core inference services should require BOTH auth token and API key
+  local services_requiring_both = {
+    "asr",
+    "nmt",
+    "tts",
+    "pipeline",
+    "llm",
+    "transliteration",
+    "language-detection",
+    "speaker-diarization",
+    "audio-lang-detection",
+    "language-diarization",
+    "ocr",
+    "ner",
+  }
+
   for _, svc in ipairs(services_requiring_both) do
     if string.find(p, "/api/v1/" .. svc) then
       return true
