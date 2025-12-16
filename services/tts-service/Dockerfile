@@ -14,21 +14,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first (better Docker cache)
+# Copy requirements first
 COPY services/tts-service/requirements.txt .
 
-# Upgrade pip tooling
 RUN pip install --upgrade pip setuptools wheel
 
-# Install Python deps to user site-packages
+# Install Python deps
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Copy observability plugin source
+# Copy observability plugin
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 
-# IMPORTANT:
-# Install plugin as editable (expects source to exist at runtime)
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+# ✅ INSTALL PLUGIN AS NORMAL PACKAGE (FIX)
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_observability
 
 
 # -----------------------------
@@ -46,21 +44,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
 RUN useradd --create-home --shell /bin/bash app
 
-# Copy Python dependencies installed in builder
+# Copy Python site-packages
 COPY --from=builder /root/.local /home/app/.local
 
-# 🔑 COPY observability plugin SOURCE (FIXES ModuleNotFoundError)
-COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
-
-# Environment
 ENV PATH="/home/app/.local/bin:$PATH"
-ENV PYTHONPATH="/app:/app/libs"
+ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
 
-# Copy application code
+# Copy app code
 COPY services/tts-service /app
 
 RUN chown -R app:app /app
