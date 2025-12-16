@@ -2226,6 +2226,14 @@ async def list_roles(
     """List all available roles (Admin only)"""
     return await proxy_to_auth_service(request, "/api/v1/auth/roles/list")
 
+@app.get("/api/v1/auth/permission/list", tags=["Role Management"])
+async def get_permission_list(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """List all available permission names"""
+    return await proxy_to_auth_service(request, "/api/v1/auth/permission/list")
+
 # Admin Endpoints
 @app.get("/api/v1/auth/users/{user_id}", tags=["Admin"])
 async def get_user_details(
