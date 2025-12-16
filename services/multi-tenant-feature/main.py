@@ -46,6 +46,14 @@ async def lifespan(app: FastAPI):
     yield   # everything before this runs at startup; everything after runs at shutdown
     logger.info("Shutting down FastAPI app...")
 
+    # Close sync Redis client (for redis_om caching)
+    try:
+        if redis_cache_client:
+            redis_cache_client.close()
+            logger.info("Sync Redis connection closed.")
+    except Exception as e:
+        logger.error(f"Error closing sync Redis: {e}")
+
     # Close async Redis client (for auth/rate limiting)
     try:
         if redis_client:
