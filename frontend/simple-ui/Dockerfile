@@ -8,7 +8,7 @@ WORKDIR /app
 RUN apk add --no-cache libc6-compat
 
 # Copy package files
-COPY package.json package-lock.json ./
+COPY frontend/simple-ui/package.json frontend/simple-ui/package-lock.json ./
 
 # Install dependencies
 RUN npm ci --only=production
