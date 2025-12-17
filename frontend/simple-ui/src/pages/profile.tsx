@@ -49,6 +49,7 @@ import { useAuth } from "../hooks/useAuth";
 import { useApiKey } from "../hooks/useApiKey";
 import { User, UserUpdateRequest } from "../types/auth";
 import roleService, { Role, UserRole } from "../services/roleService";
+import authService from "../services/authService";
 
 const ProfilePage: React.FC = () => {
   const router = useRouter();
@@ -69,6 +70,8 @@ const ProfilePage: React.FC = () => {
   
   // Role management state
   const [roles, setRoles] = useState<Role[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [selectedUser, setSelectedUser] = useState<{ id: number; email: string; username: string } | null>(null);
   const [selectedUserRoles, setSelectedUserRoles] = useState<string[]>([]);
   const [selectedRole, setSelectedRole] = useState<string>("");
@@ -76,16 +79,6 @@ const ProfilePage: React.FC = () => {
   const [isLoadingUserRoles, setIsLoadingUserRoles] = useState(false);
   const [isAssigningRole, setIsAssigningRole] = useState(false);
   const [isRemovingRole, setIsRemovingRole] = useState(false);
-  
-  // Placeholder users list - TODO: Replace with API call to GET /api/v1/auth/users/list (when available)
-  // For now, using dummy data to handle errors and test the UI
-  const placeholderUsers = [
-    { id: 1, email: "admin@ai4i.com", username: "admin" },
-    { id: 2, email: "user@example.com", username: "user1" },
-    { id: 3, email: "moderator@example.com", username: "moderator1" },
-    { id: 4, email: "guest@example.com", username: "guest1" },
-    { id: 5, email: "test@example.com", username: "testuser" },
-  ];
 
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
@@ -110,6 +103,32 @@ const ProfilePage: React.FC = () => {
       router.push("/");
     }
   }, [isAuthenticated, authLoading, router]);
+
+  // Fetch all users (Admin only)
+  useEffect(() => {
+    const fetchUsers = async () => {
+      if (!isAuthenticated || authLoading) return;
+      
+      setIsLoadingUsers(true);
+      try {
+        const usersList = await authService.getAllUsers();
+        setUsers(usersList);
+      } catch (error) {
+        console.error("Failed to fetch users:", error);
+        toast({
+          title: "Error",
+          description: error instanceof Error ? error.message : "Failed to load users. Only administrators can view users.",
+          status: "error",
+          duration: 5000,
+          isClosable: true,
+        });
+      } finally {
+        setIsLoadingUsers(false);
+      }
+    };
+
+    fetchUsers();
+  }, [isAuthenticated, authLoading, toast]);
 
   const handleCopyApiKey = () => {
     const key = getApiKey();
@@ -634,10 +653,14 @@ const ProfilePage: React.FC = () => {
                                 value={selectedUser?.id || ""}
                                 onChange={async (e) => {
                                   const userId = parseInt(e.target.value);
-                                  // Find user from placeholder list (will be replaced with API call later)
-                                  const user = placeholderUsers.find(u => u.id === userId);
+                                  // Find user from fetched users list
+                                  const user = users.find(u => u.id === userId);
                                   if (user) {
-                                    setSelectedUser(user);
+                                    setSelectedUser({
+                                      id: user.id,
+                                      email: user.email,
+                                      username: user.username || "",
+                                    });
                                     setIsLoadingUserRoles(true);
                                     try {
                                       // API: GET /api/v1/auth/roles/user/{user_id}
@@ -660,10 +683,11 @@ const ProfilePage: React.FC = () => {
                                     setSelectedUserRoles([]);
                                   }
                                 }}
-                                placeholder="Select a user"
+                                placeholder={isLoadingUsers ? "Loading users..." : "Select a user"}
                                 bg="white"
+                                isDisabled={isLoadingUsers}
                               >
-                                {placeholderUsers.map((u) => (
+                                {users.map((u) => (
                                   <option key={u.id} value={u.id}>
                                     {u.username} ({u.email})
                                   </option>
