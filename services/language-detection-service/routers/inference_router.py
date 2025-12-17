@@ -25,25 +25,60 @@ async def get_language_detection_service(
     request: Request,
     db: AsyncSession = Depends(get_db_session)
 ) -> LanguageDetectionService:
+    """
+    Dependency to construct LanguageDetectionService with Triton client resolved
+    exclusively via Model Management (no environment variable fallback).
+
+    ModelResolutionMiddleware (from ai4icore_model_management) must:
+    - Extract config.serviceId from the request body
+    - Resolve serviceId → triton_endpoint + model_name
+    - Attach to request.state:
+        - request.state.triton_endpoint
+        - request.state.triton_model_name
+        - request.state.service_id
+    """
     repository = LanguageDetectionRepository(db)
     text_service = TextService()
-    
-    default_triton_client = TritonClient(
-        triton_url=request.app.state.triton_endpoint,
-        api_key=request.app.state.triton_api_key
-    )
-    
-    def get_triton_client_for_endpoint(endpoint: str) -> TritonClient:
-        return TritonClient(
-            triton_url=endpoint,
-            api_key=request.app.state.triton_api_key
+
+    triton_endpoint = getattr(request.state, "triton_endpoint", None)
+    triton_api_key = getattr(request.app.state, "triton_api_key", "")
+
+    if not triton_endpoint:
+        service_id = getattr(request.state, "service_id", None)
+        if service_id:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
+                    f"Please ensure the service is registered in the Model Management database."
+                ),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Request must include config.serviceId. "
+                "Language Detection service requires Model Management database resolution."
+            ),
         )
-    
+
+    logger.info(
+        "Using Triton endpoint=%s for serviceId=%s from Model Management",
+        triton_endpoint,
+        getattr(request.state, "service_id", "unknown"),
+    )
+
+    triton_client = TritonClient(triton_endpoint, triton_api_key or None)
+
+    # LanguageDetectionService already supports dynamic endpoints internally if needed;
+    # we pass the resolved client as the primary path.
+    def get_triton_client_for_endpoint(endpoint: str) -> TritonClient:
+        return TritonClient(triton_url=endpoint, api_key=triton_api_key or None)
+
     return LanguageDetectionService(
         repository,
         text_service,
-        default_triton_client,
-        get_triton_client_for_endpoint
+        triton_client,
+        get_triton_client_for_endpoint,
     )
 
 

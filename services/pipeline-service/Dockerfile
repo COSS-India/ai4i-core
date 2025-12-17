@@ -8,13 +8,13 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# ✅ FIX: copy requirements from correct monorepo path
-COPY services/pipeline-service/requirements.txt .
+# ✅ FIX: copy requirements relative to build context
+COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ✅ FIX: copy application code from correct path
-COPY services/pipeline-service/ .
+# ✅ FIX: copy application code relative to build context
+COPY . .
 
 EXPOSE 8090
 

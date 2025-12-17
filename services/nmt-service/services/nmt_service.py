@@ -168,12 +168,9 @@ class NMTService:
                 "Falling back to default Triton client."
             )
         
-        # Fallback to default client if service not found or error occurred
-        if self.default_triton_client:
-            logger.debug(f"Using default Triton client for service {service_id}")
-            return self.default_triton_client
+        # No fallback: if Model Management / registry cannot resolve, fail fast
         raise TritonInferenceError(
-            f"No Triton endpoint available for service {service_id} and no default client configured."
+            f"Model Management failed to resolve Triton endpoint for service {service_id}."
         )
     
     async def get_model_name(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> str:

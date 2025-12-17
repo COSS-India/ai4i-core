@@ -23,6 +23,10 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../libs'))
+from ai4icore_model_management import ModelManagementPlugin
 
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
@@ -241,9 +245,17 @@ if not config.customers:
 if not config.apps:
     config.apps = ["ner"]
 
-plugin = ObservabilityPlugin(config)
-plugin.register_plugin(app)
+observability_plugin = ObservabilityPlugin(config)
+observability_plugin.register_plugin(app)
 logger.info("AI4ICore Observability Plugin initialized for NER service")
+
+# Model Management Plugin (must be registered after app creation but before routers)
+try:
+    model_mgmt_plugin = ModelManagementPlugin()
+    model_mgmt_plugin.register_plugin(app, redis_client=redis_client)
+    logger.info("✅ Model Management Plugin initialized for NER service")
+except Exception as e:
+    logger.warning(f"Failed to initialize Model Management Plugin: {e}")
 
 # CORS
 app.add_middleware(

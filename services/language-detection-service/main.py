@@ -21,6 +21,7 @@ from middleware.error_handler_middleware import add_error_handlers
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
 from models import database_models, auth_models
 
@@ -38,8 +39,11 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db"
 )
-TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "65.1.35.3:8000")
-TRITON_API_KEY = os.getenv("TRITON_API_KEY", "your_api_key")
+# NOTE: Triton endpoint/model must come from Model Management.
+# These env vars are kept only for legacy health checks or debugging if needed,
+# but are NOT used for inference once Model Management is enabled.
+TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "")
+TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
 
 redis_client: Optional[redis.Redis] = None
 db_engine: Optional[AsyncEngine] = None
@@ -172,15 +176,35 @@ app = FastAPI(
 
 # Observability plugin
 # Plugin automatically extracts metrics from request bodies - no manual recording needed!
-config = PluginConfig.from_env()
-config.enabled = True  # Enable plugin
-if not config.customers:
-    config.customers = []  # Will be extracted from JWT/headers automatically
-if not config.apps:
-    config.apps = ["language-detection"]  # Service name
-plugin = ObservabilityPlugin(config)
-plugin.register_plugin(app)
+obs_config = PluginConfig.from_env()
+obs_config.enabled = True  # Enable plugin
+if not obs_config.customers:
+    obs_config.customers = []  # Will be extracted from JWT/headers automatically
+if not obs_config.apps:
+    obs_config.apps = ["language-detection"]  # Service name
+observability_plugin = ObservabilityPlugin(obs_config)
+observability_plugin.register_plugin(app)
 logger.info("✅ AI4ICore Observability Plugin initialized for Language Detection service")
+
+# Model Management Plugin - single source of truth for Triton endpoint/model (no env fallback)
+try:
+    mm_config = ModelManagementConfig(
+        model_management_service_url="http://model-management-service:8091",
+        model_management_api_key=None,
+        cache_ttl_seconds=300,
+        triton_endpoint_cache_ttl=300,
+        # Explicitly disable default Triton fallback – Model Management must resolve everything
+        default_triton_endpoint="",
+        default_triton_api_key="",
+        middleware_enabled=True,
+        middleware_paths=["/api/v1/language-detection"],
+        request_timeout=10.0,
+    )
+    model_mgmt_plugin = ModelManagementPlugin(config=mm_config)
+    model_mgmt_plugin.register_plugin(app, redis_client=None)
+    logger.info("✅ Model Management Plugin initialized for Language Detection service")
+except Exception as e:
+    logger.warning(f"Failed to initialize Model Management Plugin: {e}")
 
 # Middleware
 app.add_middleware(

@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# ✅ FIX: copy requirements from correct monorepo path
-COPY services/model-management-service/requirements.txt .
+# ✅ FIX: copy requirements relative to build context
+COPY requirements.txt .
 
 # Install dependencies (NO --user)
 RUN pip install --no-cache-dir -r requirements.txt
@@ -41,8 +41,8 @@ RUN useradd --create-home --shell /bin/bash app
 # Copy installed Python packages
 COPY --from=builder /usr/local /usr/local
 
-# Copy application code
-COPY services/model-management-service/ .
+# Copy application code relative to build context
+COPY . .
 
 # Fix permissions
 RUN chown -R app:app /app

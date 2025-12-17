@@ -25,6 +25,7 @@ from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
 # Import models to ensure they are registered with SQLAlchemy
 from models import database_models, auth_models
@@ -41,7 +42,9 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db")
-TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "http://13.220.11.146:8000")
+# NOTE: Triton endpoint/model must come from Model Management for inference.
+# These env vars are retained only for legacy health checks or debugging.
+TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
 TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT", "300.0"))
 
@@ -245,6 +248,25 @@ else:
 
 # Register error handlers
 add_error_handlers(app)
+
+# Model Management Plugin - single source of truth for Triton endpoint/model (no env fallback)
+try:
+    mm_config = ModelManagementConfig(
+        model_management_service_url="http://model-management-service:8091",
+        model_management_api_key=None,
+        cache_ttl_seconds=300,
+        triton_endpoint_cache_ttl=300,
+        default_triton_endpoint="",
+        default_triton_api_key="",
+        middleware_enabled=True,
+        middleware_paths=["/api/v1/llm"],
+        request_timeout=10.0,
+    )
+    model_mgmt_plugin = ModelManagementPlugin(config=mm_config)
+    model_mgmt_plugin.register_plugin(app, redis_client=redis_client)
+    logger.info("✅ Model Management Plugin initialized for LLM service")
+except Exception as e:
+    logger.warning(f"Failed to initialize Model Management Plugin: {e}")
 
 # Include routers
 app.include_router(inference_router)

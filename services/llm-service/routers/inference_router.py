@@ -31,13 +31,50 @@ async def get_db_session(request: Request) -> AsyncSession:
     return request.app.state.db_session_factory()
 
 
-async def get_llm_service(request: Request, db: AsyncSession = Depends(get_db_session)) -> LLMService:
-    """Dependency to get configured LLM service"""
+async def get_llm_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> LLMService:
+    """
+    Dependency to get configured LLM service.
+
+    REQUIRES Model Management database resolution - no environment variable fallback.
+    Request must include config.serviceId for Model Management to resolve endpoint and model.
+    """
     repository = LLMRepository(db)
+
+    triton_endpoint = getattr(request.state, "triton_endpoint", None)
+    triton_api_key = getattr(request.app.state, "triton_api_key", "")
+    triton_timeout = getattr(request.app.state, "triton_timeout", 300.0)
+
+    if not triton_endpoint:
+        service_id = getattr(request.state, "service_id", None)
+        if service_id:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
+                    f"Please ensure the service is registered in Model Management database."
+                ),
+            )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Request must include config.serviceId. "
+                "LLM service requires Model Management database resolution."
+            ),
+        )
+
+    logger.info(
+        "Using Triton endpoint=%s for serviceId=%s from Model Management",
+        triton_endpoint,
+        getattr(request.state, "service_id", "unknown"),
+    )
+
     triton_client = TritonClient(
-        triton_url=request.app.state.triton_endpoint,
-        api_key=request.app.state.triton_api_key,
-        timeout=getattr(request.app.state, 'triton_timeout', 300.0)
+        triton_url=triton_endpoint,
+        api_key=triton_api_key or None,
+        timeout=triton_timeout,
     )
     return LLMService(repository, triton_client)
 

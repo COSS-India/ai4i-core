@@ -7,8 +7,8 @@ WORKDIR /app
 # Alpine compatibility
 RUN apk update && apk add --no-cache libc6-compat
 
-# ✅ FIX: copy package files using full path
-COPY frontend/simple-ui/package.json frontend/simple-ui/package-lock.json ./
+# ✅ FIX: copy package files relative to build context
+COPY package.json package-lock.json ./
 
 # Install dependencies
 RUN npm ci
@@ -20,8 +20,8 @@ WORKDIR /app
 # Copy node_modules from deps stage
 COPY --from=deps /app/node_modules ./node_modules
 
-# ✅ FIX: copy source code using full path
-COPY frontend/simple-ui/ .
+# ✅ FIX: copy source code relative to build context
+COPY . .
 
 # Build-time environment variables
 ARG NEXT_PUBLIC_API_URL=""

@@ -34,17 +34,36 @@ async def get_speaker_diarization_service(
     """
     Dependency to construct SpeakerDiarizationService with configured Triton client and repository.
 
-    Uses TRITON_ENDPOINT, TRITON_API_KEY, and TRITON_TIMEOUT from app.state (set in main.py).
+    REQUIRES Model Management database resolution - no environment variable fallback.
+    Request must include config.serviceId for Model Management to resolve endpoint and model.
     """
-    triton_endpoint: str = getattr(request.app.state, "triton_endpoint", "")
+    triton_endpoint: str = getattr(request.state, "triton_endpoint", None)
     triton_api_key: str = getattr(request.app.state, "triton_api_key", "")
     triton_timeout: float = getattr(request.app.state, "triton_timeout", 300.0)
 
     if not triton_endpoint:
+        service_id = getattr(request.state, "service_id", None)
+        if service_id:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
+                    f"Please ensure the service is registered in Model Management database."
+                ),
+            )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="TRITON_ENDPOINT is not configured for Speaker Diarization service",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Request must include config.serviceId. "
+                "Speaker Diarization service requires Model Management database resolution."
+            ),
         )
+
+    logger.info(
+        "Using Triton endpoint=%s for serviceId=%s from Model Management",
+        triton_endpoint,
+        getattr(request.state, "service_id", "unknown"),
+    )
 
     triton_client = TritonClient(triton_endpoint, triton_api_key or None, triton_timeout)
     repository = SpeakerDiarizationRepository(db)

@@ -60,23 +60,28 @@ class TransliterationService:
         # Check cache first
         if service_id in self._triton_clients:
             return self._triton_clients[service_id]
-        
+
         # Get endpoint and model info from registry
         service_info = self.SERVICE_REGISTRY.get(service_id)
         if service_info:
             endpoint, _ = service_info
         else:
-            # Use default client if service not in registry
-            return self.default_triton_client
+            # No fallback: service_id must be present in registry
+            raise TritonInferenceError(
+                f"Unknown transliteration service_id='{service_id}'. "
+                f"Please ensure it is correctly configured."
+            )
         
         # Create client using factory function if available
         if self.get_triton_client_func:
             client = self.get_triton_client_func(endpoint)
             self._triton_clients[service_id] = client
             return client
-        else:
-            # Fallback to default client
-            return self.default_triton_client
+
+        # No factory configured – fail fast instead of using a default client
+        raise TritonInferenceError(
+            "No Triton client factory configured for TransliterationService."
+        )
     
     def get_model_name(self, service_id: str) -> str:
         """Get Triton model name based on service ID"""
