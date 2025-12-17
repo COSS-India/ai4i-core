@@ -77,7 +77,8 @@ async def load_policies_from_db(db: AsyncSession) -> None:
     for user_id, role_name in user_roles:
         user_sub = f"user:{user_id}"
         role_sub = f"role:{role_name}"
-        _enforcer.add_role_for_user(user_sub, role_sub, tenant)
+        # Use grouping policy for RBAC with domains: g, sub, role, dom
+        _enforcer.add_grouping_policy(user_sub, role_sub, tenant)
     
     logger.info(f"Loaded {len(role_perms)} role-permission policies and {len(user_roles)} user-role mappings into Casbin")
 
