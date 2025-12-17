@@ -350,6 +350,23 @@ class AuthService {
     return this.request<OAuth2Provider[]>('/oauth2/providers');
   }
 
+  // User management (Admin only)
+  async getAllUsers(): Promise<User[]> {
+    return this.request<User[]>('/users/list', {
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
+    });
+  }
+
+  async getUserById(userId: number): Promise<User> {
+    return this.request<User>(`/users/${userId}`, {
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
+    });
+  }
+
   // Utility methods
   isAuthenticated(): boolean {
     return !!this.getAccessToken();
