@@ -47,7 +47,7 @@ import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
 import { useApiKey } from "../hooks/useApiKey";
-import { User, UserUpdateRequest } from "../types/auth";
+import { User, UserUpdateRequest, Permission } from "../types/auth";
 import roleService, { Role, UserRole } from "../services/roleService";
 import authService from "../services/authService";
 
@@ -79,6 +79,35 @@ const ProfilePage: React.FC = () => {
   const [isLoadingUserRoles, setIsLoadingUserRoles] = useState(false);
   const [isAssigningRole, setIsAssigningRole] = useState(false);
   const [isRemovingRole, setIsRemovingRole] = useState(false);
+  
+  // Permissions management state
+  const [permissions, setPermissions] = useState<string[]>([]);
+  const [isLoadingPermissions, setIsLoadingPermissions] = useState(false);
+  const [selectedUserForPermissions, setSelectedUserForPermissions] = useState<{ id: number; email: string; username: string } | null>(null);
+  const [selectedUserPermissions, setSelectedUserPermissions] = useState<string[]>([]);
+  const [selectedPermission, setSelectedPermission] = useState<string>("");
+  const [isLoadingUserPermissions, setIsLoadingUserPermissions] = useState(false);
+  const [isAssigningPermission, setIsAssigningPermission] = useState(false);
+  
+  // API Key creation for user (in Permissions tab)
+  const [apiKeyForUser, setApiKeyForUser] = useState({
+    key_name: "",
+    permissions: [] as string[],
+    expires_days: 30,
+  });
+  const [selectedPermissionsForUser, setSelectedPermissionsForUser] = useState<string[]>([]);
+  const [isCreatingApiKeyForUser, setIsCreatingApiKeyForUser] = useState(false);
+  
+  // API Key management state (for all users)
+  const [apiKeys, setApiKeys] = useState<any[]>([]);
+  const [isLoadingApiKeys, setIsLoadingApiKeys] = useState(false);
+  const [isCreatingApiKey, setIsCreatingApiKey] = useState(false);
+  const [newApiKey, setNewApiKey] = useState({
+    key_name: "",
+    permissions: [] as string[],
+    expires_days: 30,
+  });
+  const [selectedPermissionsForApiKey, setSelectedPermissionsForApiKey] = useState<string[]>([]);
 
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
@@ -112,6 +141,8 @@ const ProfilePage: React.FC = () => {
       setIsLoadingUsers(true);
       try {
         const usersList = await authService.getAllUsers();
+        console.log("u",usersList);
+        
         setUsers(usersList);
       } catch (error) {
         console.error("Failed to fetch users:", error);
@@ -307,9 +338,12 @@ const ProfilePage: React.FC = () => {
               <TabList>
                 <Tab fontWeight="semibold">User Details</Tab>
                 <Tab fontWeight="semibold">Organization</Tab>
-                {/* <Tab fontWeight="semibold">API Key</Tab> */}
+                <Tab fontWeight="semibold">API Key</Tab>
                 {(user?.roles?.includes('ADMIN') || user?.is_superuser) && (
-                  <Tab fontWeight="semibold">Roles</Tab>
+                  <>
+                    <Tab fontWeight="semibold">Roles</Tab>
+                    <Tab fontWeight="semibold">Permissions</Tab>
+                  </>
                 )}
               </TabList>
 
@@ -540,7 +574,7 @@ const ProfilePage: React.FC = () => {
                 </TabPanel>
 
                 {/* API Key Tab */}
-                {/* <TabPanel px={0} pt={6}>
+                <TabPanel px={0} pt={6}>
                   <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                     <CardHeader>
                       <Heading size="md" color="gray.700">
@@ -590,7 +624,7 @@ const ProfilePage: React.FC = () => {
                     </VStack>
                   </CardBody>
                 </Card>
-                </TabPanel> */}
+                </TabPanel>
 
                 {/* Roles Tab - Only visible to ADMIN users */}
                 {(user?.roles?.includes('ADMIN') || user?.is_superuser) && (
@@ -882,6 +916,307 @@ const ProfilePage: React.FC = () => {
                             <AlertIcon />
                             <AlertDescription>
                               Only administrators can manage roles. Select a user to view and manage their roles.
+                            </AlertDescription>
+                          </Alert>
+                        </VStack>
+                      </CardBody>
+                    </Card>
+                  </TabPanel>
+                )}
+
+             
+                {/* Permissions Tab - Only visible to ADMIN users */}
+                {(user?.roles?.includes('ADMIN') || user?.is_superuser) && (
+                  <TabPanel px={0} pt={6}>
+                    <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
+                      <CardHeader>
+                        <Heading size="md" color="gray.700">
+                          Permissions Management
+                        </Heading>
+                      </CardHeader>
+                      <CardBody>
+                        <VStack spacing={6} align="stretch">
+                          {/* Load Permissions Button */}
+                          <HStack justify="space-between">
+                            <Text fontSize="sm" color="gray.600">
+                              Assign permissions to users
+                            </Text>
+                            <Button
+                              size="sm"
+                              colorScheme="purple"
+                              onClick={async () => {
+                                setIsLoadingPermissions(true);
+                                try {
+                                  const allPermissions = await authService.getAllPermissions();
+                                  setPermissions(allPermissions);
+                                  toast({
+                                    title: "Permissions Loaded",
+                                    description: `Loaded ${allPermissions.length} permissions`,
+                                    status: "success",
+                                    duration: 2000,
+                                    isClosable: true,
+                                  });
+                                } catch (error) {
+                                  toast({
+                                    title: "Error",
+                                    description: error instanceof Error ? error.message : "Failed to load permissions",
+                                    status: "error",
+                                    duration: 5000,
+                                    isClosable: true,
+                                  });
+                                } finally {
+                                  setIsLoadingPermissions(false);
+                                }
+                              }}
+                              isLoading={isLoadingPermissions}
+                              loadingText="Loading..."
+                            >
+                              Load Permissions
+                            </Button>
+                          </HStack>
+
+                          {/* User Selection */}
+                          <Box>
+                            <Heading size="sm" mb={4} color="gray.700">
+                              Select User
+                            </Heading>
+                            <FormControl>
+                              <FormLabel fontWeight="semibold">User</FormLabel>
+                              <Select
+                                value={selectedUserForPermissions?.id || ""}
+                                onChange={async (e) => {
+                                  const userId = parseInt(e.target.value);
+                                  const user = users.find((u) => u.id === userId);
+                                  if (user) {
+                                    setSelectedUserForPermissions({
+                                      id: user.id,
+                                      email: user.email,
+                                      username: user.username || "",
+                                    });
+                                    // TODO: Load user's current permissions from API
+                                    setSelectedUserPermissions([]);
+                                  } else {
+                                    setSelectedUserForPermissions(null);
+                                    setSelectedUserPermissions([]);
+                                  }
+                                }}
+                                placeholder={isLoadingUsers ? "Loading users..." : "Select a user"}
+                                bg="white"
+                                isDisabled={isLoadingUsers}
+                              >
+                                {users.map((u) => (
+                                  <option key={u.id} value={u.id}>
+                                    {u.username} ({u.email})
+                                  </option>
+                                ))}
+                              </Select>
+                            </FormControl>
+                          </Box>
+
+                          {/* Current User Permissions */}
+                          {selectedUserForPermissions && (
+                            <Box>
+                              <Heading size="sm" mb={4} color="gray.700">
+                                Current Permissions for {selectedUserForPermissions.username}
+                              </Heading>
+                              {selectedUserPermissions.length > 0 ? (
+                                <VStack spacing={2} align="stretch">
+                                  {selectedUserPermissions.map((perm) => (
+                                    <HStack key={perm} justify="space-between" p={3} bg={inputReadOnlyBg} borderRadius="md">
+                                      <Badge colorScheme="purple" fontSize="sm" p={1}>
+                                        {perm}
+                                      </Badge>
+                                      <Button
+                                        size="xs"
+                                        colorScheme="red"
+                                        variant="outline"
+                                        onClick={async () => {
+                                          // TODO: Implement remove permission API call
+                                          toast({
+                                            title: "Info",
+                                            description: "Remove permission functionality will be implemented",
+                                            status: "info",
+                                            duration: 3000,
+                                            isClosable: true,
+                                          });
+                                        }}
+                                      >
+                                        Remove
+                                      </Button>
+                                    </HStack>
+                                  ))}
+                                </VStack>
+                              ) : (
+                                <Alert status="info" borderRadius="md">
+                                  <AlertIcon />
+                                  <AlertDescription>
+                                    This user has no direct permissions assigned (permissions come from roles).
+                                  </AlertDescription>
+                                </Alert>
+                              )}
+                            </Box>
+                          )}
+
+                          {/* Create API Key for User Section */}
+                          {selectedUserForPermissions && permissions.length > 0 && (
+                            <Box>
+                              <Heading size="sm" mb={4} color="gray.700">
+                                Create API Key for {selectedUserForPermissions.username}
+                              </Heading>
+                              <VStack spacing={4} align="stretch">
+                                <FormControl>
+                                  <FormLabel fontWeight="semibold">Key Name</FormLabel>
+                                  <Input
+                                    value={apiKeyForUser.key_name}
+                                    onChange={(e) => setApiKeyForUser({ ...apiKeyForUser, key_name: e.target.value })}
+                                    placeholder="Enter a name for this API key"
+                                    bg="white"
+                                  />
+                                </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontWeight="semibold">Permissions</FormLabel>
+                                  <Select
+                                    value={selectedPermission}
+                                    onChange={(e) => {
+                                      if (e.target.value && !selectedPermissionsForUser.includes(e.target.value)) {
+                                        setSelectedPermissionsForUser([...selectedPermissionsForUser, e.target.value]);
+                                        setSelectedPermission("");
+                                      }
+                                    }}
+                                    placeholder="Select permissions to add"
+                                    bg="white"
+                                  >
+                                    {permissions
+                                      .filter((perm) => !selectedPermissionsForUser.includes(perm))
+                                      .map((perm) => (
+                                        <option key={perm} value={perm}>
+                                          {perm}
+                                        </option>
+                                      ))}
+                                  </Select>
+                                  {selectedPermissionsForUser.length > 0 && (
+                                    <VStack align="stretch" mt={2} spacing={2}>
+                                      {selectedPermissionsForUser.map((perm) => (
+                                        <HStack key={perm} justify="space-between" p={2} bg="purple.50" borderRadius="md">
+                                          <Badge colorScheme="purple">{perm}</Badge>
+                                          <Button
+                                            size="xs"
+                                            colorScheme="red"
+                                            variant="ghost"
+                                            onClick={() => {
+                                              setSelectedPermissionsForUser(selectedPermissionsForUser.filter((p) => p !== perm));
+                                            }}
+                                          >
+                                            Remove
+                                          </Button>
+                                        </HStack>
+                                      ))}
+                                    </VStack>
+                                  )}
+                                </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontWeight="semibold">Expiry (Days)</FormLabel>
+                                  <Input
+                                    type="number"
+                                    value={apiKeyForUser.expires_days}
+                                    onChange={(e) => setApiKeyForUser({ ...apiKeyForUser, expires_days: parseInt(e.target.value) || 30 })}
+                                    min={1}
+                                    max={365}
+                                    bg="white"
+                                  />
+                                  <Text fontSize="xs" color="gray.500" mt={1}>
+                                    API key will expire after {apiKeyForUser.expires_days} day(s)
+                                  </Text>
+                                </FormControl>
+
+                                <Button
+                                  colorScheme="purple"
+                                  onClick={async () => {
+                                    if (!apiKeyForUser.key_name.trim()) {
+                                      toast({
+                                        title: "Validation Error",
+                                        description: "Please enter a key name",
+                                        status: "error",
+                                        duration: 3000,
+                                        isClosable: true,
+                                      });
+                                      return;
+                                    }
+                                    if (selectedPermissionsForUser.length === 0) {
+                                      toast({
+                                        title: "Validation Error",
+                                        description: "Please select at least one permission",
+                                        status: "error",
+                                        duration: 3000,
+                                        isClosable: true,
+                                      });
+                                      return;
+                                    }
+                                    setIsCreatingApiKeyForUser(true);
+                                    try {
+                                      // Create API key payload with user_id
+                                      const payload = {
+                                        key_name: apiKeyForUser.key_name,
+                                        permissions: selectedPermissionsForUser,
+                                        expires_days: apiKeyForUser.expires_days,
+                                        user_id: selectedUserForPermissions.id,
+                                      };
+                                      
+                                      // For now, we'll use the regular createApiKey endpoint
+                                      // If there's an admin endpoint for creating keys for other users, use that instead
+                                      const createdKey = await authService.createApiKey({
+                                        key_name: payload.key_name,
+                                        permissions: payload.permissions,
+                                        expires_days: payload.expires_days,
+                                      });
+                                      
+                                      toast({
+                                        title: "API Key Created",
+                                        description: `API key "${createdKey.key_name}" created successfully for ${selectedUserForPermissions.username}. Save this key - it won't be shown again!`,
+                                        status: "success",
+                                        duration: 5000,
+                                        isClosable: true,
+                                      });
+                                      
+                                      // Reset form
+                                      setApiKeyForUser({ key_name: "", permissions: [], expires_days: 30 });
+                                      setSelectedPermissionsForUser([]);
+                                    } catch (error) {
+                                      toast({
+                                        title: "Error",
+                                        description: error instanceof Error ? error.message : "Failed to create API key",
+                                        status: "error",
+                                        duration: 5000,
+                                        isClosable: true,
+                                      });
+                                    } finally {
+                                      setIsCreatingApiKeyForUser(false);
+                                    }
+                                  }}
+                                  isLoading={isCreatingApiKeyForUser}
+                                  loadingText="Creating..."
+                                >
+                                  Add Permission (Create API Key)
+                                </Button>
+                              </VStack>
+                            </Box>
+                          )}
+
+                          {permissions.length === 0 && !isLoadingPermissions && (
+                            <Alert status="info" borderRadius="md">
+                              <AlertIcon />
+                              <AlertDescription>
+                                Click "Load Permissions" to view all available permissions in the system.
+                              </AlertDescription>
+                            </Alert>
+                          )}
+
+                          <Alert status="info" borderRadius="md">
+                            <AlertIcon />
+                            <AlertDescription>
+                              Permissions are typically assigned through roles. Direct permission assignment may require backend support.
                             </AlertDescription>
                           </Alert>
                         </VStack>

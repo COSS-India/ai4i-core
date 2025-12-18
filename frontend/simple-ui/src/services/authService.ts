@@ -17,6 +17,7 @@ import {
   APIKeyCreate,
   APIKeyResponse,
   OAuth2Provider,
+  Permission,
 } from '../types/auth';
 import { API_BASE_URL } from './api';
 
@@ -335,6 +336,16 @@ class AuthService {
     });
   }
 
+  async createApiKeyForUser(data: APIKeyCreate & { user_id: number }): Promise<APIKeyResponse> {
+    return this.request<APIKeyResponse>('/api-keys', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
+    });
+  }
+
   async listApiKeys(): Promise<APIKeyResponse[]> {
     return this.request<APIKeyResponse[]>('/api-keys');
   }
@@ -352,7 +363,7 @@ class AuthService {
 
   // User management (Admin only)
   async getAllUsers(): Promise<User[]> {
-    return this.request<User[]>('/users/list', {
+    return this.request<User[]>('/users', {
       headers: {
         'x-auth-source': 'AUTH_TOKEN',
       },
@@ -361,6 +372,15 @@ class AuthService {
 
   async getUserById(userId: number): Promise<User> {
     return this.request<User>(`/users/${userId}`, {
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
+    });
+  }
+
+  // Permissions management (Admin only)
+  async getAllPermissions(): Promise<string[]> {
+    return this.request<string[]>('/permission/list', {
       headers: {
         'x-auth-source': 'AUTH_TOKEN',
       },
