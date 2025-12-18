@@ -5,6 +5,7 @@ import os
 import secrets
 import hashlib
 import logging
+import base64
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Tuple
 from jose import JWTError, jwt
@@ -13,6 +14,7 @@ from passlib.hash import argon2
 import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from cryptography.fernet import Fernet
 from models import User, UserSession, APIKey, Role, Permission, UserRole, RolePermission, OAuthProvider
 from casbin_enforcer import check_apikey_permission
 
@@ -27,6 +29,42 @@ JWT_REFRESH_SECRET_KEY = os.getenv("JWT_REFRESH_SECRET_KEY", "dhruva-refresh-sec
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+
+# API Key Encryption Configuration
+API_KEY_ENCRYPTION_KEY = os.getenv("API_KEY_ENCRYPTION_KEY", None)
+
+def _get_encryption_key() -> bytes:
+    """Get or generate encryption key for API key encryption (Fernet key format)"""
+    if API_KEY_ENCRYPTION_KEY:
+        # If provided, use it (must be a valid Fernet key - 44-byte base64 string)
+        try:
+            # Validate it's a valid Fernet key by trying to create a Fernet instance
+            Fernet(API_KEY_ENCRYPTION_KEY.encode())
+            return API_KEY_ENCRYPTION_KEY.encode()
+        except Exception:
+            logger.warning("Invalid API_KEY_ENCRYPTION_KEY format, generating new key")
+    
+    # Generate a key from JWT_SECRET_KEY if available (for consistency)
+    # This ensures the same key is used across restarts if JWT_SECRET_KEY is set
+    if JWT_SECRET_KEY and JWT_SECRET_KEY != "dhruva-jwt-secret-key-2024-super-secure":
+        # Derive a Fernet-compatible key from JWT_SECRET_KEY
+        # Fernet needs exactly 32 bytes of key material
+        key_material = hashlib.sha256(JWT_SECRET_KEY.encode()).digest()[:32]
+        # Base64 encode to get a valid Fernet key (44 bytes)
+        fernet_key = base64.urlsafe_b64encode(key_material)
+        return fernet_key
+    
+    # Fallback: generate a key (WARNING: this will change on restart)
+    logger.warning("No API_KEY_ENCRYPTION_KEY set, using generated key (will change on restart)")
+    return Fernet.generate_key()
+
+# Initialize Fernet cipher
+try:
+    _fernet = Fernet(_get_encryption_key())
+except Exception as e:
+    logger.error(f"Failed to initialize Fernet cipher: {e}")
+    # Fallback to a generated key
+    _fernet = Fernet(Fernet.generate_key())
 
 class AuthUtils:
     """Authentication utility functions"""
@@ -107,6 +145,28 @@ class AuthUtils:
     def hash_api_key(api_key: str) -> str:
         """Hash an API key for storage"""
         return hashlib.sha256(api_key.encode()).hexdigest()
+    
+    @staticmethod
+    def encrypt_api_key(api_key: str) -> str:
+        """Encrypt an API key for storage"""
+        try:
+            encrypted = _fernet.encrypt(api_key.encode())
+            return encrypted.decode()
+        except Exception as e:
+            logger.error(f"Error encrypting API key: {e}")
+            raise ValueError("Failed to encrypt API key")
+    
+    @staticmethod
+    def decrypt_api_key(encrypted_key: str) -> Optional[str]:
+        """Decrypt an API key from storage"""
+        try:
+            if not encrypted_key:
+                return None
+            decrypted = _fernet.decrypt(encrypted_key.encode())
+            return decrypted.decode()
+        except Exception as e:
+            logger.error(f"Error decrypting API key: {e}")
+            return None
     
     @staticmethod
     async def validate_api_key(
