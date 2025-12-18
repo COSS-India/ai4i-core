@@ -16,12 +16,16 @@ RUN apt-get update && apt-get install -y \
 # Copy AI4ICore Observability Plugin
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 
+# Copy AI4ICore Model Management Plugin
+COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
 # Copy requirements and install Python dependencies
 COPY services/audio-lang-detection-service/requirements.txt .
 # Set pip timeout via environment variable (default is 15 seconds, increase to 300)
 ENV PIP_DEFAULT_TIMEOUT=300
 RUN pip install --no-cache-dir --user -r requirements.txt
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
 
 
 # Final runtime image
@@ -50,6 +54,9 @@ ENV PATH=/home/app/.local/bin:$PATH
 
 # Copy AI4ICore Observability Plugin
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+
+# Copy AI4ICore Model Management Plugin
+COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
 # Copy application code
 COPY services/audio-lang-detection-service .

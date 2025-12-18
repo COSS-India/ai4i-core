@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from typing import Dict, Any
 
 import redis.asyncio as redis
+import redis as redis_sync  # For synchronous Redis client for middleware
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -43,6 +44,7 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 
 # Observability integration - AI4ICore Observability Plugin
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
 # Configure logging
 logging.basicConfig(
@@ -114,6 +116,18 @@ async def lifespan(app: FastAPI):
         app.state.db_session_factory = db_session_factory
         app.state.db_engine = db_engine
         
+        # NOTE: Triton endpoint/model MUST come from Model Management for inference.
+        # No environment variable fallback - all resolution via Model Management database.
+        TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
+        TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT", "300.0"))
+        
+        # Store Triton config in app state (for use by routers after Model Management resolution)
+        app.state.triton_api_key = TRITON_API_KEY
+        app.state.triton_timeout = TRITON_TIMEOUT
+        
+        # NOTE: Model Management Plugin is registered before app starts (outside lifespan)
+        # to ensure middleware is added before app starts. Do NOT register it here.
+        
         # Update rate limiting middleware with Redis client
         for middleware in app.user_middleware:
             if hasattr(middleware, 'cls') and middleware.cls == RateLimitMiddleware:
@@ -126,19 +140,17 @@ async def lifespan(app: FastAPI):
             audio_service = AudioService()
             text_service = TextService()
             voice_service = VoiceService()
-            triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-            # Strip http:// or https:// scheme from URL (like ASR service)
-            if triton_url.startswith(('http://', 'https://')):
-                triton_url = triton_url.split('://', 1)[1]
-            triton_api_key = os.getenv("TRITON_API_KEY")
-            triton_client = TritonClient(triton_url, triton_api_key)
+            # NOTE: Streaming service Triton client will be created per-request via Model Management
+            # For now, skip Triton client initialization here
+            triton_client = None
             
             # Create async session for repository
             async with db_session_factory() as session:
                 repository = TTSRepository(session)
                 
                 # Create streaming service (if available)
-                if STREAMING_AVAILABLE:
+                # NOTE: Streaming service requires Model Management for Triton client resolution
+                if STREAMING_AVAILABLE and triton_client:
                     response_frequency_ms = int(os.getenv("STREAMING_RESPONSE_FREQUENCY_MS", "2000"))
                     streaming_service = StreamingTTSService(
                         audio_service=audio_service,
@@ -156,7 +168,10 @@ async def lifespan(app: FastAPI):
                     app.mount("/socket.io/tts", streaming_service.app)
                     logger.info("Socket.IO TTS streaming endpoint mounted at /socket.io/tts")
                 else:
-                    logger.warning("Streaming service not available - socketio dependency missing")
+                    if not STREAMING_AVAILABLE:
+                        logger.warning("Streaming service not available - socketio dependency missing")
+                    else:
+                        logger.warning("Streaming service skipped - requires Model Management for Triton resolution")
         except Exception as e:
             logger.error(f"Failed to initialize streaming service: {e}")
             # Continue without streaming (optional feature)
@@ -271,6 +286,47 @@ plugin = ObservabilityPlugin(config)
 plugin.register_plugin(app)
 logger.info("✅ AI4ICore Observability Plugin initialized for TTS service")
 
+# Initialize Redis client early for middleware (synchronous for Model Management Plugin)
+redis_client_sync = None
+try:
+    redis_host = os.getenv("REDIS_HOST", "redis")
+    redis_port = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
+    redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+    
+    redis_client_sync = redis_sync.Redis(
+        host=redis_host,
+        port=redis_port,
+        password=redis_password,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        retry_on_timeout=True
+    )
+    
+    # Test Redis connection (synchronous ping)
+    redis_client_sync.ping()
+    logger.info("Redis client created for middleware (connection tested)")
+except Exception as e:
+    logger.warning(f"Redis connection failed for middleware: {e}")
+    redis_client_sync = None
+
+# Model Management Plugin - single source of truth for Triton endpoint/model (no env fallback)
+# MUST be registered BEFORE app starts (before other middleware) to avoid "Cannot add middleware after application has started" error
+TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
+model_mgmt_config = ModelManagementConfig(
+    model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
+    model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
+    cache_ttl_seconds=300,
+    triton_endpoint_cache_ttl=300,
+    default_triton_endpoint="",  # No fallback - must come from Model Management
+    default_triton_api_key=TRITON_API_KEY,
+    middleware_enabled=True,
+    middleware_paths=["/api/v1"]
+)
+model_mgmt_plugin = ModelManagementPlugin(model_mgmt_config)
+model_mgmt_plugin.register_plugin(app, redis_client=redis_client_sync)
+logger.info("✅ Model Management Plugin initialized for TTS service")
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -381,28 +437,15 @@ async def health_check() -> Dict[str, Any]:
         health_status["postgres"] = "unhealthy"
     
     try:
-        # Check Triton server connectivity
-        try:
-            from utils.triton_client import TritonClient
-            triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-            # Strip http:// or https:// scheme from URL (like ASR service)
-            if triton_url.startswith(('http://', 'https://')):
-                triton_url = triton_url.split('://', 1)[1]
-            triton_api_key = os.getenv("TRITON_API_KEY")
-            triton_client = TritonClient(triton_url, triton_api_key)
-            
-            # Check if server is ready
-            if triton_client.is_server_ready():
-                health_status["triton"] = "healthy"
-            else:
-                health_status["triton"] = "unhealthy"
-        except ImportError:
-            health_status["triton"] = "unavailable"
+        # Triton endpoint must be resolved via Model Management - no hardcoded fallback
+        # Skip Triton check in health endpoint (requires Model Management serviceId)
+        logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
+        health_status["triton"] = "unknown"
     except Exception as e:
-        logger.error(f"Triton health check failed: {e}")
-        health_status["triton"] = "unhealthy"
+        logger.warning(f"Triton health check skipped: {e}")
+        health_status["triton"] = "unknown"
     
-    # Determine overall status
+    # Determine overall status (Triton check skipped, only Redis and DB matter)
     if health_status["redis"] == "healthy" and health_status["postgres"] == "healthy":
         health_status["status"] = "healthy"
     else:

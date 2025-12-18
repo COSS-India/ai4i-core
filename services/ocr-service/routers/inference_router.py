@@ -38,30 +38,39 @@ def get_ocr_service(request: Request) -> OCRService:
     triton_api_key = getattr(request.app.state, "triton_api_key", "")
     
     if not triton_endpoint:
-        # No fallback - Model Management must resolve the endpoint
         service_id = getattr(request.state, "service_id", None)
+        model_mgmt_error = getattr(request.state, "model_management_error", None)
+        
         if service_id:
+            error_detail = (
+                f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
+                f"Please ensure the service is registered in Model Management database."
+            )
+            if model_mgmt_error:
+                error_detail += f" Error: {model_mgmt_error}"
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
-                       f"Please ensure the service is registered in Model Management database."
+                detail=error_detail,
             )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Request must include config.serviceId. OCR service requires Model Management database resolution."
-            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Request must include config.serviceId. "
+                "OCR service requires Model Management database resolution."
+            ),
+        )
     
     # Get resolved model name from middleware (MUST be resolved by Model Management)
     model_name = getattr(request.state, "triton_model_name", None)
     
-    if not model_name:
-        # No fallback - Model Management must resolve the model name
+    if not model_name or model_name == "unknown":
         service_id = getattr(request.state, "service_id", None)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Model Management failed to resolve model name for serviceId: {service_id}. "
-                   f"Please ensure the service is properly configured in Model Management database."
+            detail=(
+                f"Model Management failed to resolve Triton model name for serviceId: {service_id}. "
+                f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+            ),
         )
     
     logger.info(
@@ -121,16 +130,53 @@ async def run_inference(
             detail=str(exc),
         ) from exc
     except TritonInferenceError as exc:
-        logger.error("OCR Triton inference failed: %s", exc)
+        service_id = getattr(http_request.state, "service_id", None)
+        triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+        model_name = getattr(http_request.state, "triton_model_name", None)
+        
+        error_detail = (
+            f"OCR inference failed for serviceId '{service_id}' "
+            f"at endpoint '{triton_endpoint}' with model '{model_name}': {str(exc)}. "
+            "Please verify the model is registered in Model Management and the Triton server is accessible."
+        )
+        
+        logger.error(
+            "OCR Triton inference failed: %s (serviceId=%s, endpoint=%s, model=%s)",
+            exc, service_id, triton_endpoint, model_name
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="OCR service temporarily unavailable",
+            detail=error_detail,
         ) from exc
     except Exception as exc:  # pragma: no cover - generic error path
-        logger.error("OCR inference failed: %s", exc, exc_info=True)
+        service_id = getattr(http_request.state, "service_id", None)
+        triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+        error_detail = str(exc)
+        
+        # Include model management context in error message
+        if service_id and triton_endpoint:
+            error_detail = (
+                f"OCR inference failed for serviceId '{service_id}' at endpoint '{triton_endpoint}': {error_detail}. "
+                "Please verify the model is registered in Model Management and the Triton server is accessible."
+            )
+        elif service_id:
+            error_detail = (
+                f"OCR inference failed for serviceId '{service_id}': {error_detail}. "
+                "Model Management resolved the serviceId but Triton endpoint may be misconfigured."
+            )
+        else:
+            error_detail = (
+                f"OCR inference failed: {error_detail}. "
+                "Please ensure config.serviceId is provided and the service is registered in Model Management."
+            )
+        
+        logger.error(
+            "OCR inference failed: %s (serviceId=%s, endpoint=%s)",
+            exc, service_id, triton_endpoint, exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error",
+            detail=error_detail,
         ) from exc
 
 

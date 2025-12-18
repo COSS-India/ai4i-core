@@ -355,12 +355,12 @@ services:
       microservices-network:
         aliases:
           - config-service
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   metrics-service:
@@ -646,14 +646,13 @@ services:
 
   llm-service:
     build:
-      context: ./services/llm-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/llm-service/Dockerfile
     container_name: ai4v-llm-service
     ports:
       - "8093:8090"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=http://3.235.56.233:8001
       - TRITON_TIMEOUT=300
     env_file:
       - ./services/llm-service/.env

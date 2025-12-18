@@ -49,9 +49,8 @@ DATABASE_URL = os.getenv(
     "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db",
 )
 
-# NOTE: Triton endpoint/model must come from Model Management for inference.
-# These env vars are retained only for legacy health checks or debugging.
-TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "")
+# NOTE: Triton endpoint/model MUST come from Model Management for inference.
+# No environment variable fallback - all resolution via Model Management database.
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
 TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT", "300.0"))
 
@@ -151,7 +150,7 @@ async def lifespan(app: FastAPI):
     app.state.redis_client = redis_client
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
-    app.state.triton_endpoint = TRITON_ENDPOINT
+    # Triton endpoint/model resolved via Model Management middleware - no hardcoded fallback
     app.state.triton_api_key = TRITON_API_KEY
     app.state.triton_timeout = TRITON_TIMEOUT
 
@@ -330,14 +329,14 @@ async def health(request: Request):
     except Exception as e:
         logger.warning("/health: PostgreSQL check failed: %s", e)
 
+    # Triton endpoint must be resolved via Model Management - no hardcoded fallback
+    # Health check focuses on Redis and DB availability
+    triton_ok = False
     try:
-        triton_endpoint = getattr(request.app.state, "triton_endpoint", "")
-        if triton_endpoint:
-            triton_client_instance = TritonClient(triton_endpoint)
-            if triton_client_instance.client.is_server_live() and triton_client_instance.client.is_server_ready():
-                triton_ok = True
+        # Skip Triton check in health endpoint (requires Model Management serviceId)
+        logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
     except Exception as e:
-        logger.warning("/health: Triton check failed: %s", e)
+        logger.warning("/health: Triton check skipped: %s", e)
 
     status_str = "ok" if (redis_ok and db_ok and triton_ok) else "degraded"
     status_code = 200 if status_str == "ok" else 503

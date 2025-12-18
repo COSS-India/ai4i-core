@@ -63,18 +63,13 @@ async def health_check(request: Request) -> Dict[str, Any]:
         import tritonclient.http as http_client
         import os
         
-        triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-        client = http_client.InferenceServerClient(url=triton_url)
-        
-        if client.is_server_ready():
-            health_status["triton"] = "healthy"
-        else:
-            health_status["triton"] = "unhealthy"
-    except ImportError:
-        health_status["triton"] = "unavailable"
+        # Triton endpoint must be resolved via Model Management - no hardcoded fallback
+        # Skip Triton check in health endpoint (requires Model Management serviceId)
+        logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
+        health_status["triton"] = "unknown"
     except Exception as e:
-        logger.error(f"Triton health check failed: {e}")
-        health_status["triton"] = "unhealthy"
+        logger.warning(f"Triton health check skipped: {e}")
+        health_status["triton"] = "unknown"
     
     # Determine overall status
     if (health_status["redis"] == "healthy" and 
@@ -141,17 +136,12 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
             import tritonclient.http as http_client
             import os
             
-            triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-            client = http_client.InferenceServerClient(url=triton_url)
-            
-            if not client.is_server_ready():
-                readiness_status["status"] = "not_ready"
-                readiness_status["reason"] = "Triton server not ready"
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=readiness_status
-                )
-        except ImportError:
+            # Triton endpoint must be resolved via Model Management - no hardcoded fallback
+            # Skip Triton check in readiness endpoint (requires Model Management serviceId)
+            logger.debug("/ready: Skipping Triton check (requires Model Management serviceId)")
+            # Skip Triton validation - only check Redis and DB
+        except Exception as e:
+            logger.warning(f"Triton readiness check skipped: {e}")
             # Triton client not available, but that's okay for readiness
             pass
         except Exception as e:

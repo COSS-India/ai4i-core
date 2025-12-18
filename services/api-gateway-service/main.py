@@ -752,6 +752,13 @@ class ModelTaskTypeEnum(str, Enum):
     tts = "tts"
     asr = "asr"
     llm = "llm"
+    transliteration = "transliteration"
+    language_detection = "language-detection"
+    speaker_diarization = "speaker-diarization"
+    audio_lang_detection = "audio-lang-detection"
+    language_diarization = "language-diarization"
+    ocr = "ocr"
+    ner = "ner"
 
 class ModelCreateRequest(BaseModel):
     """Request model for creating a new model."""
@@ -3573,7 +3580,13 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             method = request.method
             if method in ['POST', 'PUT', 'PATCH']:
                 body = await request.body()
-            headers = dict(request.headers)
+            # Filter headers - remove hop-by-hop headers and Content-Length (httpx will set it)
+            headers = {}
+            for header_name, header_value in request.headers.items():
+                header_lower = header_name.lower()
+                # Skip hop-by-hop headers and Content-Length (httpx will calculate it)
+                if not is_hop_by_hop_header(header_name) and header_lower != 'content-length' and header_lower != 'host':
+                    headers[header_name] = header_value
             params = request.query_params
         else:
             # IMPORTANT: leave params as None so any querystring already present
@@ -3584,6 +3597,8 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         
         # Forward request to service (5 minute timeout for LLM service, 300s for others)
         timeout_value = 300.0 if service_name == 'llm-service' else 300.0
+        
+        # Use stream=False to ensure response is fully read before returning
         response = await http_client.request(
             method=method,
             url=f"{service_url}{path}",
@@ -3594,9 +3609,13 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             timeout=timeout_value
         )
         
+        # Read response content immediately to avoid ReadError
+        # Accessing response.content reads the entire body and closes the connection properly
+        response_content = response.content
+        
         # Return response
         return Response(
-            content=response.content,
+            content=response_content,
             status_code=response.status_code,
             headers=dict(response.headers),
             media_type=response.headers.get('content-type')

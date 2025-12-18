@@ -16,7 +16,6 @@ from repositories.nmt_repository import NMTRepository
 from services.nmt_service import NMTService
 from services.text_service import TextService
 from utils.triton_client import TritonClient
-from utils.model_management_client import ModelManagementClient
 from utils.auth_utils import extract_auth_headers
 from utils.validation_utils import (
     validate_language_pair, validate_service_id, validate_batch_size,
@@ -40,46 +39,93 @@ async def get_db_session(request: Request) -> AsyncSession:
     return request.app.state.db_session_factory()
 
 
-def create_triton_client(triton_url: str, api_key: str) -> TritonClient:
-    """Factory function to create Triton client"""
-    return TritonClient(triton_url=triton_url, api_key=api_key)
-
-
 async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_db_session)) -> NMTService:
-    """Dependency to get configured NMT service"""
+    """
+    Dependency to get configured NMT service.
+    
+    REQUIRES Model Management database resolution - no environment variable fallback.
+    Request must include config.serviceId for Model Management to resolve endpoint and model.
+    """
     repository = NMTRepository(db)
     text_service = TextService()
     
-    # Default Triton client
-    default_triton_client = None
-    if getattr(request.app.state, "triton_endpoint", None):
-        default_triton_client = TritonClient(
-            triton_url=request.app.state.triton_endpoint,
-            api_key=request.app.state.triton_api_key
+    triton_endpoint = getattr(request.state, "triton_endpoint", None)
+    triton_api_key = getattr(request.state, "triton_api_key", None)
+    
+    if not triton_endpoint:
+        service_id = getattr(request.state, "service_id", None)
+        model_mgmt_error = getattr(request.state, "model_management_error", None)
+        
+        if service_id:
+            error_detail = (
+                f"Model Management did not resolve serviceId: {service_id} and no default endpoint is allowed. "
+                f"Please ensure the service is registered in Model Management database."
+            )
+            if model_mgmt_error:
+                error_detail += f" Error: {model_mgmt_error}"
+            raise HTTPException(
+                status_code=500,
+                detail=error_detail,
+            )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Request must include config.serviceId. "
+                "NMT service requires Model Management database resolution."
+            ),
         )
+    
+    model_name = getattr(request.state, "triton_model_name", None)
+    
+    if not model_name or model_name == "unknown":
+        service_id = getattr(request.state, "service_id", None)
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Model Management did not resolve model name for serviceId: {service_id}. "
+                f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+            ),
+        )
+    
+    logger.info(
+        "Using Triton endpoint=%s model_name=%s for serviceId=%s from Model Management",
+        triton_endpoint,
+        model_name,
+        getattr(request.state, "service_id", "unknown"),
+    )
     
     # Factory function to create Triton clients for different endpoints
     def get_triton_client_for_endpoint(endpoint: str) -> TritonClient:
         """Create Triton client for specific endpoint"""
-        # Use default API key for now (can be extended to support per-endpoint keys)
+        # Strip http:// or https:// scheme from URL if present
+        triton_url = endpoint
+        if triton_url.startswith(('http://', 'https://')):
+            triton_url = triton_url.split('://', 1)[1]
         return TritonClient(
-            triton_url=endpoint,
-            api_key=request.app.state.triton_api_key
+            triton_url=triton_url,
+            api_key=triton_api_key
         )
     
-    # Get model management client from app state
-    model_management_client = getattr(request.app.state, "model_management_client", None)
+    # Get Redis client and Model Management client from app state
     redis_client = getattr(request.app.state, "redis_client", None)
-    cache_ttl = getattr(request.app.state, "triton_endpoint_cache_ttl", 300)
+    model_management_client = getattr(request.app.state, "model_management_client", None)
+    
+    if not model_management_client:
+        raise HTTPException(
+            status_code=500,
+            detail="Model Management client not available. Service configuration error."
+        )
+    
+    # Get cache TTL from Model Management client config
+    cache_ttl_seconds = getattr(model_management_client, "cache_ttl_seconds", 300)
     
     return NMTService(
-        repository, 
-        text_service, 
-        default_triton_client,
-        get_triton_client_for_endpoint,
+        repository=repository, 
+        text_service=text_service,
+        get_triton_client_func=get_triton_client_for_endpoint,
         model_management_client=model_management_client,
         redis_client=redis_client,
-        cache_ttl_seconds=cache_ttl
+        cache_ttl_seconds=cache_ttl_seconds
     )
 
 
@@ -133,11 +179,23 @@ async def run_inference(
     
     except Exception as e:
         logger.error(f"NMT inference failed: {e}", exc_info=True)
-        # Return more detailed error in development, generic in production
-        import traceback
-        error_detail = {
-            "message": str(e),
-            "type": type(e).__name__,
-            "traceback": traceback.format_exc() if logger.level <= logging.DEBUG else None
-        }
-        raise HTTPException(status_code=500, detail=error_detail)
+        
+        # Extract context from request state for better error messages
+        service_id = getattr(http_request.state, "service_id", None)
+        triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+        model_name = getattr(http_request.state, "triton_model_name", None)
+        
+        # Return appropriate error based on exception type
+        from services.nmt_service import TritonInferenceError
+        if "Triton" in str(e) or "triton" in str(e).lower() or isinstance(e, TritonInferenceError):
+            error_detail = f"Triton inference failed for serviceId '{service_id}'"
+            if triton_endpoint and model_name:
+                error_detail += f" at endpoint '{triton_endpoint}' with model '{model_name}': {str(e)}. "
+                error_detail += "Please verify the model is registered in Model Management and the Triton server is accessible."
+            elif service_id:
+                error_detail += f": {str(e)}. Please verify the service is registered in Model Management."
+            else:
+                error_detail += f": {str(e)}"
+            raise HTTPException(status_code=503, detail=error_detail)
+        else:
+            raise HTTPException(status_code=500, detail=f"NMT inference failed: {str(e)}")

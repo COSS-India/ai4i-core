@@ -29,20 +29,19 @@ class TextProcessingError(Exception):
 class LLMService:
     """Main LLM service for inference"""
     
-    # Service registry mapping serviceId to model name
-    SERVICE_REGISTRY = {
-        "llm": "llm",
-        "ai4bharat/llm": "llm",
-        "default-llm": "llm"
-    }
-    
-    def __init__(self, repository: LLMRepository, triton_client: TritonClient):
+    def __init__(self, repository: LLMRepository, triton_client: TritonClient, resolved_model_name: Optional[str] = None):
         self.repository = repository
         self.triton_client = triton_client
+        self.resolved_model_name = resolved_model_name  # Model name from Model Management
     
     def get_model_name(self, service_id: str) -> str:
-        """Get model name based on service ID"""
-        return self.SERVICE_REGISTRY.get(service_id, "llm")  # Default to "llm"
+        """Get model name resolved via Model Management (REQUIRED - no fallback)"""
+        if not self.resolved_model_name:
+            raise TritonInferenceError(
+                f"Model name not resolved via Model Management for serviceId: {service_id}. "
+                f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+            )
+        return self.resolved_model_name
     
     async def run_inference(
         self,

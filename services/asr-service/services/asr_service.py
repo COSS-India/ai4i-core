@@ -36,11 +36,12 @@ class AudioProcessingError(Exception):
 class ASRService:
     """Main ASR service for speech-to-text conversion."""
     
-    def __init__(self, repository: ASRRepository, audio_service: AudioService, triton_client: TritonClient):
+    def __init__(self, repository: ASRRepository, audio_service: AudioService, triton_client: TritonClient, resolved_model_name: Optional[str] = None):
         """Initialize ASR service with dependencies."""
         self.repository = repository
         self.audio_service = audio_service
         self.triton_client = triton_client
+        self.resolved_model_name = resolved_model_name  # Model name from Model Management
     
     async def run_inference(
         self,
@@ -61,8 +62,22 @@ class ASRService:
             transcription_format = request.config.transcriptionFormat
             best_token_count = request.config.bestTokenCount
             
-            # Use serviceId as model name for Triton
-            model_name = service_id
+            # Validate language code - Triton model only supports Indic languages
+            from utils.validation_utils import SUPPORTED_LANGUAGES, InvalidLanguageCodeError
+            if language not in SUPPORTED_LANGUAGES:
+                raise InvalidLanguageCodeError(
+                    f"Language '{language}' is not supported by the IndicASR model. "
+                    f"Supported languages: {', '.join(SUPPORTED_LANGUAGES)}. "
+                    f"Note: English ('en') is not supported by this Indic language ASR model."
+                )
+            
+            # Use resolved model name from Model Management (REQUIRED - no fallback)
+            if not self.resolved_model_name:
+                raise TritonInferenceError(
+                    f"Model name not resolved via Model Management for serviceId: {service_id}. "
+                    f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+                )
+            model_name = self.resolved_model_name
             
             standard_rate = 16000  # Target sample rate
             

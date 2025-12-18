@@ -9,13 +9,22 @@ RUN apt-get update && apt-get install -y \
     g++ \
     curl \
     libpq-dev \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# ✅ FIX: copy requirements relative to build context
-COPY requirements.txt .
+# Copy AI4ICore Observability Plugin
+COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+
+# Copy AI4ICore Model Management Plugin
+COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
+# Copy service requirements
+COPY services/llm-service/requirements.txt .
 
 # Install Python dependencies (NO --user)
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_model_management
 
 # ---------------- Final stage ----------------
 FROM python:3.11-slim
@@ -34,8 +43,14 @@ RUN useradd --create-home --shell /bin/bash app
 # Copy installed Python packages
 COPY --from=builder /usr/local /usr/local
 
+# Copy AI4ICore Observability Plugin
+COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+
+# Copy AI4ICore Model Management Plugin
+COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
 # Copy application code
-COPY . .
+COPY services/llm-service .
 
 # Fix ownership ONLY for app files
 RUN chown -R app:app /app

@@ -37,13 +37,15 @@ class TTSService:
         repository: TTSRepository,
         audio_service: AudioService,
         text_service: TextService,
-        triton_client: TritonClient
+        triton_client: TritonClient,
+        resolved_model_name: Optional[str] = None
     ):
         """Initialize TTS service with dependencies."""
         self.repository = repository
         self.audio_service = audio_service
         self.text_service = text_service
         self.triton_client = triton_client
+        self.resolved_model_name = resolved_model_name  # Model name from Model Management
     
     async def run_inference(
         self,
@@ -118,8 +120,14 @@ class TTSService:
                             )
                             
                             # Send Triton request
+                            # Use resolved model name from Model Management (REQUIRED - no fallback)
+                            if not self.resolved_model_name:
+                                raise TritonInferenceError(
+                                    f"Model name not resolved via Model Management for serviceId: {service_id}. "
+                                    f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+                                )
                             triton_response = self.triton_client.send_triton_request(
-                                model_name="tts",
+                                model_name=self.resolved_model_name,
                                 input_list=inputs,
                                 output_list=outputs
                             )

@@ -143,12 +143,24 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
 
         # Try to infer model name from model inference endpoint metadata
         if service_info.model_inference_endpoint:
+            # Check top level first
             model_name = (
                 service_info.model_inference_endpoint.get("model_name")
                 or service_info.model_inference_endpoint.get("modelName")
                 or service_info.model_inference_endpoint.get("model")
                 or model_name
             )
+            
+            # If not found at top level, check inside schema (common structure)
+            if not model_name or model_name == "unknown":
+                schema = service_info.model_inference_endpoint.get("schema", {})
+                if isinstance(schema, dict):
+                    model_name = (
+                        schema.get("model_name")
+                        or schema.get("modelName")
+                        or schema.get("name")
+                        or model_name
+                    )
         
         # If still no model name, try to extract from service_id
         if not model_name and service_id:
@@ -268,19 +280,64 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         # For POST requests, try to extract serviceId from body
         service_id = None
         if request.method == "POST":
-            # Read body (need to store it for downstream)
-            body = await request.body()
+            # Check if body was already read by previous middleware (e.g., Observability)
+            # FastAPI/Starlette caches the body in _body attribute after first read
+            body_already_read = hasattr(request, '_body') and request._body is not None
+            original_receive = getattr(request, '_receive', None)
+            
+            if body_already_read:
+                # Body was already read by previous middleware, use cached body
+                body = request._body
+                
+                # Wrap the existing _receive function to handle disconnect properly
+                # Observability's receive returns http.request after body, but Starlette expects proper handling
+                if original_receive and callable(original_receive):
+                    call_count = [0]  # Use list to allow modification in nested function
+                    
+                    async def wrapped_receive() -> dict:
+                        nonlocal call_count
+                        call_count[0] += 1
+                        try:
+                            msg = await original_receive()
+                            # If Observability's receive returns empty http.request after body consumed,
+                            # we need to handle it properly for Starlette's disconnect listener
+                            if msg.get("type") == "http.request" and not msg.get("body") and call_count[0] > 1:
+                                # After body is consumed, return disconnect message
+                                return {"type": "http.disconnect"}
+                            return msg
+                        except StopIteration:
+                            # If original receive raises StopIteration, return disconnect
+                            return {"type": "http.disconnect"}
+                        except Exception:
+                            # On any error, return disconnect to prevent hanging
+                            return {"type": "http.disconnect"}
+                    
+                    request._receive = wrapped_receive
+            else:
+                # Read body (need to store it for downstream)
+                body = await request.body()
+                
+                # Recreate request with body (FastAPI needs it)
+                # Use a flag to ensure body is only returned once, then return disconnect
+                body_sent = False
+                
+                async def receive() -> dict:
+                    nonlocal body_sent
+                    if not body_sent:
+                        body_sent = True
+                        return {"type": "http.request", "body": body, "more_body": False}
+                    # After the body has been sent, return disconnect message
+                    # This prevents Starlette's RuntimeError
+                    return {"type": "http.disconnect"}
+                
+                request._receive = receive
+            
             service_id = extract_service_id_from_body(body)
             
             if service_id:
                 logger.info(f"Extracted serviceId from request: {service_id}")
             else:
                 logger.warning(f"No serviceId found in request body for {request.url.path}")
-            
-            # Recreate request with body (FastAPI needs it)
-            async def receive():
-                return {"type": "http.request", "body": body}
-            request._receive = receive
         
         # If we found a serviceId, resolve it
         if service_id:

@@ -32,16 +32,6 @@ class TextProcessingError(Exception):
 class TransliterationService:
     """Main transliteration service for transliteration inference"""
     
-    # Service registry mapping serviceId to (triton_endpoint, triton_model_name)
-    # Each entry: service_id -> (endpoint, model_name)
-    # Note: Triton HTTP client expects host:port format (without http://), and model names should not contain special characters
-    SERVICE_REGISTRY = {
-        "ai4bharat/indicxlit": ("65.1.35.3:8200", "transliteration"),
-        "ai4bharat-transliteration": ("65.1.35.3:8200", "transliteration"),
-        "indicxlit": ("65.1.35.3:8200", "transliteration"),
-        "default": ("65.1.35.3:8200", "transliteration")
-    }
-    
     def __init__(
         self,
         repository: TransliterationRepository,
@@ -57,38 +47,38 @@ class TransliterationService:
     
     def get_triton_client(self, service_id: str) -> TritonClient:
         """Get Triton client for the given service ID"""
-        # Check cache first
+        # If we already have a client cached for this service_id, reuse it
         if service_id in self._triton_clients:
             return self._triton_clients[service_id]
 
-        # Get endpoint and model info from registry
-        service_info = self.SERVICE_REGISTRY.get(service_id)
-        if service_info:
-            endpoint, _ = service_info
-        else:
-            # No fallback: service_id must be present in registry
+        # Use the endpoint that was resolved by Model Management middleware
+        # and injected via the default_triton_client created in the router.
+        endpoint = getattr(self.default_triton_client, "triton_url", None)
+        if not endpoint:
             raise TritonInferenceError(
-                f"Unknown transliteration service_id='{service_id}'. "
-                f"Please ensure it is correctly configured."
+                "No Triton endpoint available from Model Management. "
+                "Ensure Model Management is resolving serviceId correctly."
             )
-        
+
         # Create client using factory function if available
         if self.get_triton_client_func:
             client = self.get_triton_client_func(endpoint)
             self._triton_clients[service_id] = client
             return client
 
-        # No factory configured – fail fast instead of using a default client
-        raise TritonInferenceError(
-            "No Triton client factory configured for TransliterationService."
-        )
+        # Fallback: use the default client directly
+        return self.default_triton_client
     
     def get_model_name(self, service_id: str) -> str:
-        """Get Triton model name based on service ID"""
-        service_info = self.SERVICE_REGISTRY.get(service_id)
-        if service_info:
-            return service_info[1]  # Return model name
-        return "transliteration"  # Default to "transliteration" if not found
+        """
+        Get Triton model name based on service ID.
+        
+        Currently we use a single Triton model named "transliteration" for all
+        transliteration services. If in the future Model Management exposes
+        different model names per service, this function can be extended to
+        derive the model name from that metadata instead of hardcoding it here.
+        """
+        return "transliteration"
     
     async def run_inference(
         self,
@@ -150,9 +140,10 @@ class TransliterationService:
                     triton_client = self.get_triton_client(service_id)
                     
                     # Log the model name and endpoint for debugging
-                    service_info = self.SERVICE_REGISTRY.get(service_id)
-                    endpoint = service_info[0] if service_info else "default"
-                    logger.info(f"Using Triton endpoint: {endpoint}, model: {model_name} for service: {service_id}")
+                    endpoint = getattr(triton_client, "triton_url", "unknown")
+                    logger.info(
+                        f"Using Triton endpoint: {endpoint}, model: {model_name} for service: {service_id}"
+                    )
                     
                     # Prepare Triton inputs
                     inputs, outputs = triton_client.get_transliteration_io_for_triton(

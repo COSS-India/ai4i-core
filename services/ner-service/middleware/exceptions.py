@@ -66,18 +66,6 @@ class RateLimitExceeded(Exception):
     pass
 
 
-class AuthenticationError(Exception):
-    """Raised when authentication fails."""
-
-    pass
-
-
-class AuthorizationError(Exception):
-    """Raised when authorization/permission checks fail."""
-
-    pass
-
-
 class ErrorDetail(BaseModel):
     """Error detail model for consistent error responses."""
 

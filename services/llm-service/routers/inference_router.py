@@ -49,13 +49,18 @@ async def get_llm_service(
 
     if not triton_endpoint:
         service_id = getattr(request.state, "service_id", None)
+        model_mgmt_error = getattr(request.state, "model_management_error", None)
+        
         if service_id:
+            error_detail = (
+                f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
+                f"Please ensure the service is registered in Model Management database."
+            )
+            if model_mgmt_error:
+                error_detail += f" Error: {model_mgmt_error}"
             raise HTTPException(
                 status_code=500,
-                detail=(
-                    f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
-                    f"Please ensure the service is registered in Model Management database."
-                ),
+                detail=error_detail,
             )
         raise HTTPException(
             status_code=400,
@@ -64,10 +69,24 @@ async def get_llm_service(
                 "LLM service requires Model Management database resolution."
             ),
         )
+    
+    # Get resolved model name from middleware (MUST be resolved by Model Management)
+    model_name = getattr(request.state, "triton_model_name", None)
+    
+    if not model_name or model_name == "unknown":
+        service_id = getattr(request.state, "service_id", None)
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Model Management failed to resolve Triton model name for serviceId: {service_id}. "
+                f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+            ),
+        )
 
     logger.info(
-        "Using Triton endpoint=%s for serviceId=%s from Model Management",
+        "Using Triton endpoint=%s model_name=%s for serviceId=%s from Model Management",
         triton_endpoint,
+        model_name,
         getattr(request.state, "service_id", "unknown"),
     )
 
@@ -76,7 +95,7 @@ async def get_llm_service(
         api_key=triton_api_key or None,
         timeout=triton_timeout,
     )
-    return LLMService(repository, triton_client)
+    return LLMService(repository, triton_client, resolved_model_name=model_name)
 
 
 @inference_router.post(
@@ -111,9 +130,49 @@ async def run_inference(
         logger.info(f"LLM inference completed successfully")
         return response
         
-    except Exception as e:
-        logger.error(f"LLM inference failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    except ValueError as exc:
+        logger.warning("Validation error in LLM inference: %s", exc)
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        service_id = getattr(http_request.state, "service_id", None)
+        triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+        model_name = getattr(http_request.state, "triton_model_name", None)
+        error_detail = str(exc)
+        
+        # Include model management context in error message
+        if service_id and triton_endpoint and model_name:
+            error_detail = (
+                f"LLM inference failed for serviceId '{service_id}' "
+                f"at endpoint '{triton_endpoint}' with model '{model_name}': {error_detail}. "
+                "Please verify the model is registered in Model Management and the Triton server is accessible."
+            )
+        elif service_id and triton_endpoint:
+            error_detail = (
+                f"LLM inference failed for serviceId '{service_id}' at endpoint '{triton_endpoint}': {error_detail}. "
+                "Please verify the model is registered in Model Management and the Triton server is accessible."
+            )
+        elif service_id:
+            error_detail = (
+                f"LLM inference failed for serviceId '{service_id}': {error_detail}. "
+                "Model Management resolved the serviceId but Triton endpoint may be misconfigured."
+            )
+        else:
+            error_detail = (
+                f"LLM inference failed: {error_detail}. "
+                "Please ensure config.serviceId is provided and the service is registered in Model Management."
+            )
+        
+        logger.error(
+            "LLM inference failed: %s (serviceId=%s, endpoint=%s, model=%s)",
+            exc, service_id, triton_endpoint, model_name, exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=error_detail,
+        ) from exc
 
 
 @inference_router.get(
