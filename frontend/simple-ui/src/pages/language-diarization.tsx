@@ -248,7 +248,7 @@ const LanguageDiarizationPage: React.FC = () => {
                 // Extract unique languages from segments if not provided directly
                 const uniqueLanguages = languages.length > 0 
                   ? languages 
-                  : [...new Set(segments.map((s: any) => s.language).filter(Boolean))];
+                  : Array.from(new Set(segments.map((s: any) => s.language).filter(Boolean)));
                 const numLanguages = data.num_languages || uniqueLanguages.length || 0;
                 
                 const formatTime = (seconds: number) => {

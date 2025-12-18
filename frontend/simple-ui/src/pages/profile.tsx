@@ -47,14 +47,14 @@ import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
 import { useApiKey } from "../hooks/useApiKey";
-import { User, UserUpdateRequest, Permission } from "../types/auth";
+import { User, UserUpdateRequest, Permission, APIKeyResponse } from "../types/auth";
 import roleService, { Role, UserRole } from "../services/roleService";
 import authService from "../services/authService";
 
 const ProfilePage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading, updateUser } = useAuth();
-  const { apiKey, getApiKey } = useApiKey();
+  const { apiKey, getApiKey, setApiKey } = useApiKey();
   const [showApiKey, setShowApiKey] = useState(false);
   const [isEditingUser, setIsEditingUser] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -99,7 +99,7 @@ const ProfilePage: React.FC = () => {
   const [isCreatingApiKeyForUser, setIsCreatingApiKeyForUser] = useState(false);
   
   // API Key management state (for all users)
-  const [apiKeys, setApiKeys] = useState<any[]>([]);
+  const [apiKeys, setApiKeys] = useState<APIKeyResponse[]>([]);
   const [isLoadingApiKeys, setIsLoadingApiKeys] = useState(false);
   const [isCreatingApiKey, setIsCreatingApiKey] = useState(false);
   const [newApiKey, setNewApiKey] = useState({
@@ -108,6 +108,10 @@ const ProfilePage: React.FC = () => {
     expires_days: 30,
   });
   const [selectedPermissionsForApiKey, setSelectedPermissionsForApiKey] = useState<string[]>([]);
+  
+  // State for fetching API key when tab is clicked
+  const [isFetchingApiKey, setIsFetchingApiKey] = useState(false);
+  const [activeTabIndex, setActiveTabIndex] = useState(0);
 
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
@@ -123,6 +127,7 @@ const ProfilePage: React.FC = () => {
         language: user.language || "en",
         preferences: user.preferences || {},
       });
+     
     }
   }, [user]);
 
@@ -136,7 +141,15 @@ const ProfilePage: React.FC = () => {
   // Fetch all users (Admin only)
   useEffect(() => {
     const fetchUsers = async () => {
-      if (!isAuthenticated || authLoading) return;
+      // Only fetch if user is authenticated, not loading, and is an ADMIN
+      if (!isAuthenticated || authLoading || !user) return;
+      
+      // Check if user is admin or superuser
+      const isAdmin = user?.roles?.includes('ADMIN') || user?.is_superuser;
+      if (!isAdmin) {
+        // Not an admin, don't fetch users
+        return;
+      }
       
       setIsLoadingUsers(true);
       try {
@@ -159,7 +172,7 @@ const ProfilePage: React.FC = () => {
     };
 
     fetchUsers();
-  }, [isAuthenticated, authLoading, toast]);
+  }, [isAuthenticated, authLoading, toast,user?.roles?.includes('ADMIN') ]);
 
   const handleCopyApiKey = () => {
     const key = getApiKey();
@@ -267,6 +280,51 @@ const ProfilePage: React.FC = () => {
 
   const maskedApiKey = apiKey ? "****" + apiKey.slice(-4) : "";
 
+  // Function to fetch API keys from the API
+  const handleFetchApiKeys = async () => {
+    console.log('Profile: Fetching API keys from /api/v1/auth/api-keys');
+    setIsFetchingApiKey(true);
+    setIsLoadingApiKeys(true);
+    try {
+      const fetchedApiKeys = await authService.listApiKeys();
+      console.log('Profile: API keys fetched successfully:', fetchedApiKeys);
+      setApiKeys(fetchedApiKeys);
+      
+      // If there's at least one API key, use the first one (or most recent)
+      if (fetchedApiKeys.length > 0) {
+        // Find the most recent active API key
+        const activeKey = fetchedApiKeys
+          .filter(key => key.is_active)
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+        
+        if (activeKey && activeKey.key_value) {
+          // If key_value is available (only on creation), store it
+          setApiKey(activeKey.key_value);
+        }
+      }
+      
+      toast({
+        title: "API Keys Loaded",
+        description: `Found ${fetchedApiKeys.length} API key(s)`,
+        status: "success",
+        duration: 2000,
+        isClosable: true,
+      });
+    } catch (error) {
+      console.error("Failed to fetch API keys:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to load API keys",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsFetchingApiKey(false);
+      setIsLoadingApiKeys(false);
+    }
+  };
+
   // Common timezones
   const timezones = [
     "UTC",
@@ -334,7 +392,23 @@ const ProfilePage: React.FC = () => {
           </Heading>
 
           <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px">
-            <Tabs colorScheme="blue" variant="enclosed">
+            <Tabs 
+              colorScheme="blue" 
+              variant="enclosed"
+              index={activeTabIndex}
+              onChange={(index) => {
+                setActiveTabIndex(index);
+                // Calculate API Key tab index (always index 2, regardless of admin tabs)
+                // Tabs: 0=User Details, 1=Organization, 2=API Key, 3=Roles (if admin), 4=Permissions (if admin)
+                const apiKeyTabIndex = 2;
+                console.log('Profile: Tab changed to index', index, 'API Key tab index is', apiKeyTabIndex);
+                // When API Key tab is clicked, fetch API keys
+                if (index === apiKeyTabIndex) {
+                  console.log('Profile: API Key tab clicked, calling handleFetchApiKeys');
+                  handleFetchApiKeys();
+                }
+              }}
+            >
               <TabList>
                 <Tab fontWeight="semibold">User Details</Tab>
                 <Tab fontWeight="semibold">Organization</Tab>
@@ -577,50 +651,117 @@ const ProfilePage: React.FC = () => {
                 <TabPanel px={0} pt={6}>
                   <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                     <CardHeader>
-                      <Heading size="md" color="gray.700">
-                        API Key
-                      </Heading>
+                      <HStack justify="space-between">
+                        <Heading size="md" color="gray.700">
+                          API Key
+                        </Heading>
+                        {isFetchingApiKey && (
+                          <Spinner size="sm" color="blue.500" />
+                        )}
+                      </HStack>
                     </CardHeader>
                     <CardBody>
                 <VStack spacing={4} align="stretch">
-                  <FormControl>
-                    <FormLabel fontWeight="semibold">Your API Key</FormLabel>
-                    <InputGroup>
-                      <Input
-                        type={showApiKey ? "text" : "password"}
-                        value={showApiKey ? (apiKey || "") : maskedApiKey}
-                        isReadOnly
-                        bg={inputReadOnlyBg}
-                        placeholder={apiKey ? undefined : "No API key set"}
-                      />
-                      <InputRightElement width="8rem">
-                        <HStack spacing={1}>
-                          <IconButton
-                            aria-label={showApiKey ? "Hide API key" : "Show API key"}
-                            icon={showApiKey ? <ViewOffIcon /> : <ViewIcon />}
-                            onClick={() => setShowApiKey(!showApiKey)}
-                            variant="ghost"
-                            size="sm"
-                            isDisabled={!apiKey}
+                  {isFetchingApiKey ? (
+                    <Center py={8}>
+                      <VStack spacing={4}>
+                        <Spinner size="lg" color="blue.500" />
+                        <Text color="gray.600">Loading API keys...</Text>
+                      </VStack>
+                    </Center>
+                  ) : (
+                    <>
+                      <FormControl>
+                        <FormLabel fontWeight="semibold">Your API Key</FormLabel>
+                        <InputGroup>
+                          <Input
+                            type={showApiKey ? "text" : "password"}
+                            value={showApiKey ? (apiKey || "") : maskedApiKey}
+                            isReadOnly
+                            bg={inputReadOnlyBg}
+                            placeholder={apiKey ? undefined : "No API key set"}
                           />
-                          {apiKey && (
-                            <IconButton
-                              aria-label="Copy API key"
-                              icon={<CopyIcon />}
-                              onClick={handleCopyApiKey}
-                              variant="ghost"
-                              size="sm"
-                            />
-                          )}
-                        </HStack>
-                      </InputRightElement>
-                    </InputGroup>
-                    {!apiKey && (
-                      <Text fontSize="sm" color="gray.500" mt={2}>
-                        You haven&apos;t set an API key yet. Use the &quot;Manage API Key&quot; option in the header to set one.
-                      </Text>
-                    )}
-                  </FormControl>
+                          <InputRightElement width="8rem">
+                            <HStack spacing={1}>
+                              <IconButton
+                                aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                                icon={showApiKey ? <ViewOffIcon /> : <ViewIcon />}
+                                onClick={() => setShowApiKey(!showApiKey)}
+                                variant="ghost"
+                                size="sm"
+                                isDisabled={!apiKey}
+                              />
+                              {apiKey && (
+                                <IconButton
+                                  aria-label="Copy API key"
+                                  icon={<CopyIcon />}
+                                  onClick={handleCopyApiKey}
+                                  variant="ghost"
+                                  size="sm"
+                                />
+                              )}
+                            </HStack>
+                          </InputRightElement>
+                        </InputGroup>
+                        {!apiKey && (
+                          <Text fontSize="sm" color="gray.500" mt={2}>
+                            You haven&apos;t set an API key yet. Use the &quot;Manage API Key&quot; option in the header to set one.
+                          </Text>
+                        )}
+                      </FormControl>
+                      
+                      {/* Display fetched API keys list */}
+                      {apiKeys.length > 0 && (
+                        <Box>
+                          <Heading size="sm" mb={4} color="gray.700">
+                            Your API Keys ({apiKeys.length})
+                          </Heading>
+                          <VStack spacing={2} align="stretch">
+                            {apiKeys.map((key) => (
+                              <Card key={key.id} bg={inputReadOnlyBg} borderColor={cardBorder} borderWidth="1px">
+                                <CardBody p={4}>
+                                  <VStack align="stretch" spacing={2}>
+                                    <HStack justify="space-between">
+                                      <Text fontWeight="semibold">{key.key_name}</Text>
+                                      <Badge colorScheme={key.is_active ? "green" : "red"}>
+                                        {key.is_active ? "Active" : "Inactive"}
+                                      </Badge>
+                                    </HStack>
+                                    <Text fontSize="sm" color="gray.600">
+                                      Created: {new Date(key.created_at).toLocaleString()}
+                                    </Text>
+                                    {key.expires_at && (
+                                      <Text fontSize="sm" color="gray.600">
+                                        Expires: {new Date(key.expires_at).toLocaleString()}
+                                      </Text>
+                                    )}
+                                    {key.permissions.length > 0 && (
+                                      <HStack flexWrap="wrap" spacing={2}>
+                                        <Text fontSize="xs" color="gray.500">Permissions:</Text>
+                                        {key.permissions.map((perm) => (
+                                          <Badge key={perm} colorScheme="blue" fontSize="xs">
+                                            {perm}
+                                          </Badge>
+                                        ))}
+                                      </HStack>
+                                    )}
+                                    {key.key_value && (
+                                      <Alert status="info" borderRadius="md" mt={2}>
+                                        <AlertIcon />
+                                        <AlertDescription fontSize="xs">
+                                          Key value is only shown once. Make sure to save it securely.
+                                        </AlertDescription>
+                                      </Alert>
+                                    )}
+                                  </VStack>
+                                </CardBody>
+                              </Card>
+                            ))}
+                          </VStack>
+                        </Box>
+                      )}
+                    </>
+                  )}
                     </VStack>
                   </CardBody>
                 </Card>
@@ -1156,20 +1297,20 @@ const ProfilePage: React.FC = () => {
                                     }
                                     setIsCreatingApiKeyForUser(true);
                                     try {
-                                      // Create API key payload with user_id
+                                      // Create API key payload with userId (camelCase as per API spec)
                                       const payload = {
                                         key_name: apiKeyForUser.key_name,
                                         permissions: selectedPermissionsForUser,
                                         expires_days: apiKeyForUser.expires_days,
-                                        user_id: selectedUserForPermissions.id,
+                                        userId: selectedUserForPermissions.id,
                                       };
                                       
-                                      // For now, we'll use the regular createApiKey endpoint
-                                      // If there's an admin endpoint for creating keys for other users, use that instead
-                                      const createdKey = await authService.createApiKey({
+                                      // Send the payload directly with userId
+                                      const createdKey = await authService.createApiKeyForUser({
                                         key_name: payload.key_name,
                                         permissions: payload.permissions,
                                         expires_days: payload.expires_days,
+                                        user_id: payload.userId, // TypeScript interface uses user_id, but payload will have userId
                                       });
                                       
                                       toast({
@@ -1208,7 +1349,7 @@ const ProfilePage: React.FC = () => {
                             <Alert status="info" borderRadius="md">
                               <AlertIcon />
                               <AlertDescription>
-                                Click "Load Permissions" to view all available permissions in the system.
+                                Click &quot;Load Permissions&quot; to view all available permissions in the system.
                               </AlertDescription>
                             </Alert>
                           )}

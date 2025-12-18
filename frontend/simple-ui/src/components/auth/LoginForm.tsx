@@ -85,8 +85,14 @@ const LoginForm: React.FC<LoginFormProps> = ({
       setLoginAttempted(false);
       setLoginError(null);
     } catch (error) {
-      // Error is handled by the hook
-      console.error("Login failed:", error);
+      // Error is handled by the hook, but log details for debugging
+      console.error("LoginForm: Login failed with error:", error);
+      if (error instanceof Error) {
+        console.error("LoginForm: Error message:", error.message);
+        console.error("LoginForm: Error stack:", error.stack);
+      }
+      // The error state will be updated by the hook, which will trigger the useEffect
+      // that updates loginError
     }
   };
 
