@@ -59,6 +59,7 @@ class APIKey(Base):
     user_id = Column(Integer, nullable=False, index=True)
     key_name = Column(String(100), nullable=False)
     key_hash = Column(String(255), unique=True, index=True, nullable=False)
+    key_value_encrypted = Column(Text, nullable=True)  # Encrypted API key value
     permissions = Column(JSON, default=list)
     is_active = Column(Boolean, default=True)
     last_used = Column(DateTime(timezone=True), nullable=True)
@@ -227,6 +228,10 @@ class APIKeyCreate(BaseModel):
     key_name: str = Field(..., min_length=1, max_length=100)
     permissions: List[str] = Field(default_factory=list)
     expires_days: Optional[int] = Field(None, ge=1, le=365)
+    user_id: Optional[int] = Field(None, alias="userId", description="User ID for whom the API key is created (Admin only). If not provided, creates key for current user.")
+    
+    class Config:
+        populate_by_name = True  # Allow both user_id and userId
 
 class APIKeyResponse(BaseModel):
     id: int
