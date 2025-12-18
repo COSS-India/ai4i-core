@@ -66,15 +66,18 @@ class RateLimitExceeded(Exception):
     pass
 
 
-class AuthenticationError(Exception):
-    """Raised when authentication fails."""
+class ErrorDetail(BaseModel):
+    """Error detail model for consistent error responses."""
 
-    pass
+    message: str
+    code: Optional[str] = None
+    timestamp: float = time.time()
 
 
-class AuthorizationError(Exception):
-    """Raised when authorization/permission checks fail."""
+class ErrorResponse(BaseModel):
+    """Error response model for consistent error responses."""
 
-    pass
+    detail: ErrorDetail
+    status_code: int
 
 
