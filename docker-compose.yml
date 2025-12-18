@@ -155,7 +155,9 @@ services:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: ${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP}
+      # Default map if KAFKA_LISTENER_SECURITY_PROTOCOL_MAP is not set:
+      # map both PLAINTEXT and PLAINTEXT_INTERNAL to PLAINTEXT.
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:-PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT}"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -273,6 +275,24 @@ services:
     networks:
       - microservices-network
     restart: unless-stopped
+
+  # Swagger UI for Kong-facing API documentation
+  swagger-kong-ui:
+    image: swaggerapi/swagger-ui
+    container_name: ai4v-swagger-kong-ui
+    ports:
+      - "8085:8080"
+    volumes:
+      # Generated OpenAPI spec that points to Kong and includes all endpoints.
+      # Mount it at a custom path; the swagger-ui entrypoint will copy it into
+      # /usr/share/nginx/html/openapi.json on startup.
+      - ./docs/kong-openapi.json:/kong-openapi.json:ro
+    environment:
+      SWAGGER_JSON: /kong-openapi.json
+    networks:
+      - microservices-network
+    depends_on:
+      - kong
 
   # Microservices
   api-gateway-service:
@@ -899,8 +919,8 @@ services:
       context: ./frontend/simple-ui
       dockerfile: Dockerfile
       args:
-        # Browser talks to Kong via host port 8000
-        NEXT_PUBLIC_API_URL: http://localhost:8000
+        # Browser talks directly to the API Gateway on host port 8080
+        NEXT_PUBLIC_API_URL: http://localhost:8080
         # Service-specific API keys from .env file (no hardcoding)
         NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
         NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
@@ -912,10 +932,10 @@ services:
     ports:
       - "3000:3000"
     environment:
-      # Route all frontend API calls through Kong Gateway on host
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      # Route all frontend API calls through the API Gateway on host
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
       - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
-      # Service-specific API keys for Kong authentication
+      # Service-specific API keys for API Gateway authentication / RBAC
       - NEXT_PUBLIC_ASR_API_KEY=${ASR_API_KEY}
       - NEXT_PUBLIC_TTS_API_KEY=${TTS_API_KEY}
       - NEXT_PUBLIC_NMT_API_KEY=${NMT_API_KEY}
@@ -977,11 +997,13 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
-      - GF_INSTALL_PLUGINS=
-      - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
-      # - GF_SERVER_ROOT_URL=http://localhost:3001
 
+      # Combined from both HEAD and remote commits
+      - GF_INSTALL_PLUGINS=
+      - GF_SERVER_DOMAIN=core-v1.ai4inclusion.org
+      - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
+
     volumes:
       - grafana-data:/var/lib/grafana
       - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning
@@ -995,6 +1017,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+
 
 volumes:
   postgres-data:

@@ -27,6 +27,7 @@ from models import (
 from pydantic import BaseModel
 from auth_utils import AuthUtils
 from oauth_utils import OAuthUtils
+from casbin_enforcer import load_policies_from_db, check_roles_permission
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -177,6 +178,15 @@ async def startup_event():
             expire_on_commit=False
         )
         logger.info("Connected to PostgreSQL")
+        
+        # Load Casbin policies from database
+        try:
+            async with db_session() as session:
+                await load_policies_from_db(session)
+                logger.info("Loaded Casbin policies from database")
+        except Exception as e:
+            logger.warning(f"Failed to load Casbin policies from database: {e}")
+            logger.warning("Casbin will use empty policies (may cause permission checks to fail)")
         
     except Exception as e:
         logger.error(f"Failed to initialize connections: {e}")
@@ -729,18 +739,89 @@ async def reset_password(
     logger.info(f"Password reset attempted with token: {reset_data.token[:10]}...")
     return {"message": "Password reset functionality would be implemented with email verification"}
 
+
+def require_permission(resource: str, action: str):
+    """
+    Dependency factory: ensure current user (by roles) has given permission
+    using Casbin policies loaded from role_permissions.
+
+    Example:
+        current_user: User = Depends(require_permission("apiKey", "create"))
+    """
+
+    async def _dep(
+        current_user: User = Depends(get_current_active_user),
+        db: AsyncSession = Depends(get_db),
+    ) -> User:
+        user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+        allowed = await check_roles_permission(
+            roles=user_roles,
+            obj=resource,
+            act=action,
+            tenant="default",
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Insufficient permissions: requires '{resource}.{action}'",
+            )
+        return current_user
+
+    return _dep
+
+
+# Backwards-compatible admin helper (still used by some admin endpoints)
+async def require_admin(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """Dependency to ensure current user is an admin role (ADMIN or superuser)."""
+    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    if "ADMIN" not in user_roles and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can access this endpoint"
+        )
+    return current_user
+
+
 # API Key Management
 
 @app.post("/api/v1/auth/api-keys", response_model=APIKeyResponse)
 async def create_api_key(
     api_key_data: APIKeyCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_permission("apiKey", "create")),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new API key"""
+    """Create a new API key. Only accessible by ADMIN role. Admins can create keys for other users by providing user_id."""
+    # Determine target user ID
+    target_user_id = current_user.id
+    target_user = current_user
+    
+    # If user_id is provided, verify admin permissions and target user exists
+    if api_key_data.user_id is not None:
+        # Check if current user is admin
+        user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+        if "ADMIN" not in user_roles and not current_user.is_superuser:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only administrators can create API keys for other users"
+            )
+        
+        # Verify target user exists
+        target_user = await AuthUtils.get_user_by_id(db, api_key_data.user_id)
+        if not target_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with ID {api_key_data.user_id} not found"
+            )
+        
+        target_user_id = api_key_data.user_id
+    
     # Generate API key
     api_key_value = AuthUtils.generate_api_key()
     api_key_hash = AuthUtils.hash_api_key(api_key_value)
+    api_key_encrypted = AuthUtils.encrypt_api_key(api_key_value)
     
     # Set expiration
     expires_at = None
@@ -749,9 +830,10 @@ async def create_api_key(
     
     # Create API key record
     db_api_key = APIKey(
-        user_id=current_user.id,
+        user_id=target_user_id,
         key_name=api_key_data.key_name,
         key_hash=api_key_hash,
+        key_value_encrypted=api_key_encrypted,
         permissions=api_key_data.permissions,
         expires_at=expires_at
     )
@@ -760,7 +842,7 @@ async def create_api_key(
     await db.commit()
     await db.refresh(db_api_key)
     
-    logger.info(f"API key created for user: {current_user.email}")
+    logger.info(f"API key created for user: {target_user.email} (created by: {current_user.email})")
     
     return APIKeyResponse(
         id=db_api_key.id,
@@ -778,7 +860,7 @@ async def list_api_keys(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """List user's API keys"""
+    """List user's API keys. Accessible by any authenticated user."""
     result = await db.execute(
         select(APIKey).where(APIKey.user_id == current_user.id)
     )
@@ -788,7 +870,7 @@ async def list_api_keys(
         APIKeyResponse(
             id=key.id,
             key_name=key.key_name,
-            key_value="***",  # Never return actual key value
+            key_value=AuthUtils.decrypt_api_key(key.key_value_encrypted) or "***",  # Decrypt and return actual value
             permissions=key.permissions,
             is_active=key.is_active,
             created_at=key.created_at,
@@ -801,7 +883,7 @@ async def list_api_keys(
 @app.delete("/api/v1/auth/api-keys/{key_id}")
 async def revoke_api_key(
     key_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_permission("apiKey", "delete")),
     db: AsyncSession = Depends(get_db)
 ):
     """Revoke an API key"""
@@ -1177,35 +1259,13 @@ async def get_user_roles_endpoint(
 
 @app.get("/api/v1/auth/roles/list", response_model=List[dict], tags=["Role Management"])
 async def list_roles(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """List all available roles (Admin only)"""
-    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
-    if "ADMIN" not in user_roles and not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can list roles"
-        )
-    
     result = await db.execute(select(Role))
     roles = result.scalars().all()
     return [{"id": role.id, "name": role.name, "description": role.description} for role in roles]
-
-
-# Helper function to check admin role
-async def require_admin(
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
-) -> User:
-    """Dependency to ensure current user is an admin"""
-    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
-    if "ADMIN" not in user_roles and not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can access this endpoint"
-        )
-    return current_user
 
 
 # Admin endpoints

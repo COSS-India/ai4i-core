@@ -8,12 +8,11 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# ✅ FIX: copy requirements relative to build context
+# Copy and install Python dependencies
 COPY requirements.txt .
-
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ✅ FIX: copy application code relative to build context
+# Copy application code
 COPY . .
 
 EXPOSE 8090

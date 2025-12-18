@@ -983,6 +983,7 @@ class APIKeyCreateBody(BaseModel):
     key_name: str = Field(..., min_length=1, max_length=100, description="Name/label for the API key")
     permissions: Optional[List[str]] = Field(default_factory=list, description="List of permissions for the API key (e.g., ['read:profile', 'update:profile'])")
     expires_days: Optional[int] = Field(None, ge=1, le=365, description="Number of days until the API key expires (1-365 days, optional)")
+    userId: Optional[int] = Field(None, description="User ID for whom the API key is created (Admin only). If not provided, creates key for current user.")
 
 class AssignRoleBody(BaseModel):
     user_id: int = Field(..., description="ID of the user to assign role to")
@@ -2088,8 +2089,13 @@ async def create_api_key(
 ):
     """Create API key"""
     import json
+    # Convert body to dict and map userId to user_id for auth service
+    body_dict = body.dict(exclude_none=True)
+    if 'userId' in body_dict:
+        body_dict['user_id'] = body_dict.pop('userId')
+    
     # Encode request body as JSON
-    payload = json.dumps(body.dict()).encode('utf-8')
+    payload = json.dumps(body_dict).encode('utf-8')
     
     # Prepare headers - preserve Authorization, remove Content-Length
     headers = build_auth_headers(request, credentials, None)
