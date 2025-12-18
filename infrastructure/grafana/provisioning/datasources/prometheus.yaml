@@ -1,6 +1,7 @@
 apiVersion: 1
 
 datasources:
+  # Prometheus - for metrics (default datasource)
   - name: Prometheus
     type: prometheus
     access: proxy
@@ -8,5 +9,15 @@ datasources:
     url: http://prometheus:9090
     basicAuth: false
     isDefault: true
+    editable: true
+
+  # Jaeger - for distributed tracing
+  - name: Jaeger
+    type: jaeger
+    access: proxy
+    orgId: 1
+    url: http://jaeger:16686
+    basicAuth: false
+    isDefault: false
     editable: true
 

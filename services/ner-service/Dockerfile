@@ -11,9 +11,11 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy AI4ICore Observability Plugin from monorepo
+# Copy shared libraries
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY libs/ai4icore_auth /app/libs/ai4icore_auth
+COPY libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 
 # Copy service requirements
 COPY services/ner-service/requirements.txt .
@@ -22,6 +24,8 @@ COPY services/ner-service/requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 
 
 FROM python:3.11-slim
@@ -51,6 +55,8 @@ ENV PATH=/home/app/.local/bin:$PATH
 RUN mkdir -p /app/libs
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
+COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 
 # Copy service code
 COPY services/ner-service .

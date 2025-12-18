@@ -4,6 +4,7 @@ Main Observability Plugin for AI4ICore platform
 Provides enterprise-grade observability features including metrics, monitoring,
 and business analytics for AI4ICore services.
 """
+import os
 from typing import Optional, Dict, Any
 from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
@@ -15,11 +16,13 @@ from .middleware import ObservabilityMiddleware
 class ObservabilityPlugin:
     """Main plugin class for AI4ICore Observability."""
     
-    def __init__(self, config: Optional[PluginConfig] = None):
+    def __init__(self, config: Optional[PluginConfig] = None, service_name: Optional[str] = None):
         """Initialize the observability plugin."""
         self.config = config or PluginConfig()
         self.metrics = MetricsCollector(config=self.config.to_dict())
+        self.service_name = service_name or os.getenv("SERVICE_NAME", "unknown-service")
         self._initialized = False
+        self._tracer = None
     
     def register_middleware(self, app: FastAPI) -> None:
         """Register middleware with FastAPI application."""

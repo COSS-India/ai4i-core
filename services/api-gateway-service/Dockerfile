@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements from repo root context
-COPY services/api-gateway-service/requirements.txt .
+# Copy requirements file
+COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --user -r requirements.txt
@@ -37,8 +37,8 @@ RUN useradd --create-home --shell /bin/bash app
 # Copy installed Python packages
 COPY --from=builder /root/.local /home/app/.local
 
-# Copy application code from repo root
-COPY services/api-gateway-service/ .
+# Copy application code
+COPY . .
 
 # Fix permissions
 RUN chown -R app:app /app /home/app/.local \
