@@ -14,13 +14,13 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements (now local to context)
+# Copy requirements (local to context)
 COPY requirements.txt .
 
 ENV PIP_DEFAULT_TIMEOUT=300
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Copy observability plugin (must exist INSIDE context)
+# Copy observability plugin (vendored)
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 
@@ -31,6 +31,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Runtime dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     libpq5 \
@@ -42,14 +43,17 @@ RUN apt-get update && apt-get install -y \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
+# Non-root user
 RUN useradd --create-home --shell /bin/bash app
 
+# Copy Python deps from builder
 COPY --from=builder /root/.local /home/app/.local
 ENV PATH=/home/app/.local/bin:$PATH
 
+# Copy observability plugin
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 
-# Copy app source (everything in context)
+# Copy app source
 COPY . .
 
 RUN chown -R app:app /app /home/app/.local
