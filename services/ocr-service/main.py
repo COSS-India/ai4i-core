@@ -6,7 +6,6 @@ Provides batch OCR inference using Triton Inference Server (Surya OCR).
 """
 
 import asyncio
-import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -23,6 +22,13 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_logging import (
+    get_logger,
+    CorrelationMiddleware,
+    configure_logging,
+)
+from ai4icore_telemetry import setup_tracing
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
@@ -31,11 +37,13 @@ from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from models import database_models
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+# Configure structured logging
+configure_logging(
+    service_name=os.getenv("SERVICE_NAME", "ocr-service"),
+    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
 )
-logger = logging.getLogger(__name__)
+# Get logger instance
+logger = get_logger(__name__)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
@@ -243,6 +251,17 @@ plugin = ObservabilityPlugin(config)
 plugin.register_plugin(app)
 logger.info("AI4ICore Observability Plugin initialized for OCR service")
 
+# Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+tracer = setup_tracing("ocr-service")
+if tracer:
+    logger.info("✅ Distributed tracing initialized for OCR service")
+    # Instrument FastAPI to automatically create spans for all requests
+    FastAPIInstrumentor.instrument_app(app)
+    logger.info("✅ FastAPI instrumentation enabled for tracing")
+else:
+    logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -251,6 +270,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Correlation middleware (MUST be before RequestLoggingMiddleware)
+# This extracts X-Correlation-ID from headers and sets it in logging context
+app.add_middleware(CorrelationMiddleware)
 
 # Request logging
 app.add_middleware(RequestLoggingMiddleware)

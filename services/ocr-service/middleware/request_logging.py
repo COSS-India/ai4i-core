@@ -1,16 +1,16 @@
 """
 Request/response logging middleware for tracking OCR API usage.
 
-Copied from NMT service to keep behavior and structure consistent.
+Uses structured JSON logging with trace correlation.
 """
 
-import logging
 import time
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from ai4icore_logging import get_logger, get_correlation_id
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -20,7 +20,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
     async def dispatch(self, request: Request, call_next):
-        """Log request and response information."""
+        """Log request and response information with structured logging."""
         # Capture start time
         start_time = time.time()
 
@@ -33,6 +33,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Extract auth context from request.state if available
         user_id = getattr(request.state, "user_id", None)
         api_key_id = getattr(request.state, "api_key_id", None)
+        
+        # Get correlation ID (set by CorrelationMiddleware)
+        correlation_id = get_correlation_id(request)
 
         # Process request
         response = await call_next(request)
@@ -42,21 +45,40 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # Determine log level based on status code
         status_code = response.status_code
+        
+        # Build context for structured logging
+        log_context = {
+            "method": method,
+            "path": path,
+            "status_code": status_code,
+            "duration_ms": round(processing_time * 1000, 2),
+            "client_ip": client_ip,
+            "user_agent": user_agent,
+        }
+        
+        if user_id:
+            log_context["user_id"] = user_id
+        if api_key_id:
+            log_context["api_key_id"] = api_key_id
+        if correlation_id:
+            log_context["correlation_id"] = correlation_id
+
+        # Log with appropriate level using structured logging
         if 200 <= status_code < 300:
-            log_level = logging.INFO
+            logger.info(
+                f"{method} {path} - {status_code} - {processing_time:.3f}s",
+                extra={"context": log_context}
+            )
         elif 400 <= status_code < 500:
-            log_level = logging.WARNING
+            logger.warning(
+                f"{method} {path} - {status_code} - {processing_time:.3f}s",
+                extra={"context": log_context}
+            )
         else:
-            log_level = logging.ERROR
-
-        # Log request/response
-        log_message = (
-            f"{method} {path} - {status_code} - {processing_time:.3f}s - "
-            f"user_id={user_id} api_key_id={api_key_id} - "
-            f"client_ip={client_ip}"
-        )
-
-        logger.log(log_level, log_message)
+            logger.error(
+                f"{method} {path} - {status_code} - {processing_time:.3f}s",
+                extra={"context": log_context}
+            )
 
         # Add processing time header
         response.headers["X-Process-Time"] = f"{processing_time:.3f}"
