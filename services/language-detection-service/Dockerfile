@@ -1,5 +1,7 @@
-# Stage 1: Builder
-FROM python:3.11-slim as builder
+# -----------------------------
+# STAGE 1 — BUILDER
+# -----------------------------
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
@@ -12,21 +14,24 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy AI4ICore Observability Plugin
-COPY libs/ai4icore_observability /app/libs/ai4icore_observability
-
-COPY services/language-detection-service/requirements.txt .
+# Copy requirements (context-relative)
+COPY requirements.txt .
 
 RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Copy vendored observability plugin
+COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 
 
-# Stage 2: Final Runtime
+# -----------------------------
+# STAGE 2 — RUNTIME
+# -----------------------------
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# 🔥 IMPORTANT: Install networking + SSL + system libs required by redis & asyncpg
+# Runtime dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     libpq5 \
@@ -38,18 +43,18 @@ RUN apt-get update && apt-get install -y \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
+# Non-root user
 RUN useradd --create-home --shell /bin/bash app
 
-# Copy python packages
+# Copy Python deps from builder
 COPY --from=builder /root/.local /home/app/.local
 ENV PATH=/home/app/.local/bin:$PATH
 
-# Copy AI4ICore Observability Plugin
+# Copy observability plugin
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 
-# Copy app code
-COPY services/language-detection-service .
+# Copy application source (ENTIRE CONTEXT)
+COPY . .
 
 RUN chown -R app:app /app /home/app/.local \
     && chmod +x /home/app/.local/bin/*
@@ -59,7 +64,6 @@ USER app
 EXPOSE 8090
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8090/health || exit 1
+  CMD curl -f http://localhost:8090/health || exit 1
 
 ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8090"]
-
