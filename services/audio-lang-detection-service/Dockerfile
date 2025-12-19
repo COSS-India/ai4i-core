@@ -14,21 +14,16 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+# Copy requirements (RELATIVE TO CONTEXT)
+COPY requirements.txt .
 
-COPY services/audio-lang-detection-service/requirements.txt .
-
-
-
-# Copy requirements (local to context)
-# COPY requirements.txt .
-
-# ENV PIP_DEFAULT_TIMEOUT=300
+ENV PIP_DEFAULT_TIMEOUT=300
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Copy observability plugin (vendored)
-# COPY libs/ai4icore_observability /app/libs/ai4icore_observability
-# RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+# Copy observability plugin (vendored inside service)
+COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+
 
 # -----------------------------
 # STAGE 2 — RUNTIME
@@ -59,17 +54,11 @@ ENV PATH=/home/app/.local/bin:$PATH
 # Copy observability plugin
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 
-# Copy app source
-# COPY . .
-# Copy app code
-COPY services/audio-lang-detection-service .
+# Copy application source (ENTIRE CONTEXT)
+COPY . .
 
 RUN chown -R app:app /app /home/app/.local \
     && chmod +x /home/app/.local/bin/*
-
-
-
-# RUN chown -R app:app /app /home/app/.local
 
 USER app
 
