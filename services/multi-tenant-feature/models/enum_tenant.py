@@ -12,9 +12,18 @@ class SubscriptionType(str, Enum):
     TTS = "tts"
     ASR = "asr"
     NMT = "nmt"
-    OCR = "ocr"
     LLM = "llm"
     PIPELINE = "pipeline"
+    OCR = "ocr"
+    NER = "ner"
+
+    Transliteration = "transliteration"
+    Langauage_detection = "language_detection"
+    Speaker_diarization = "speaker_diarization"
+    Language_diarization = "language_diarization"
+    Audio_language_detection = "audio_language_detection"
+    
+    
 
 
 class BillingStatus(str, Enum):
@@ -39,8 +48,6 @@ class AuditAction(str, Enum):
 
     
 
-
-
 class AuditActorType(str, Enum):
     SYSTEM = "system"          # automated system action
     USER = "user"              # tenant user
@@ -50,3 +57,15 @@ class AuditActorType(str, Enum):
     CRON = "cron"              # scheduled job
     MIGRATION = "migration"  
     
+
+
+class ServiceUnitType(str, Enum):
+    CHARACTER = "character"
+    SECOND = "second"
+    MINUTE = "minute"
+    HOUR = "hour"
+    REQUEST = "request"
+
+
+class ServiceCurrencyType(str,Enum):
+    INR ="INR"

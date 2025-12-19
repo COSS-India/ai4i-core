@@ -4,8 +4,9 @@ from logger import logger
 from db_connection import create_tables , auth_db_engine, AuthDBSessionLocal , tenant_db_engine , TenantDBSessionLocal
 import uvicorn
 
-from routers.tenant_router import router as tenant_router
+from routers.admin_router import router as admin_router
 from routers.billing_router import router as billing_router
+from routers.email_router import router as email_router
 
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -120,8 +121,9 @@ else:
 add_error_handlers(app)
 
 # Register routers
-app.include_router(tenant_router)
+app.include_router(admin_router)
 app.include_router(billing_router)
+app.include_router(email_router)
 
 @app.get("/")
 async def root():

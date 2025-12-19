@@ -30,4 +30,4 @@ def get_logger(name: str = __name__):
 
 
 # Global logger instance
-logger = get_logger("model-management-service")
+logger = get_logger("multi-tenant-service")

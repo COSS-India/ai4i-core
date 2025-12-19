@@ -3,7 +3,7 @@ from uuid import UUID
 
 
 class TenantResendEmailVerificationRequest(BaseModel):
-    tenant_id: str
+    tenant_id: UUID # UUID as string
 
 
 class TenantResendEmailVerificationResponse(BaseModel):

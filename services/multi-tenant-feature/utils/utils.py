@@ -39,4 +39,15 @@ def generate_billing_customer_id(tenant_id: str) -> str:
     return f"BILL-{tenant_id[:8]}-{uuid.uuid4().hex[:6]}"
 
 def generate_email_verification_token() -> str:
+    """
+    Generate token for email verification
+    """
     return secrets.token_urlsafe(32)
+
+
+def generate_service_id() -> int:
+    """
+    Generate a random positive BIGINT (fits PostgreSQL BIGINT).
+    """
+    return secrets.randbits(25)  # max 9.22e18
+
