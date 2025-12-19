@@ -84,10 +84,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Model Management Service API",
+    title="Multi Tenant Service API",
     version="1.0.0",
     description="API for creating and managing models",
-    lifespan=lifespan,  # ✅ use lifespan instead of @on_event
+    lifespan=lifespan,  # use lifespan instead of @on_event
 )
 
 # Add CORS middleware
@@ -136,8 +136,6 @@ async def root():
     }
 
 
-
-
 if __name__ == "__main__":
     logger.info(" Starting FastAPI server on http://0.0.0.0:8001 ...")
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, loop="asyncio", reload=True)

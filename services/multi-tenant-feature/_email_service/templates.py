@@ -5,6 +5,7 @@ Welcome to AI4I!
 
 Your tenant has been successfully activated.
 
+Tenant Id: {tenant_id}
 Admin Username: {username}
 Temporary Password: {password}
 

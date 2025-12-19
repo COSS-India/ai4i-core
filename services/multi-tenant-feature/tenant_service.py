@@ -13,9 +13,12 @@ from utils.utils import (
     now_utc,
     generate_billing_customer_id,
     generate_email_verification_token,
-    generate_service_id
+    generate_service_id,
+    generate_random_password,
+    hash_password,
 )
 from models.db_models import Tenant, BillingRecord, AuditLog , TenantEmailVerification , ServiceConfig
+from models.auth_models import UserDB
 from models.enum_tenant import  TenantStatus, AuditAction , BillingStatus , AuditActorType
 from models.tenant_create import TenantRegisterRequest, TenantRegisterResponse
 from models.service_create import ServiceCreateRequest , ServiceResponse , ListServicesResponse
@@ -82,11 +85,26 @@ async def send_verification_link(
     )
     db.add(verification)
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Integrity error while creating verification token for tenant {created.id}: {e}")
+        raise HTTPException(
+            status_code=409,
+            detail="Verification token creation failed due to integrity constraint"
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error committing verification token to database: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create verification token"
+        )
 
     # verification_link = f"https://{subdomain}/tenant/verify/email?token={token}" TODO : add subdomain if required
 
-    verification_link = f"http://{EMAIL_VERIFICATION_LINK}/email/verify?token={token}"
+    verification_link = f"{EMAIL_VERIFICATION_LINK}/email/verify?token={token}"
 
     background_tasks.add_task(
         send_verification_email,
@@ -150,8 +168,8 @@ async def create_new_tenant(
         "subscriptions": payload.requested_subscriptions or [],
         "quotas": payload.requested_quotas or DEFAULT_QUOTAS,
         "status": TenantStatus.PENDING,
-        "temp_admin_username": f"admin@{tenant_id}",
-        "temp_admin_password_hash": "TO_BE_HASHED",
+        "temp_admin_username": "",
+        "temp_admin_password_hash": "",
     }
 
     stmt = insert(Tenant).values(**tenant_data).returning(Tenant)
@@ -189,7 +207,22 @@ async def create_new_tenant(
     )
     db.add(audit)
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Integrity error while creating tenant {tenant_id}: {e}")
+        raise HTTPException(
+            status_code=409,
+            detail="Tenant creation failed due to integrity constraint (duplicate domain or email)"
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error committing tenant creation to database: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create tenant"
+        )
 
     resposne = TenantRegisterResponse(
         id=created.id,
@@ -204,12 +237,13 @@ async def create_new_tenant(
 
 
 
-async def verify_email_token(token: str, db: AsyncSession, background_tasks):
+async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: AsyncSession, background_tasks: BackgroundTasks):
+
     stmt = select(TenantEmailVerification).where(
         TenantEmailVerification.token == token,
         TenantEmailVerification.verified_at.is_(None)
     )
-    verification = (await db.execute(stmt)).scalar_one_or_none()
+    verification = (await tenant_db.execute(stmt)).scalar_one_or_none()
 
     if not verification:
         raise ValueError("Invalid or expired token")
@@ -217,7 +251,7 @@ async def verify_email_token(token: str, db: AsyncSession, background_tasks):
     if verification.expires_at < now_utc():
         raise ValueError("Token expired")
 
-    tenant = await db.get(Tenant, verification.tenant_id)
+    tenant = await tenant_db.get(Tenant, verification.tenant_id)
     if not tenant:
         raise ValueError("Tenant not found for this verification token")
 
@@ -231,6 +265,26 @@ async def verify_email_token(token: str, db: AsyncSession, background_tasks):
     verification.verified_at = now_utc()
     tenant.status = TenantStatus.ACTIVE
 
+    #generate username and password
+
+    admin_username = f"admin@{tenant.tenant_id}"
+    plain_password = generate_random_password(length = 8)
+    logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id}")
+    hashed_password = hash_password(plain_password)
+
+    tenant.temp_admin_username = admin_username
+    tenant.temp_admin_password_hash = hashed_password
+    
+    admin_user = UserDB(
+            email=tenant.contact_email,
+            username=admin_username,
+            hashed_password=hashed_password,
+            is_active=True,
+            is_verified=True,
+        )
+    auth_db.add(admin_user)
+
+
     audit = AuditLog(
         tenant_id=tenant.id,
         action=AuditAction.email_verified,
@@ -242,16 +296,61 @@ async def verify_email_token(token: str, db: AsyncSession, background_tasks):
             "email": tenant.contact_email,
         },
     )
-    db.add(audit)
+    tenant_db.add(audit)
 
-    await db.commit()
+    try:
+        await auth_db.commit()
+    except IntegrityError as e:
+        await auth_db.rollback()
+        await tenant_db.rollback()
+        logger.error(f"Integrity error while committing admin user to auth_db for tenant {tenant.tenant_id}: {e}")
+        raise HTTPException(
+            status_code=409,
+            detail="Failed to create admin user - user may already exist"
+        )
+    except Exception as e:
+        await auth_db.rollback()
+        await tenant_db.rollback()
+        logger.exception(f"Error committing admin user to auth_db: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create admin user in authentication database"
+        )
+
+    try:
+        await tenant_db.commit()
+    except IntegrityError as e:
+        await tenant_db.rollback()
+        logger.error(f"Integrity error while committing tenant verification to tenant_db for tenant {tenant.tenant_id}: {e}")
+        raise HTTPException(
+            status_code=409,
+            detail="Failed to verify tenant - integrity constraint violation"
+        )
+    except Exception as e:
+        await tenant_db.rollback()
+        logger.exception(f"Error committing tenant verification to tenant_db: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to verify tenant in database"
+        )
+
+    await tenant_db.refresh(tenant)
+
+    # Extract values before adding background task to avoid detached object issues
+    tenant_id_str = str(tenant.tenant_id)
+    contact_email_str = str(tenant.contact_email)
+    admin_username_str = str(tenant.temp_admin_username) if tenant.temp_admin_username else admin_username
+    password_str = str(plain_password)
+
+    logger.info(f"Tenant verified and activated: {tenant_id_str}")
 
     background_tasks.add_task(
         send_welcome_email,
-        tenant.contact_email,
-        None, # add subdomain if required
-        tenant.temp_admin_username,
-        tenant.temp_admin_password_hash,
+        tenant_id_str,
+        contact_email_str,
+        None,  # subdomain not available
+        admin_username_str,
+        password_str,
     )
 
     background_tasks.add_task(
@@ -290,13 +389,34 @@ async def resend_verification_email(
         expires_at=expiry,
     )
     db.add(verification)
-    await db.commit()
+    
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Integrity error while resending verification email for tenant {tenant.tenant_id}: {e}")
+        raise HTTPException(
+            status_code=409,
+            detail="Failed to create verification token - integrity constraint violation"
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error committing verification token resend to database: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to resend verification email"
+        )
+
+    # verification_link = f"https://{tenant.subdomain}/verify-email?token={token}" # TODO : add subdomain if required
 
     verification_link = f"http://{EMAIL_VERIFICATION_LINK}/email/verify?token={token}"
 
+    # Extract email before adding background task to avoid detached object issues
+    contact_email_str = str(tenant.contact_email)
+
     background_tasks.add_task(
         send_verification_email,
-        tenant.contact_email,
+        contact_email_str,
         verification_link,
     )
 
@@ -347,8 +467,24 @@ async def create_service(payload: ServiceCreateRequest,db: AsyncSession,) -> Ser
     )
 
     db.add(service)
-    await db.commit()
-    await db.refresh(service)
+    
+    try:
+        await db.commit()
+        await db.refresh(service)
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Integrity error while creating service {payload.service_name}: {e}")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Service creation failed - service '{payload.service_name}' or ID {service_id} may already exist"
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error committing service creation to database: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to create service"
+        )
 
     response  = ServiceResponse(
             id=service.id,
@@ -393,8 +529,23 @@ async def update_service(payload: ServiceUpdateRequest,db: AsyncSession,) -> Ser
             )
             setattr(service, field, new_value)
 
-    await db.commit()
-    await db.refresh(service)
+    try:
+        await db.commit()
+        await db.refresh(service)
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Integrity error while updating service {payload.service_id}: {e}")
+        raise HTTPException(
+            status_code=409,
+            detail="Service update failed due to integrity constraint violation"
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error committing service update to database: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to update service"
+        )
 
     logger.info(f"Service pricing updated. Service ID={service.id}, Changes={changes}")
 
@@ -468,8 +619,23 @@ async def update_billing_plan(db: AsyncSession,payload: BillingUpdateRequest) ->
     )
     db.add(audit)
 
-    await db.commit()
-    await db.refresh(billing)
+    try:
+        await db.commit()
+        await db.refresh(billing)
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Integrity error while updating billing plan for tenant {payload.tenant_id}: {e}")
+        raise HTTPException(
+            status_code=409,
+            detail="Billing plan update failed due to integrity constraint violation"
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error committing billing plan update to database: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to update billing plan"
+        )
 
     return BillingUpdateResponse(
         tenant_id=billing.tenant_id,

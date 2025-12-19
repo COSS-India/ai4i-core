@@ -2,6 +2,10 @@ import re
 from datetime import datetime, timezone
 import secrets
 import uuid
+import string
+from passlib.context import CryptContext
+
+
 
 BASE_DOMAIN = "ai4i.com"  # replace via env var in production
 DEFAULT_QUOTAS = {
@@ -50,4 +54,13 @@ def generate_service_id() -> int:
     Generate a random positive BIGINT (fits PostgreSQL BIGINT).
     """
     return secrets.randbits(25)  # max 9.22e18
+
+
+def generate_random_password(length: int = 8) -> str:
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+def hash_password(password: str) -> str:
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    return pwd_context.hash(password)
 
