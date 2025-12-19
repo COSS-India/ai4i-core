@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     key_hash VARCHAR(255) UNIQUE NOT NULL,
     key_name VARCHAR(100) NOT NULL,
+    key_value_encrypted TEXT,
     permissions JSONB DEFAULT '[]'::jsonb,
     is_active BOOLEAN DEFAULT true,
     expires_at TIMESTAMP WITH TIME ZONE,
