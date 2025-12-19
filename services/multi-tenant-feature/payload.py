@@ -19,5 +19,25 @@ resposne = {
   "status": "pending"
 }
 
+true = True
+# Service payload registration example 
+request = {
+    "service_name": "pipeline",
+    "unit_type": "minute",
+    "price_per_unit": 0.00010,
+    "currency": "INR",
+    "is_active": true
+  }
 
-# Billing Update Payload Example
+response = {
+    "id": 24154220,
+    "service_name": "pipeline",
+    "unit_type": "minute",
+    "price_per_unit": "0.000100",
+    "currency": "INR",
+    "is_active": true,
+    "created_at": "2025-12-19T10:15:44.873845Z",
+    "updated_at": "2025-12-19T10:15:44.873845Z"
+}
+
+
