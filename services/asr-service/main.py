@@ -141,8 +141,8 @@ async def lifespan(app: FastAPI):
                 
                 # Mount Socket.IO streaming endpoint only if streaming service was initialized
                 if streaming_service:
-                app.mount("/socket.io", streaming_service.app)
-                logger.info("Socket.IO streaming endpoint mounted at /socket.io")
+                    app.mount("/socket.io", streaming_service.app)
+                    logger.info("Socket.IO streaming endpoint mounted at /socket.io")
                     logger.info("Streaming service initialized successfully")
                 else:
                     logger.info("Streaming service initialization skipped - not available")
