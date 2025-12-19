@@ -281,7 +281,7 @@ services:
     image: swaggerapi/swagger-ui
     container_name: ai4v-swagger-kong-ui
     ports:
-      - "8085:8080"
+      - "8086:8080"
     volumes:
       # Generated OpenAPI spec that points to Kong and includes all endpoints.
       # Mount it at a custom path; the swagger-ui entrypoint will copy it into
