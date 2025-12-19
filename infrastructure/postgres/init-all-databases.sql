@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     key_hash VARCHAR(255) UNIQUE NOT NULL,
     key_name VARCHAR(100) NOT NULL,
+    key_value_encrypted TEXT,
     is_active BOOLEAN DEFAULT true,
     expires_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -429,9 +430,26 @@ BEGIN
     END IF;
 END $$;
 
+-- Migration 3: Add key_value_encrypted column
+DO $$
+BEGIN
+    -- Add key_value_encrypted column if it doesn't exist
+    IF NOT EXISTS (
+        SELECT 1 
+        FROM information_schema.columns 
+        WHERE table_schema = 'public' 
+        AND table_name = 'api_keys' 
+        AND column_name = 'key_value_encrypted'
+    ) THEN
+        ALTER TABLE api_keys ADD COLUMN key_value_encrypted TEXT;
+        RAISE NOTICE 'Migrated: Added api_keys.key_value_encrypted column';
+    END IF;
+END $$;
+
 -- Add comments to document the changes
 COMMENT ON COLUMN api_keys.key_name IS 'Name/label for the API key';
 COMMENT ON COLUMN api_keys.permissions IS 'Array of permission strings for the API key';
+COMMENT ON COLUMN api_keys.key_value_encrypted IS 'Encrypted API key value (encrypted using Fernet)';
 CREATE INDEX IF NOT EXISTS idx_user_sessions_session_token ON user_sessions(session_token);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_refresh_token ON user_sessions(refresh_token);
