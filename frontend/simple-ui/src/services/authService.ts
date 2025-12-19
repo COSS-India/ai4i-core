@@ -17,6 +17,7 @@ import {
   APIKeyCreate,
   APIKeyResponse,
   OAuth2Provider,
+  Permission,
 } from '../types/auth';
 import { API_BASE_URL } from './api';
 
@@ -51,17 +52,61 @@ class AuthService {
       },
     };
 
+    // Add timeout to prevent hanging (10 seconds)
+    const timeoutMs = 10000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    
     try {
-      const response = await fetch(url, config);
+      const response = await fetch(url, {
+        ...config,
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
       
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+        let errorData: any = {};
+        try {
+          const text = await response.text();
+          if (text) {
+            errorData = JSON.parse(text);
+          }
+        } catch (e) {
+          // If JSON parsing fails, use empty object
+          errorData = {};
+        }
+        
+        // Extract error message from various possible formats
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        if (errorData?.detail) {
+          errorMessage = String(errorData.detail);
+        } else if (errorData?.message) {
+          errorMessage = String(errorData.message);
+        } else if (typeof errorData === 'string') {
+          errorMessage = errorData;
+        } else if (Array.isArray(errorData) && errorData.length > 0) {
+          errorMessage = errorData.map((err: any) => err.detail || err.message || String(err)).join(', ');
+        }
+        
+        // Add status code to error message for debugging
+        const error = new Error(errorMessage);
+        (error as any).status = response.status;
+        throw error;
       }
 
       return await response.json();
-    } catch (error) {
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        console.error('Auth service request timed out:', url);
+        throw new Error('Request timeout: Auth service is not responding');
+      }
       console.error('Auth service request failed:', error);
+      // Preserve the original error message and status if available
+      if (error.status) {
+        (error as any).status = error.status;
+      }
       throw error;
     }
   }
@@ -176,40 +221,46 @@ class AuthService {
       const response = await fetch(url, config);
       
       if (!response.ok) {
-        let errorMessage = `HTTP error! status: ${response.status}`;
+        let errorData: any = {};
         try {
-          const errorData = await response.json();
-          // Handle different error response formats
-          if (typeof errorData === 'string') {
-            errorMessage = errorData;
-          } else if (errorData?.detail) {
-            // Extract the detail field which contains the error message
-            errorMessage = String(errorData.detail);
-          } else if (errorData?.message) {
-            errorMessage = String(errorData.message);
-          } else if (Array.isArray(errorData)) {
-            // Handle array of errors
-            errorMessage = errorData.map((err: any) => 
-              err.detail || err.message || String(err)
-            ).join(', ');
-          } else if (typeof errorData === 'object') {
-            // Try to extract meaningful error from object
-            const errorText = errorData.detail || errorData.message || errorData.error;
-            errorMessage = errorText ? String(errorText) : JSON.stringify(errorData);
-          }
-        } catch (jsonError) {
-          // If response is not JSON, try to get text
-          try {
-            const text = await response.text();
-            if (text) {
-              errorMessage = text;
+          const text = await response.text();
+          if (text) {
+            try {
+              errorData = JSON.parse(text);
+            } catch (e) {
+              // If JSON parsing fails, use text as error message
+              errorData = { detail: text };
             }
-          } catch (textError) {
-            // Use default error message
-            console.error('Failed to parse error response:', textError);
           }
+        } catch (textError) {
+          console.error('Failed to parse error response:', textError);
+          errorData = {};
         }
-        throw new Error(errorMessage);
+        
+        // Handle different error response formats
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        if (typeof errorData === 'string') {
+          errorMessage = errorData;
+        } else if (errorData?.detail) {
+          // Extract the detail field which contains the error message
+          errorMessage = String(errorData.detail);
+        } else if (errorData?.message) {
+          errorMessage = String(errorData.message);
+        } else if (Array.isArray(errorData)) {
+          // Handle array of errors
+          errorMessage = errorData.map((err: any) => 
+            err.detail || err.message || String(err)
+          ).join(', ');
+        } else if (typeof errorData === 'object' && Object.keys(errorData).length > 0) {
+          // Try to extract meaningful error from object
+          const errorText = errorData.detail || errorData.message || errorData.error;
+          errorMessage = errorText ? String(errorText) : JSON.stringify(errorData);
+        }
+        
+        // Add status code to error for better debugging
+        const error = new Error(errorMessage);
+        (error as any).status = response.status;
+        throw error;
       }
 
       return await response.json();
@@ -292,11 +343,96 @@ class AuthService {
   }
 
   async getCurrentUser(): Promise<User> {
-    return this.request<User>('/me', {
+    // Use a longer timeout for /me endpoint as it's critical for auth validation
+    return this.requestWithTimeout<User>('/me', {
       headers: {
         'x-auth-source': 'AUTH_TOKEN',
       },
-    });
+    }, 20000); // 20 seconds timeout for /me endpoint
+  }
+
+  // Request method with custom timeout
+  private async requestWithTimeout<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    timeoutMs: number = 10000
+  ): Promise<T> {
+    const url = `${this.baseUrl}${endpoint}`;
+    
+    const defaultHeaders: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+
+    // Add authorization header if token exists
+    const token = this.getAccessToken();
+    if (token) {
+      defaultHeaders.Authorization = `Bearer ${token}`;
+    }
+
+    const config: RequestInit = {
+      ...options,
+      headers: {
+        ...defaultHeaders,
+        ...options.headers,
+      },
+    };
+
+    // Use custom timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    
+    try {
+      const response = await fetch(url, {
+        ...config,
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        let errorData: any = {};
+        try {
+          const text = await response.text();
+          if (text) {
+            errorData = JSON.parse(text);
+          }
+        } catch (e) {
+          // If JSON parsing fails, use empty object
+          errorData = {};
+        }
+        
+        // Extract error message from various possible formats
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        if (errorData?.detail) {
+          errorMessage = String(errorData.detail);
+        } else if (errorData?.message) {
+          errorMessage = String(errorData.message);
+        } else if (typeof errorData === 'string') {
+          errorMessage = errorData;
+        } else if (Array.isArray(errorData) && errorData.length > 0) {
+          errorMessage = errorData.map((err: any) => err.detail || err.message || String(err)).join(', ');
+        }
+        
+        // Add status code to error for better debugging
+        const error = new Error(errorMessage);
+        (error as any).status = response.status;
+        throw error;
+      }
+
+      return await response.json();
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        console.error('Auth service request timed out:', url);
+        throw new Error(`Request timeout: Auth service is not responding (timeout: ${timeoutMs}ms)`);
+      }
+      console.error('Auth service request failed:', error);
+      // Preserve the original error message and status if available
+      if (error.status) {
+        (error as any).status = error.status;
+      }
+      throw error;
+    }
   }
 
   async updateCurrentUser(data: Partial<User>): Promise<User> {
@@ -335,6 +471,23 @@ class AuthService {
     });
   }
 
+  async createApiKeyForUser(data: APIKeyCreate & { user_id: number }): Promise<APIKeyResponse> {
+    // Convert user_id to userId (camelCase) for the API payload
+    const payload = {
+      key_name: data.key_name,
+      permissions: data.permissions,
+      expires_days: data.expires_days,
+      userId: data.user_id, // Send as userId (camelCase) in JSON payload
+    };
+    return this.request<APIKeyResponse>('/api-keys', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
+    });
+  }
+
   async listApiKeys(): Promise<APIKeyResponse[]> {
     return this.request<APIKeyResponse[]>('/api-keys');
   }
@@ -348,6 +501,32 @@ class AuthService {
   // OAuth2
   async getOAuth2Providers(): Promise<OAuth2Provider[]> {
     return this.request<OAuth2Provider[]>('/oauth2/providers');
+  }
+
+  // User management (Admin only)
+  async getAllUsers(): Promise<User[]> {
+    return this.request<User[]>('/users', {
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
+    });
+  }
+
+  async getUserById(userId: number): Promise<User> {
+    return this.request<User>(`/users/${userId}`, {
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
+    });
+  }
+
+  // Permissions management (Admin only)
+  async getAllPermissions(): Promise<string[]> {
+    return this.request<string[]>('/permission/list', {
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
+    });
   }
 
   // Utility methods

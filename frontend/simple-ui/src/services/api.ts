@@ -76,6 +76,34 @@ export const apiEndpoints = {
     models: '/api/v1/llm/models',
     health: '/api/v1/llm/health',
   },
+  ocr: {
+    inference: '/api/v1/ocr/inference',
+    health: '/api/v1/ocr/health',
+  },
+  transliteration: {
+    inference: '/api/v1/transliteration/inference',
+    health: '/api/v1/transliteration/health',
+  },
+  'language-detection': {
+    inference: '/api/v1/language-detection/inference',
+    health: '/api/v1/language-detection/health',
+  },
+  'speaker-diarization': {
+    inference: '/api/v1/speaker-diarization/inference',
+    health: '/api/v1/speaker-diarization/health',
+  },
+  'language-diarization': {
+    inference: '/api/v1/language-diarization/inference',
+    health: '/api/v1/language-diarization/health',
+  },
+  'audio-language-detection': {
+    inference: '/api/v1/audio-lang-detection/inference',
+    health: '/api/v1/audio-lang-detection/health',
+  },
+  ner: {
+    inference: '/api/v1/ner/inference',
+    health: '/api/v1/ner/health',
+  },
 } as const;
 
 // Create Axios instance with standard timeout
@@ -293,7 +321,8 @@ apiClient.interceptors.request.use(
       // For other endpoints (legacy), use API key if available
       const apiKey = getApiKey();
       if (apiKey) {
-        config.headers['Authorization'] = `Bearer ${apiKey}`;
+        // Send API key in X-API-Key header (not as Bearer token)
+        config.headers['X-API-Key'] = apiKey;
       }
     }
     

@@ -96,6 +96,7 @@ export interface APIKeyCreate {
   key_name: string;
   permissions: string[];
   expires_days?: number;
+  user_id?: number; // Optional: for admin creating keys for other users
 }
 
 export interface APIKeyResponse {
@@ -114,6 +115,14 @@ export interface OAuth2Provider {
   client_id: string;
   authorization_url: string;
   scope: string[];
+}
+
+export interface Permission {
+  id: number;
+  name: string;
+  resource: string;
+  action: string;
+  created_at: string;
 }
 
 export interface AuthState {
