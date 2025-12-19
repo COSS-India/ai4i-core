@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db_connection import get_tenant_db_session
+from db_connection import get_tenant_db_session , get_auth_db_session
 from models.tenant_email import TenantResendEmailVerificationRequest, TenantResendEmailVerificationResponse
 from tenant_service import verify_email_token, resend_verification_email
 
@@ -20,10 +20,11 @@ router = APIRouter(
 async def verify_email(
     background_tasks: BackgroundTasks,
     token: str = Query(..., description="Email verification token"),
-    db: AsyncSession = Depends(get_tenant_db_session),
+    db_tenant: AsyncSession = Depends(get_tenant_db_session),
+    db_auth: AsyncSession = Depends(get_auth_db_session),
 ):
     try:
-        await verify_email_token(token, db, background_tasks)
+        await verify_email_token(token, db_tenant, db_auth, background_tasks)
         logger.info(f"Email verified successfully")
         return {"message": "Email verified successfully"}
     except HTTPException:

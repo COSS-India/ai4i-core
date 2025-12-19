@@ -18,12 +18,14 @@ LOGIN_URL = os.getenv("LOGIN_URL" ,"")
 
 
 async def send_welcome_email(
+    tenant_id: str,
     contact_email: str,
     subdomain: str,
     temp_admin_username: str,
     temp_admin_password: str,
 ):
     body = WELCOME_EMAIL_BODY.format(
+        tenant_id=tenant_id,
         # subdomain=subdomain,
         username=temp_admin_username,
         password=temp_admin_password,
