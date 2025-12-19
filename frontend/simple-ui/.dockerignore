@@ -1,0 +1,69 @@
+# Environment files
+.env
+*.env
+**/.env
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.build/
+build/
+dist/
+.eggs/
+*.egg-info/
+.cache/
+.pytest_cache/
+.mypy_cache/
+
+# Git and editor files
+.git/
+.gitignore
+.gitattributes
+*.swp
+*.swo
+.DS_Store
+.vscode/
+.idea/
+
+# Local data, logs, and temp files
+*.log
+logs/
+.tmp/
+.temp/
+
+# Node artifacts (if any UI subfolders exist)
+node_modules/
+*.tsbuildinfo
+
+# Docker-related
+Dockerfile.*.local
+
+# Kubernetes manifests (not needed inside runtime image)
+k8s-manifests/
+k8s-manifests-simplified/
+
+
+checkpoints/
+weights/
+*.pt
+*.pth
+*.onnx
+*.npz
+*.npy
+audio_samples/
+
+
+# Tests (if you don’t want them in the runtime image)
+# tests/
+
+
+.git
+__pycache__/
+*.pyc
+tests/
+docs/
+data/
+*.log
