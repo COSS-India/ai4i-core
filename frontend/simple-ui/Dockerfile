@@ -21,7 +21,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 
 # ✅ FIX: copy source code using full path
-COPY frontend/simple-ui/ .
+COPY . .
 
 # Build-time environment variables
 ARG NEXT_PUBLIC_API_URL=""
