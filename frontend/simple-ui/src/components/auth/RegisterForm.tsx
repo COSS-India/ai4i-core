@@ -17,6 +17,7 @@ import {
   Link,
   Select,
   FormErrorMessage,
+  useToast,
 } from '@chakra-ui/react';
 import { ViewIcon, ViewOffIcon } from '@chakra-ui/icons';
 import { useAuth } from '../../hooks/useAuth';
@@ -31,6 +32,7 @@ interface RegisterFormProps {
 
 const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin, onRegisterSuccess }) => {
   const { register, isLoading, error, clearError } = useAuth();
+  const toast = useToast();
   const [formData, setFormData] = useState<RegisterRequest>({
     email: '',
     username: '',
@@ -75,6 +77,16 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
 
     try {
       await register(formData);
+      
+      // Show success toast
+      toast({
+        title: "Registration Successful",
+        description: "Your account has been created successfully! Please sign in to continue.",
+        status: "success",
+        duration: 5000,
+        isClosable: true,
+      });
+      
       // After successful registration, switch to login page
       if (onRegisterSuccess) {
         onRegisterSuccess();

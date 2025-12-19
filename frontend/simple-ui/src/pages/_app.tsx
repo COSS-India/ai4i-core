@@ -12,7 +12,24 @@ import AuthGuard from '../components/auth/AuthGuard';
 import '../styles/globals.css';
 
 // Define routes that need the full layout
-const layoutRoutes = ['/', '/asr', '/tts', '/nmt', '/llm', '/pipeline', '/pipeline-builder', '/profile', '/model-management'];
+const layoutRoutes = [
+  '/', 
+  '/asr', 
+  '/tts', 
+  '/nmt', 
+  '/llm', 
+  '/pipeline', 
+  '/pipeline-builder', 
+  '/profile', 
+  '/model-management',
+  '/ocr',
+  '/transliteration',
+  '/language-detection',
+  '/speaker-diarization',
+  '/language-diarization',
+  '/audio-language-detection',
+  '/ner',
+];
 
 export default function App({ Component, pageProps }: AppProps) {
   const router = useRouter();
