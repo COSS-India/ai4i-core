@@ -15,10 +15,14 @@ RUN apt-get update && apt-get install -y \
 # Copy AI4ICore Observability Plugin
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 
+# Copy AI4ICore Model Management Plugin
+COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
 COPY services/language-detection-service/requirements.txt .
 
 RUN pip install --no-cache-dir --user -r requirements.txt
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
 
 
 # Stage 2: Final Runtime
@@ -47,6 +51,9 @@ ENV PATH=/home/app/.local/bin:$PATH
 
 # Copy AI4ICore Observability Plugin
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+
+# Copy AI4ICore Model Management Plugin
+COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
 # Copy app code
 COPY services/language-detection-service .
