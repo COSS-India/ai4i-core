@@ -38,6 +38,9 @@ import {
   Td,
   Badge,
   TableContainer,
+  Checkbox,
+  CheckboxGroup,
+  SimpleGrid,
 } from "@chakra-ui/react";
 import { ViewIcon, ViewOffIcon, CopyIcon } from "@chakra-ui/icons";
 import { FiEdit2, FiCheck, FiX } from "react-icons/fi";
@@ -85,7 +88,6 @@ const ProfilePage: React.FC = () => {
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(false);
   const [selectedUserForPermissions, setSelectedUserForPermissions] = useState<{ id: number; email: string; username: string } | null>(null);
   const [selectedUserPermissions, setSelectedUserPermissions] = useState<string[]>([]);
-  const [selectedPermission, setSelectedPermission] = useState<string>("");
   const [isLoadingUserPermissions, setIsLoadingUserPermissions] = useState(false);
   const [isAssigningPermission, setIsAssigningPermission] = useState(false);
   
@@ -112,6 +114,57 @@ const ProfilePage: React.FC = () => {
   // State for fetching API key when tab is clicked
   const [isFetchingApiKey, setIsFetchingApiKey] = useState(false);
   const [activeTabIndex, setActiveTabIndex] = useState(0);
+  const [selectedApiKeyId, setSelectedApiKeyId] = useState<number | null>(null);
+  
+  // Effect to find and populate API key based on selected permissions
+  useEffect(() => {
+    // Only run if we have selected permissions and API keys loaded
+    if (selectedPermissionsForUser.length > 0 && apiKeys.length > 0) {
+      // Find API key that matches the selected permissions exactly
+      const matchingKey = apiKeys.find((key) => {
+        if (key.permissions.length !== selectedPermissionsForUser.length) {
+          return false;
+        }
+        // Check if all selected permissions are in the key's permissions
+        const sortedSelected = [...selectedPermissionsForUser].sort();
+        const sortedKeyPerms = [...key.permissions].sort();
+        return JSON.stringify(sortedSelected) === JSON.stringify(sortedKeyPerms);
+      });
+      
+      if (matchingKey) {
+        // Set the selected API key ID to highlight it in the list
+        setSelectedApiKeyId(matchingKey.id);
+        
+        if (matchingKey.key_value) {
+          // If key_value is available (only on creation), set it
+          setApiKey(matchingKey.key_value);
+          toast({
+            title: "API Key Found",
+            description: `API key "${matchingKey.key_name}" matches the selected permissions`,
+            status: "info",
+            duration: 3000,
+            isClosable: true,
+          });
+        } else {
+          // If key exists but key_value is not available, show a message
+          toast({
+            title: "API Key Found",
+            description: `API key "${matchingKey.key_name}" matches the selected permissions, but the key value is not available (only shown once on creation)`,
+            status: "info",
+            duration: 4000,
+            isClosable: true,
+          });
+        }
+      } else {
+        // No matching key found, clear selection
+        setSelectedApiKeyId(null);
+      }
+    } else if (selectedPermissionsForUser.length === 0) {
+      // No permissions selected, clear API key selection
+      setSelectedApiKeyId(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPermissionsForUser, apiKeys]);
 
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
@@ -398,13 +451,19 @@ const ProfilePage: React.FC = () => {
               index={activeTabIndex}
               onChange={(index) => {
                 setActiveTabIndex(index);
-                // Calculate API Key tab index (always index 2, regardless of admin tabs)
+                // Calculate tab indices
                 // Tabs: 0=User Details, 1=Organization, 2=API Key, 3=Roles (if admin), 4=Permissions (if admin)
                 const apiKeyTabIndex = 2;
-                console.log('Profile: Tab changed to index', index, 'API Key tab index is', apiKeyTabIndex);
+                const permissionsTabIndex = (user?.roles?.includes('ADMIN') || user?.is_superuser) ? 4 : -1;
+                console.log('Profile: Tab changed to index', index, 'API Key tab index is', apiKeyTabIndex, 'Permissions tab index is', permissionsTabIndex);
                 // When API Key tab is clicked, fetch API keys
                 if (index === apiKeyTabIndex) {
                   console.log('Profile: API Key tab clicked, calling handleFetchApiKeys');
+                  handleFetchApiKeys();
+                }
+                // When Permissions tab is clicked, also fetch API keys for matching
+                if (index === permissionsTabIndex && apiKeys.length === 0) {
+                  console.log('Profile: Permissions tab clicked, fetching API keys for matching');
                   handleFetchApiKeys();
                 }
               }}
@@ -716,13 +775,58 @@ const ProfilePage: React.FC = () => {
                           <Heading size="sm" mb={4} color="gray.700">
                             Your API Keys ({apiKeys.length})
                           </Heading>
+                          <Text fontSize="sm" color="gray.600" mb={3}>
+                            Select an API key to use it as your current key
+                          </Text>
                           <VStack spacing={2} align="stretch">
                             {apiKeys.map((key) => (
-                              <Card key={key.id} bg={inputReadOnlyBg} borderColor={cardBorder} borderWidth="1px">
+                              <Card 
+                                key={key.id} 
+                                bg={inputReadOnlyBg} 
+                                borderColor={selectedApiKeyId === key.id ? "blue.500" : cardBorder}
+                                borderWidth={selectedApiKeyId === key.id ? "2px" : "1px"}
+                              >
                                 <CardBody p={4}>
-                                  <VStack align="stretch" spacing={2}>
-                                    <HStack justify="space-between">
-                                      <Text fontWeight="semibold">{key.key_name}</Text>
+                                  <VStack align="stretch" spacing={3}>
+                                    <HStack justify="space-between" align="flex-start">
+                                      <HStack spacing={3} flex={1}>
+                                        <Checkbox
+                                          isChecked={selectedApiKeyId === key.id}
+                                          onChange={(e) => {
+                                            if (e.target.checked) {
+                                              setSelectedApiKeyId(key.id);
+                                              // If key_value is available, set it as the current API key
+                                              if (key.key_value) {
+                                                setApiKey(key.key_value);
+                                                toast({
+                                                  title: "API Key Selected",
+                                                  description: `API key "${key.key_name}" has been set as your current key`,
+                                                  status: "success",
+                                                  duration: 3000,
+                                                  isClosable: true,
+                                                });
+                                              } else {
+                                                // Key value not available (only shown once on creation)
+                                                toast({
+                                                  title: "Key Value Not Available",
+                                                  description: `API key "${key.key_name}" is selected, but the key value is not available. Only newly created keys have their values displayed.`,
+                                                  status: "warning",
+                                                  duration: 4000,
+                                                  isClosable: true,
+                                                });
+                                              }
+                                            } else {
+                                              setSelectedApiKeyId(null);
+                                            }
+                                          }}
+                                          colorScheme="blue"
+                                          size="lg"
+                                        >
+                                          <Box>
+                                            <Text fontWeight="semibold">{key.key_name}</Text>
+                                          </Box>
+                                        </Checkbox>
+                                      </HStack>
                                       <Badge colorScheme={key.is_active ? "green" : "red"}>
                                         {key.is_active ? "Active" : "Inactive"}
                                       </Badge>
@@ -1217,43 +1321,54 @@ const ProfilePage: React.FC = () => {
 
                                 <FormControl>
                                   <FormLabel fontWeight="semibold">Permissions</FormLabel>
-                                  <Select
-                                    value={selectedPermission}
-                                    onChange={(e) => {
-                                      if (e.target.value && !selectedPermissionsForUser.includes(e.target.value)) {
-                                        setSelectedPermissionsForUser([...selectedPermissionsForUser, e.target.value]);
-                                        setSelectedPermission("");
-                                      }
-                                    }}
-                                    placeholder="Select permissions to add"
-                                    bg="white"
-                                  >
-                                    {permissions
-                                      .filter((perm) => !selectedPermissionsForUser.includes(perm))
-                                      .map((perm) => (
-                                        <option key={perm} value={perm}>
-                                          {perm}
-                                        </option>
-                                      ))}
-                                  </Select>
+                                  <Text fontSize="sm" color="gray.600" mb={3}>
+                                    Select permissions to find matching API key
+                                  </Text>
+                                  {permissions.length > 0 ? (
+                                    <Box
+                                      borderWidth="1px"
+                                      borderRadius="md"
+                                      p={4}
+                                      bg="white"
+                                      maxH="300px"
+                                      overflowY="auto"
+                                    >
+                                      <CheckboxGroup
+                                        value={selectedPermissionsForUser}
+                                        onChange={(values) => {
+                                          setSelectedPermissionsForUser(values as string[]);
+                                        }}
+                                      >
+                                        <SimpleGrid columns={2} spacing={3}>
+                                          {permissions.map((perm) => (
+                                            <Checkbox key={perm} value={perm} colorScheme="purple">
+                                              <Text fontSize="sm">{perm}</Text>
+                                            </Checkbox>
+                                          ))}
+                                        </SimpleGrid>
+                                      </CheckboxGroup>
+                                    </Box>
+                                  ) : (
+                                    <Alert status="info" borderRadius="md">
+                                      <AlertIcon />
+                                      <AlertDescription>
+                                        Click &quot;Load Permissions&quot; to view available permissions
+                                      </AlertDescription>
+                                    </Alert>
+                                  )}
                                   {selectedPermissionsForUser.length > 0 && (
-                                    <VStack align="stretch" mt={2} spacing={2}>
-                                      {selectedPermissionsForUser.map((perm) => (
-                                        <HStack key={perm} justify="space-between" p={2} bg="purple.50" borderRadius="md">
-                                          <Badge colorScheme="purple">{perm}</Badge>
-                                          <Button
-                                            size="xs"
-                                            colorScheme="red"
-                                            variant="ghost"
-                                            onClick={() => {
-                                              setSelectedPermissionsForUser(selectedPermissionsForUser.filter((p) => p !== perm));
-                                            }}
-                                          >
-                                            Remove
-                                          </Button>
-                                        </HStack>
-                                      ))}
-                                    </VStack>
+                                    <Box mt={3}>
+                                      <Text fontSize="sm" fontWeight="semibold" mb={2} color="gray.700">
+                                        Selected Permissions ({selectedPermissionsForUser.length}):
+                                      </Text>
+                                      <HStack flexWrap="wrap" spacing={2}>
+                                        {selectedPermissionsForUser.map((perm) => (
+                                          <Badge key={perm} colorScheme="purple" fontSize="sm" p={1}>
+                                            {perm}
+                                          </Badge>
+                                        ))}
+                                      </HStack>
+                                    </Box>
                                   )}
                                 </FormControl>
 
@@ -1313,9 +1428,28 @@ const ProfilePage: React.FC = () => {
                                         user_id: payload.userId, // TypeScript interface uses user_id, but payload will have userId
                                       });
                                       
+                                      // If the created key has a key_value, set it in the API key box
+                                      if (createdKey.key_value) {
+                                        setApiKey(createdKey.key_value);
+                                        // Set the newly created key as selected
+                                        setSelectedApiKeyId(createdKey.id);
+                                      }
+                                      
+                                      // Refresh API keys list to include the new key
+                                      try {
+                                        const updatedApiKeys = await authService.listApiKeys();
+                                        setApiKeys(updatedApiKeys);
+                                        // Update selected key ID if we have it
+                                        if (createdKey.id) {
+                                          setSelectedApiKeyId(createdKey.id);
+                                        }
+                                      } catch (error) {
+                                        console.error("Failed to refresh API keys list:", error);
+                                      }
+                                      
                                       toast({
                                         title: "API Key Created",
-                                        description: `API key "${createdKey.key_name}" created successfully for ${selectedUserForPermissions.username}. Save this key - it won't be shown again!`,
+                                        description: `API key "${createdKey.key_name}" created successfully for ${selectedUserForPermissions.username}.`,
                                         status: "success",
                                         duration: 5000,
                                         isClosable: true,
