@@ -373,169 +373,134 @@ apiClient.interceptors.response.use(
         case 401:
           // Unauthorized - handle based on endpoint type
           if (typeof window !== 'undefined') {
-            const isModelManagementEndpoint = error.config?.url?.includes('/model-management');
+            const url = error.config?.url || '';
+            const isModelManagementEndpoint = url.includes('/model-management');
             
-            if (isModelManagementEndpoint) {
-              // For model-management endpoints, try to refresh token
-              if (!originalRequest._retry) {
+            // Check if it's a service endpoint or model-management endpoint
+            // These should NOT automatically logout - let the UI handle the error
+            const isServiceEndpoint = url.includes('/api/v1/asr') || 
+                                     url.includes('/api/v1/tts') ||
+                                     url.includes('/api/v1/nmt') ||
+                                     url.includes('/api/v1/llm') ||
+                                     url.includes('/api/v1/pipeline') ||
+                                     url.includes('/api/v1/ocr') ||
+                                     url.includes('/api/v1/ner') ||
+                                     url.includes('/api/v1/transliteration') ||
+                                     url.includes('/api/v1/language-detection') ||
+                                     url.includes('/api/v1/speaker-diarization') ||
+                                     url.includes('/api/v1/language-diarization') ||
+                                     url.includes('/api/v1/audio-lang-detection') ||
+                                     isModelManagementEndpoint;
+            
+            if (isServiceEndpoint || isModelManagementEndpoint) {
+              // For service endpoints and model-management endpoints
+              // Don't automatically logout - let the UI handle the error
+              
+              // Extract error message from response for better debugging
+              let errorMessage = 'Authentication failed';
+              try {
+                const errorData = (data as any);
+                if (errorData?.detail) {
+                  errorMessage = String(errorData.detail);
+                } else if (errorData?.message) {
+                  errorMessage = String(errorData.message);
+                }
+              } catch (e) {
+                // Ignore parsing errors
+              }
+              
+              // Log detailed error information
+              const jwtToken = getJwtToken();
+              const apiKey = getApiKey();
+              const endpointType = isModelManagementEndpoint ? 'model-management' : 'service';
+              console.warn(`${endpointType} endpoint 401 error:`, {
+                url,
+                errorMessage,
+                hasJWT: !!jwtToken,
+                hasAPIKey: !!apiKey,
+                jwtLength: jwtToken?.length || 0,
+                apiKeyLength: apiKey?.length || 0,
+                responseData: data,
+              });
+              
+              // Try to refresh token if it's expired (only once)
+              if (jwtToken && !originalRequest._retry) {
                 originalRequest._retry = true;
                 
-                if (isRefreshing) {
-                  // If already refreshing, queue this request
-                  return new Promise((resolve, reject) => {
-                    failedQueue.push({ resolve, reject });
-                  })
-                    .then((token) => {
-                      originalRequest.headers['Authorization'] = `Bearer ${token}`;
-                      return apiClient(originalRequest);
-                    })
-                    .catch((err) => {
-                      return Promise.reject(err);
-                    });
-                }
-                
-                isRefreshing = true;
-                
                 try {
-                  // Import authService dynamically to avoid circular dependencies
                   const { default: authService } = await import('./authService');
                   const refreshToken = authService.getRefreshToken();
                   
-                  if (!refreshToken) {
-                    throw new Error('No refresh token available');
+                  if (refreshToken) {
+                    // Try to refresh the token
+                    const response = await authService.refreshToken();
+                    const newAccessToken = response.access_token;
+                    const rememberMe = localStorage.getItem('remember_me') === 'true';
+                    authService.setAccessToken(newAccessToken, rememberMe);
+                    
+                    // Retry the request with new token
+                    originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+                    return apiClient(originalRequest);
                   }
-                  
-                  // Call refresh token API
-                  const response = await authService.refreshToken();
-                  const newAccessToken = response.access_token;
-                  
-                  // Update the token in storage
-                  const rememberMe = localStorage.getItem('remember_me') === 'true';
-                  authService.setAccessToken(newAccessToken, rememberMe);
-                  
-                  // Update the original request with new token
-                  originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
-                  
-                  // Process queued requests
-                  processQueue(null, newAccessToken);
-                  isRefreshing = false;
-                  
-                  // Retry the original request
-                  return apiClient(originalRequest);
                 } catch (refreshError) {
-                  // Refresh failed, clear tokens and logout
-                  processQueue(refreshError, null);
-                  isRefreshing = false;
+                  // Refresh failed - don't logout, just let the error propagate to the UI
+                  console.warn(`Token refresh failed for ${endpointType} endpoint:`, refreshError);
+                }
+              }
+              
+              // Enhance error with more details for UI to display
+              let enhancedErrorMessage = errorMessage;
+              if (isModelManagementEndpoint) {
+                enhancedErrorMessage = `Model management error: ${errorMessage}. Please check your authentication and try again.`;
+              } else if (!apiKey) {
+                enhancedErrorMessage = `API key is required. Please set an API key in your profile or header.`;
+              } else {
+                enhancedErrorMessage = `Authentication failed: ${errorMessage}. Please check your API key and login status.`;
+              }
+              
+              const enhancedError = new Error(enhancedErrorMessage);
+              (enhancedError as any).status = 401;
+              (enhancedError as any).response = error.response;
+              return Promise.reject(enhancedError);
+            } else {
+              // For auth endpoints only, handle with token refresh and logout if needed
+              // This is the original behavior for non-service/auth endpoints
+              if (!originalRequest._retry) {
+                originalRequest._retry = true;
+                
+                try {
+                  const { default: authService } = await import('./authService');
+                  const refreshToken = authService.getRefreshToken();
                   
-                  console.error('Token refresh failed:', refreshError);
-                  
-                  // Clear tokens and redirect to auth page
+                  if (refreshToken) {
+                    const response = await authService.refreshToken();
+                    const newAccessToken = response.access_token;
+                    const rememberMe = localStorage.getItem('remember_me') === 'true';
+                    authService.setAccessToken(newAccessToken, rememberMe);
+                    
+                    originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+                    return apiClient(originalRequest);
+                  }
+                } catch (refreshError) {
+                  // Refresh failed for auth endpoint - logout
+                  console.error('Token refresh failed for auth endpoint:', refreshError);
                   const { default: authService } = await import('./authService');
                   authService.clearAuthTokens();
                   authService.clearStoredUser();
                   
                   if (typeof window !== 'undefined') {
-                    window.location.href = '/auth';
+                    window.location.href = '/';
                   }
-                  
-                  return Promise.reject(refreshError);
                 }
               } else {
-                // Already retried, redirect to auth
+                // Already retried, logout
                 const { default: authService } = await import('./authService');
                 authService.clearAuthTokens();
                 authService.clearStoredUser();
                 
                 if (typeof window !== 'undefined') {
-                  window.location.href = '/auth';
+                  window.location.href = '/';
                 }
-              }
-            } else {
-              // For service endpoints (ASR, TTS, NMT, LLM, Pipeline, etc.)
-              // Don't automatically logout - let the UI handle the error
-              // Check if it's a service endpoint that requires both JWT and API key
-              const url = error.config?.url || '';
-              const isServiceEndpoint = url.includes('/api/v1/asr') || 
-                                       url.includes('/api/v1/tts') ||
-                                       url.includes('/api/v1/nmt') ||
-                                       url.includes('/api/v1/llm') ||
-                                       url.includes('/api/v1/pipeline') ||
-                                       url.includes('/api/v1/ocr') ||
-                                       url.includes('/api/v1/ner') ||
-                                       url.includes('/api/v1/transliteration') ||
-                                       url.includes('/api/v1/language-detection') ||
-                                       url.includes('/api/v1/speaker-diarization') ||
-                                       url.includes('/api/v1/language-diarization') ||
-                                       url.includes('/api/v1/audio-lang-detection');
-              
-              if (isServiceEndpoint) {
-                // Extract error message from response for better debugging
-                let errorMessage = 'Authentication failed';
-                try {
-                  const errorData = (data as any);
-                  if (errorData?.detail) {
-                    errorMessage = String(errorData.detail);
-                  } else if (errorData?.message) {
-                    errorMessage = String(errorData.message);
-                  }
-                } catch (e) {
-                  // Ignore parsing errors
-                }
-                
-                // Log detailed error information
-                const jwtToken = getJwtToken();
-                const apiKey = getApiKey();
-                console.error('Service endpoint 401 error:', {
-                  url,
-                  errorMessage,
-                  hasJWT: !!jwtToken,
-                  hasAPIKey: !!apiKey,
-                  jwtLength: jwtToken?.length || 0,
-                  apiKeyLength: apiKey?.length || 0,
-                  responseData: data,
-                });
-                
-                // For service endpoints, try to refresh token if it's expired
-                // Only logout if refresh fails or if it's clearly an API key issue
-                if (jwtToken && !originalRequest._retry) {
-                  // Try to refresh token once
-                  originalRequest._retry = true;
-                  
-                  try {
-                    const { default: authService } = await import('./authService');
-                    const refreshToken = authService.getRefreshToken();
-                    
-                    if (refreshToken) {
-                      // Try to refresh the token
-                      const response = await authService.refreshToken();
-                      const newAccessToken = response.access_token;
-                      const rememberMe = localStorage.getItem('remember_me') === 'true';
-                      authService.setAccessToken(newAccessToken, rememberMe);
-                      
-                      // Retry the request with new token
-                      originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
-                      return apiClient(originalRequest);
-                    }
-                  } catch (refreshError) {
-                    // Refresh failed - this might be an API key issue or token issue
-                    // Don't logout, just let the error propagate to the UI
-                    console.warn('Token refresh failed for service endpoint - may need API key:', refreshError);
-                  }
-                }
-                
-                // Enhance error with more details
-                const enhancedError = new Error(
-                  apiKey 
-                    ? `Authentication failed: ${errorMessage}. Please check your API key and login status.`
-                    : `API key is required. Please set an API key in your profile or header.`
-                );
-                (enhancedError as any).status = 401;
-                (enhancedError as any).response = error.response;
-                return Promise.reject(enhancedError);
-              } else {
-                // For other non-service endpoints, handle normally
-                localStorage.removeItem('api_key');
-                window.location.href = '/';
               }
             }
           }
