@@ -1,5 +1,5 @@
-from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query
+from typing import List, Optional, Dict, Any
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import ValidationError
 
 from models.voice_models import (
@@ -9,6 +9,7 @@ from models.voice_models import (
     VoiceAge
 )
 from services.voice_service import VoiceService, VoiceNotFoundError
+from middleware.auth_provider import AuthProvider
 
 # Create router
 router = APIRouter(prefix="/api/v1/tts", tags=["Voice Management"])
@@ -24,7 +25,8 @@ async def list_voices(
     language: Optional[str] = Query(None, description="Filter by language code"),
     gender: Optional[str] = Query(None, description="Filter by gender (male/female)"),
     age: Optional[str] = Query(None, description="Filter by age (young/adult/senior)"),
-    is_active: Optional[bool] = Query(True, description="Filter by active status")
+    is_active: Optional[bool] = Query(True, description="Filter by active status"),
+    auth: Dict[str, Any] = Depends(AuthProvider)
 ):
     """List available TTS voices with optional filtering."""
     try:
@@ -83,7 +85,10 @@ async def list_voices(
     summary="Get voice details by ID",
     description="Get detailed information about a specific voice"
 )
-async def get_voice_by_id(voice_id: str):
+async def get_voice_by_id(
+    voice_id: str,
+    auth: Dict[str, Any] = Depends(AuthProvider)
+):
     """Get voice details by ID."""
     try:
         # Create voice service
@@ -112,7 +117,10 @@ async def get_voice_by_id(voice_id: str):
     summary="List voices for a specific language",
     description="Get all voices that support the specified language"
 )
-async def get_voices_by_language(language: str):
+async def get_voices_by_language(
+    language: str,
+    auth: Dict[str, Any] = Depends(AuthProvider)
+):
     """Get all voices that support a specific language."""
     try:
         # Create voice service
