@@ -38,7 +38,17 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         correlation_id = get_correlation_id(request)
 
         # Process request
-        response = await call_next(request)
+        # Note: FastAPI exception handlers (like RequestValidationError) will catch
+        # exceptions and return responses, which will still come back through this middleware
+        # We don't catch exceptions here - let FastAPI's exception handlers handle them
+        # The response from exception handlers will still come back through this middleware
+        try:
+            response = await call_next(request)
+        except Exception:
+            # If an exception occurs, FastAPI's exception handlers will catch it
+            # and return a response. That response will come back through this middleware
+            # So we re-raise to let the exception handler work
+            raise
 
         # Calculate processing time
         processing_time = time.time() - start_time

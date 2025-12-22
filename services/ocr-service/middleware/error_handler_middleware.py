@@ -10,6 +10,8 @@ import traceback
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from ai4icore_logging import get_correlation_id, get_logger
 
 from middleware.exceptions import (
     AuthenticationError,
@@ -18,7 +20,7 @@ from middleware.exceptions import (
     RateLimitExceededError,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def add_error_handlers(app: FastAPI) -> None:
@@ -68,6 +70,60 @@ def add_error_handlers(app: FastAPI) -> None:
             status_code=429,
             content={"detail": error_detail.dict()},
             headers={"Retry-After": str(exc.retry_after)},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ):
+        """Handle request validation errors (422 Unprocessable Entity)."""
+        # Extract request info for logging
+        method = request.method
+        path = request.url.path
+        client_ip = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "unknown")
+        
+        # Get correlation ID if available
+        correlation_id = get_correlation_id(request)
+        
+        # Build error messages
+        error_messages = []
+        for error in exc.errors():
+            loc = ".".join(map(str, error["loc"]))
+            error_messages.append(f"{loc}: {error['msg']}")
+        
+        full_message = f"Validation error: {'; '.join(error_messages)}"
+        
+        # Log the validation error explicitly with trace_id
+        # This ensures 422 errors are logged even if middleware doesn't catch them
+        log_context = {
+            "method": method,
+            "path": path,
+            "status_code": 422,
+            "client_ip": client_ip,
+            "user_agent": user_agent,
+            "validation_errors": exc.errors(),
+        }
+        if correlation_id:
+            log_context["correlation_id"] = correlation_id
+        
+        # Log the validation error explicitly with trace_id
+        # This ensures 422 errors are logged even if middleware doesn't catch them
+        # Use logger.warning to match RequestLoggingMiddleware behavior for 4xx errors
+        # IMPORTANT: This handler MUST log because RequestLoggingMiddleware might not catch 422 responses
+        logger.warning(
+            f"{method} {path} - 422 - Validation error: {full_message}",
+            extra={"context": log_context}
+        )
+        
+        error_detail = ErrorDetail(
+            message="Validation error",
+            code="VALIDATION_ERROR",
+            timestamp=time.time(),
+        )
+        return JSONResponse(
+            status_code=422,
+            content={"detail": exc.errors()},
         )
 
     @app.exception_handler(HTTPException)

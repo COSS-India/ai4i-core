@@ -38,10 +38,44 @@ from middleware.error_handler_middleware import add_error_handlers
 from models import database_models
 
 # Configure structured logging
+# This also configures uvicorn loggers to use our formatter and disables access logs
 configure_logging(
     service_name=os.getenv("SERVICE_NAME", "ocr-service"),
     use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
 )
+
+# Aggressively disable uvicorn access logger BEFORE uvicorn starts
+# This must happen before uvicorn imports/creates its loggers
+import logging
+uvicorn_access = logging.getLogger("uvicorn.access")
+uvicorn_access.handlers.clear()
+uvicorn_access.propagate = False
+uvicorn_access.disabled = True
+uvicorn_access.setLevel(logging.CRITICAL + 1)  # Set above CRITICAL to ensure nothing logs
+
+# Also disable at root level by filtering out uvicorn.access messages
+class UvicornAccessFilter(logging.Filter):
+    """Filter to block uvicorn.access log messages."""
+    def filter(self, record):
+        # Block uvicorn.access logger
+        if record.name == "uvicorn.access":
+            return False
+        # Also block messages that look like uvicorn access logs
+        # Format: "INFO: IP:PORT "METHOD PATH HTTP/1.1" STATUS"
+        message = str(record.getMessage())
+        if 'HTTP/1.1"' in message:
+            import re
+            # Match uvicorn access log pattern: INFO: IP:PORT "METHOD PATH HTTP/1.1" STATUS
+            if re.search(r'INFO:\s+\d+\.\d+\.\d+\.\d+:\d+\s+"(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+.*HTTP/1\.1"\s+\d+', message):
+                return False
+        return True
+
+# Add filter to root logger to catch any uvicorn.access messages
+root_logger = logging.getLogger()
+uvicorn_filter = UvicornAccessFilter()
+for handler in root_logger.handlers:
+    handler.addFilter(uvicorn_filter)
+
 # Get logger instance
 logger = get_logger(__name__)
 
@@ -68,6 +102,15 @@ registered_instance_id: Optional[str] = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global redis_client, db_engine, db_session_factory, registry_client, registered_instance_id
+
+    # Disable uvicorn access logger AFTER uvicorn has started
+    # This ensures it stays disabled even if uvicorn recreates loggers
+    import logging
+    uvicorn_access = logging.getLogger("uvicorn.access")
+    uvicorn_access.handlers.clear()
+    uvicorn_access.propagate = False
+    uvicorn_access.disabled = True
+    uvicorn_access.setLevel(logging.CRITICAL)  # Extra safety - set to highest level
 
     logger.info("Starting OCR Service...")
 
