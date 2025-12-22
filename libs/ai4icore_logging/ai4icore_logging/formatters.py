@@ -12,6 +12,13 @@ from typing import Any, Dict, Optional
 
 from .context import get_trace_id
 
+# Try to import OpenTelemetry for trace ID extraction
+try:
+    from opentelemetry import trace
+    OPENTELEMETRY_AVAILABLE = True
+except ImportError:
+    OPENTELEMETRY_AVAILABLE = False
+
 
 class JSONFormatter(logging.Formatter):
     """
@@ -65,8 +72,27 @@ class JSONFormatter(logging.Formatter):
         Returns:
             JSON string representation of the log
         """
-        # Get trace ID from context
-        trace_id = get_trace_id()
+        # Get trace ID from context (correlation ID)
+        # Use try/except to handle any contextvars issues gracefully
+        correlation_id = None
+        try:
+            correlation_id = get_trace_id()
+        except Exception:
+            # If contextvars fails, we'll generate a trace_id below
+            pass
+        
+        # Try to get OpenTelemetry trace ID from active span (for Jaeger correlation)
+        opentelemetry_trace_id = None
+        if OPENTELEMETRY_AVAILABLE:
+            try:
+                span = trace.get_current_span()
+                if span and span.get_span_context().is_valid:
+                    # Format trace ID as hex string (Jaeger format)
+                    trace_context = span.get_span_context()
+                    opentelemetry_trace_id = format(trace_context.trace_id, "032x")
+            except Exception:
+                # Silently fail if OpenTelemetry is not properly initialized
+                pass
         
         # Build base log structure
         log_data: Dict[str, Any] = {
@@ -76,9 +102,22 @@ class JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         
-        # Add trace ID if available
-        if trace_id:
-            log_data["trace_id"] = trace_id
+        # Prefer OpenTelemetry trace ID (for Jaeger correlation), fallback to correlation ID
+        # Always ensure trace_id is set for correlation between logs and traces
+        # CRITICAL: trace_id must ALWAYS be present in logs
+        if opentelemetry_trace_id:
+            log_data["trace_id"] = opentelemetry_trace_id
+            # Also include correlation_id if different
+            if correlation_id and correlation_id != opentelemetry_trace_id:
+                log_data["correlation_id"] = correlation_id
+        elif correlation_id:
+            log_data["trace_id"] = correlation_id
+        else:
+            # Fallback: generate a trace ID if neither is available
+            # This ensures trace_id is always present in logs
+            # IMPORTANT: This should never happen in normal operation, but ensures logs always have trace_id
+            from .context import generate_trace_id
+            log_data["trace_id"] = generate_trace_id()
         
         # Add service metadata
         log_data["service_version"] = self.service_version

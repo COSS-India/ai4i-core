@@ -1,45 +1,47 @@
 """
 Trace ID Context Manager
 
-Manages trace ID (correlation ID) in thread-local storage for automatic
+Manages trace ID (correlation ID) in async context for automatic
 injection into log entries across the application.
+
+Uses contextvars for async-compatible context management that works
+correctly with FastAPI/Starlette async middleware.
 """
 
-import threading
+import contextvars
 import uuid
 from contextlib import contextmanager
 from typing import Optional
 
-# Thread-local storage for trace ID
-_thread_local = threading.local()
+# Context variable for trace ID (async-safe)
+_trace_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('trace_id', default=None)
 
 
 def set_trace_id(trace_id: str) -> None:
     """
-    Set the trace ID for the current thread.
+    Set the trace ID for the current async context.
     
     Args:
         trace_id: The trace/correlation ID to set
     """
-    _thread_local.trace_id = trace_id
+    _trace_id_var.set(trace_id)
 
 
 def get_trace_id() -> Optional[str]:
     """
-    Get the trace ID for the current thread.
+    Get the trace ID for the current async context.
     
     Returns:
         The trace ID if set, None otherwise
     """
-    return getattr(_thread_local, 'trace_id', None)
+    return _trace_id_var.get()
 
 
 def clear_trace_id() -> None:
     """
-    Clear the trace ID for the current thread.
+    Clear the trace ID for the current async context.
     """
-    if hasattr(_thread_local, 'trace_id'):
-        delattr(_thread_local, 'trace_id')
+    _trace_id_var.set(None)
 
 
 def generate_trace_id() -> str:
