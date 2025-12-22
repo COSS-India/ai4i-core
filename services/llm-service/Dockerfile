@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ✅ FIX: copy requirements from service directory
-COPY services/llm-service/requirements.txt .
+# Copy requirements from build context
+COPY requirements.txt .
 
 # Install Python dependencies (NO --user)
 RUN pip install --no-cache-dir -r requirements.txt
@@ -35,7 +35,7 @@ RUN useradd --create-home --shell /bin/bash app
 COPY --from=builder /usr/local /usr/local
 
 # Copy application code
-COPY services/llm-service/ .
+COPY . .
 
 # Fix ownership ONLY for app files
 RUN chown -R app:app /app
