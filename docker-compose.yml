@@ -250,7 +250,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-    restart: unless-stopped
+    restart: unless-stopped 
 
   kong-manager:
     image: pantsel/konga:latest
@@ -306,7 +306,7 @@ services:
       - ENV_FILE=.env
       # Swagger/OpenAPI server URL used in the generated docs
       # Prod: point Swagger to public API Gateway URL
-      - SWAGGER_SERVER_URL=https://core-v1.ai4inclusion.org:8080
+      - SWAGGER_SERVER_URL=http://core-v1.ai4inclusion.org:8080  
     env_file:
       - ./services/api-gateway-service/.env
     depends_on:
