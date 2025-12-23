@@ -16,6 +16,7 @@ class TenantRegisterResponse(BaseModel):
     tenant_id: str
     subdomain: Optional[str] = None
     schema_name: str
+    subscriptions: List[str]
     quotas : Dict[str , Any]
     status: str
     token: str

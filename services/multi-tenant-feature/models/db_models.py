@@ -46,6 +46,7 @@ class Tenant(TenantDBBase):
     audit_logs = relationship("AuditLog", back_populates="tenant", cascade="all, delete-orphan")
     tenant_email_verifications = relationship("TenantEmailVerification", back_populates="tenant", cascade="all, delete-orphan")
     user_billing_records = relationship("UserBillingRecord", back_populates="tenant", cascade="all, delete-orphan")
+    tenant_users = relationship("TenantUser", back_populates="tenant", cascade="all, delete-orphan")
 
     
     def __repr__(self):
@@ -73,8 +74,8 @@ class AuditLog(TenantDBBase):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
-    action = Column(Enum(AuditAction, native_enum=False, create_type=False), nullable=False)
-    actor = Column(Enum(AuditActorType, native_enum=False, create_type=False),nullable=False,default=AuditActorType.SYSTEM)  # who performed action (system, admin, billing)
+    action = Column(Enum(AuditAction, native_enum=False, create_type=False,length=50),nullable=False)
+    actor = Column(Enum(AuditActorType, native_enum=False, create_type=False,length=50),nullable=False,default=AuditActorType.SYSTEM)  # who performed action (system, admin, billing)
     details = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -108,7 +109,7 @@ class ServiceConfig(TenantDBBase):
 
     id = Column(BigInteger, primary_key=True) 
     service_name = Column(String(50), unique=True, nullable=False)  # asr, tts, nmt
-    unit_type = Column(Enum(ServiceUnitType, native_enum=False), nullable=False) # char, second, request
+    unit_type = Column(Enum(ServiceUnitType, native_enum=False,length=50), nullable=False) # char, second, request
     price_per_unit = Column(Numeric(10, 6), nullable=False)         # 0.010
     currency = Column(String(10), default="INR")
     is_active = Column(Boolean, default=True)
@@ -118,23 +119,44 @@ class ServiceConfig(TenantDBBase):
     user_billing_records = relationship("UserBillingRecord" , back_populates="service_config")
 
 
+
+class TenantUser(TenantDBBase):
+    __tablename__ = "tenant_users"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+
+    # user id from auth DB
+    user_id = Column(Integer, nullable=False, index=True)
+    tenant_id = Column(String(255),ForeignKey("tenants.tenant_id", ondelete="CASCADE"),nullable=False,index=True)
+    username = Column(String(255), nullable=False)
+    email = Column(String(320), nullable=False, index=True)
+    subscriptions = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    is_approved = Column(Boolean, nullable=False, default=False)
+    status = Column(Enum(TenantStatus, native_enum=False, create_type=False), nullable=False, default=TenantStatus.PENDING)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    tenant = relationship("Tenant", back_populates="tenant_users")
+    billing_records = relationship("UserBillingRecord",back_populates="tenant_users",cascade="all, delete-orphan")
+
+    def __repr__(self):
+        return f"<TenantUser email={self.email} tenant_id={self.tenant_id}> user_id={self.user_id}"
+
+
+
 class UserBillingRecord(TenantDBBase):
     __tablename__ = "user_billing_records"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("tenant_users.id",ondelete="CASCADE"), nullable=False)
     tenant_id = Column(String(255), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False)
-
     service_name = Column(String(50), nullable=False)
     service_id = Column(BigInteger, ForeignKey("service_config.id"), nullable=False)
-
     cost = Column(Numeric(10, 5), nullable=False)
-
     billing_period = Column(Date, nullable=False)  # 2025-12
-
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     service_config = relationship("ServiceConfig", back_populates="user_billing_records")
     tenant = relationship("Tenant", back_populates="user_billing_records")
+    tenant_users = relationship("TenantUser", back_populates="billing_records")

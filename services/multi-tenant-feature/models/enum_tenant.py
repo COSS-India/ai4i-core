@@ -5,8 +5,12 @@ class TenantStatus(str, Enum):
     IN_PROGRESS = "IN_PROGRESS"  # once email verified
     ACTIVE = "ACTIVE"            # once payment done
     SUSPENDED = "SUSPENDED"
-    ARCHIVED = "ARCHIVED"
-
+    # ARCHIVED = "ARCHIVED"
+    
+class TenantUserStatus(str, Enum):
+    PENDING = "PENDING"          # waiting for admin approval
+    ACTIVE = "ACTIVE"            # approved by admin
+    SUSPENDED = "SUSPENDED"
 
 class SubscriptionType(str, Enum):
     TTS = "tts"
@@ -39,8 +43,15 @@ class AuditAction(str, Enum):
     tenant_reactivated = "tenant_reactivated"
     manual_action = "manual_action"
 
+    user_created = "user_created"
+    user_updated = "user_updated"
+    user_deleted = "user_deleted"
+
     email_verified = "email_verified"
     password_reset = "password_reset"
+
+    subscription_added = "subscription_added"
+    subscription_removed = "subscription_removed"
 
     billing_updated = "billing_updated"
     payment_received = "payment_received"
