@@ -11,6 +11,7 @@ from typing import List, Optional
 
 import requests
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from models.ocr_request import OCRInferenceRequest, ImageInput
 from models.ocr_response import OCRInferenceResponse, TextOutput
@@ -70,10 +71,11 @@ class OCRService:
                     })
                     return image_bytes
                 except Exception as exc:
-                    span.set_attribute("error", True)
+                    # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
                     span.set_attribute("error.type", type(exc).__name__)
                     span.set_attribute("error.message", str(exc))
                     span.set_attribute("ocr.download_status", "failed")
+                    span.set_status(Status(StatusCode.ERROR, str(exc)))
                     span.record_exception(exc)
                     logger.error(
                         "Failed to download image from %s: %s", image.imageUri, exc
