@@ -2,11 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
-from db_connection import get_tenant_db_session
+from db_connection import get_tenant_db_session , get_auth_db_session
 from models.tenant_create import TenantRegisterRequest, TenantRegisterResponse
-from models.service_create import ServiceCreateRequest , ListServicesResponse , ServiceResponse
-from models.services_update import ServiceUpdateRequest , ServiceUpdateResponse
-from tenant_service import create_new_tenant, create_service , update_service , list_service
+from models.user_create import UserRegisterRequest , UserRegisterResponse
+from tenant_service import create_new_tenant , register_user
 
 from logger import logger
 from middleware.auth_provider import AuthProvider
@@ -45,55 +44,27 @@ async def register_tenant_request(
     
 
 
-@router.post("/register/services", response_model=ServiceResponse, status_code=status.HTTP_201_CREATED)
-async def register_service_request(
-    payload: ServiceCreateRequest,
-    db: AsyncSession = Depends(get_tenant_db_session),
-):  
+
+@router.post("/register/users",response_model=UserRegisterResponse,status_code=status.HTTP_201_CREATED,)
+async def register_user_request(
+    payload: UserRegisterRequest,
+    background_tasks: BackgroundTasks,
+    tenant_db: AsyncSession = Depends(get_tenant_db_session),
+    auth_db: AsyncSession = Depends(get_auth_db_session),
+):
     try:
-        response = await create_service(payload, db)
-        logger.info(f"Service created successfully. Service: {payload.service_name}")
-        return response
-    
+        return await register_user(payload, tenant_db, auth_db, background_tasks)
+
     except HTTPException:
         raise
     except IntegrityError as ie:
-        logger.error(f"Integrity error during service creation: {ie}")
-        raise HTTPException(status_code=409, detail="Service with this name or ID already exists")
+        logger.error(f"Integrity error during user registration: {ie}")
+        raise HTTPException(status_code=409, detail="User already exists")
     except ValueError as ve:
-        logger.error(f"Value error during service creation: {ve}")
+        logger.error(f"Validation error during user registration: {ve}")
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as exc:
-        logger.exception(f"Error creating service pricing: {exc}")
+        logger.exception(f"Unexpected error during user registration: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
-
-
-@router.post("/update/services", response_model=ServiceUpdateResponse, status_code=status.HTTP_201_CREATED)
-async def update_service_request(
-    payload: ServiceUpdateRequest,
-    db: AsyncSession = Depends(get_tenant_db_session),
-):
-    try:
-        result = await update_service(payload, db)
-        return result
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception(f"Error updating service pricing: {exc}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@router.get("/list/services", response_model=ListServicesResponse, status_code=status.HTTP_200_OK)
-async def list_services_request(db: AsyncSession = Depends(get_tenant_db_session)):
-    try:
-        result = await list_service(db)
-        return result
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception(f"Error listing services: {exc}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
 
 

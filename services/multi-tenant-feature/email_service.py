@@ -9,7 +9,7 @@ from utils.utils import (
 from models.db_models import Tenant, TenantEmailVerification
 from models.tenant_create import TenantRegisterRequest
 from _email_service.sendgrid import email_service
-from _email_service.templates import WELCOME_EMAIL_SUBJECT, WELCOME_EMAIL_BODY
+from _email_service.templates import WELCOME_EMAIL_SUBJECT, WELCOME_EMAIL_BODY ,USER_WELCOME_EMAIL_BODY
 
 from logger import logger
 import os
@@ -19,18 +19,44 @@ LOGIN_URL = os.getenv("LOGIN_URL" ,"")
 
 async def send_welcome_email(
     tenant_id: str,
+    user_id: str,
     contact_email: str,
     subdomain: str,
     temp_admin_username: str,
     temp_admin_password: str,
-):
+):  
+    
     body = WELCOME_EMAIL_BODY.format(
-        tenant_id=tenant_id,
-        # subdomain=subdomain,
-        username=temp_admin_username,
-        password=temp_admin_password,
-        login_url=f"{LOGIN_URL}",
+            tenant_id=tenant_id,
+            # subdomain=subdomain,
+            username=temp_admin_username,
+            password=temp_admin_password,
+            login_url=f"{LOGIN_URL}",
+        )
+
+    await email_service.send(
+        to_email=contact_email,
+        subject=WELCOME_EMAIL_SUBJECT,
+        body=body,
     )
+
+
+
+async def send_user_welcome_email(
+    user_id: str,
+    contact_email: str,
+    subdomain: str,
+    temp_username: str,
+    temp_password: str,
+):  
+    
+    body = USER_WELCOME_EMAIL_BODY.format(
+            user_id=user_id,
+            # subdomain=subdomain,
+            username=temp_username,
+            password=temp_password,
+            login_url=f"{LOGIN_URL}",
+        )
 
     await email_service.send(
         to_email=contact_email,

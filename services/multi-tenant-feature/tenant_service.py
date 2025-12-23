@@ -1,5 +1,5 @@
 from fastapi import BackgroundTasks, HTTPException
-from datetime import datetime, timezone , timedelta
+from datetime import datetime, timezone , timedelta , date
 
 from sqlalchemy import insert , select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,16 +17,26 @@ from utils.utils import (
     generate_random_password,
     hash_password,
 )
-from models.db_models import Tenant, BillingRecord, AuditLog , TenantEmailVerification , ServiceConfig
+from models.db_models import (
+    Tenant, 
+    BillingRecord, 
+    AuditLog , 
+    TenantEmailVerification , 
+    ServiceConfig,
+    TenantUser,
+    UserBillingRecord,
+)
 from models.auth_models import UserDB
 from models.enum_tenant import  TenantStatus, AuditAction , BillingStatus , AuditActorType
 from models.tenant_create import TenantRegisterRequest, TenantRegisterResponse
 from models.service_create import ServiceCreateRequest , ServiceResponse , ListServicesResponse
+from models.user_create import UserRegisterRequest, UserRegisterResponse
 from models.services_update import ServiceUpdateRequest , FieldChange , ServiceUpdateResponse
 from models.billing_update import BillingUpdateRequest, BillingUpdateResponse
 from models.tenant_email import TenantResendEmailVerificationResponse
+from models.tenant_subscription import TenantSubscriptionResponse
 
-from email_service import send_welcome_email, send_verification_email
+from email_service import send_welcome_email, send_verification_email , send_user_welcome_email
 
 from logger import logger
 from uuid import UUID
@@ -210,15 +220,15 @@ async def create_new_tenant(
     try:
         await db.commit()
     except IntegrityError as e:
-        await db.rollback()
         logger.error(f"Integrity error while creating tenant {tenant_id}: {e}")
+        await db.rollback()
         raise HTTPException(
             status_code=409,
             detail="Tenant creation failed due to integrity constraint (duplicate domain or email)"
         )
     except Exception as e:
-        await db.rollback()
         logger.exception(f"Error committing tenant creation to database: {e}")
+        await db.rollback()
         raise HTTPException(
             status_code=500,
             detail="Failed to create tenant"
@@ -228,6 +238,7 @@ async def create_new_tenant(
         id=created.id,
         tenant_id=created.tenant_id,
         schema_name=created.schema_name,
+        subscriptions=created.subscriptions,
         quotas=created.quotas,
         status=created.status.value if hasattr(created.status, "value") else str(created.status),
         token=token,
@@ -301,17 +312,15 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     try:
         await auth_db.commit()
     except IntegrityError as e:
-        await auth_db.rollback()
-        await tenant_db.rollback()
         logger.error(f"Integrity error while committing admin user to auth_db for tenant {tenant.tenant_id}: {e}")
+        await auth_db.rollback()
         raise HTTPException(
             status_code=409,
             detail="Failed to create admin user - user may already exist"
         )
     except Exception as e:
-        await auth_db.rollback()
-        await tenant_db.rollback()
         logger.exception(f"Error committing admin user to auth_db: {e}")
+        await auth_db.rollback()
         raise HTTPException(
             status_code=500,
             detail="Failed to create admin user in authentication database"
@@ -320,15 +329,15 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     try:
         await tenant_db.commit()
     except IntegrityError as e:
-        await tenant_db.rollback()
         logger.error(f"Integrity error while committing tenant verification to tenant_db for tenant {tenant.tenant_id}: {e}")
+        await tenant_db.rollback()
         raise HTTPException(
             status_code=409,
             detail="Failed to verify tenant - integrity constraint violation"
         )
     except Exception as e:
-        await tenant_db.rollback()
         logger.exception(f"Error committing tenant verification to tenant_db: {e}")
+        await tenant_db.rollback()
         raise HTTPException(
             status_code=500,
             detail="Failed to verify tenant in database"
@@ -393,15 +402,15 @@ async def resend_verification_email(
     try:
         await db.commit()
     except IntegrityError as e:
-        await db.rollback()
         logger.error(f"Integrity error while resending verification email for tenant {tenant.tenant_id}: {e}")
+        await db.rollback()
         raise HTTPException(
             status_code=409,
             detail="Failed to create verification token - integrity constraint violation"
         )
     except Exception as e:
-        await db.rollback()
         logger.exception(f"Error committing verification token resend to database: {e}")
+        await db.rollback()
         raise HTTPException(
             status_code=500,
             detail="Failed to resend verification email"
@@ -472,15 +481,15 @@ async def create_service(payload: ServiceCreateRequest,db: AsyncSession,) -> Ser
         await db.commit()
         await db.refresh(service)
     except IntegrityError as e:
-        await db.rollback()
         logger.error(f"Integrity error while creating service {payload.service_name}: {e}")
+        await db.rollback()
         raise HTTPException(
             status_code=409,
             detail=f"Service creation failed - service '{payload.service_name}' or ID {service_id} may already exist"
         )
     except Exception as e:
-        await db.rollback()
         logger.exception(f"Error committing service creation to database: {e}")
+        await db.rollback()
         raise HTTPException(
             status_code=500,
             detail="Failed to create service"
@@ -533,15 +542,15 @@ async def update_service(payload: ServiceUpdateRequest,db: AsyncSession,) -> Ser
         await db.commit()
         await db.refresh(service)
     except IntegrityError as e:
-        await db.rollback()
         logger.error(f"Integrity error while updating service {payload.service_id}: {e}")
+        await db.rollback()
         raise HTTPException(
             status_code=409,
             detail="Service update failed due to integrity constraint violation"
         )
     except Exception as e:
-        await db.rollback()
         logger.exception(f"Error committing service update to database: {e}")
+        await db.rollback()
         raise HTTPException(
             status_code=500,
             detail="Failed to update service"
@@ -588,6 +597,311 @@ async def list_service(db: AsyncSession) -> ListServicesResponse:
             )
             for s in services
         ],
+    )
+
+
+
+async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSession,) -> TenantSubscriptionResponse:
+    """
+    Add subscriptions to a tenant.
+    Fails if subscription already exists.
+    """
+
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    if tenant.status != TenantStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail="Tenant is not active")
+
+    # Validate services
+    valid_services = await db.scalars(
+        select(ServiceConfig.service_name)
+        .where(ServiceConfig.is_active.is_(True))
+    )
+    valid_services = set(valid_services.all())
+
+    print(valid_services)
+
+    invalid = set(subscriptions) - valid_services
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid subscriptions: {list(invalid)}",
+        )
+
+    current = set(tenant.subscriptions or [])
+    duplicates = current & set(subscriptions)
+
+    if duplicates:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Subscription(s) already exist: {list(duplicates)}",
+        )
+
+    updated = list(current | set(subscriptions))
+    tenant.subscriptions = updated
+
+    # Audit log
+    db.add(
+        AuditLog(
+            tenant_id=tenant.id,
+            action=AuditAction.subscription_added,
+            details={"added": subscriptions},
+        )
+    )
+
+    try:
+        await db.commit()
+        await db.refresh(tenant)
+    except IntegrityError as e:
+        logger.error(f"Integrity error while adding subscriptions for tenant {tenant.tenant_id}: {e}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Failed to add subscriptions due to integrity constraint violation",
+        )
+    except Exception as e:
+        logger.exception(f"Error committing subscription changes to database for tenant {tenant.tenant_id}: {e}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to add subscriptions",
+        )
+
+    return TenantSubscriptionResponse(
+        tenant_id=tenant.tenant_id,
+        subscriptions=tenant.subscriptions,
+    )
+
+
+
+
+
+async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSession,) -> TenantSubscriptionResponse:
+
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    current = set(tenant.subscriptions or [])
+    to_remove = set(subscriptions)
+
+    # Validate: subscriptions must exist
+    missing = to_remove - current
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Subscriptions not present for tenant: {list(missing)}",
+        )
+    
+    updated = list(current - set(subscriptions))
+    tenant.subscriptions = updated
+
+    db.add(
+        AuditLog(
+            tenant_id=tenant.id,
+            action=AuditAction.subscription_removed,
+            details={"removed": subscriptions},
+        )
+    )
+
+    try:
+        await db.commit()
+        await db.refresh(tenant)
+    except IntegrityError as e:
+        logger.error(f"Integrity error while removing subscriptions for tenant {tenant.tenant_id}: {e}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Failed to remove subscriptions due to integrity constraint violation",
+        )
+    except Exception as e:
+        logger.exception(f"Error committing subscription removal to database for tenant {tenant.tenant_id}: {e}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to remove subscriptions",
+        )
+
+    return TenantSubscriptionResponse(
+        tenant_id=tenant.tenant_id,
+        subscriptions=tenant.subscriptions,
+    )
+
+
+
+
+
+async def register_user(
+    payload: UserRegisterRequest,
+    tenant_db: AsyncSession,
+    auth_db: AsyncSession,
+    background_tasks: BackgroundTasks,
+) -> UserRegisterResponse:
+    """
+    Register a user under a tenant and create billing records
+    """
+
+    tenant = await tenant_db.scalar(select(Tenant).where(Tenant.tenant_id == payload.tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    if tenant.status != TenantStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail="Tenant is not active")
+
+    # Validate services against tenant subscriptions
+    tenant_services = set(tenant.subscriptions or [])
+    requested_services = set(payload.services)
+
+    if not requested_services:
+        raise HTTPException(status_code=400, detail="At least one service is required")
+    
+    inactive_services = set(requested_services) - tenant_services
+    if not requested_services.issubset(tenant_services):
+        raise HTTPException(
+            status_code=400,
+            detail=f"One or more services are not enabled for this tenant {inactive_services}",
+        )
+
+    # Validate services are active
+    services = await tenant_db.scalars(
+        select(ServiceConfig).where(
+            ServiceConfig.service_name.in_(requested_services),
+            ServiceConfig.is_active.is_(True),
+        )
+    )
+    services = services.all()
+
+    if len(services) != len(requested_services):
+        raise HTTPException(
+            status_code=400,
+            detail=f"One or more services are invalid or inactive services : {inactive_services}")
+
+    # Check if user already exists in AUTH DB or TENANT DB
+    # existing_auth_user = await auth_db.scalar(
+    # select(UserDB).where((UserDB.email == payload.email)| (UserDB.username == payload.username)))
+
+    # if existing_auth_user:
+    #     raise HTTPException(
+    #         status_code=409,
+    #         detail="User with given email or username already exists",
+    #     )
+    
+    existing_tenant_user = await tenant_db.scalar(
+    select(TenantUser).where(
+        TenantUser.tenant_id == tenant.tenant_id,
+        TenantUser.email == payload.email,
+        )
+    )
+
+    if existing_tenant_user:
+        raise HTTPException(status_code=409,detail="User already registered under this tenant")
+
+    # Generate / hash password
+    plain_password = payload.password or generate_random_password(length=12)
+    hashed_password = hash_password(plain_password)
+
+    # Create user in AUTH DB
+    user = UserDB(
+        email=payload.email,
+        username=payload.username,
+        hashed_password=hashed_password,
+        is_active=True,
+        is_verified=True,
+    )
+
+    try:
+        auth_db.add(user)
+        await auth_db.commit()
+        await auth_db.refresh(user)
+    except Exception as e:
+        await auth_db.rollback()
+        logger.error(f"Failed to create user in auth DB: {e}")
+        raise HTTPException(status_code=409, detail="User already exists")
+    
+
+    #Create TenantUser entry
+    tenant_user = TenantUser(
+            user_id=user.id,
+            tenant_id=tenant.tenant_id,
+            username=payload.username,
+            email=payload.email,
+            subscriptions=list(requested_services),
+            is_approved=False,
+    )
+
+    tenant_db.add(tenant_user)
+    await tenant_db.flush()
+
+    # 6️⃣ Create UserBillingRecord entries (TENANT DB)
+    billing_month = date.today().replace(day=1)
+
+    #TODO: commenting this out , need to check billing logic
+
+    # for service in services:
+    #     tenant_db.add(
+    #         UserBillingRecord(
+    #             tenant_user_id=tenant_user.id,
+    #             tenant_id=tenant.id,
+    #             user_id=user.id,
+    #             service_id=service.id,
+    #             service_name=service.service_name,
+    #             cost=0,
+    #             billing_period=billing_month,
+    #     )
+    # )
+
+    # 7️⃣ Audit log
+    tenant_db.add(
+        AuditLog(
+            tenant_id=tenant.id,
+            action=AuditAction.user_created,
+            actor=AuditActorType.SYSTEM,
+            details={
+                "username": payload.username,
+                "email": payload.email,
+                "services": list(requested_services),
+            },
+        )
+    )
+
+    try:
+        await tenant_db.commit()
+    except IntegrityError as e:
+        logger.error(f"Integrity error while registering user {payload.username} for tenant {tenant.tenant_id}: {e}")
+        await tenant_db.rollback()
+        raise HTTPException(status_code=409,detail="User registration failed due to integrity constraint violation")
+    except Exception as e:
+        logger.exception(f"Error committing user registration to database: {e}")
+        await tenant_db.rollback()
+        raise HTTPException(status_code=500,detail="Failed to register user")
+
+    # 8️⃣ Send welcome email (async)
+    background_tasks.add_task(
+        send_user_welcome_email,
+        user.id,
+        payload.email,
+        None,  # add subdomain if required
+        payload.username,
+        plain_password,
+    )
+
+    logger.info(
+        f"User registered successfully | tenant={tenant.tenant_id} | user={payload.username}"
+    )
+
+    # 9️⃣ Response
+    return UserRegisterResponse(
+        user_id=user.id,
+        tenant_id=tenant.tenant_id,
+        username=user.username,
+        email=user.email,
+        services=list(requested_services),
+        created_at=user.created_at,
     )
 
 
