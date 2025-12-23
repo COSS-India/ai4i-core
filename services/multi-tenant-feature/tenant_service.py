@@ -27,7 +27,7 @@ from models.db_models import (
     UserBillingRecord,
 )
 from models.auth_models import UserDB
-from models.enum_tenant import  TenantStatus, AuditAction , BillingStatus , AuditActorType
+from models.enum_tenant import  TenantStatus, AuditAction , BillingStatus , AuditActorType , TenantUserStatus
 from models.tenant_create import TenantRegisterRequest, TenantRegisterResponse
 from models.service_create import ServiceCreateRequest , ServiceResponse , ListServicesResponse
 from models.user_create import UserRegisterRequest, UserRegisterResponse
@@ -780,23 +780,10 @@ async def register_user(
         raise HTTPException(
             status_code=400,
             detail=f"One or more services are invalid or inactive services : {inactive_services}")
-
-    # Check if user already exists in AUTH DB or TENANT DB
-    # existing_auth_user = await auth_db.scalar(
-    # select(UserDB).where((UserDB.email == payload.email)| (UserDB.username == payload.username)))
-
-    # if existing_auth_user:
-    #     raise HTTPException(
-    #         status_code=409,
-    #         detail="User with given email or username already exists",
-    #     )
     
+    # Check if user already exists under this tenant
     existing_tenant_user = await tenant_db.scalar(
-    select(TenantUser).where(
-        TenantUser.tenant_id == tenant.tenant_id,
-        TenantUser.email == payload.email,
-        )
-    )
+    select(TenantUser).where(TenantUser.email == payload.email))
 
     if existing_tenant_user:
         raise HTTPException(status_code=409,detail="User already registered under this tenant")
@@ -823,16 +810,19 @@ async def register_user(
         logger.error(f"Failed to create user in auth DB: {e}")
         raise HTTPException(status_code=409, detail="User already exists")
     
-
-    #Create TenantUser entry
-    tenant_user = TenantUser(
-            user_id=user.id,
-            tenant_id=tenant.tenant_id,
-            username=payload.username,
-            email=payload.email,
-            subscriptions=list(requested_services),
-            is_approved=False,
-    )
+    if payload.is_approved:
+        #Create TenantUser entry only if user is approved
+        tenant_user = TenantUser(
+                user_id=user.id,
+                tenant_id=tenant.tenant_id,
+                username=payload.username,
+                email=payload.email,
+                subscriptions=list(requested_services),
+                status=TenantUserStatus.ACTIVE, 
+                is_approved=True,
+        )
+    else:
+        raise HTTPException(status_code=400, detail="User must be approved by tenant admin to register")
 
     tenant_db.add(tenant_user)
     await tenant_db.flush()
@@ -855,7 +845,6 @@ async def register_user(
     #     )
     # )
 
-    # 7️⃣ Audit log
     tenant_db.add(
         AuditLog(
             tenant_id=tenant.id,
@@ -880,7 +869,7 @@ async def register_user(
         await tenant_db.rollback()
         raise HTTPException(status_code=500,detail="Failed to register user")
 
-    # 8️⃣ Send welcome email (async)
+
     background_tasks.add_task(
         send_user_welcome_email,
         user.id,
@@ -894,8 +883,7 @@ async def register_user(
         f"User registered successfully | tenant={tenant.tenant_id} | user={payload.username}"
     )
 
-    # 9️⃣ Response
-    return UserRegisterResponse(
+    response = UserRegisterResponse(
         user_id=user.id,
         tenant_id=tenant.tenant_id,
         username=user.username,
@@ -903,6 +891,8 @@ async def register_user(
         services=list(requested_services),
         created_at=user.created_at,
     )
+
+    return response
 
 
 

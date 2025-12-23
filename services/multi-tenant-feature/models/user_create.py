@@ -10,6 +10,7 @@ class UserRegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=100)
     password: Optional[str] = Field(None, min_length=8, description="If not provided, a random password will be generated")
     services: List[str] = Field(..., example=["tts", "asr"])
+    is_approved: bool = Field(False, description="Indicates if the user is approved by tenant admin")
 
 
 
