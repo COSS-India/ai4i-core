@@ -1,3 +1,5 @@
+true = True
+
 
 # Tenants Registration Payload Example
 
@@ -23,10 +25,11 @@ resposne = {
 
 request = {
     "tenant_id": "acme-corp-55ac3d",
-    "email": "user1@acme.com",
-    "username": "user1",
+    "email": "user4@acme.com",
+    "username": "user4",
     "password": "StrongPass123",
-    "services": ["asr"]
+    "services": ["asr"],
+    "is_approved": true
   }
 
 response = {
@@ -41,7 +44,7 @@ response = {
 }
 
 # Service registration payload example 
-true = True
+
 request = {
     "service_name": "pipeline",
     "unit_type": "minute",

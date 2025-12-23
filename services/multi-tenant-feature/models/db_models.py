@@ -7,7 +7,7 @@ from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID, JSONB, TIMESTAMP
 from sqlalchemy.orm import relationship
 
-from .enum_tenant import TenantStatus , AuditAction ,BillingStatus , AuditActorType , ServiceUnitType
+from .enum_tenant import TenantStatus , AuditAction ,BillingStatus , AuditActorType , ServiceUnitType , TenantUserStatus
 from db_connection import TenantDBBase
 
 
@@ -132,7 +132,7 @@ class TenantUser(TenantDBBase):
     email = Column(String(320), nullable=False, index=True)
     subscriptions = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     is_approved = Column(Boolean, nullable=False, default=False)
-    status = Column(Enum(TenantStatus, native_enum=False, create_type=False), nullable=False, default=TenantStatus.PENDING)
+    status = Column(Enum(TenantUserStatus, native_enum=False, create_type=False), nullable=False, default=TenantStatus.PENDING)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
