@@ -1,6 +1,7 @@
-# Multi-stage Dockerfile for Speaker Diarization Service
-
-FROM python:3.11-slim as builder
+# -----------------------------
+# STAGE 1 — BUILDER
+# -----------------------------
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
@@ -13,21 +14,24 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy AI4ICore Observability Plugin
-COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+# Copy requirements (context-relative)
+COPY requirements.txt .
 
-# Copy requirements and install Python dependencies
-COPY services/speaker-diarization-service/requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Copy vendored observability plugin (must exist INSIDE service folder)
+COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 
 
-# Final runtime image
+# -----------------------------
+# STAGE 2 — RUNTIME
+# -----------------------------
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
+# Runtime dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     libpq5 \
@@ -39,32 +43,27 @@ RUN apt-get update && apt-get install -y \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
+# Non-root user
 RUN useradd --create-home --shell /bin/bash app
 
-# Copy Python packages from builder
+# Copy python packages
 COPY --from=builder /root/.local /home/app/.local
 ENV PATH=/home/app/.local/bin:$PATH
 
-# Copy AI4ICore Observability Plugin
+# Copy observability plugin
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 
-# Copy application code
-COPY services/speaker-diarization-service .
+# Copy application source (ENTIRE CONTEXT)
+COPY . .
 
-# Adjust ownership and permissions
 RUN chown -R app:app /app /home/app/.local \
     && chmod +x /home/app/.local/bin/*
 
 USER app
 
-# Expose port
 EXPOSE 8095
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8095/health || exit 1
+  CMD curl -f http://localhost:8095/health || exit 1
 
-# Run the application
 ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8095"]
-
