@@ -178,3 +178,4 @@ def configure_logging(
         # Let them propagate to root logger which has our formatter
         uvicorn_logger.propagate = True
 
+
