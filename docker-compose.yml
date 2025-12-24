@@ -1093,6 +1093,7 @@ services:
     container_name: ai4v-fluent-bit
     volumes:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
+      - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
