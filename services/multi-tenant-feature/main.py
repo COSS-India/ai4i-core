@@ -139,6 +139,11 @@ async def root():
         "description": "Multi tenant support feature"
     }
 
+@app.get("/health")
+async def health():
+    """Health check endpoint"""
+    return {"status": "healthy", "service": "multi-tenant-service"}
+
 
 if __name__ == "__main__":
     logger.info(" Starting FastAPI server on http://0.0.0.0:8001 ...")
