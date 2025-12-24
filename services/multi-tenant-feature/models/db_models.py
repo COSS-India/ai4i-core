@@ -46,7 +46,7 @@ class Tenant(TenantDBBase):
     audit_logs = relationship("AuditLog", back_populates="tenant", cascade="all, delete-orphan")
     tenant_email_verifications = relationship("TenantEmailVerification", back_populates="tenant", cascade="all, delete-orphan")
     user_billing_records = relationship("UserBillingRecord", back_populates="tenant", cascade="all, delete-orphan")
-    tenant_users = relationship("TenantUser", back_populates="tenant", cascade="all, delete-orphan")
+    tenant_users = relationship("TenantUser", back_populates="tenant",foreign_keys="TenantUser.tenant_uuid", cascade="all, delete-orphan")
 
     
     def __repr__(self):
@@ -59,7 +59,7 @@ class BillingRecord(TenantDBBase):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     billing_customer_id = Column(String(255), nullable=True)  # external billing id
-    billing_plan = Column(Numeric(10, 2), nullable=False, default=0.00)
+    cost = Column(Numeric(20, 10), nullable=False, default=0.00)
     billing_status = Column(Enum(BillingStatus, native_enum=False, create_type=False),nullable=False,default=BillingStatus.UNPAID)
     suspension_reason = Column(String(512), nullable=True)
     suspended_until = Column(TIMESTAMP(timezone=False), nullable=True)
@@ -127,6 +127,7 @@ class TenantUser(TenantDBBase):
 
     # user id from auth DB
     user_id = Column(Integer, nullable=False, index=True)
+    tenant_uuid = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     tenant_id = Column(String(255),ForeignKey("tenants.tenant_id", ondelete="CASCADE"),nullable=False,index=True)
     username = Column(String(255), nullable=False)
     email = Column(String(320), nullable=False, index=True)
@@ -136,7 +137,7 @@ class TenantUser(TenantDBBase):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
-    tenant = relationship("Tenant", back_populates="tenant_users")
+    tenant = relationship("Tenant", back_populates="tenant_users" , foreign_keys=[tenant_uuid])
     billing_records = relationship("UserBillingRecord",back_populates="tenant_users",cascade="all, delete-orphan")
 
     def __repr__(self):
@@ -152,8 +153,9 @@ class UserBillingRecord(TenantDBBase):
     tenant_id = Column(String(255), ForeignKey("tenants.tenant_id", ondelete="CASCADE"), nullable=False)
     service_name = Column(String(50), nullable=False)
     service_id = Column(BigInteger, ForeignKey("service_config.id"), nullable=False)
-    cost = Column(Numeric(10, 5), nullable=False)
+    cost = Column(Numeric(20, 10), nullable=False, default=0.00)
     billing_period = Column(Date, nullable=False)  # 2025-12
+    status = Column(Enum(TenantUserStatus, native_enum=False, create_type=False), nullable=False, default=TenantStatus.PENDING)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
