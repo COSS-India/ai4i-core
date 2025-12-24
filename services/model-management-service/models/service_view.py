@@ -15,10 +15,12 @@ class ServiceResponse(BaseModel):
     hardwareDescription: str
     publishedOn: int
     modelId: str
+    modelVersion: str  # Which version of the model the service uses
     endpoint: Optional[str] = None
     api_key: Optional[str] = None
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
+    availableVersions: Optional[List[str]] = None  # Other versions of the same model that the service could switch to
 
 
 class _ServiceUsage(BaseModel):

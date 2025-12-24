@@ -8,7 +8,14 @@ from middleware.exceptions import (
     AuthenticationError, 
     AuthorizationError, 
     RateLimitExceededError,
-    ErrorDetail
+    ErrorDetail,
+    VersionAlreadyExistsError,
+    VersionNotFoundError,
+    ImmutableVersionError,
+    ActiveVersionLimitExceededError,
+    InvalidVersionFormatError,
+    DeprecatedVersionError,
+    ServiceVersionSwitchError
 )
 
 import time
@@ -100,3 +107,94 @@ def add_error_handlers(app: FastAPI) -> None:
                 "type": err.get("type", "")
             })
         return JSONResponse(status_code=422, content={"detail": errors})
+    
+    @app.exception_handler(VersionAlreadyExistsError)
+    async def version_exists_error_handler(request: Request, exc: VersionAlreadyExistsError):
+        """Handle version already exists errors."""
+        error_detail = ErrorDetail(
+            message=str(exc.detail),
+            code="VERSION_ALREADY_EXISTS",
+            timestamp=time.time()
+        )
+        return JSONResponse(
+            status_code=409,
+            content={"detail": error_detail.dict()}
+        )
+    
+    @app.exception_handler(VersionNotFoundError)
+    async def version_not_found_error_handler(request: Request, exc: VersionNotFoundError):
+        """Handle version not found errors."""
+        error_detail = ErrorDetail(
+            message=str(exc.detail),
+            code="VERSION_NOT_FOUND",
+            timestamp=time.time()
+        )
+        return JSONResponse(
+            status_code=404,
+            content={"detail": error_detail.dict()}
+        )
+    
+    @app.exception_handler(ImmutableVersionError)
+    async def immutable_version_error_handler(request: Request, exc: ImmutableVersionError):
+        """Handle immutable version modification attempts."""
+        error_detail = ErrorDetail(
+            message=str(exc.detail),
+            code="IMMUTABLE_VERSION",
+            timestamp=time.time()
+        )
+        return JSONResponse(
+            status_code=403,
+            content={"detail": error_detail.dict()}
+        )
+    
+    @app.exception_handler(ActiveVersionLimitExceededError)
+    async def version_limit_error_handler(request: Request, exc: ActiveVersionLimitExceededError):
+        """Handle active version limit exceeded errors."""
+        error_detail = ErrorDetail(
+            message=str(exc.detail),
+            code="ACTIVE_VERSION_LIMIT_EXCEEDED",
+            timestamp=time.time()
+        )
+        return JSONResponse(
+            status_code=400,
+            content={"detail": error_detail.dict()}
+        )
+    
+    @app.exception_handler(InvalidVersionFormatError)
+    async def invalid_version_format_error_handler(request: Request, exc: InvalidVersionFormatError):
+        """Handle invalid version format errors."""
+        error_detail = ErrorDetail(
+            message=str(exc.detail),
+            code="INVALID_VERSION_FORMAT",
+            timestamp=time.time()
+        )
+        return JSONResponse(
+            status_code=422,
+            content={"detail": error_detail.dict()}
+        )
+    
+    @app.exception_handler(DeprecatedVersionError)
+    async def deprecated_version_error_handler(request: Request, exc: DeprecatedVersionError):
+        """Handle deprecated version usage errors."""
+        error_detail = ErrorDetail(
+            message=str(exc.detail),
+            code="DEPRECATED_VERSION",
+            timestamp=time.time()
+        )
+        return JSONResponse(
+            status_code=400,
+            content={"detail": error_detail.dict()}
+        )
+    
+    @app.exception_handler(ServiceVersionSwitchError)
+    async def service_version_switch_error_handler(request: Request, exc: ServiceVersionSwitchError):
+        """Handle service version switch errors."""
+        error_detail = ErrorDetail(
+            message=str(exc.detail),
+            code="SERVICE_VERSION_SWITCH_ERROR",
+            timestamp=time.time()
+        )
+        return JSONResponse(
+            status_code=400,
+            content={"detail": error_detail.dict()}
+        )

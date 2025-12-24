@@ -68,3 +68,52 @@ class ErrorResponse(BaseModel):
     """Error response model for consistent error responses."""
     detail: ErrorDetail
     status_code: int
+
+
+class VersionAlreadyExistsError(HTTPException):
+    """Exception raised when a model version already exists."""
+    
+    def __init__(self, message: str = "Version already exists"):
+        super().__init__(status_code=409, detail=message)
+
+
+class VersionNotFoundError(HTTPException):
+    """Exception raised when a model version is not found."""
+    
+    def __init__(self, message: str = "Version not found"):
+        super().__init__(status_code=404, detail=message)
+
+
+class ImmutableVersionError(HTTPException):
+    """Exception raised when attempting to modify an immutable version."""
+    
+    def __init__(self, message: str = "Version is immutable and cannot be modified"):
+        super().__init__(status_code=403, detail=message)
+
+
+class ActiveVersionLimitExceededError(HTTPException):
+    """Exception raised when active version limit is exceeded."""
+    
+    def __init__(self, message: str = "Active version limit exceeded"):
+        super().__init__(status_code=400, detail=message)
+
+
+class InvalidVersionFormatError(HTTPException):
+    """Exception raised when version format is invalid."""
+    
+    def __init__(self, message: str = "Invalid version format"):
+        super().__init__(status_code=422, detail=message)
+
+
+class DeprecatedVersionError(HTTPException):
+    """Exception raised for service operations on deprecated versions."""
+    
+    def __init__(self, message: str = "Version is deprecated"):
+        super().__init__(status_code=400, detail=message)
+
+
+class ServiceVersionSwitchError(HTTPException):
+    """Exception raised for version switch failures."""
+    
+    def __init__(self, message: str = "Service version switch failed"):
+        super().__init__(status_code=400, detail=message)
