@@ -789,8 +789,8 @@ services:
 
   language-detection-service:
     build:
-      context: ./services/language-detection-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/language-detection-service/Dockerfile
     container_name: ai4v-language-detection-service
     ports:
       - "8098:8090"
@@ -817,8 +817,8 @@ services:
 
   speaker-diarization-service:
     build:
-      context: ./services/speaker-diarization-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/speaker-diarization-service/Dockerfile
     container_name: ai4v-speaker-diarization-service
     ports:
       - "8095:8095"
@@ -844,11 +844,11 @@ services:
 
   language-diarization-service:
     build:
-      context: ./services/language-diarization-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/language-diarization-service/Dockerfile
     container_name: ai4v-language-diarization-service
     ports:
-      - "9002:9002"
+      - "9002:8090"
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=65.1.35.3:8600
@@ -864,7 +864,7 @@ services:
     networks:
       - microservices-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9002/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -873,8 +873,8 @@ services:
 
   audio-lang-detection-service:
     build:
-      context: ./services/audio-lang-detection-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/audio-lang-detection-service/Dockerfile
     container_name: ai4v-audio-lang-detection-service
     ports:
       - "8096:8096"

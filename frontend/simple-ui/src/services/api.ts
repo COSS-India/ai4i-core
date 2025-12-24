@@ -139,8 +139,8 @@ llmApiClient.interceptors.request.use(
     // Add request start time for timing calculation
     config.headers['request-startTime'] = new Date().getTime().toString();
     
-    // Check endpoint type to determine authentication method
-    const url = config.url || '';
+    // Check endpoint type to determine authentication method (case-insensitive)
+    const url = (config.url || '').toLowerCase();
     const isLLMEndpoint = url.includes('/api/v1/llm');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     
@@ -282,26 +282,29 @@ apiClient.interceptors.request.use(
     // Add request start time for timing calculation
     config.headers['request-startTime'] = new Date().getTime().toString();
     
-    // Check endpoint type to determine authentication method
-    const url = config.url || '';
+    // Check endpoint type to determine authentication method (case-insensitive)
+    const url = (config.url || '').toLowerCase();
     const isModelManagementEndpoint = url.includes('/model-management');
     const isASREndpoint = url.includes('/api/v1/asr');
     const isNMSEndpoint = url.includes('/api/v1/nmt');
     const isTTSEndpoint = url.includes('/api/v1/tts');
     const isLLMEndpoint = url.includes('/api/v1/llm');
     const isPipelineEndpoint = url.includes('/api/v1/pipeline');
+    const isNEREndpoint = url.includes('/api/v1/ner');
+    const isOCREndpoint = url.includes('/api/v1/ocr');
+    const isTransliterationEndpoint = url.includes('/api/v1/transliteration');
+    const isLanguageDetectionEndpoint = url.includes('/api/v1/language-detection');
+    const isSpeakerDiarizationEndpoint = url.includes('/api/v1/speaker-diarization');
+    const isLanguageDiarizationEndpoint = url.includes('/api/v1/language-diarization');
+    const isAudioLangDetectionEndpoint = url.includes('/api/v1/audio-lang-detection');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     
     // Services that require JWT tokens (routed via Kong with token-validator)
     const requiresJWT = isModelManagementEndpoint || isASREndpoint || isNMSEndpoint || 
                         isTTSEndpoint || isLLMEndpoint || isPipelineEndpoint ||
-                        url.includes('/api/v1/audio-lang-detection') ||
-                        url.includes('/api/v1/language-detection') ||
-                        url.includes('/api/v1/language-diarization') ||
-                        url.includes('/api/v1/speaker-diarization') ||
-                        url.includes('/api/v1/ner') ||
-                        url.includes('/api/v1/ocr') ||
-                        url.includes('/api/v1/transliteration');
+                        isAudioLangDetectionEndpoint || isLanguageDetectionEndpoint ||
+                        isLanguageDiarizationEndpoint || isSpeakerDiarizationEndpoint ||
+                        isNEREndpoint || isOCREndpoint || isTransliterationEndpoint;
     
     if (requiresJWT && !isAuthEndpoint) {
       // For services that require JWT tokens, use JWT token
@@ -313,8 +316,10 @@ apiClient.interceptors.request.use(
         }
       } 
       
-      // ASR, NMT, TTS, Pipeline, LLM require BOTH JWT token AND API key
-      if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint) {
+      // All services require BOTH JWT token AND API key
+      if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint || isNEREndpoint ||
+          isOCREndpoint || isTransliterationEndpoint || isLanguageDetectionEndpoint || 
+          isSpeakerDiarizationEndpoint || isLanguageDiarizationEndpoint || isAudioLangDetectionEndpoint) {
         const apiKey = getApiKey();
         if (apiKey) {
           config.headers['X-API-Key'] = apiKey;
@@ -373,7 +378,7 @@ apiClient.interceptors.response.use(
         case 401:
           // Unauthorized - handle based on endpoint type
           if (typeof window !== 'undefined') {
-            const url = error.config?.url || '';
+            const url = (error.config?.url || '').toLowerCase();
             const isModelManagementEndpoint = url.includes('/model-management');
             
             // Check if it's a service endpoint or model-management endpoint
