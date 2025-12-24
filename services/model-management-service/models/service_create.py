@@ -30,6 +30,7 @@ class ServiceCreateRequest(BaseModel):
     hardwareDescription: str
     publishedOn: int
     modelId: str
+    modelVersion: str
     endpoint: str
     api_key: str
     healthStatus: Optional[ServiceStatus] = None
