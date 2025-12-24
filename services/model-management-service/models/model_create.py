@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel , field_validator
 from models.type_enum import TaskTypeEnum
-from datetime import datetime
+from models.db_models import VersionStatus
 
 class ModelProcessingType(BaseModel):
     type: str
@@ -62,6 +62,7 @@ class Task(BaseModel):
 class ModelCreateRequest(BaseModel):
     modelId: str
     version: str
+    versionStatus: Optional[VersionStatus] = VersionStatus.ACTIVE  # Default to ACTIVE
     submittedOn: int
     updatedOn: int = None
     name: str
