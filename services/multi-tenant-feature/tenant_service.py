@@ -1,7 +1,7 @@
 from fastapi import BackgroundTasks, HTTPException
 from datetime import datetime, timezone , timedelta , date
 
-from sqlalchemy import insert , select
+from sqlalchemy import insert , select , update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError , NoResultFound
 
@@ -35,6 +35,8 @@ from models.services_update import ServiceUpdateRequest , FieldChange , ServiceU
 from models.billing_update import BillingUpdateRequest, BillingUpdateResponse
 from models.tenant_email import TenantResendEmailVerificationResponse
 from models.tenant_subscription import TenantSubscriptionResponse
+from models.tenant_status import TenantStatusUpdateRequest , TenantStatusUpdateResponse
+from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
 
 from email_service import send_welcome_email, send_verification_email , send_user_welcome_email
 
@@ -100,17 +102,11 @@ async def send_verification_link(
     except IntegrityError as e:
         await db.rollback()
         logger.error(f"Integrity error while creating verification token for tenant {created.id}: {e}")
-        raise HTTPException(
-            status_code=409,
-            detail="Verification token creation failed due to integrity constraint"
-        )
+        raise HTTPException(status_code=409,detail="Verification token creation failed")
     except Exception as e:
         await db.rollback()
         logger.exception(f"Error committing verification token to database: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to create verification token"
-        )
+        raise HTTPException(status_code=500,detail="Failed to create verification token")
 
     # verification_link = f"https://{subdomain}/tenant/verify/email?token={token}" TODO : add subdomain if required
 
@@ -222,17 +218,11 @@ async def create_new_tenant(
     except IntegrityError as e:
         logger.error(f"Integrity error while creating tenant {tenant_id}: {e}")
         await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail="Tenant creation failed due to integrity constraint (duplicate domain or email)"
-        )
+        raise HTTPException(status_code=409,detail="Tenant creation failed")
     except Exception as e:
         logger.exception(f"Error committing tenant creation to database: {e}")
         await db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to create tenant"
-        )
+        raise HTTPException(status_code=500,detail="Failed to create tenant")
 
     resposne = TenantRegisterResponse(
         id=created.id,
@@ -314,34 +304,22 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     except IntegrityError as e:
         logger.error(f"Integrity error while committing admin user to auth_db for tenant {tenant.tenant_id}: {e}")
         await auth_db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail="Failed to create admin user - user may already exist"
-        )
+        raise HTTPException(status_code=409, detail="Failed to create admin user")
     except Exception as e:
         logger.exception(f"Error committing admin user to auth_db: {e}")
         await auth_db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to create admin user in authentication database"
-        )
+        raise HTTPException(status_code=500, detail="Failed to create admin user in authentication database")
 
     try:
         await tenant_db.commit()
     except IntegrityError as e:
         logger.error(f"Integrity error while committing tenant verification to tenant_db for tenant {tenant.tenant_id}: {e}")
         await tenant_db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail="Failed to verify tenant - integrity constraint violation"
-        )
+        raise HTTPException(status_code=409, detail="Failed to verify tenant")
     except Exception as e:
         logger.exception(f"Error committing tenant verification to tenant_db: {e}")
         await tenant_db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to verify tenant in database"
-        )
+        raise HTTPException(status_code=500, detail="Failed to verify tenant in database")
 
     await tenant_db.refresh(tenant)
 
@@ -386,8 +364,8 @@ async def resend_verification_email(
     if tenant.status == TenantStatus.SUSPENDED:
         raise ValueError("Tenant is suspended. Contact support.")
     
-    if tenant.status == TenantStatus.ARCHIVED:
-        raise ValueError("Tenant is archived. Contact support.")
+    # if tenant.status == TenantStatus.ARCHIVED:
+    #     raise ValueError("Tenant is archived. Contact support.")
 
     token = generate_email_verification_token()
     expiry = now_utc() + timedelta(minutes=15)  # Match the expiry time from initial verification
@@ -404,17 +382,11 @@ async def resend_verification_email(
     except IntegrityError as e:
         logger.error(f"Integrity error while resending verification email for tenant {tenant.tenant_id}: {e}")
         await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail="Failed to create verification token - integrity constraint violation"
-        )
+        raise HTTPException(status_code=409, detail="Failed to create verification token")
     except Exception as e:
         logger.exception(f"Error committing verification token resend to database: {e}")
         await db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to resend verification email"
-        )
+        raise HTTPException(status_code=500, detail="Failed to resend verification email")
 
     # verification_link = f"https://{tenant.subdomain}/verify-email?token={token}" # TODO : add subdomain if required
 
@@ -483,17 +455,11 @@ async def create_service(payload: ServiceCreateRequest,db: AsyncSession,) -> Ser
     except IntegrityError as e:
         logger.error(f"Integrity error while creating service {payload.service_name}: {e}")
         await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail=f"Service creation failed - service '{payload.service_name}' or ID {service_id} may already exist"
-        )
+        raise HTTPException(status_code=409,detail=f"Service creation failed - service '{payload.service_name}' or ID {service_id} may already exist")
     except Exception as e:
         logger.exception(f"Error committing service creation to database: {e}")
         await db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to create service"
-        )
+        raise HTTPException(status_code=500, detail="Failed to create service")
 
     response  = ServiceResponse(
             id=service.id,
@@ -544,17 +510,12 @@ async def update_service(payload: ServiceUpdateRequest,db: AsyncSession,) -> Ser
     except IntegrityError as e:
         logger.error(f"Integrity error while updating service {payload.service_id}: {e}")
         await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail="Service update failed due to integrity constraint violation"
+        raise HTTPException(status_code=409, detail="Service update failed"
         )
     except Exception as e:
         logger.exception(f"Error committing service update to database: {e}")
         await db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to update service"
-        )
+        raise HTTPException(status_code=500, detail="Failed to update service")
 
     logger.info(f"Service pricing updated. Service ID={service.id}, Changes={changes}")
 
@@ -658,17 +619,11 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
     except IntegrityError as e:
         logger.error(f"Integrity error while adding subscriptions for tenant {tenant.tenant_id}: {e}")
         await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail="Failed to add subscriptions due to integrity constraint violation",
-        )
+        raise HTTPException(status_code=409, detail="Failed to add subscriptions")
     except Exception as e:
         logger.exception(f"Error committing subscription changes to database for tenant {tenant.tenant_id}: {e}")
         await db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to add subscriptions",
-        )
+        raise HTTPException(status_code=500, detail="Failed to add subscriptions")
 
     return TenantSubscriptionResponse(
         tenant_id=tenant.tenant_id,
@@ -714,17 +669,11 @@ async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: Async
     except IntegrityError as e:
         logger.error(f"Integrity error while removing subscriptions for tenant {tenant.tenant_id}: {e}")
         await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail="Failed to remove subscriptions due to integrity constraint violation",
-        )
+        raise HTTPException(status_code=409, detail="Failed to remove subscriptions")
     except Exception as e:
         logger.exception(f"Error committing subscription removal to database for tenant {tenant.tenant_id}: {e}")
         await db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to remove subscriptions",
-        )
+        raise HTTPException(status_code=500, detail="Failed to remove subscriptions")
 
     return TenantSubscriptionResponse(
         tenant_id=tenant.tenant_id,
@@ -814,6 +763,7 @@ async def register_user(
         #Create TenantUser entry only if user is approved
         tenant_user = TenantUser(
                 user_id=user.id,
+                tenant_uuid=tenant.id,
                 tenant_id=tenant.tenant_id,
                 username=payload.username,
                 email=payload.email,
@@ -832,18 +782,18 @@ async def register_user(
 
     #TODO: commenting this out , need to check billing logic
 
-    # for service in services:
-    #     tenant_db.add(
-    #         UserBillingRecord(
-    #             tenant_user_id=tenant_user.id,
-    #             tenant_id=tenant.id,
-    #             user_id=user.id,
-    #             service_id=service.id,
-    #             service_name=service.service_name,
-    #             cost=0,
-    #             billing_period=billing_month,
-    #     )
-    # )
+    for service in services:
+        tenant_db.add(
+            UserBillingRecord(
+                user_id=tenant_user.id,
+                tenant_id=tenant.tenant_id,
+                service_id=service.id,
+                service_name=service.service_name,
+                cost=0,
+                billing_period=billing_month,
+                status=TenantUserStatus.ACTIVE
+        )
+    )
 
     tenant_db.add(
         AuditLog(
@@ -863,11 +813,11 @@ async def register_user(
     except IntegrityError as e:
         logger.error(f"Integrity error while registering user {payload.username} for tenant {tenant.tenant_id}: {e}")
         await tenant_db.rollback()
-        raise HTTPException(status_code=409,detail="User registration failed due to integrity constraint violation")
+        raise HTTPException(status_code=409, detail="User registration failed")
     except Exception as e:
         logger.exception(f"Error committing user registration to database: {e}")
         await tenant_db.rollback()
-        raise HTTPException(status_code=500,detail="Failed to register user")
+        raise HTTPException(status_code=500, detail="Failed to register user")
 
 
     background_tasks.add_task(
@@ -894,6 +844,184 @@ async def register_user(
 
     return response
 
+
+async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSession) -> TenantStatusUpdateResponse:
+    """
+    Update tenant status and cascade to tenant users and billing records.
+    """
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == payload.tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    old_status = tenant.status
+    new_status = payload.status
+
+    if old_status == new_status:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tenant already in {new_status} state",
+        )
+
+    tenant.status = new_status
+
+    # Cascade user status for this tenant
+    if new_status == TenantStatus.SUSPENDED:
+        await db.execute(
+            update(TenantUser)
+            .where(TenantUser.tenant_id == payload.tenant_id)
+            .values(status=TenantUserStatus.SUSPENDED)
+        )
+        # Mark all user billing records for this tenant as suspended
+        await db.execute(
+            update(UserBillingRecord)
+            .where(UserBillingRecord.tenant_id == payload.tenant_id)
+            .values(status=TenantUserStatus.SUSPENDED)
+        )
+    elif new_status == TenantStatus.ACTIVE:
+        await db.execute(
+            update(TenantUser)
+            .where(TenantUser.tenant_id == payload.tenant_id)
+            .values(status=TenantUserStatus.ACTIVE)
+        )
+        # Reactivate user billing records
+        await db.execute(
+            update(UserBillingRecord)
+            .where(UserBillingRecord.tenant_id == payload.tenant_id)
+            .values(status=TenantUserStatus.ACTIVE)
+        )
+
+    # Update tenant-level billing record status if it exists
+    billing_record = await db.scalar(select(BillingRecord).where(BillingRecord.tenant_id == tenant.id))
+    if billing_record:
+        if new_status == TenantStatus.SUSPENDED:
+            billing_record.billing_status = BillingStatus.OVERDUE
+            billing_record.suspension_reason = payload.reason if payload.reason else ""
+            billing_record.suspended_until = payload.suspended_until or None
+        elif new_status == TenantStatus.ACTIVE:
+            # When reactivating, mark as UNPAID if it was overdue/pending
+            if billing_record.billing_status in {
+                BillingStatus.OVERDUE,
+                BillingStatus.UNPAID,
+                BillingStatus.PENDING,
+            }:
+                billing_record.billing_status = BillingStatus.PAID
+            billing_record.suspension_reason = None
+            billing_record.suspended_until = None
+
+    # Audit log for tenant status change
+    db.add(
+        AuditLog(
+            tenant_id=tenant.id,
+            action=(
+                AuditAction.tenant_suspended
+                if new_status == TenantStatus.SUSPENDED
+                else AuditAction.tenant_updated
+            ),
+            actor=AuditActorType.SYSTEM,
+            details={
+                "old_status": old_status,
+                "new_status": new_status,
+                "reason": payload.reason,
+            },
+        )
+    )
+
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Integrity error while updating tenant status | tenant={payload.tenant_id}: {e}")
+        raise HTTPException(status_code=409, detail="Tenant status update failed")
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error committing tenant status update to database | tenant={payload.tenant_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update tenant status")
+    
+    response = TenantStatusUpdateResponse(
+        tenant_id=tenant.tenant_id,
+        old_status=old_status,
+        new_status=new_status,
+    )
+
+    return response
+
+
+
+async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: AsyncSession):
+    """
+    Update a tenant user's status and cascade to their billing records.
+    """
+    tenant_id = payload.tenant_id
+    user_id = payload.user_id
+
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    if tenant.status == TenantStatus.SUSPENDED:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot update user status while tenant is suspended",
+        )
+    
+    tenant_user = await db.scalar(select(TenantUser).where(TenantUser.tenant_id == tenant_id,TenantUser.user_id == user_id))
+
+    if not tenant_user:
+        raise HTTPException(status_code=404, detail="Tenant user not found")
+
+    if tenant_user.status == payload.status:
+        raise HTTPException(
+            status_code=400,
+            detail=f"User already {payload.status}",
+        )
+
+    old_status = tenant_user.status
+    tenant_user.status = payload.status
+
+    # Cascade status to this user's billing records
+    await db.execute(update(UserBillingRecord)
+        .where(
+            UserBillingRecord.tenant_id == tenant_id,
+            UserBillingRecord.user_id == tenant_user.id,
+        )
+        .values(status=payload.status)
+    )
+
+    # Audit log
+    db.add(
+        AuditLog(
+            tenant_id=tenant_user.tenant_uuid,
+            action=AuditAction.user_updated,
+            actor=AuditActorType.ADMIN,
+            details={
+                "user_id": user_id,
+                "old_status": old_status,
+                "new_status": payload.status,
+            },
+        )
+    )
+
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Integrity error while updating tenant user status | tenant={tenant_id} user_id={user_id}: {e}")
+        raise HTTPException(status_code=409, detail="Tenant user status update failed")
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error committing tenant user status update to database | tenant={tenant_id} user_id={user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update tenant user status")
+
+    response = TenantUserStatusUpdateResponse(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        old_status=old_status,
+        new_status=payload.status,
+    )
+
+    return response
 
 
 async def update_billing_plan(db: AsyncSession,payload: BillingUpdateRequest) -> BillingUpdateResponse:

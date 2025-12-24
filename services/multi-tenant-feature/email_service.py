@@ -19,7 +19,6 @@ LOGIN_URL = os.getenv("LOGIN_URL" ,"")
 
 async def send_welcome_email(
     tenant_id: str,
-    user_id: str,
     contact_email: str,
     subdomain: str,
     temp_admin_username: str,

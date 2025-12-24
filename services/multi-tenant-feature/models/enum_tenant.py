@@ -2,15 +2,15 @@ from enum import Enum
 
 class TenantStatus(str, Enum):
     PENDING = "PENDING"          # waiting for email verification 
-    IN_PROGRESS = "IN_PROGRESS"  # once email verified
-    ACTIVE = "ACTIVE"            # once payment done
+    IN_PROGRESS = "IN_PROGRESS"  # 
+    ACTIVE = "ACTIVE"            # once email verified
     SUSPENDED = "SUSPENDED"
     # ARCHIVED = "ARCHIVED"
     
 class TenantUserStatus(str, Enum):
-    PENDING = "PENDING"          # waiting for admin approval
-    ACTIVE = "ACTIVE"            # approved by admin
+    ACTIVE = "ACTIVE"            # user created and approved by tenant admin
     SUSPENDED = "SUSPENDED"
+
 
 class SubscriptionType(str, Enum):
     TTS = "tts"
