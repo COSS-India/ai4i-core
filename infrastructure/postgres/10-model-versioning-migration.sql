@@ -17,8 +17,24 @@ ALTER TABLE models
     ADD COLUMN IF NOT EXISTS version_status version_status NOT NULL DEFAULT 'ACTIVE',
     ADD COLUMN IF NOT EXISTS version_status_updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
 
+-- Step 2b: Make updated_on nullable (it should be NULL on creation, set on updates)
+ALTER TABLE models ALTER COLUMN updated_on DROP NOT NULL;
+
 -- Step 3: Remove unique constraint on model_id and add composite unique constraint
--- First, drop the existing unique constraint on model_id if it exists
+-- First, drop the foreign key constraint that depends on the unique constraint
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 
+        FROM pg_constraint 
+        WHERE conname = 'services_model_id_fkey' 
+        AND conrelid = 'services'::regclass
+    ) THEN
+        ALTER TABLE services DROP CONSTRAINT services_model_id_fkey;
+    END IF;
+END $$;
+
+-- Now drop the existing unique constraint on model_id if it exists
 DO $$
 BEGIN
     IF EXISTS (
@@ -55,6 +71,22 @@ SET model_version = m.version
 FROM models m
 WHERE s.model_id = m.model_id
   AND s.model_version IS NULL;
+
+-- Re-add the foreign key constraint as a composite foreign key referencing (model_id, version)
+-- This ensures services reference a specific version of a model
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 
+        FROM pg_constraint 
+        WHERE conname = 'services_model_id_fkey' 
+        AND conrelid = 'services'::regclass
+    ) THEN
+        ALTER TABLE services 
+        ADD CONSTRAINT services_model_id_fkey 
+        FOREIGN KEY (model_id, model_version) REFERENCES models(model_id, version);
+    END IF;
+END $$;
 
 -- Step 6: Make model_version NOT NULL after populating existing data
 -- First check if there are any NULL values
