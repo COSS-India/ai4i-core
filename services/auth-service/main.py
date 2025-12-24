@@ -25,7 +25,7 @@ from models import (
     UserDetailResponse, PermissionResponse, UserListResponse
 )
 from pydantic import BaseModel
-from auth_utils import AuthUtils
+from auth_utils import AuthUtils, ACCESS_TOKEN_EXPIRE_MINUTES
 from oauth_utils import OAuthUtils
 from casbin_enforcer import load_policies_from_db, check_roles_permission
 
@@ -379,7 +379,7 @@ async def login(
     user_roles = await AuthUtils.get_user_roles(db, user.id)
     
     # Generate tokens
-    access_token_expires = timedelta(minutes=15)
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     refresh_token_expires = timedelta(days=7) if login_data.remember_me else timedelta(hours=24)
     
     access_token = AuthUtils.create_access_token(
@@ -483,7 +483,7 @@ async def refresh_token(
     user_roles = await AuthUtils.get_user_roles(db, user.id)
     
     # Generate new access token
-    access_token_expires = timedelta(minutes=15)
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = AuthUtils.create_access_token(
         data={"sub": str(user.id), "email": user.email, "username": user.username},
         expires_delta=access_token_expires,
@@ -1042,7 +1042,7 @@ async def google_callback(
         user_roles = await AuthUtils.get_user_roles(db, user.id)
         
         # 7. Generate JWT tokens
-        access_token_expires = timedelta(minutes=15)
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         refresh_token_expires = timedelta(days=7)
         
         jwt_access_token = AuthUtils.create_access_token(
