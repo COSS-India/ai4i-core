@@ -74,6 +74,8 @@ class ModelCreateRequest(BaseModel):
     inferenceEndPoint: InferenceEndPoint
     benchmarks: List[Benchmark]
     submitter: Submitter
+    releaseNotes: Optional[str] = None
+    versionStatus: str = "active"
 
     model_config = {
         "validate_by_name": True,   # replaces allow_population_by_field_name
@@ -95,4 +97,19 @@ class ModelCreateRequest(BaseModel):
                 f"Invalid task type '{v['type']}'. Valid types are: {', '.join(valid_types)}"
             )
     
+        return v
+    
+    @field_validator("version")
+    def validate_version_format(cls, v):
+        """Validate version follows semantic versioning pattern (e.g., 1.0.0)"""
+        import re
+        if not re.match(r'^\d+\.\d+\.\d+', v):
+            raise ValueError(f"Version must follow semantic versioning pattern (e.g., '1.0.0'), got: {v}")
+        return v
+    
+    @field_validator("versionStatus")
+    def validate_version_status(cls, v):
+        """Validate version status is either 'active' or 'deprecated'"""
+        if v not in ["active", "deprecated"]:
+            raise ValueError(f"versionStatus must be 'active' or 'deprecated', got: {v}")
         return v

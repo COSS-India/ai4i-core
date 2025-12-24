@@ -11,6 +11,7 @@ class ModelViewRequest(BaseModel):
 class ModelViewResponse(BaseModel):
     modelId: str
     uuid: str
+    version: str
     name: str
     description: str
     languages: List[Dict[str, Any]]
@@ -23,3 +24,7 @@ class ModelViewResponse(BaseModel):
     isPublished: bool
     publishedAt: Optional[str]
     unpublishedAt: Optional[str]
+    versionStatus: str
+    releaseNotes: Optional[str] = None
+    isImmutable: bool
+    allVersions: Optional[List[str]] = None

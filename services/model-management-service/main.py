@@ -5,7 +5,7 @@ from db_connection import create_tables , auth_db_engine, AuthDBSessionLocal , a
 from routers.router_admin import router_admin
 from routers.router_details import router_details
 from routers.router_health import router_health
-from routers.router_restful import router_restful
+from routers.router_restful import router_restful, router_services_restful
 from cache.app_cache import get_cache_connection, get_async_cache_connection
 import uvicorn
 import os
@@ -131,6 +131,7 @@ add_error_handlers(app)
 app.include_router(router_admin)
 app.include_router(router_details)
 app.include_router(router_restful)  # RESTful endpoints for frontend compatibility
+app.include_router(router_services_restful)  # RESTful service-version endpoints
 app.include_router(router_health)
 
 

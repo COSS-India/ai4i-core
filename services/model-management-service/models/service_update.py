@@ -18,6 +18,7 @@ class ServiceUpdateRequest(BaseModel):
     hardwareDescription: Optional[str] = None
     publishedOn: Optional[int] = None
     modelId: str
+    modelVersion: Optional[str] = None  # Allow switching to a different version of the same model
     endpoint: Optional[str] = None
     api_key: Optional[str] = None
     languagePair: Optional[LanguagePair] = None

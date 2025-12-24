@@ -9,7 +9,7 @@ from .model_create import (
 
 class ModelUpdateRequest(BaseModel):
     modelId: str
-    version: Optional[str] = None
+    version: Optional[str] = None  # Version cannot be changed once created, but needed for identifying which version to update
     submittedOn: Optional[int] = None
     updatedOn: Optional[int] = None
     name: Optional[str] = None
@@ -22,6 +22,7 @@ class ModelUpdateRequest(BaseModel):
     inferenceEndPoint: Optional[InferenceEndPoint] = None
     benchmarks: Optional[List[Benchmark]] = None
     submitter: Optional[Submitter] = None
+    releaseNotes: Optional[str] = None
 
     model_config = {
         "validate_by_name": True,   # replaces allow_population_by_field_name

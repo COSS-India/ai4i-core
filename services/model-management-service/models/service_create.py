@@ -30,6 +30,7 @@ class ServiceCreateRequest(BaseModel):
     hardwareDescription: str
     publishedOn: int
     modelId: str
+    modelVersion: str  # Required: specifies which version of the model the service uses
     endpoint: str
     api_key: str
     healthStatus: Optional[ServiceStatus] = None
