@@ -147,7 +147,7 @@ async def save_model_to_db(payload: ModelCreateRequest):
         now_epoch = int(time.time())
 
         payload_dict["submittedOn"] = now_epoch
-        payload_dict["updatedOn"] = now_epoch
+        payload_dict["updatedOn"] = None  
 
         # Create new model record
         new_model = Model(
@@ -156,7 +156,7 @@ async def save_model_to_db(payload: ModelCreateRequest):
             version_status=version_status,
             version_status_updated_at=datetime.now(),
             submitted_on=payload_dict.get("submittedOn"),
-            updated_on=payload_dict.get("updatedOn"),
+            updated_on=None,  # Null on creation, will be set on updates
             name=payload_dict.get("name"),
             description=payload_dict.get("description"),
             ref_url=payload_dict.get("refUrl"),
@@ -519,12 +519,22 @@ async def list_all_models(task_type: TaskTypeEnum | None) -> List[Dict[str, Any]
             data = item.__dict__.copy()
             data.pop("_sa_instance_state", None)
 
+            # Extract version_status - it's an enum, need to get its value
+            version_status = data.get("version_status")
+            version_status_value = version_status.value if version_status else None
+            
+            # Extract version_status_updated_at
+            version_status_updated_at = data.get("version_status_updated_at")
+            version_status_updated_at_str = version_status_updated_at.isoformat() if version_status_updated_at else None
+
             # Build response object
             result.append({
                 "modelId": str(data.get("model_id")),
                 "uuid": str(data.get("id")),
                 "name": data.get("name"),
                 "version": data.get("version"),
+                "versionStatus": version_status_value,
+                "versionStatusUpdatedAt": version_status_updated_at_str,
                 "description": data.get("description"),
                 "languages": data.get("languages") or [],
                 "domain": data.get("domain"),

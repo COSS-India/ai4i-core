@@ -25,7 +25,7 @@ class Model(AppDBBase):
     version_status = Column(SQLEnum(VersionStatus, name='version_status'), nullable=False, default=VersionStatus.ACTIVE)
     version_status_updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     submitted_on = Column(BigInteger, nullable=False)
-    updated_on = Column(BigInteger, nullable=False)
+    updated_on = Column(BigInteger, nullable=True)
     name = Column(String(255), nullable=False)
     description = Column(Text)
     ref_url = Column(String(500))
@@ -43,7 +43,11 @@ class Model(AppDBBase):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
-    services = relationship("Service", back_populates="model")
+    services = relationship(
+        "Service",
+        back_populates="model",
+        primaryjoin="and_(Model.model_id == foreign(Service.model_id), Model.version == foreign(Service.model_version))"
+    )
 
 
 class Service(AppDBBase):
@@ -74,6 +78,8 @@ class Service(AppDBBase):
     model = relationship(
         "Model",
         back_populates="services",
-        primaryjoin="and_(Service.model_id == foreign(Model.model_id), Service.model_version == foreign(Model.version))"
+        primaryjoin="and_(foreign(Service.model_id) == Model.model_id, foreign(Service.model_version) == Model.version)",
+        foreign_keys=[model_id, model_version],
+        uselist=False
     )
 

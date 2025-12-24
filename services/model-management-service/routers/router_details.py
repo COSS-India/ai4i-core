@@ -29,7 +29,7 @@ router_details = APIRouter(
 async def view_model_request(payload: ModelViewRequest):
     
     try: 
-        data = await get_model_details(payload.modelId)
+        data = await get_model_details(payload.modelId, version=payload.version)
 
         if not data:
             raise HTTPException(status_code=404, detail="Model not found")
