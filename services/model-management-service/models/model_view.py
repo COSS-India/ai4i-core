@@ -12,6 +12,7 @@ class ModelViewResponse(BaseModel):
     modelId: str
     uuid: str
     name: str
+    version: str
     description: str
     languages: List[Dict[str, Any]]
     domain: List[str]
