@@ -14,7 +14,7 @@ request = {
 
 
 
-resposne = {
+response = {
   "id": "6b1ad5f2-1c8f-4c4a-a3b6-c7f8c0a1d2e3",
   "tenant_id": "acme-corp-4a5f1b",
   "subdomain": "acme-corp-4a5f1b.ai4i.com",
@@ -190,8 +190,17 @@ response = {
 
 request = {
     "tenant_id": "acme-corp-55ac3d",
-    "status": "ACTIVE"
+    "status": "ACTIVE",
+    "reason": "",
+    "suspended_until": null
   }
+
+# OR
+
+request = {
+    "tenant_id": "acme-corp-55ac3d",  
+    "status": "ACTIVE"
+    }
 
 response = {
     "tenant_id": "acme-corp-55ac3d",
@@ -205,7 +214,7 @@ response = {
 #################################################### Tenant User Status Update Payload Examples ######################################
 
 # Tenant User Status Update Payload Examples
-request{
+request = {
     "tenant_id": "acme-corp-55ac3d",
     "user_id": 23,
     "status": "SUSPENDED"
