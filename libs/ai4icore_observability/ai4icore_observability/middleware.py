@@ -70,8 +70,15 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # Detect service type
         service_type = self._detect_service_type(path)
         
-        # Extract real character count for TTS, translation, ASR, OCR, Transliteration, NER (tokens), Audio Language Detection, Text Language Detection, and Speaker Verification
-        # IMPORTANT: We need to read and restore the body to avoid consuming the stream
+        # Extract real character count for TTS, translation, ASR, OCR, Transliteration, NER (tokens),
+        # Audio Language Detection, Text Language Detection, and Speaker Verification.
+        #
+        # NOTE:
+        # FastAPI/Starlette cache the request body internally, so calling request.body() here will
+        # not break downstream handlers – they will reuse the cached body rather than re-reading
+        # the ASGI stream. This means we do NOT need to monkey‑patch request._receive or otherwise
+        # interfere with the ASGI receive cycle, which can cause "Unexpected message received:
+        # http.request" errors when combined with other BaseHTTPMiddleware layers.
         tts_characters = 0
         translation_characters = 0
         asr_audio_length = 0
@@ -85,27 +92,24 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         speaker_diarization_length = 0
         language_diarization_length = 0
         
-        if method == "POST" and service_type in ["tts", "translation", "asr", "ocr", "transliteration", "ner", "language_detection", "audio_lang_detection", "speaker_verification", "speaker_diarization", "language_diarization"]:
+        if method == "POST" and service_type in [
+            "tts",
+            "translation",
+            "asr",
+            "ocr",
+            "transliteration",
+            "ner",
+            "language_detection",
+            "audio_lang_detection",
+            "speaker_verification",
+            "speaker_diarization",
+            "language_diarization",
+        ]:
+            # Read the body once. FastAPI will cache this internally so later calls to
+            # request.body() in your endpoints / dependencies will reuse the cached data
+            # instead of touching the underlying ASGI receive again.
             if not body_already_read:
                 body_bytes = await request.body()
-            
-            # Restore the body for downstream handlers by providing a receive
-            # callable that yields the body once and then an empty message.
-            # This follows ASGI expected behaviour and avoids EndOfStream errors
-            # when downstream consumers call receive().
-            body_sent = False
-
-            async def receive() -> dict:
-                nonlocal body_sent
-                if not body_sent:
-                    body_sent = True
-                    return {"type": "http.request", "body": body_bytes, "more_body": False}
-                # After the body has been sent, indicate end of stream
-                return {"type": "http.request", "body": b"", "more_body": False}
-
-            # Attach the receive coroutine to the request so downstream can
-            # await request._receive() as expected by Starlette/FastAPI internals.
-            request._receive = receive
             
             if self.config.debug:
                 print("The service type", service_type)
@@ -868,4 +872,5 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             return 99.6 if duration < 2.5 else 95.5
         else:
             return 99.0
+
 

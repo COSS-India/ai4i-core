@@ -204,19 +204,60 @@ const LanguageDetectionPage: React.FC = () => {
                   <Text fontSize="sm" fontWeight="semibold" mb={2} color="gray.700">
                     Detected Language:
                   </Text>
-                  {result.output.map((item: any, index: number) => (
-                    <Box key={index} mb={index < result.output.length - 1 ? 3 : 0}>
-                      {item.source && (
-                        <Text fontSize="xs" color="gray.600" mb={1}>
-                          Text: {item.source}
-                        </Text>
-                      )}
-                      <Text fontSize="md" fontWeight="semibold" color="blue.700">
-                        {item.detectedLanguage || "Unknown"}
-                        {item.detectedScript && ` (${item.detectedScript} script)`}
-                      </Text>
-                    </Box>
-                  ))}
+                  {result.output.map((item: any, index: number) => {
+                    // Support both new (langPrediction[]) and legacy (detectedLanguage/detectedScript) response shapes
+                    const prediction =
+                      Array.isArray(item.langPrediction) && item.langPrediction.length > 0
+                        ? item.langPrediction[0]
+                        : null;
+
+                    let detectedLanguage = "Unknown";
+                    let detectedScript: string | undefined;
+                    let langCode: string | undefined;
+                    let confidence: number | undefined;
+
+                    if (prediction) {
+                      detectedLanguage = prediction.language || "Unknown";
+                      detectedScript = prediction.scriptCode;
+                      langCode = prediction.langCode;
+                      confidence = prediction.langScore;
+                    } else {
+                      // Fallback to legacy/alternate fields if present
+                      detectedLanguage =
+                        item.detectedLanguage ||
+                        item.language ||
+                        "Unknown";
+                      detectedScript =
+                        item.detectedScript ||
+                        item.scriptCode ||
+                        item.script;
+                      langCode = item.langCode;
+                      confidence = item.langScore;
+                    }
+
+                    return (
+                      <Box key={index} mb={index < result.output.length - 1 ? 3 : 0}>
+                        {item.source && (
+                          <Text fontSize="xs" color="gray.600" mb={1}>
+                            Text: {item.source}
+                          </Text>
+                        )}
+                        <VStack align="start" spacing={1}>
+                          <Text fontSize="md" fontWeight="semibold" color="blue.700">
+                            {detectedLanguage}
+                            {detectedScript && ` (${detectedScript} script)`}
+                          </Text>
+                          {langCode && (
+                            <Text fontSize="xs" color="gray.500">
+                              Code: {langCode}
+                              {confidence !== undefined &&
+                                ` • Confidence: ${(confidence * 100).toFixed(1)}%`}
+                            </Text>
+                          )}
+                        </VStack>
+                      </Box>
+                    );
+                  })}
                 </Box>
               )}
 
