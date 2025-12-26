@@ -1096,6 +1096,7 @@ services:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       # Mount Docker container logs from WSL filesystem
       # Docker installed via snap uses /var/snap/docker/common/var-lib-docker as root
+      - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
       - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
     networks:
       - microservices-network
