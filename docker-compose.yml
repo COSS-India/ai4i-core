@@ -1091,10 +1091,12 @@ services:
   fluent-bit:
     image: fluent/fluent-bit:latest
     container_name: ai4v-fluent-bit
+    user: root  # Required to access Docker container logs
     volumes:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Mount Docker container logs from WSL filesystem
+      # Docker installed via snap uses /var/snap/docker/common/var-lib-docker as root
+      - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
     networks:
       - microservices-network
     depends_on:
