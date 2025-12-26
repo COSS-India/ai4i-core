@@ -274,26 +274,34 @@ async def AuthProvider(
     
     # Handle BOTH Bearer token AND API key (already validated by API Gateway)
     if auth_source == "BOTH":
-        # Validate Bearer token to get user info
-        bearer_result = await authenticate_bearer_token(request, authorization)
-        
-        # Extract API key
-        api_key = x_api_key or get_api_key_from_header(authorization)
-        if not api_key:
-            raise AuthenticationError("Missing API key")
-        
-        # Validate API key permissions via auth-service (skip database lookup)
-        service, action = determine_service_and_action(request)
-        await validate_api_key_permissions(api_key, service, action)
-        
-        # Populate request state with auth context from Bearer token
-        request.state.user_id = bearer_result.get("user_id")
-        request.state.api_key_id = None  # Not needed when using BOTH
-        request.state.api_key_name = None
-        request.state.user_email = bearer_result.get("user", {}).get("email")
-        request.state.is_authenticated = True
-        
-        return bearer_result
+        try:
+            # Validate Bearer token to get user info
+            bearer_result = await authenticate_bearer_token(request, authorization)
+            
+            # Extract API key
+            api_key = x_api_key or get_api_key_from_header(authorization)
+            if not api_key:
+                raise AuthenticationError("Missing API key")
+            
+            # Validate API key permissions via auth-service (skip database lookup)
+            service, action = determine_service_and_action(request)
+            logger.debug(f"Validating API key permissions for service={service}, action={action}")
+            await validate_api_key_permissions(api_key, service, action)
+            
+            # Populate request state with auth context from Bearer token
+            request.state.user_id = bearer_result.get("user_id")
+            request.state.api_key_id = None  # Not needed when using BOTH
+            request.state.api_key_name = None
+            request.state.user_email = bearer_result.get("user", {}).get("email")
+            request.state.is_authenticated = True
+            
+            return bearer_result
+        except (AuthenticationError, AuthorizationError) as e:
+            logger.error(f"Authentication/Authorization error in BOTH mode: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in BOTH authentication mode: {e}", exc_info=True)
+            raise AuthenticationError(f"Authentication failed: {str(e)}")
     
     # Handle API key authentication (requires permission check)
     try:
