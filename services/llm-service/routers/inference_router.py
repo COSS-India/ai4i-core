@@ -32,13 +32,71 @@ async def get_db_session(request: Request) -> AsyncSession:
 
 
 async def get_llm_service(request: Request, db: AsyncSession = Depends(get_db_session)) -> LLMService:
-    """Dependency to get configured LLM service"""
+    """
+    Dependency to get configured LLM service.
+    
+    REQUIRES Model Management database resolution - no environment variable fallback.
+    Request must include config.serviceId for Model Management to resolve endpoint and model.
+    """
     repository = LLMRepository(db)
-    triton_client = TritonClient(
-        triton_url=request.app.state.triton_endpoint,
-        api_key=request.app.state.triton_api_key,
-        timeout=getattr(request.app.state, 'triton_timeout', 300.0)
+    
+    triton_endpoint = getattr(request.state, "triton_endpoint", None)
+    triton_api_key = getattr(request.app.state, "triton_api_key", "")
+    triton_timeout = getattr(request.app.state, "triton_timeout", 300.0)
+    
+    if not triton_endpoint:
+        service_id = getattr(request.state, "service_id", None)
+        model_mgmt_error = getattr(request.state, "model_management_error", None)
+        
+        if service_id:
+            error_detail = (
+                f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
+                f"Please ensure the service is registered in Model Management database."
+            )
+            if model_mgmt_error:
+                error_detail += f" Error: {model_mgmt_error}"
+            raise HTTPException(
+                status_code=500,
+                detail=error_detail,
+            )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Request must include config.serviceId. "
+                "LLM service requires Model Management database resolution."
+            ),
+        )
+    
+    model_name = getattr(request.state, "triton_model_name", None)
+    
+    if not model_name or model_name == "unknown":
+        service_id = getattr(request.state, "service_id", None)
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Model Management failed to resolve Triton model name for serviceId: {service_id}. "
+                f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+            ),
+        )
+    
+    logger.info(
+        "Using Triton endpoint=%s model_name=%s for serviceId=%s from Model Management",
+        triton_endpoint,
+        model_name,
+        getattr(request.state, "service_id", "unknown"),
     )
+    
+    # Strip http:// or https:// scheme from URL if present (TritonClient expects host:port)
+    triton_url = triton_endpoint
+    if triton_url.startswith(('http://', 'https://')):
+        triton_url = triton_url.split('://', 1)[1]
+    
+    triton_client = TritonClient(
+        triton_url=triton_url,
+        api_key=triton_api_key,
+        timeout=triton_timeout
+    )
+    
     return LLMService(repository, triton_client)
 
 

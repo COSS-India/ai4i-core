@@ -46,18 +46,10 @@ async def health_check(request: Request) -> Dict[str, Any]:
             postgres_status = "unhealthy"
         
         # Check Triton server
-        triton_status = "healthy"
-        try:
-            triton_client = TritonClient(
-                triton_url=request.app.state.triton_endpoint,
-                api_key=request.app.state.triton_api_key,
-                timeout=getattr(request.app.state, 'triton_timeout', 300.0)
-            )
-            if not triton_client.is_server_ready():
-                triton_status = "unhealthy"
-        except Exception as e:
-            logger.error(f"Triton health check failed: {e}")
-            triton_status = "unhealthy"
+        # NOTE: Triton endpoint must come from Model Management - no default endpoint available
+        # Health check cannot verify Triton without a serviceId, so mark as unavailable
+        triton_status = "unavailable"
+        # Triton connectivity will be verified during actual inference requests via Model Management
         
         # Determine overall status
         overall_status = "healthy" if all(
@@ -109,17 +101,9 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
         if not hasattr(request.app.state, 'db_engine') or not request.app.state.db_engine:
             raise HTTPException(status_code=503, detail="Database engine not initialized")
         
-        if not hasattr(request.app.state, 'triton_endpoint') or not request.app.state.triton_endpoint:
-            raise HTTPException(status_code=503, detail="Triton endpoint not configured")
-        
-        # Check that Triton server is ready
-        triton_client = TritonClient(
-            triton_url=request.app.state.triton_endpoint,
-            api_key=request.app.state.triton_api_key
-        )
-        
-        if not triton_client.is_server_ready():
-            raise HTTPException(status_code=503, detail="Triton server not ready")
+        # NOTE: Triton endpoint comes from Model Management per-request, not from app.state
+        # Readiness check verifies that Model Management middleware is configured
+        # Actual Triton connectivity is verified during inference requests
         
         return {
             "status": "ready",

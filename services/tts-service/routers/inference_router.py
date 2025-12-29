@@ -36,36 +36,75 @@ inference_router = APIRouter(
 )
 
 
-async def get_tts_service(db: AsyncSession = Depends(get_db_session)) -> TTSService:
-    """Dependency to get configured TTS service."""
-    try:
-        # Create repository
-        repository = TTSRepository(db)
+async def get_tts_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db_session)
+) -> TTSService:
+    """
+    Dependency to get configured TTS service.
+    
+    REQUIRES Model Management database resolution - no environment variable fallback.
+    Request must include config.serviceId for Model Management to resolve endpoint and model.
+    """
+    repository = TTSRepository(db)
+    audio_service = AudioService()
+    text_service = TextService()
+    
+    triton_endpoint = getattr(request.state, "triton_endpoint", None)
+    triton_api_key = getattr(request.app.state, "triton_api_key", "")
+    triton_timeout = getattr(request.app.state, "triton_timeout", 300.0)
+    
+    if not triton_endpoint:
+        service_id = getattr(request.state, "service_id", None)
+        model_mgmt_error = getattr(request.state, "model_management_error", None)
         
-        # Create services
-        audio_service = AudioService()
-        text_service = TextService()
-        
-        # Create Triton client
-        import os
-        triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-        # Strip http:// or https:// scheme from URL (like ASR service)
-        if triton_url.startswith(('http://', 'https://')):
-            triton_url = triton_url.split('://', 1)[1]
-        triton_api_key = os.getenv("TRITON_API_KEY")
-        triton_client = TritonClient(triton_url, triton_api_key)
-        
-        # Create TTS service
-        tts_service = TTSService(repository, audio_service, text_service, triton_client)
-        
-        return tts_service
-        
-    except Exception as e:
-        logger.error(f"Failed to create TTS service: {e}")
+        if service_id:
+            error_detail = (
+                f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
+                f"Please ensure the service is registered in Model Management database."
+            )
+            if model_mgmt_error:
+                error_detail += f" Error: {model_mgmt_error}"
+            raise HTTPException(
+                status_code=500,
+                detail=error_detail,
+            )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to initialize TTS service"
+            status_code=400,
+            detail=(
+                "Request must include config.serviceId. "
+                "TTS service requires Model Management database resolution."
+            ),
         )
+    
+    model_name = getattr(request.state, "triton_model_name", None)
+    
+    if not model_name or model_name == "unknown":
+        service_id = getattr(request.state, "service_id", None)
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Model Management failed to resolve Triton model name for serviceId: {service_id}. "
+                f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+            ),
+        )
+    
+    logger.info(
+        "Using Triton endpoint=%s model_name=%s for serviceId=%s from Model Management",
+        triton_endpoint,
+        model_name,
+        getattr(request.state, "service_id", "unknown"),
+    )
+    
+    # Strip http:// or https:// scheme from URL if present (TritonClient expects host:port)
+    triton_url = triton_endpoint
+    if triton_url.startswith(('http://', 'https://')):
+        triton_url = triton_url.split('://', 1)[1]
+    
+    triton_client = TritonClient(triton_url, triton_api_key)
+    
+    # Create TTS service
+    return TTSService(repository, audio_service, text_service, triton_client)
 
 
 @inference_router.post(
