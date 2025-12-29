@@ -45,6 +45,8 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
+# Allow connections from all network interfaces (required for Docker)
+ENV HOSTNAME=0.0.0.0
 
 RUN addgroup --system --gid 1001 nodejs \
  && adduser --system --uid 1001 nextjs
@@ -52,6 +54,10 @@ RUN addgroup --system --gid 1001 nodejs \
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Fix the standalone server.js to use HOSTNAME env var instead of hardcoded 'localhost'
+# This is needed because Next.js 13.1.x standalone builds hardcode hostname: 'localhost'
+RUN sed -i "s/hostname: 'localhost'/hostname: process.env.HOSTNAME || '0.0.0.0'/g" server.js
 
 USER nextjs
 

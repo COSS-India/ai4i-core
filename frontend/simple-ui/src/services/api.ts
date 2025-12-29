@@ -139,8 +139,8 @@ llmApiClient.interceptors.request.use(
     // Add request start time for timing calculation
     config.headers['request-startTime'] = new Date().getTime().toString();
     
-    // Check endpoint type to determine authentication method
-    const url = config.url || '';
+    // Check endpoint type to determine authentication method (case-insensitive)
+    const url = (config.url || '').toLowerCase();
     const isLLMEndpoint = url.includes('/api/v1/llm');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     
@@ -184,14 +184,14 @@ llmApiClient.interceptors.response.use(
     return response;
   },
   (error: AxiosError) => {
-    // Handle errors same way as apiClient
+    // Don't automatically logout on 401 for service endpoints
+    // Let the UI handle the error and show appropriate messages
+    // This prevents users from being logged out when API key is missing/invalid
     if (error.response) {
-      const { status, data } = error.response;
-      if (status === 401 && typeof window !== 'undefined') {
-        // Clear JWT tokens on 401 (unauthorized)
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        window.location.href = '/';
+      const { status } = error.response;
+      if (status === 401) {
+        // Log the error but don't logout - let UI handle it
+        console.warn('LLM service returned 401 - check API key and authentication');
       }
     }
     return Promise.reject(error);
@@ -211,7 +211,13 @@ asrApiClient.interceptors.request.use(
     const apiKey = getApiKey();
     if (apiKey) {
       config.headers['X-API-Key'] = apiKey;
+      // Set x-auth-source to BOTH when both JWT token and API key are present
+      if (authToken) {
+        config.headers['x-auth-source'] = 'BOTH';
+        config.headers['X-Auth-Source'] = 'BOTH'; // Also set uppercase for consistency
+      }
     }
+    
     return config;
   },
   (error: AxiosError) => {
@@ -229,14 +235,14 @@ asrApiClient.interceptors.response.use(
     return response;
   },
   (error: AxiosError) => {
-    // Handle errors same way as apiClient
+    // Don't automatically logout on 401 for service endpoints
+    // Let the UI handle the error and show appropriate messages
+    // This prevents users from being logged out when API key is missing/invalid
     if (error.response) {
-      const { status, data } = error.response;
-      if (status === 401 && typeof window !== 'undefined') {
-        // Clear JWT tokens on 401 (unauthorized)
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        window.location.href = '/';
+      const { status } = error.response;
+      if (status === 401) {
+        // Log the error but don't logout - let UI handle it
+        console.warn('ASR service returned 401 - check API key and authentication');
       }
     }
     return Promise.reject(error);
@@ -248,7 +254,8 @@ const getJwtToken = (): string | null => {
   if (typeof window === 'undefined') return null;
   // Check both localStorage and sessionStorage for token (same logic as authService)
   const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
-  return token;
+  // Return null if token is empty or whitespace
+  return token && token.trim() !== '' ? token.trim() : null;
 };
 
 // Flag to prevent infinite refresh loops
@@ -275,26 +282,29 @@ apiClient.interceptors.request.use(
     // Add request start time for timing calculation
     config.headers['request-startTime'] = new Date().getTime().toString();
     
-    // Check endpoint type to determine authentication method
-    const url = config.url || '';
+    // Check endpoint type to determine authentication method (case-insensitive)
+    const url = (config.url || '').toLowerCase();
     const isModelManagementEndpoint = url.includes('/model-management');
     const isASREndpoint = url.includes('/api/v1/asr');
     const isNMSEndpoint = url.includes('/api/v1/nmt');
     const isTTSEndpoint = url.includes('/api/v1/tts');
     const isLLMEndpoint = url.includes('/api/v1/llm');
     const isPipelineEndpoint = url.includes('/api/v1/pipeline');
+    const isNEREndpoint = url.includes('/api/v1/ner');
+    const isOCREndpoint = url.includes('/api/v1/ocr');
+    const isTransliterationEndpoint = url.includes('/api/v1/transliteration');
+    const isLanguageDetectionEndpoint = url.includes('/api/v1/language-detection');
+    const isSpeakerDiarizationEndpoint = url.includes('/api/v1/speaker-diarization');
+    const isLanguageDiarizationEndpoint = url.includes('/api/v1/language-diarization');
+    const isAudioLangDetectionEndpoint = url.includes('/api/v1/audio-lang-detection');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     
     // Services that require JWT tokens (routed via Kong with token-validator)
     const requiresJWT = isModelManagementEndpoint || isASREndpoint || isNMSEndpoint || 
                         isTTSEndpoint || isLLMEndpoint || isPipelineEndpoint ||
-                        url.includes('/api/v1/audio-lang-detection') ||
-                        url.includes('/api/v1/language-detection') ||
-                        url.includes('/api/v1/language-diarization') ||
-                        url.includes('/api/v1/speaker-diarization') ||
-                        url.includes('/api/v1/ner') ||
-                        url.includes('/api/v1/ocr') ||
-                        url.includes('/api/v1/transliteration');
+                        isAudioLangDetectionEndpoint || isLanguageDetectionEndpoint ||
+                        isLanguageDiarizationEndpoint || isSpeakerDiarizationEndpoint ||
+                        isNEREndpoint || isOCREndpoint || isTransliterationEndpoint;
     
     if (requiresJWT && !isAuthEndpoint) {
       // For services that require JWT tokens, use JWT token
@@ -302,20 +312,32 @@ apiClient.interceptors.request.use(
       if (jwtToken) {
         config.headers['Authorization'] = `Bearer ${jwtToken}`;
         if (isModelManagementEndpoint) {
-        config.headers['x-auth-source'] = 'AUTH_TOKEN';
-      }
-      }
+          config.headers['x-auth-source'] = 'AUTH_TOKEN';
+        }
+      } 
       
-      // ASR, NMT, TTS, Pipeline, LLM require BOTH JWT token AND API key
-      if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint) {
+      // All services require BOTH JWT token AND API key
+      if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint || isNEREndpoint ||
+          isOCREndpoint || isTransliterationEndpoint || isLanguageDetectionEndpoint || 
+          isSpeakerDiarizationEndpoint || isLanguageDiarizationEndpoint || isAudioLangDetectionEndpoint) {
         const apiKey = getApiKey();
         if (apiKey) {
           config.headers['X-API-Key'] = apiKey;
           // Set X-Auth-Source to BOTH when both JWT and API key are present
+          // Use lowercase to match the model-management endpoint format
           if (jwtToken) {
+            config.headers['x-auth-source'] = 'BOTH';
+            // Also set uppercase version for consistency
             config.headers['X-Auth-Source'] = 'BOTH';
+          } else {
+            // If only API key is present (shouldn't happen for these endpoints, but handle it)
+            console.warn('API key present but JWT token missing for service endpoint:', config.url);
           }
+        } else {
+          // Log warning if API key is missing
+          console.warn('API key is missing for service endpoint:', config.url);
         }
+        
       }
     } else if (!isAuthEndpoint) {
       // For other endpoints (legacy), use API key if available
@@ -356,87 +378,135 @@ apiClient.interceptors.response.use(
         case 401:
           // Unauthorized - handle based on endpoint type
           if (typeof window !== 'undefined') {
-            const isModelManagementEndpoint = error.config?.url?.includes('/model-management');
+            const url = (error.config?.url || '').toLowerCase();
+            const isModelManagementEndpoint = url.includes('/model-management');
             
-            if (isModelManagementEndpoint) {
-              // For model-management endpoints, try to refresh token
-              if (!originalRequest._retry) {
+            // Check if it's a service endpoint or model-management endpoint
+            // These should NOT automatically logout - let the UI handle the error
+            const isServiceEndpoint = url.includes('/api/v1/asr') || 
+                                     url.includes('/api/v1/tts') ||
+                                     url.includes('/api/v1/nmt') ||
+                                     url.includes('/api/v1/llm') ||
+                                     url.includes('/api/v1/pipeline') ||
+                                     url.includes('/api/v1/ocr') ||
+                                     url.includes('/api/v1/ner') ||
+                                     url.includes('/api/v1/transliteration') ||
+                                     url.includes('/api/v1/language-detection') ||
+                                     url.includes('/api/v1/speaker-diarization') ||
+                                     url.includes('/api/v1/language-diarization') ||
+                                     url.includes('/api/v1/audio-lang-detection') ||
+                                     isModelManagementEndpoint;
+            
+            if (isServiceEndpoint || isModelManagementEndpoint) {
+              // For service endpoints and model-management endpoints
+              // Don't automatically logout - let the UI handle the error
+              
+              // Extract error message from response for better debugging
+              let errorMessage = 'Authentication failed';
+              try {
+                const errorData = (data as any);
+                if (errorData?.detail) {
+                  errorMessage = String(errorData.detail);
+                } else if (errorData?.message) {
+                  errorMessage = String(errorData.message);
+                }
+              } catch (e) {
+                // Ignore parsing errors
+              }
+              
+              // Log detailed error information
+              const jwtToken = getJwtToken();
+              const apiKey = getApiKey();
+              const endpointType = isModelManagementEndpoint ? 'model-management' : 'service';
+              console.warn(`${endpointType} endpoint 401 error:`, {
+                url,
+                errorMessage,
+                hasJWT: !!jwtToken,
+                hasAPIKey: !!apiKey,
+                jwtLength: jwtToken?.length || 0,
+                apiKeyLength: apiKey?.length || 0,
+                responseData: data,
+              });
+              
+              // Try to refresh token if it's expired (only once)
+              if (jwtToken && !originalRequest._retry) {
                 originalRequest._retry = true;
                 
-                if (isRefreshing) {
-                  // If already refreshing, queue this request
-                  return new Promise((resolve, reject) => {
-                    failedQueue.push({ resolve, reject });
-                  })
-                    .then((token) => {
-                      originalRequest.headers['Authorization'] = `Bearer ${token}`;
-                      return apiClient(originalRequest);
-                    })
-                    .catch((err) => {
-                      return Promise.reject(err);
-                    });
-                }
-                
-                isRefreshing = true;
-                
                 try {
-                  // Import authService dynamically to avoid circular dependencies
                   const { default: authService } = await import('./authService');
                   const refreshToken = authService.getRefreshToken();
                   
-                  if (!refreshToken) {
-                    throw new Error('No refresh token available');
+                  if (refreshToken) {
+                    // Try to refresh the token
+                    const response = await authService.refreshToken();
+                    const newAccessToken = response.access_token;
+                    const rememberMe = localStorage.getItem('remember_me') === 'true';
+                    authService.setAccessToken(newAccessToken, rememberMe);
+                    
+                    // Retry the request with new token
+                    originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+                    return apiClient(originalRequest);
                   }
-                  
-                  // Call refresh token API
-                  const response = await authService.refreshToken();
-                  const newAccessToken = response.access_token;
-                  
-                  // Update the token in storage
-                  const rememberMe = localStorage.getItem('remember_me') === 'true';
-                  authService.setAccessToken(newAccessToken, rememberMe);
-                  
-                  // Update the original request with new token
-                  originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
-                  
-                  // Process queued requests
-                  processQueue(null, newAccessToken);
-                  isRefreshing = false;
-                  
-                  // Retry the original request
-                  return apiClient(originalRequest);
                 } catch (refreshError) {
-                  // Refresh failed, clear tokens and logout
-                  processQueue(refreshError, null);
-                  isRefreshing = false;
+                  // Refresh failed - don't logout, just let the error propagate to the UI
+                  console.warn(`Token refresh failed for ${endpointType} endpoint:`, refreshError);
+                }
+              }
+              
+              // Enhance error with more details for UI to display
+              let enhancedErrorMessage = errorMessage;
+              if (isModelManagementEndpoint) {
+                enhancedErrorMessage = `Model management error: ${errorMessage}. Please check your authentication and try again.`;
+              } else if (!apiKey) {
+                enhancedErrorMessage = `API key is required. Please set an API key in your profile or header.`;
+              } else {
+                enhancedErrorMessage = `Authentication failed: ${errorMessage}. Please check your API key and login status.`;
+              }
+              
+              const enhancedError = new Error(enhancedErrorMessage);
+              (enhancedError as any).status = 401;
+              (enhancedError as any).response = error.response;
+              return Promise.reject(enhancedError);
+            } else {
+              // For auth endpoints only, handle with token refresh and logout if needed
+              // This is the original behavior for non-service/auth endpoints
+              if (!originalRequest._retry) {
+                originalRequest._retry = true;
+                
+                try {
+                  const { default: authService } = await import('./authService');
+                  const refreshToken = authService.getRefreshToken();
                   
-                  console.error('Token refresh failed:', refreshError);
-                  
-                  // Clear tokens and redirect to auth page
+                  if (refreshToken) {
+                    const response = await authService.refreshToken();
+                    const newAccessToken = response.access_token;
+                    const rememberMe = localStorage.getItem('remember_me') === 'true';
+                    authService.setAccessToken(newAccessToken, rememberMe);
+                    
+                    originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+                    return apiClient(originalRequest);
+                  }
+                } catch (refreshError) {
+                  // Refresh failed for auth endpoint - logout
+                  console.error('Token refresh failed for auth endpoint:', refreshError);
                   const { default: authService } = await import('./authService');
                   authService.clearAuthTokens();
                   authService.clearStoredUser();
                   
                   if (typeof window !== 'undefined') {
-                    window.location.href = '/auth';
+                    window.location.href = '/';
                   }
-                  
-                  return Promise.reject(refreshError);
                 }
               } else {
-                // Already retried, redirect to auth
+                // Already retried, logout
                 const { default: authService } = await import('./authService');
                 authService.clearAuthTokens();
                 authService.clearStoredUser();
                 
                 if (typeof window !== 'undefined') {
-                  window.location.href = '/auth';
+                  window.location.href = '/';
                 }
               }
-            } else {
-              // For other endpoints, clear API key and redirect
-              localStorage.removeItem('api_key');
-              window.location.href = '/';
             }
           }
           break;

@@ -60,15 +60,8 @@ class InvalidTokenError(AuthenticationError):
         super().__init__(message=message, status_code=401)
 
 
-class RateLimitExceeded(Exception):
-    """Raised when a client exceeds configured rate limits."""
-
-    pass
-
-
 class ErrorDetail(BaseModel):
     """Error detail model for consistent error responses."""
-
     message: str
     code: Optional[str] = None
     timestamp: float = time.time()
@@ -76,7 +69,6 @@ class ErrorDetail(BaseModel):
 
 class ErrorResponse(BaseModel):
     """Error response model for consistent error responses."""
-
     detail: ErrorDetail
     status_code: int
 
