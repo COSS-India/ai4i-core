@@ -531,15 +531,21 @@ class AuthUtils:
         db.add(new_user)
         await db.flush()  # Get user ID
         
-        # Assign default USER role
-        result = await db.execute(select(Role).where(Role.name == 'USER'))
-        user_role_obj = result.scalar_one_or_none()
-        if user_role_obj:
-            user_role = UserRole(
-                user_id=new_user.id,
-                role_id=user_role_obj.id
-            )
-            db.add(user_role)
+        # Check if user already has any role (shouldn't happen for new users, but safety check)
+        existing_roles = await db.execute(
+            select(UserRole).where(UserRole.user_id == new_user.id)
+        )
+        existing_role = existing_roles.scalar_one_or_none()
+        if not existing_role:
+            # Assign default USER role (only if no role exists - one role per user)
+            result = await db.execute(select(Role).where(Role.name == 'USER'))
+            user_role_obj = result.scalar_one_or_none()
+            if user_role_obj:
+                user_role = UserRole(
+                    user_id=new_user.id,
+                    role_id=user_role_obj.id
+                )
+                db.add(user_role)
         
         # Create OAuth provider record
         oauth_provider = OAuthProvider(
