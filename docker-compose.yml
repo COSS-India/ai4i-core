@@ -306,7 +306,9 @@ services:
       - ENV_FILE=.env
       # Swagger/OpenAPI server URL used in the generated docs
       # Prod: point Swagger to public API Gateway URL
-      - SWAGGER_SERVER_URL=http://core-v1.ai4inclusion.org:8080  
+      - SWAGGER_SERVER_URL=http://core-v1.ai4inclusion.org:8080
+      # Override AUTH_SERVICE_URL for Docker (use service name, not localhost)
+      - AUTH_SERVICE_URL=http://auth-service:8081
     env_file:
       - ./services/api-gateway-service/.env
     depends_on:

@@ -23,6 +23,7 @@ load_dotenv()
 from routers import health_router, inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
 from utils.triton_client import TritonClient
+from utils.model_management_client import ModelManagementClient
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
@@ -51,8 +52,11 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db"
 )
-TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "65.1.35.3:8200")
-TRITON_API_KEY = os.getenv("TRITON_API_KEY", "your_api_key")
+# Default Triton API key (can be overridden per-service by model management)
+TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
+# Model Management Service Configuration (REQUIRED)
+MODEL_MANAGEMENT_SERVICE_URL = os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091")
+TRANSLITERATION_ENDPOINT_CACHE_TTL = int(os.getenv("TRANSLITERATION_ENDPOINT_CACHE_TTL", "300"))
 
 # Global variables
 redis_client: Optional[redis.Redis] = None
@@ -60,6 +64,7 @@ db_engine: Optional[AsyncEngine] = None
 db_session_factory: Optional[async_sessionmaker] = None
 registry_client: Optional[ServiceRegistryHttpClient] = None
 registered_instance_id: Optional[str] = None
+model_management_client: Optional[ModelManagementClient] = None
 
 logger.info(f"Configuration loaded: REDIS_HOST={REDIS_HOST}, REDIS_PORT={REDIS_PORT}")
 logger.info(f"DATABASE_URL configured: {DATABASE_URL.split('@')[0]}@***")  # Mask password in logs
@@ -68,7 +73,7 @@ logger.info(f"DATABASE_URL configured: {DATABASE_URL.split('@')[0]}@***")  # Mas
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager for startup and shutdown"""
-    global redis_client, db_engine, db_session_factory, registry_client, registered_instance_id
+    global redis_client, db_engine, db_session_factory, registry_client, registered_instance_id, model_management_client
 
     # Startup
     logger.info("Starting Transliteration Service...")
@@ -169,12 +174,30 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Failed to connect to PostgreSQL: {e}")
         raise
 
+    # Initialize Model Management Client (REQUIRED)
+    try:
+        logger.info(f"Initializing Model Management Client with URL: {MODEL_MANAGEMENT_SERVICE_URL}")
+        model_management_client = ModelManagementClient(
+            base_url=MODEL_MANAGEMENT_SERVICE_URL,
+            cache_ttl_seconds=TRANSLITERATION_ENDPOINT_CACHE_TTL,
+            timeout=10.0
+        )
+        logger.info("✓ Model Management Client initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Model Management Client: {e}")
+        logger.error("Model Management Service is REQUIRED for transliteration service to operate.")
+        raise RuntimeError(
+            f"Failed to initialize Model Management Client: {e}. "
+            "Ensure MODEL_MANAGEMENT_SERVICE_URL is set correctly and the service is accessible."
+        )
+
     # Store in app state for middleware & routes
     app.state.redis_client = redis_client
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
-    app.state.triton_endpoint = TRITON_ENDPOINT
-    app.state.triton_api_key = TRITON_API_KEY
+    app.state.triton_api_key = TRITON_API_KEY  # Default API key for Triton clients
+    app.state.model_management_client = model_management_client
+    app.state.transliteration_endpoint_cache_ttl = TRANSLITERATION_ENDPOINT_CACHE_TTL
 
     # Register service into the central registry via config-service
     try:
@@ -219,6 +242,14 @@ async def lifespan(app: FastAPI):
                 await registry_client.deregister(service_name, registered_instance_id)
         except Exception as e:
             logger.warning("Service registry deregistration error: %s", e)
+
+        # Close model management client
+        if model_management_client:
+            try:
+                await model_management_client.close()
+                logger.info("Model Management Client closed")
+            except Exception as e:
+                logger.warning(f"Error closing Model Management Client: {e}")
 
         if redis_client:
             await redis_client.close()

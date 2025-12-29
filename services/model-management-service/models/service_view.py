@@ -1,5 +1,5 @@
 from pydantic import BaseModel , field_validator
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union, Any
 from .service_create import ServiceStatus, BenchmarkEntry
 from .model_create import ModelCreateRequest
 from datetime import datetime
@@ -18,7 +18,7 @@ class ServiceResponse(BaseModel):
     endpoint: Optional[str] = None
     api_key: Optional[str] = None
     healthStatus: Optional[ServiceStatus] = None
-    benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
+    benchmarks: Optional[Union[Dict[str, List[BenchmarkEntry]], List[Any], Dict[str, Any]]] = None
 
 
 class _ServiceUsage(BaseModel):

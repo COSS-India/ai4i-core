@@ -5,17 +5,22 @@ from models.type_enum import TaskTypeEnum
 from datetime import datetime
 
 class ModelProcessingType(BaseModel):
-    type: str
+    type: Optional[str] = None
 
 
 class Schema(BaseModel):
-    modelProcessingType: ModelProcessingType
-    request: Dict[str, Any] = {}
-    response: Dict[str, Any] = {}
+    modelProcessingType: Optional[ModelProcessingType] = None
+    request: Optional[Dict[str, Any]] = None
+    response: Optional[Dict[str, Any]] = None
 
 
 class InferenceEndPoint(BaseModel):
-    schema: Schema
+    schema_: Optional[Schema] = None  # Renamed to avoid shadowing BaseModel.schema
+    modelName: Optional[str] = None
+    format: Optional[str] = None
+    
+    class Config:
+        fields = {'schema_': 'schema'}  # Map schema_ to schema in JSON
 
 
 class Score(BaseModel):
@@ -29,13 +34,13 @@ class BenchmarkLanguage(BaseModel):
 
 
 class Benchmark(BaseModel):
-    benchmarkId: str
-    name: str
-    description: str
-    domain: str
-    createdOn: datetime
-    languages: BenchmarkLanguage
-    score: List[Score]
+    benchmarkId: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    domain: Optional[str] = None
+    createdOn: Optional[datetime] = None
+    languages: Optional[BenchmarkLanguage] = None
+    score: Optional[List[Score]] = None
 
 
 class OAuthId(BaseModel):
@@ -51,8 +56,10 @@ class TeamMember(BaseModel):
 
 class Submitter(BaseModel):
     name: str
-    aboutMe: Optional[str]
-    team: List[TeamMember]
+    aboutMe: Optional[str] = None
+    team: Optional[List[TeamMember]] = None
+    organization: Optional[str] = None
+    contact: Optional[str] = None
 
 
 class Task(BaseModel):
@@ -62,18 +69,18 @@ class Task(BaseModel):
 class ModelCreateRequest(BaseModel):
     modelId: str
     version: str
-    submittedOn: int
-    updatedOn: int = None
+    submittedOn: Optional[int] = None
+    updatedOn: Optional[int] = None
     name: str
-    description: str
-    refUrl: str
+    description: Optional[str] = None
+    refUrl: Optional[str] = None
     task: Task
-    languages: List[Dict[str, Any]]
-    license: str
-    domain: List[str]
-    inferenceEndPoint: InferenceEndPoint
-    benchmarks: List[Benchmark]
-    submitter: Submitter
+    languages: Optional[List[Dict[str, Any]]] = None
+    license: Optional[str] = None
+    domain: Optional[List[str]] = None
+    inferenceEndPoint: Optional[InferenceEndPoint] = None
+    benchmarks: Optional[List[Benchmark]] = None
+    submitter: Optional[Submitter] = None
 
     model_config = {
         "validate_by_name": True,   # replaces allow_population_by_field_name

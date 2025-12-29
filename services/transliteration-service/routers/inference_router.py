@@ -16,6 +16,8 @@ from repositories.transliteration_repository import TransliterationRepository
 from services.transliteration_service import TransliterationService
 from services.text_service import TextService
 from utils.triton_client import TritonClient
+from utils.model_management_client import ModelManagementClient
+from utils.auth_utils import extract_auth_headers
 from utils.validation_utils import (
     validate_language_pair, validate_service_id, validate_batch_size,
     InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError
@@ -47,29 +49,44 @@ def create_triton_client(triton_url: str, api_key: str) -> TritonClient:
 
 
 async def get_transliteration_service(request: Request, db: AsyncSession = Depends(get_db_session)) -> TransliterationService:
-    """Dependency to get configured transliteration service"""
+    """
+    Dependency to get configured transliteration service
+    
+    Raises:
+        HTTPException: If model management client is not available
+    """
     repository = TransliterationRepository(db)
     text_service = TextService()
-    
-    # Default Triton client
-    default_triton_client = TritonClient(
-        triton_url=request.app.state.triton_endpoint,
-        api_key=request.app.state.triton_api_key
-    )
     
     # Factory function to create Triton clients for different endpoints
     def get_triton_client_for_endpoint(endpoint: str) -> TritonClient:
         """Create Triton client for specific endpoint"""
+        # Get default API key from app state (can be overridden per-service from model management)
+        default_api_key = getattr(request.app.state, "triton_api_key", "")
         return TritonClient(
             triton_url=endpoint,
-            api_key=request.app.state.triton_api_key
+            api_key=default_api_key
         )
+    
+    # Get model management client from app state (REQUIRED)
+    model_management_client = getattr(request.app.state, "model_management_client", None)
+    if model_management_client is None:
+        logger.error("Model management client not available. Service cannot start without it.")
+        raise HTTPException(
+            status_code=503,
+            detail="Model management service is not available. The transliteration service requires model management to operate."
+        )
+    
+    redis_client = getattr(request.app.state, "redis_client", None)
+    cache_ttl = getattr(request.app.state, "transliteration_endpoint_cache_ttl", 300)
     
     return TransliterationService(
         repository, 
-        text_service, 
-        default_triton_client,
-        get_triton_client_for_endpoint
+        text_service,
+        get_triton_client_for_endpoint,
+        model_management_client,
+        redis_client=redis_client,
+        cache_ttl_seconds=cache_ttl
     )
 
 
@@ -106,6 +123,9 @@ async def run_inference(
         api_key_id = getattr(http_request.state, 'api_key_id', None)
         session_id = getattr(http_request.state, 'session_id', None)
         
+        # Extract auth headers for model management service calls
+        auth_headers = extract_auth_headers(http_request)
+        
         # Log incoming request
         logger.info(f"Processing transliteration inference request with {len(request.input)} texts")
         
@@ -119,7 +139,8 @@ async def run_inference(
             request=request,
             user_id=user_id,
             api_key_id=api_key_id,
-            session_id=session_id
+            session_id=session_id,
+            auth_headers=auth_headers
         )
         
         logger.info(f"Transliteration inference completed successfully")
