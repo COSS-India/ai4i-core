@@ -31,6 +31,7 @@ from middleware.exceptions import AuthenticationError, AuthorizationError, RateL
 
 # Observability integration - AI4ICore Observability Plugin
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
 # Import models to ensure they are registered with SQLAlchemy
 from models import database_models, auth_models
@@ -51,8 +52,10 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db"
 )
-TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "65.1.35.3:8200")
-TRITON_API_KEY = os.getenv("TRITON_API_KEY", "your_api_key")
+# NOTE: Triton endpoint/model must come from Model Management for inference.
+# These env vars are retained only for legacy health checks or debugging.
+TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "")
+TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
 
 # Global variables
 redis_client: Optional[redis.Redis] = None
@@ -273,16 +276,36 @@ app = FastAPI(
 
 # Initialize AI4ICore Observability Plugin
 # Plugin automatically extracts metrics from request bodies - no manual recording needed!
-config = PluginConfig.from_env()
-config.enabled = True  # Enable plugin
-if not config.customers:
-    config.customers = []  # Will be extracted from JWT/headers automatically
-if not config.apps:
-    config.apps = ["transliteration"]  # Service name
+obs_config = PluginConfig.from_env()
+obs_config.enabled = True  # Enable plugin
+if not obs_config.customers:
+    obs_config.customers = []  # Will be extracted from JWT/headers automatically
+if not obs_config.apps:
+    obs_config.apps = ["transliteration"]  # Service name
 
-plugin = ObservabilityPlugin(config)
-plugin.register_plugin(app)
+observability_plugin = ObservabilityPlugin(obs_config)
+observability_plugin.register_plugin(app)
 logger.info("✅ AI4ICore Observability Plugin initialized for Transliteration service")
+
+# Model Management Plugin - single source of truth for Triton endpoint/model (no env fallback)
+try:
+    mm_config = ModelManagementConfig(
+        model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
+        model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
+        cache_ttl_seconds=300,
+        triton_endpoint_cache_ttl=300,
+        # Disable default Triton fallback – Model Management must resolve everything
+        default_triton_endpoint="",
+        default_triton_api_key="",
+        middleware_enabled=True,
+        middleware_paths=["/api/v1/transliteration"],
+        request_timeout=10.0,
+    )
+    model_mgmt_plugin = ModelManagementPlugin(config=mm_config)
+    model_mgmt_plugin.register_plugin(app, redis_client=None)
+    logger.info("✅ Model Management Plugin initialized for Transliteration service")
+except Exception as e:
+    logger.warning(f"Failed to initialize Model Management Plugin: {e}")
 
 # Add CORS middleware
 app.add_middleware(
