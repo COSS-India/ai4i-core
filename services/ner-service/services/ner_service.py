@@ -34,8 +34,16 @@ class NerService:
     - Return NerInferenceResponse
     """
 
-    def __init__(self, triton_client: TritonClient):
+    def __init__(self, triton_client: TritonClient, model_name: str):
+        """
+        Initialize NER service.
+        
+        Args:
+            triton_client: Triton client instance
+            model_name: Model name (should be resolved by Model Management middleware)
+        """
         self.triton_client = triton_client
+        self.model_name = model_name
 
     def run_inference(self, request: NerInferenceRequest) -> NerInferenceResponse:
         """
@@ -59,7 +67,7 @@ class NerService:
             )
 
             response = self.triton_client.send_triton_request(
-                model_name="ner",
+                model_name=self.model_name,
                 inputs=inputs,
                 outputs=outputs,
             )

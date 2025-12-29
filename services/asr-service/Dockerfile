@@ -20,6 +20,9 @@
     # Copy AI4ICore Observability Plugin
     COPY libs/ai4icore_observability /app/libs/ai4icore_observability
     
+    # Copy AI4ICore Model Management Plugin
+    COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+    
     # Copy requirements and install dependencies
     COPY services/asr-service/requirements.txt .
     
@@ -31,6 +34,9 @@
     
     # Then install the observability plugin (after its dependencies are installed)
     RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+    
+    # Install Model Management plugin
+    RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
     
     
     # -----------------------------
@@ -58,6 +64,9 @@
     
     # Copy AI4ICore Observability Plugin
     COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+    
+    # Copy AI4ICore Model Management Plugin
+    COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
     
     # Copy application code
     COPY services/asr-service .

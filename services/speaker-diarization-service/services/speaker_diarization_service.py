@@ -89,7 +89,9 @@ class SpeakerDiarizationService:
         # Create request record if repository is available
         if self.repository:
             try:
-                model_id = request.config.serviceId if request.config else "speaker_diarization"
+                model_id = request.config.serviceId if request.config and request.config.serviceId else None
+                if not model_id:
+                    logger.warning("No serviceId provided in request config for database logging")
                 # Calculate total audio duration (estimate from base64 size if needed)
                 audio_duration = None  # Could be calculated from audio data if needed
                 num_speakers = None  # Will be determined by model

@@ -30,8 +30,16 @@ class OCRService:
       - Map OCR model output to OCRInferenceResponse
     """
 
-    def __init__(self, triton_client: TritonClient):
+    def __init__(self, triton_client: TritonClient, model_name: str):
+        """
+        Initialize OCR service.
+        
+        Args:
+            triton_client: Triton client instance
+            model_name: Model name (should be resolved by Model Management middleware)
+        """
         self.triton_client = triton_client
+        self.model_name = model_name
 
     def _resolve_image_base64(self, image: ImageInput) -> Optional[str]:
         """
