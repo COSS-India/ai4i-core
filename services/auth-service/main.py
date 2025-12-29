@@ -339,18 +339,55 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     db.add(db_user)
     await db.flush()  # Flush to ensure the user is added to the session
     
-    # Assign default USER role to new users
-    result = await db.execute(select(Role).where(Role.name == 'USER'))
-    user_role_obj = result.scalar_one_or_none()
-    if user_role_obj:
-        user_role = UserRole(user_id=db_user.id, role_id=user_role_obj.id)
-        db.add(user_role)
+    # Check if user already has any role (shouldn't happen for new users, but safety check)
+    existing_roles = await db.execute(
+        select(UserRole).where(UserRole.user_id == db_user.id)
+    )
+    existing_role = existing_roles.scalar_one_or_none()
+    if existing_role:
+        logger.warning(f"User {user_data.email} already has a role assigned. Skipping default role assignment.")
+    else:
+        # Assign default USER role to new users (only if no role exists)
+        result = await db.execute(select(Role).where(Role.name == 'USER'))
+        user_role_obj = result.scalar_one_or_none()
+        if user_role_obj:
+            user_role = UserRole(user_id=db_user.id, role_id=user_role_obj.id)
+            db.add(user_role)
+            logger.info(f"Assigned default USER role to new user: {user_data.email}")
+        else:
+            logger.warning(f"USER role not found in database. User {user_data.email} registered without default role.")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="System configuration error: Default USER role not found. Please contact administrator."
+            )
     
     await db.commit()
     await db.refresh(db_user)
     
+    # Get user roles to include in response
+    user_roles = await AuthUtils.get_user_roles(db, db_user.id)
+    
+    # Create response dict with roles
+    user_dict = {
+        "id": db_user.id,
+        "email": db_user.email,
+        "username": db_user.username,
+        "full_name": db_user.full_name,
+        "phone_number": db_user.phone_number,
+        "timezone": db_user.timezone,
+        "language": db_user.language,
+        "is_active": db_user.is_active,
+        "is_verified": db_user.is_verified,
+        "is_superuser": db_user.is_superuser,
+        "created_at": db_user.created_at,
+        "updated_at": db_user.updated_at,
+        "last_login": db_user.last_login,
+        "avatar_url": db_user.avatar_url,
+        "roles": user_roles
+    }
+    
     logger.info(f"New user registered: {user_data.email}")
-    return db_user
+    return user_dict
 
 @app.post("/api/v1/auth/login", response_model=LoginResponse)
 async def login(
@@ -1166,9 +1203,19 @@ async def assign_role(
             UserRole.role_id == role.id
         )
     )
-    existing = result.scalar_one_or_none()
-    if existing:
+    existing_same_role = result.scalar_one_or_none()
+    if existing_same_role:
         return {"message": f"User already has role '{role_data.role_name}'"}
+    
+    # Check if user has any other role (only one role per user allowed)
+    result = await db.execute(
+        select(UserRole).where(UserRole.user_id == role_data.user_id)
+    )
+    existing_role = result.scalar_one_or_none()
+    if existing_role:
+        # Remove existing role before assigning new one (only one role per user)
+        await db.delete(existing_role)
+        logger.info(f"Removed existing role from user {target_user.email} before assigning new role")
     
     # Assign role
     user_role = UserRole(user_id=role_data.user_id, role_id=role.id)
