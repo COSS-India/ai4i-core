@@ -1301,7 +1301,10 @@ def determine_service_and_action(request: Request) -> Tuple[str, str]:
 def requires_both_auth_and_api_key(request: Request) -> bool:
     """Check if service requires both Bearer token AND API key."""
     path = request.url.path.lower()
-    services_requiring_both = ["asr", "nmt", "tts", "pipeline", "llm"]
+    services_requiring_both = [
+        "asr", "nmt", "tts", "pipeline", "llm", "ner", "ocr", "transliteration",
+        "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection"
+    ]
     for svc in services_requiring_both:
         if f"/api/v1/{svc}" in path:
             return True
@@ -1395,7 +1398,7 @@ def build_auth_headers(request: Request, credentials: Optional[HTTPAuthorization
     return headers
 
 async def ensure_authenticated_for_request(req: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> None:
-    """Enforce authentication - require BOTH Bearer token AND API key for ASR, NMT, TTS, Pipeline, LLM services."""
+    """Enforce authentication - require BOTH Bearer token AND API key for all services."""
     
     requires_both = requires_both_auth_and_api_key(req)
     
@@ -1808,7 +1811,7 @@ async def api_status():
             "transliteration": os.getenv("TRANSLITERATION_SERVICE_URL", "http://transliteration-service:8090"),
             "language-detection": os.getenv("LANGUAGE_DETECTION_SERVICE_URL", "http://language-detection-service:8090"),
             "speaker-diarization": os.getenv("SPEAKER_DIARIZATION_SERVICE_URL", "http://speaker-diarization-service:8095"),
-            "language-diarization": os.getenv("LANGUAGE_DIARIZATION_SERVICE_URL", "http://language-diarization-service:9002"),
+            "language-diarization": os.getenv("LANGUAGE_DIARIZATION_SERVICE_URL", "http://language-diarization-service:8090"),
             "audio-lang-detection": os.getenv("AUDIO_LANG_DETECTION_SERVICE_URL", "http://audio-lang-detection-service:8096"),
             "model-management": os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
             "llm": os.getenv("LLM_SERVICE_URL", "http://llm-service:8090"),
@@ -3561,7 +3564,7 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'transliteration-service': os.getenv('TRANSLITERATION_SERVICE_URL', 'http://transliteration-service:8090'),
         'language-detection-service': os.getenv('LANGUAGE_DETECTION_SERVICE_URL', 'http://language-detection-service:8090'),
         'speaker-diarization-service': os.getenv('SPEAKER_DIARIZATION_SERVICE_URL', 'http://speaker-diarization-service:8095'),
-        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:9002'),
+        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:8090'),
         'audio-lang-detection-service': os.getenv('AUDIO_LANG_DETECTION_SERVICE_URL', 'http://audio-lang-detection-service:8096'),
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
@@ -3640,7 +3643,7 @@ async def proxy_to_service_with_params(
         'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
         'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),
         'speaker-diarization-service': os.getenv('SPEAKER_DIARIZATION_SERVICE_URL', 'http://speaker-diarization-service:8095'),
-        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:9002'),
+        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:8090'),
         'audio-lang-detection-service': os.getenv('AUDIO_LANG_DETECTION_SERVICE_URL', 'http://audio-lang-detection-service:8096'),
         'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
         'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),
