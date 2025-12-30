@@ -40,6 +40,7 @@ from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
+from ai4icore_model_management import ModelManagementClient
 
 # Observability integration - AI4ICore Observability Plugin
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
@@ -58,6 +59,9 @@ db_session_factory = None
 streaming_service: StreamingTTSService = None
 registry_client: ServiceRegistryHttpClient = None
 registered_instance_id: str = None
+model_management_client: ModelManagementClient = None
+TTS_ENDPOINT_CACHE_TTL = int(os.getenv("TTS_ENDPOINT_CACHE_TTL", "300"))
+MODEL_MANAGEMENT_SERVICE_URL = os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091")
 
 
 @asynccontextmanager
@@ -109,10 +113,24 @@ async def lifespan(app: FastAPI):
             await conn.execute(text("SELECT 1"))
         logger.info("PostgreSQL connection established successfully")
         
+        # Initialize Model Management Client (REQUIRED)
+        global model_management_client
+        try:
+            logger.info(f"Initializing Model Management Client with URL: {MODEL_MANAGEMENT_SERVICE_URL}")
+            model_management_client = ModelManagementClient(base_url=MODEL_MANAGEMENT_SERVICE_URL)
+            logger.info("✓ Model Management Client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Model Management Client: {e}")
+            # Model management is required for TTS service
+            raise
+        
         # Store connections in app state for middleware access
         app.state.redis_client = redis_client
         app.state.db_session_factory = db_session_factory
         app.state.db_engine = db_engine
+        app.state.model_management_client = model_management_client
+        app.state.tts_endpoint_cache_ttl = TTS_ENDPOINT_CACHE_TTL
+        app.state.triton_api_key = os.getenv("TRITON_API_KEY", "")
         
         # Update rate limiting middleware with Redis client
         for middleware in app.user_middleware:
@@ -126,12 +144,17 @@ async def lifespan(app: FastAPI):
             audio_service = AudioService()
             text_service = TextService()
             voice_service = VoiceService()
-            triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-            # Strip http:// or https:// scheme from URL (like ASR service)
-            if triton_url.startswith(('http://', 'https://')):
-                triton_url = triton_url.split('://', 1)[1]
-            triton_api_key = os.getenv("TRITON_API_KEY")
-            triton_client = TritonClient(triton_url, triton_api_key)
+            # Note: Triton client will be created dynamically via model management
+            # For streaming, we'll use a default client (can be updated later)
+            triton_api_key = os.getenv("TRITON_API_KEY", "")
+            # Create a factory function for Triton clients
+            def get_triton_client_for_endpoint(endpoint: str) -> TritonClient:
+                """Factory function to create Triton clients for different endpoints"""
+                return TritonClient(triton_url=endpoint, api_key=triton_api_key)
+            
+            # For streaming, we'll need to get the endpoint from model management
+            # For now, use a placeholder - streaming will need to be updated separately
+            triton_client = None  # Will be created dynamically when needed
             
             # Create async session for repository
             async with db_session_factory() as session:
@@ -381,23 +404,10 @@ async def health_check() -> Dict[str, Any]:
         health_status["postgres"] = "unhealthy"
     
     try:
-        # Check Triton server connectivity
-        try:
-            from utils.triton_client import TritonClient
-            triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-            # Strip http:// or https:// scheme from URL (like ASR service)
-            if triton_url.startswith(('http://', 'https://')):
-                triton_url = triton_url.split('://', 1)[1]
-            triton_api_key = os.getenv("TRITON_API_KEY")
-            triton_client = TritonClient(triton_url, triton_api_key)
-            
-            # Check if server is ready
-            if triton_client.is_server_ready():
-                health_status["triton"] = "healthy"
-            else:
-                health_status["triton"] = "unhealthy"
-        except ImportError:
-            health_status["triton"] = "unavailable"
+        # Check Triton server connectivity via model management
+        # Note: We can't check a specific endpoint without a service ID
+        # So we'll just mark it as "unknown" - actual health is checked per-request
+        health_status["triton"] = "unknown"
     except Exception as e:
         logger.error(f"Triton health check failed: {e}")
         health_status["triton"] = "unhealthy"

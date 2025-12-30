@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.tts_request import TTSInferenceRequest
 from models.tts_response import TTSInferenceResponse
 from repositories.tts_repository import TTSRepository, get_db_session
-from services.tts_service import TTSService
+from services.tts_service import TTSService, TritonInferenceError
 from services.audio_service import AudioService
 from services.text_service import TextService
 from utils.triton_client import TritonClient
@@ -25,6 +25,7 @@ from utils.validation_utils import (
     validate_audio_duration
 )
 from middleware.exceptions import AuthenticationError, AuthorizationError
+from ai4icore_model_management import ModelManagementClient, extract_auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ inference_router = APIRouter(
 )
 
 
-async def get_tts_service(db: AsyncSession = Depends(get_db_session)) -> TTSService:
+async def get_tts_service(request: Request, db: AsyncSession = Depends(get_db_session)) -> TTSService:
     """Dependency to get configured TTS service."""
     try:
         # Create repository
@@ -46,20 +47,41 @@ async def get_tts_service(db: AsyncSession = Depends(get_db_session)) -> TTSServ
         audio_service = AudioService()
         text_service = TextService()
         
-        # Create Triton client
-        import os
-        triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-        # Strip http:// or https:// scheme from URL (like ASR service)
-        if triton_url.startswith(('http://', 'https://')):
-            triton_url = triton_url.split('://', 1)[1]
-        triton_api_key = os.getenv("TRITON_API_KEY")
-        triton_client = TritonClient(triton_url, triton_api_key)
+        # Factory function to create Triton clients for different endpoints
+        def get_triton_client_for_endpoint(endpoint: str) -> TritonClient:
+            """Create Triton client for specific endpoint"""
+            import os
+            # Get default API key from app state (can be overridden per-service from model management)
+            default_api_key = getattr(request.app.state, "triton_api_key", os.getenv("TRITON_API_KEY", ""))
+            return TritonClient(triton_url=endpoint, api_key=default_api_key)
+        
+        # Get model management client from app state (REQUIRED)
+        model_management_client = getattr(request.app.state, "model_management_client", None)
+        if model_management_client is None:
+            logger.error("Model management client not available. Service cannot start without it.")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Model management service is not available. The TTS service requires model management to operate."
+            )
+        
+        redis_client = getattr(request.app.state, "redis_client", None)
+        cache_ttl = getattr(request.app.state, "tts_endpoint_cache_ttl", 300)
         
         # Create TTS service
-        tts_service = TTSService(repository, audio_service, text_service, triton_client)
+        tts_service = TTSService(
+            repository=repository,
+            audio_service=audio_service,
+            text_service=text_service,
+            get_triton_client_func=get_triton_client_for_endpoint,
+            model_management_client=model_management_client,
+            redis_client=redis_client,
+            cache_ttl_seconds=cache_ttl
+        )
         
         return tts_service
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to create TTS service: {e}")
         raise HTTPException(
@@ -89,6 +111,9 @@ async def run_inference(
         api_key_id = getattr(http_request.state, 'api_key_id', None)
         session_id = getattr(http_request.state, 'session_id', None)
         
+        # Extract auth headers for model management service calls
+        auth_headers = extract_auth_headers(http_request)
+        
         # Validate request
         await validate_request(request)
         
@@ -99,7 +124,8 @@ async def run_inference(
             request=request,
             user_id=user_id,
             api_key_id=api_key_id,
-            session_id=session_id
+            session_id=session_id,
+            auth_headers=auth_headers
         )
         
         # Log completion
@@ -109,30 +135,71 @@ async def run_inference(
         return response
         
     except ValueError as e:
+        # Handle service ID not found errors from model management service
+        error_msg = str(e)
         logger.warning(f"Validation error in TTS inference: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    except Exception as e:
-        logger.error(f"TTS inference failed: {e}")
         
-        # Return appropriate error based on exception type
-        if "Triton" in str(e):
+        if "not found" in error_msg.lower() or "does not exist" in error_msg.lower():
             raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="TTS service temporarily unavailable"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Service ID '{request.config.serviceId}' not found. Please verify the service ID is correct and registered in the model management service."
             )
-        elif "text" in str(e).lower():
+        elif "endpoint" in error_msg.lower() and ("not configured" in error_msg.lower() or "no endpoint" in error_msg.lower()):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Text processing failed"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Service ID '{request.config.serviceId}' has no endpoint configured. Please configure the endpoint in the model management service."
             )
         else:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Internal server error"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
             )
+    except TritonInferenceError as e:
+        error_msg = str(e)
+        logger.error(f"TTS Triton inference failed: {e}", exc_info=True)
+        
+        if "not found" in error_msg.lower() or "404" in error_msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Triton model not found: {error_msg}"
+            )
+        elif "connect" in error_msg.lower() or "connection" in error_msg.lower() or "refused" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Cannot connect to Triton server: {error_msg}"
+            )
+        elif "timeout" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=f"Triton inference request timed out: {error_msg}"
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"TTS service temporarily unavailable: {error_msg}"
+            )
+    except Exception as e:
+        logger.error(f"TTS inference failed: {e}", exc_info=True)
+        error_msg = str(e)
+        
+        # Service ID not found errors
+        if "service" in error_msg.lower() and ("not found" in error_msg.lower() or "does not exist" in error_msg.lower()):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Service ID '{request.config.serviceId}' not found. Please verify the service ID is correct and registered."
+            )
+        
+        # Triton endpoint errors
+        if "Triton" in error_msg or "triton" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"TTS service temporarily unavailable: {error_msg}"
+            )
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {error_msg}"
+        )
 
 
 @inference_router.get(

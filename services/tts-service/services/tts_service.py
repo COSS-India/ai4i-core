@@ -19,7 +19,9 @@ from models.tts_response import TTSInferenceResponse, AudioOutput, AudioConfig
 from repositories.tts_repository import TTSRepository
 from services.audio_service import AudioService
 from services.text_service import TextService
-from utils.triton_client import TritonClient
+from utils.triton_client import TritonClient, TritonInferenceError
+from ai4icore_model_management import ModelManagementClient, ServiceInfo
+from typing import Dict, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -37,20 +39,151 @@ class TTSService:
         repository: TTSRepository,
         audio_service: AudioService,
         text_service: TextService,
-        triton_client: TritonClient
+        get_triton_client_func,
+        model_management_client: ModelManagementClient,
+        redis_client=None,
+        cache_ttl_seconds: int = 300
     ):
         """Initialize TTS service with dependencies."""
+        if model_management_client is None:
+            raise ValueError("model_management_client is required. Model management service must be available.")
+        
         self.repository = repository
         self.audio_service = audio_service
         self.text_service = text_service
-        self.triton_client = triton_client
+        self.get_triton_client_func = get_triton_client_func
+        self.model_management_client = model_management_client
+        self.redis_client = redis_client
+        self.cache_ttl_seconds = cache_ttl_seconds
+        self._triton_clients: Dict[str, TritonClient] = {}
+        
+        # Service info cache (service_id -> (ServiceInfo, expires_at))
+        self._service_info_cache: Dict[str, Tuple[ServiceInfo, float]] = {}
+        
+        # Service registry cache (service_id -> (endpoint, model_name, expires_at))
+        self._service_registry_cache: Dict[str, Tuple[str, str, float]] = {}
+    
+    async def _get_service_info(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> ServiceInfo:
+        """Get service info from model management service with caching"""
+        # Check cache first
+        cached = self._service_info_cache.get(service_id)
+        if cached:
+            service_info, expires_at = cached
+            if expires_at > time.time():
+                logger.debug(f"Service info cache hit for {service_id}")
+                return service_info
+            self._service_info_cache.pop(service_id, None)
+        
+        # Fetch from model management service (REQUIRED)
+        try:
+            logger.info(f"Fetching service info for {service_id} from model management service")
+            service_info = await self.model_management_client.get_service(
+                service_id,
+                use_cache=True,
+                redis_client=self.redis_client,
+                auth_headers=auth_headers
+            )
+            
+            if service_info is None:
+                error_msg = (
+                    f"Service ID '{service_id}' not found in model management service. "
+                    f"Please verify the service ID is correct and register the service in the model management service."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            
+            if not service_info.endpoint:
+                error_msg = (
+                    f"Service ID '{service_id}' has no Triton endpoint configured in model management service. "
+                    f"Please configure the endpoint for this service."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            
+            # Cache the service info
+            expires_at = time.time() + self.cache_ttl_seconds
+            self._service_info_cache[service_id] = (service_info, expires_at)
+            
+            # Also update registry cache
+            endpoint, model_name = self._extract_triton_metadata(service_info, service_id)
+            self._service_registry_cache[service_id] = (endpoint, model_name, expires_at)
+            
+            logger.info(f"Successfully fetched and cached service info for {service_id}")
+            return service_info
+            
+        except ValueError:
+            raise
+        except Exception as e:
+            error_msg = (
+                f"Failed to fetch service info for service ID '{service_id}' from model management service: {e}. "
+                f"Please verify the model management service is available and the service ID is correct."
+            )
+            logger.error(error_msg, exc_info=True)
+            raise ValueError(error_msg) from e
+    
+    def _extract_triton_metadata(self, service_info: ServiceInfo, service_id: str) -> Tuple[str, str]:
+        """Extract Triton endpoint and model name from ServiceInfo"""
+        # Extract endpoint (remove http:// or https:// prefix if present)
+        endpoint = service_info.endpoint or ""
+        endpoint = endpoint.replace("http://", "").replace("https://", "").strip()
+        
+        # Extract model name - try multiple sources
+        model_name = service_info.triton_model or "tts"
+        
+        # Check model_inference_endpoint for model name
+        if service_info.model_inference_endpoint:
+            if isinstance(service_info.model_inference_endpoint, dict):
+                endpoint_model_name = service_info.model_inference_endpoint.get("modelName") or service_info.model_inference_endpoint.get("model_name")
+                if endpoint_model_name:
+                    model_name = endpoint_model_name
+        
+        logger.info(f"Extracted Triton metadata for {service_id}: endpoint={endpoint}, model_name={model_name}")
+        return endpoint, model_name
+    
+    async def _get_service_registry_entry(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> Tuple[str, str]:
+        """Get service registry entry (endpoint, model_name) for the given service ID"""
+        # Check registry cache first
+        cached = self._service_registry_cache.get(service_id)
+        if cached:
+            endpoint, model_name, expires_at = cached
+            if expires_at > time.time():
+                logger.debug(f"Service registry cache hit for {service_id}")
+                return (endpoint, model_name)
+            self._service_registry_cache.pop(service_id, None)
+        
+        # Get from model management service (REQUIRED)
+        service_info = await self._get_service_info(service_id, auth_headers)
+        endpoint, model_name = self._extract_triton_metadata(service_info, service_id)
+        return (endpoint, model_name)
+    
+    async def get_triton_client(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> TritonClient:
+        """Get Triton client for the given service ID"""
+        # Check cache first
+        if service_id in self._triton_clients:
+            logger.debug(f"Triton client cache hit for {service_id}")
+            return self._triton_clients[service_id]
+        
+        # Get endpoint from model management service (REQUIRED)
+        endpoint, _ = await self._get_service_registry_entry(service_id, auth_headers)
+        
+        # Create client using factory function
+        logger.info(f"Creating Triton client for service {service_id} with endpoint {endpoint}")
+        client = self.get_triton_client_func(endpoint)
+        self._triton_clients[service_id] = client
+        return client
+    
+    async def get_model_name(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> str:
+        """Get Triton model name based on service ID"""
+        _, model_name = await self._get_service_registry_entry(service_id, auth_headers)
+        return model_name
     
     async def run_inference(
         self,
         request: TTSInferenceRequest,
         user_id: Optional[int] = None,
         api_key_id: Optional[int] = None,
-        session_id: Optional[int] = None
+        session_id: Optional[int] = None,
+        auth_headers: Optional[Dict[str, str]] = None
     ) -> TTSInferenceResponse:
         """
         Run TTS inference for the given request.
@@ -75,6 +208,10 @@ class TTSService:
                 format = audio_format
             
             logger.info(f"Starting TTS inference for {len(request.input)} text inputs")
+            
+            # Get Triton client and model name dynamically from model management
+            triton_client = await self.get_triton_client(service_id, auth_headers)
+            model_name = await self.get_model_name(service_id, auth_headers)
             
             # Initialize response
             response = TTSInferenceResponse(audio=[])
@@ -111,15 +248,15 @@ class TTSService:
                     for chunk in text_chunks:
                         try:
                             # Prepare Triton inputs
-                            inputs, outputs = self.triton_client.get_tts_io_for_triton(
+                            inputs, outputs = triton_client.get_tts_io_for_triton(
                                 text=chunk,
                                 gender=gender,
                                 language=language
                             )
                             
                             # Send Triton request
-                            triton_response = self.triton_client.send_triton_request(
-                                model_name="tts",
+                            triton_response = triton_client.send_triton_request(
+                                model_name=model_name,
                                 input_list=inputs,
                                 output_list=outputs
                             )
