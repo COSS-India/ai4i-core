@@ -56,11 +56,13 @@ CREATE TABLE IF NOT EXISTS api_keys (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     key_hash VARCHAR(255) UNIQUE NOT NULL,
-    name VARCHAR(100) NOT NULL,
+    key_name VARCHAR(100) NOT NULL,
+    key_value_encrypted TEXT,
+    permissions JSONB DEFAULT '[]'::jsonb,
     is_active BOOLEAN DEFAULT true,
     expires_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    last_used_at TIMESTAMP WITH TIME ZONE
+    last_used TIMESTAMP WITH TIME ZONE
 );
 
 -- Sessions table

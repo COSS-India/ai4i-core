@@ -1,0 +1,39 @@
+# FastAPI and ASGI server
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
+
+# Database ORM and driver
+sqlalchemy==2.0.30
+asyncpg==0.29.0
+alembic==1.13.1
+
+# Redis for caching and rate limiting
+redis==5.0.4
+
+# Data validation
+pydantic==2.7.1
+pydantic-settings==2.2.1
+
+# Triton client for Surya OCR
+tritonclient[http]==2.46.0
+gevent==24.2.1
+
+# NumPy for array operations
+numpy==1.26.4
+
+# HTTP client for downloading images and auth validation
+requests>=2.31.0
+httpx==0.27.0
+
+# Utilities
+python-multipart==0.0.9
+python-dotenv==1.0.1
+
+# Authentication and security (for future OCR auth integration)
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+
+# AI4ICore Observability Plugin is installed in Dockerfile (listed for reference)
+# -e ../../libs/ai4icore_observability
+
+

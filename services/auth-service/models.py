@@ -59,6 +59,7 @@ class APIKey(Base):
     user_id = Column(Integer, nullable=False, index=True)
     key_name = Column(String(100), nullable=False)
     key_hash = Column(String(255), unique=True, index=True, nullable=False)
+    key_value_encrypted = Column(Text, nullable=True)  # Encrypted API key value
     permissions = Column(JSON, default=list)
     is_active = Column(Boolean, default=True)
     last_used = Column(DateTime(timezone=True), nullable=True)
@@ -227,6 +228,10 @@ class APIKeyCreate(BaseModel):
     key_name: str = Field(..., min_length=1, max_length=100)
     permissions: List[str] = Field(default_factory=list)
     expires_days: Optional[int] = Field(None, ge=1, le=365)
+    user_id: Optional[int] = Field(None, alias="userId", description="User ID for whom the API key is created (Admin only). If not provided, creates key for current user.")
+    
+    class Config:
+        populate_by_name = True  # Allow both user_id and userId
 
 class APIKeyResponse(BaseModel):
     id: int
@@ -251,3 +256,52 @@ class OAuth2Callback(BaseModel):
     code: str
     state: str
     provider: str
+
+class APIKeyValidationRequest(BaseModel):
+    api_key: str
+    service: str = Field(..., description="Service name: asr, tts, nmt, pipeline, model-management")
+    action: str = Field(..., description="Action type: read, inference")
+
+class APIKeyValidationResponse(BaseModel):
+    valid: bool
+    message: Optional[str] = None
+    user_id: Optional[int] = None
+    permissions: List[str] = []
+
+
+# Admin endpoints response models
+class UserDetailResponse(BaseModel):
+    """User details response for admin endpoints"""
+    userid: int = Field(..., alias="id")
+    username: str
+    emailid: str = Field(..., alias="email")
+    phonenumber: Optional[str] = Field(None, alias="phone_number")
+    full_name: Optional[str] = None
+    is_active: bool
+    is_verified: bool
+    is_superuser: bool
+    created_at: datetime
+    last_login: Optional[datetime] = None
+    
+    class Config:
+        populate_by_name = True
+
+
+class PermissionResponse(BaseModel):
+    """Permission response model"""
+    id: int
+    name: str
+    resource: str
+    action: str
+    created_at: datetime
+
+
+class UserListResponse(BaseModel):
+    """User list response for admin endpoints"""
+    userid: int = Field(..., alias="id")
+    username: str
+    emailid: str = Field(..., alias="email")
+    phonenumber: Optional[str] = Field(None, alias="phone_number")
+    
+    class Config:
+        populate_by_name = True

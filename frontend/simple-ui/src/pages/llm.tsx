@@ -80,10 +80,10 @@ const LLMPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>LLM - GPT OSS 20B | AI4Inclusion Console</title>
+        <title>LLM | AI4Inclusion Console</title>
         <meta
           name="description"
-          content="Test GPT OSS 20B Large Language Model for text processing, translation, and generation"
+          content="Test Large Language Model for text processing, translation, and generation"
         />
       </Head>
 
@@ -92,10 +92,10 @@ const LLMPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center" mb={2}>
             <Heading size="lg" color="gray.800" mb={1}>
-              Large Language Model - GPT OSS 20B
+              Large Language Model
             </Heading>
             <Text color="gray.600" fontSize="sm">
-              Translate and generate text with GPT OSS 20B
+              Translate and generate text
             </Text>
           </Box>
 

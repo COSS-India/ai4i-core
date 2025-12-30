@@ -58,6 +58,9 @@ BEGIN
 END
 $$;
 
+SELECT 'CREATE DATABASE konga'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'konga')\gexec
+
 -- Grant all privileges on each database to the configured PostgreSQL user
 GRANT ALL PRIVILEGES ON DATABASE auth_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE config_db TO dhruva_user;
@@ -65,6 +68,7 @@ GRANT ALL PRIVILEGES ON DATABASE metrics_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE telemetry_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE alerting_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE dashboard_db TO dhruva_user;
+GRANT ALL PRIVILEGES ON DATABASE konga TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE unleash TO dhruva_user;
 
 -- Add comments documenting which service uses each database
@@ -74,4 +78,5 @@ COMMENT ON DATABASE metrics_db IS 'Metrics Collection Service database';
 COMMENT ON DATABASE telemetry_db IS 'Telemetry Service database';
 COMMENT ON DATABASE alerting_db IS 'Alerting Service database';
 COMMENT ON DATABASE dashboard_db IS 'Dashboard Service database';
+COMMENT ON DATABASE konga IS 'Kong Manager (Konga) database';
 COMMENT ON DATABASE unleash IS 'Unleash feature flag management database';
