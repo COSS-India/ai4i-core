@@ -383,11 +383,12 @@ const ModelManagementPage: React.FC = () => {
         console.error("Failed to fetch models:", error);
         
         // Check if it's an authentication error
-        if (error.response?.status === 401) {
+        if (error.response?.status === 401 || error.message?.includes('Authentication') || error.message?.includes('401')) {
+          const errorMessage = error instanceof Error ? error.message : "Authentication failed";
           toast({
-            title: "Authentication Required",
-            description: "Please sign in to view models",
-            status: "warning",
+            title: "Authentication Error",
+            description: errorMessage.includes('Model management') ? errorMessage : `Model management error: ${errorMessage}. Please check your login status and try again.`,
+            status: "error",
             duration: 5000,
             isClosable: true,
           });

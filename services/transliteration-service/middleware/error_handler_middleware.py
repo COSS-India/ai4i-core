@@ -75,6 +75,24 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
         """Handle unexpected exceptions."""
+        # Extract exception from ExceptionGroup if present (Python 3.11+)
+        actual_exc = exc
+        try:
+            if hasattr(exc, 'exceptions') and exc.exceptions:
+                actual_exc = exc.exceptions[0]
+        except (AttributeError, IndexError):
+            pass
+        
+        # Check if it's one of our custom exceptions that wasn't caught
+        if isinstance(actual_exc, RateLimitExceededError):
+            return await rate_limit_error_handler(request, actual_exc)
+        elif isinstance(actual_exc, AuthenticationError):
+            return await authentication_error_handler(request, actual_exc)
+        elif isinstance(actual_exc, AuthorizationError):
+            return await authorization_error_handler(request, actual_exc)
+        elif isinstance(actual_exc, HTTPException):
+            return await http_exception_handler(request, actual_exc)
+        
         logger.error(f"Unexpected error: {exc}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         

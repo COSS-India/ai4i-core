@@ -22,8 +22,6 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from ai4icore_observability import ObservabilityPlugin, PluginConfig
-
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
@@ -37,6 +35,14 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Observability plugin (optional)
+try:
+    from ai4icore_observability import ObservabilityPlugin, PluginConfig
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    OBSERVABILITY_AVAILABLE = False
+    logger.warning("AI4ICore Observability Plugin not available - continuing without it")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
@@ -125,9 +131,11 @@ async def lifespan(app: FastAPI):
 
         logger.info("Testing PostgreSQL connection...")
         try:
-            async with asyncio.timeout(60):
+            # Use asyncio.wait_for for Python 3.10 compatibility
+            async def test_connection():
                 async with db_engine.begin() as conn:
                     await conn.execute(text("SELECT 1"))
+            await asyncio.wait_for(test_connection(), timeout=60.0)
         except asyncio.TimeoutError:
             raise Exception("PostgreSQL connection timeout after 60 seconds")
 
@@ -233,17 +241,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Observability
-config = PluginConfig.from_env()
-config.enabled = True
-if not config.customers:
-    config.customers = []
-if not config.apps:
-    config.apps = ["ner"]
+# Observability (optional)
+if OBSERVABILITY_AVAILABLE:
+    try:
+        config = PluginConfig.from_env()
+        config.enabled = True
+        if not config.customers:
+            config.customers = []
+        if not config.apps:
+            config.apps = ["ner"]
 
-plugin = ObservabilityPlugin(config)
-plugin.register_plugin(app)
-logger.info("AI4ICore Observability Plugin initialized for NER service")
+        plugin = ObservabilityPlugin(config)
+        plugin.register_plugin(app)
+        logger.info("AI4ICore Observability Plugin initialized for NER service")
+    except Exception as e:
+        logger.warning(f"Failed to initialize Observability Plugin: {e} - continuing without it")
+else:
+    logger.info("Running without AI4ICore Observability Plugin")
 
 # CORS
 app.add_middleware(
