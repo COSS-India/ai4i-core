@@ -339,18 +339,63 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     db.add(db_user)
     await db.flush()  # Flush to ensure the user is added to the session
     
-    # Assign default USER role to new users
-    result = await db.execute(select(Role).where(Role.name == 'USER'))
-    user_role_obj = result.scalar_one_or_none()
-    if user_role_obj:
-        user_role = UserRole(user_id=db_user.id, role_id=user_role_obj.id)
-        db.add(user_role)
+    # Check if user already has any role (shouldn't happen for new users, but safety check)
+    existing_roles = await db.execute(
+        select(UserRole).where(UserRole.user_id == db_user.id)
+    )
+    existing_role = existing_roles.scalar_one_or_none()
+    if existing_role:
+        logger.warning(f"User {user_data.email} already has a role assigned. Skipping default role assignment.")
+    else:
+        # Assign default USER role to new users (only if no role exists)
+        result = await db.execute(select(Role).where(Role.name == 'USER'))
+        user_role_obj = result.scalar_one_or_none()
+        if user_role_obj:
+            user_role = UserRole(user_id=db_user.id, role_id=user_role_obj.id)
+            db.add(user_role)
+            logger.info(f"Assigned default USER role to new user: {user_data.email}")
+        else:
+            logger.warning(f"USER role not found in database. User {user_data.email} registered without default role.")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="System configuration error: Default USER role not found. Please contact administrator."
+            )
     
     await db.commit()
     await db.refresh(db_user)
     
-    logger.info(f"New user registered: {user_data.email}")
-    return db_user
+    # Get user roles directly (query immediately after commit to ensure we get the role)
+    role_result = await db.execute(
+        select(Role.name)
+        .join(UserRole, Role.id == UserRole.role_id)
+        .where(UserRole.user_id == db_user.id)
+        .order_by(UserRole.assigned_at.desc())
+        .limit(1)
+    )
+    user_roles = list(role_result.scalars().all())
+    
+    logger.info(f"New user registered: {user_data.email} with roles: {user_roles}")
+    
+    # Create response dict with roles
+    user_dict = {
+        "id": db_user.id,
+        "email": db_user.email,
+        "username": db_user.username,
+        "full_name": db_user.full_name,
+        "phone_number": db_user.phone_number,
+        "timezone": db_user.timezone,
+        "language": db_user.language,
+        "is_active": db_user.is_active,
+        "is_verified": db_user.is_verified,
+        "is_superuser": db_user.is_superuser,
+        "created_at": db_user.created_at,
+        "updated_at": db_user.updated_at,
+        "last_login": db_user.last_login,
+        "avatar_url": db_user.avatar_url,
+        "roles": user_roles
+    }
+    
+    return user_dict
 
 @app.post("/api/v1/auth/login", response_model=LoginResponse)
 async def login(
@@ -1159,24 +1204,67 @@ async def assign_role(
             detail=f"Role '{role_data.role_name}' not found"
         )
     
-    # Check if user already has this role
+    # Check if user already has this exact role
     result = await db.execute(
         select(UserRole).where(
             UserRole.user_id == role_data.user_id,
             UserRole.role_id == role.id
         )
     )
-    existing = result.scalar_one_or_none()
-    if existing:
+    existing_same_role = result.scalar_one_or_none()
+    if existing_same_role:
         return {"message": f"User already has role '{role_data.role_name}'"}
     
-    # Assign role
+    # Check if user has any other roles (only one role per user allowed)
+    result = await db.execute(
+        select(UserRole).where(UserRole.user_id == role_data.user_id)
+    )
+    existing_roles = list(result.scalars().all())
+    
+    if existing_roles:
+        # Get role names for logging
+        role_ids = [r.role_id for r in existing_roles]
+        if role_ids:
+            role_result = await db.execute(
+                select(Role.name).where(Role.id.in_(role_ids))
+            )
+            existing_role_names = list(role_result.scalars().all())
+        else:
+            existing_role_names = []
+        
+        # Remove ALL existing roles before assigning new one (only one role per user)
+        for existing_role in existing_roles:
+            await db.delete(existing_role)
+        
+        if existing_role_names:
+            logger.warning(
+                f"User {target_user.email} had {len(existing_roles)} role(s) [{', '.join(existing_role_names)}]. "
+                f"Removed all existing roles before assigning new role '{role_data.role_name}'"
+            )
+        else:
+            logger.warning(
+                f"User {target_user.email} had {len(existing_roles)} role(s). "
+                f"Removed all existing roles before assigning new role '{role_data.role_name}'"
+            )
+    
+    # Assign the new role (only one role per user)
     user_role = UserRole(user_id=role_data.user_id, role_id=role.id)
     db.add(user_role)
     await db.commit()
     
     logger.info(f"Role '{role_data.role_name}' assigned to user {target_user.email} by {current_user.email}")
-    return {"message": f"Role '{role_data.role_name}' assigned successfully"}
+    
+    # Prepare response message
+    if existing_roles:
+        response_message = f"Role '{role_data.role_name}' assigned successfully. Previous role(s) were replaced."
+    else:
+        response_message = f"Role '{role_data.role_name}' assigned successfully."
+    
+    return {
+        "message": response_message,
+        "user_id": role_data.user_id,
+        "new_role": role_data.role_name
+    }
 
 @app.post("/api/v1/auth/roles/remove", response_model=dict, tags=["Role Management"])
 async def remove_role(
@@ -1234,28 +1322,86 @@ async def get_user_roles_endpoint(
     db: AsyncSession = Depends(get_db)
 ):
     """Get roles for a user (Admin or self)"""
-    # Check if current user is admin or viewing own profile
-    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
-    if user_id != current_user.id and "ADMIN" not in user_roles and not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can view other users' roles"
+    try:
+        # Check if current user is admin or viewing own profile
+        user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+        if user_id != current_user.id and "ADMIN" not in user_roles and not current_user.is_superuser:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only administrators can view other users' roles"
+            )
+        
+        target_user = await AuthUtils.get_user_by_id(db, user_id)
+        if not target_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Clean up duplicate roles before getting roles (ensure only one role per user)
+        user_roles_result = await db.execute(
+            select(UserRole)
+            .where(UserRole.user_id == user_id)
+            .order_by(UserRole.assigned_at.desc())
         )
-    
-    target_user = await AuthUtils.get_user_by_id(db, user_id)
-    if not target_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+        all_user_roles = list(user_roles_result.scalars().all())
+        
+        logger.info(f"[GET_ROLES] Found {len(all_user_roles)} role(s) for user {user_id} (email: {target_user.email})")
+        
+        if len(all_user_roles) > 1:
+            # Get role names for logging
+            role_ids = [ur.role_id for ur in all_user_roles]
+            role_names_result = await db.execute(
+                select(Role).where(Role.id.in_(role_ids))
+            )
+            roles_list = list(role_names_result.scalars().all())
+            role_map = {r.id: r.name for r in roles_list}
+            old_role_names = [role_map.get(ur.role_id, "UNKNOWN") for ur in all_user_roles[1:]]
+            most_recent_role_name = role_map.get(all_user_roles[0].role_id, "UNKNOWN")
+            
+            # Keep only the most recent role, delete all others
+            deleted_count = 0
+            for old_role in all_user_roles[1:]:
+                await db.delete(old_role)
+                deleted_count += 1
+            
+            await db.flush()
+            await db.commit()
+            
+            logger.warning(
+                f"Cleaned up {deleted_count} duplicate role(s) [{', '.join(old_role_names)}] "
+                f"for user {user_id} (email: {target_user.email}). Kept only: {most_recent_role_name}"
+            )
+        
+        # Refresh the session to ensure we see the latest data after cleanup
+        await db.refresh(target_user)
+        
+        # Now get the roles (should be only one after cleanup)
+        # Query directly to ensure we get the current state
+        if len(all_user_roles) > 1:
+            # After cleanup, query again to get only the remaining role
+            remaining_role_result = await db.execute(
+                select(Role.name)
+                .join(UserRole, Role.id == UserRole.role_id)
+                .where(UserRole.user_id == user_id)
+                .order_by(UserRole.assigned_at.desc())
+                .limit(1)
+            )
+            roles = list(remaining_role_result.scalars().all())
+        else:
+            # Use the utility function if no cleanup was needed
+            roles = await AuthUtils.get_user_roles(db, user_id)
+        
+        logger.info(f"Returning {len(roles)} role(s) for user {user_id}: {roles}")
+        return UserRolesResponse(
+            user_id=target_user.id,
+            username=target_user.username,
+            email=target_user.email,
+            roles=roles
         )
-    
-    roles = await AuthUtils.get_user_roles(db, user_id)
-    return UserRolesResponse(
-        user_id=target_user.id,
-        username=target_user.username,
-        email=target_user.email,
-        roles=roles
-    )
+    except Exception as e:
+        logger.error(f"Error in get_user_roles_endpoint for user {user_id}: {str(e)}", exc_info=True)
+        raise
 
 @app.get("/api/v1/auth/roles/list", response_model=List[dict], tags=["Role Management"])
 async def list_roles(
