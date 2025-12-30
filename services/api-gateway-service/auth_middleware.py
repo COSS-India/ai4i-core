@@ -1,12 +1,12 @@
 """
 Authentication middleware for API Gateway
+Authentication is delegated to auth-service for centralized validation
 """
 import os
 import logging
 from typing import Optional, Dict, Any
 from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -25,32 +25,32 @@ class AuthMiddleware:
         self.http_client = httpx.AsyncClient(timeout=10.0)
     
     async def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
-        """Verify JWT token locally or with auth service"""
+        """Verify JWT token with auth service (authentication happens at auth-service level)"""
         try:
-            # First try to verify locally
-            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-            if payload.get("type") == "access":
-                return payload
-        except JWTError:
-            pass
-        
-        # If local verification fails, check with auth service
-        try:
+            # Always validate token through auth-service for centralized authentication
+            # This ensures user status, permissions, and token validity are checked in one place
             response = await self.http_client.post(
                 f"{AUTH_SERVICE_URL}/api/v1/auth/validate",
                 headers={"Authorization": f"Bearer {token}"}
             )
             if response.status_code == 200:
                 data = response.json()
+                # Return token payload format expected by API Gateway
                 return {
                     "sub": str(data.get("user_id")),
                     "username": data.get("username"),
-                    "permissions": data.get("permissions", [])
+                    "permissions": data.get("permissions", []),
+                    "roles": data.get("roles", [])
                 }
+            else:
+                logger.warning(f"Auth service validation failed with status {response.status_code}")
+                return None
+        except httpx.RequestError as e:
+            logger.error(f"Auth service request failed: {e}")
+            return None
         except Exception as e:
             logger.error(f"Auth service validation failed: {e}")
-        
-        return None
+            return None
     
     async def get_current_user(self, credentials: Optional[HTTPAuthorizationCredentials] = None) -> Optional[Dict[str, Any]]:
         """Get current user from token"""

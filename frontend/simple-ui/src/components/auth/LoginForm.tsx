@@ -25,6 +25,7 @@ import React, { useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
 import { LoginRequest } from "../../types/auth";
 import LoadingSpinner from "../common/LoadingSpinner";
+import { API_BASE_URL } from "../../services/api";
 
 interface LoginFormProps {
   onSuccess?: () => void;
@@ -84,8 +85,14 @@ const LoginForm: React.FC<LoginFormProps> = ({
       setLoginAttempted(false);
       setLoginError(null);
     } catch (error) {
-      // Error is handled by the hook
-      console.error("Login failed:", error);
+      // Error is handled by the hook, but log details for debugging
+      console.error("LoginForm: Login failed with error:", error);
+      if (error instanceof Error) {
+        console.error("LoginForm: Error message:", error.message);
+        console.error("LoginForm: Error stack:", error.stack);
+      }
+      // The error state will be updated by the hook, which will trigger the useEffect
+      // that updates loginError
     }
   };
 
@@ -216,7 +223,10 @@ const LoginForm: React.FC<LoginFormProps> = ({
             size="md"
             width="full"
             onClick={() => {
-              const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+              const apiBaseUrl =
+                API_BASE_URL || (typeof window !== "undefined"
+                  ? window.location.origin
+                  : "");
               window.location.href = `${apiBaseUrl}/api/v1/auth/oauth2/google/authorize`;
             }}
             leftIcon={

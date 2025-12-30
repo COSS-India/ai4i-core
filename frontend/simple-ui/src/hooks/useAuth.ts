@@ -51,8 +51,10 @@ export const useAuth = () => {
         // Only restore auth state if we have BOTH a valid token AND user data
         if (hasToken && storedUser) {
           // Verify token is still valid by calling /me endpoint
+          // The getCurrentUser method now has a 20 second timeout built-in
           try {
             const currentUser = await authService.getCurrentUser();
+            
             // Token is valid and we got user data
             setAuthState({
               user: currentUser, // Use fresh user data from API
@@ -64,9 +66,17 @@ export const useAuth = () => {
             });
             // Update stored user with fresh data
             authService.setStoredUser(currentUser);
-          } catch (error) {
-            // Token is invalid or expired, clear everything
-            console.log('Token validation failed during initialization, clearing auth state');
+          } catch (error: any) {
+            // Token is invalid or expired, or request timed out - clear everything
+            const errorMessage = error?.message || 'Token validation failed';
+            console.log('Token validation failed during initialization:', errorMessage);
+            
+            // If it's a timeout, log it but don't show error to user (silent fail)
+            // This prevents showing errors on every page load if service is slow
+            if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+              console.warn('Auth service timeout during initialization - clearing auth state silently');
+            }
+            
             authService.clearAuthTokens();
             authService.clearStoredUser();
             setAuthState({
@@ -75,7 +85,7 @@ export const useAuth = () => {
               refreshToken: null,
               isAuthenticated: false,
               isLoading: false,
-              error: null,
+              error: null, // Don't set error on init timeout - let user try to login
             });
           }
         } else {
@@ -124,6 +134,22 @@ export const useAuth = () => {
       const response = await authService.login(credentials);
       console.log('useAuth: Login API successful, tokens received');
       
+      // Verify tokens are stored before proceeding
+      const accessToken = authService.getAccessToken();
+      const refreshToken = authService.getRefreshToken();
+      console.log('useAuth: Token verification:', {
+        hasAccessToken: !!accessToken,
+        hasRefreshToken: !!refreshToken,
+        accessTokenLength: accessToken?.length || 0,
+      });
+      
+      if (!accessToken) {
+        throw new Error('Access token was not stored after login. Please try again.');
+      }
+      
+      // Small delay to ensure tokens are fully stored (especially for sessionStorage)
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       // Use /me endpoint to validate token and get user data in one call
       // This is more efficient than calling validate then me separately
       console.log('useAuth: Fetching user data from /me endpoint (this also validates the token)...');
@@ -169,24 +195,49 @@ export const useAuth = () => {
         return response;
       } catch (meError) {
         console.error('useAuth: Failed to fetch user data / token validation failed:', meError);
+        const errorMessage = meError instanceof Error ? meError.message : 'Token validation failed';
+        console.error('useAuth: Error details:', {
+          message: errorMessage,
+          hasToken: !!authService.getAccessToken(),
+          tokenLength: authService.getAccessToken()?.length || 0,
+        });
+        
         // Clear tokens if /me fails (token is invalid or expired)
         authService.clearAuthTokens();
         setAuthState(prev => ({
           ...prev,
           isLoading: false,
-          error: 'Token validation failed. Please try logging in again.',
+          error: errorMessage.includes('timeout') 
+            ? 'Request timeout. The server is taking too long to respond. Please try again.'
+            : errorMessage.includes('401') || errorMessage.includes('Unauthorized')
+            ? 'Invalid credentials. Please check your username and password.'
+            : `Token validation failed: ${errorMessage}. Please try logging in again.`,
         }));
-        throw new Error('Token validation failed. Please try logging in again.');
+        throw new Error(errorMessage);
       }
     } catch (error) {
       console.error('useAuth: Login failed:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Login failed';
+      let errorMessage = error instanceof Error ? error.message : 'Login failed';
+      
+      // Provide more user-friendly error messages
+      if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
+        errorMessage = 'Invalid email or password. Please check your credentials and try again.';
+      } else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
+        errorMessage = 'Access denied. Your account may be inactive. Please contact support.';
+      } else if (errorMessage.includes('404') || errorMessage.includes('Not Found')) {
+        errorMessage = 'Login endpoint not found. Please check your connection and try again.';
+      } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+        errorMessage = 'Request timeout. The server is taking too long to respond. Please try again.';
+      } else if (errorMessage.includes('NetworkError') || errorMessage.includes('Failed to fetch')) {
+        errorMessage = 'Network error. Please check your internet connection and try again.';
+      }
+      
       setAuthState(prev => ({
         ...prev,
         isLoading: false,
         error: errorMessage,
       }));
-      throw error;
+      throw new Error(errorMessage);
     }
   }, []);
 
@@ -235,6 +286,8 @@ export const useAuth = () => {
       // Broadcast auth update so UI reflects logout without manual refresh
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
+        // Redirect to main sign in page after logout
+        window.location.href = '/';
       }
     } catch (error) {
       console.error('Logout failed:', error);
@@ -251,6 +304,8 @@ export const useAuth = () => {
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
+        // Redirect to main sign in page after logout
+        window.location.href = '/';
       }
     }
   }, []);

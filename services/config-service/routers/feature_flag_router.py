@@ -52,12 +52,15 @@ async def evaluate_flag(
     Supports boolean, string, integer, float, and object (dict) flag types.
     Returns detailed evaluation result including value, variant, and reason.
     """
+    # Default to UNLEASH_ENVIRONMENT or "development" if not provided
+    environment = request.environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
+    
     return await service.evaluate_flag(
         flag_name=request.flag_name,
         user_id=request.user_id,
         context=request.context or {},
         default_value=request.default_value,
-        environment=request.environment,
+        environment=environment,
     )
 
 
@@ -74,12 +77,15 @@ async def evaluate_boolean_flag(
     if not isinstance(request.default_value, bool):
         raise HTTPException(status_code=400, detail="default_value must be a boolean for boolean evaluation")
     
+    # Default to UNLEASH_ENVIRONMENT or "development" if not provided
+    environment = request.environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
+    
     value, reason = await service.evaluate_boolean_flag(
         flag_name=request.flag_name,
         user_id=request.user_id,
         context=request.context or {},
         default_value=request.default_value,
-        environment=request.environment,
+        environment=environment,
     )
     
     return {
@@ -99,11 +105,14 @@ async def bulk_evaluate_flags(
     
     Evaluates all specified flags in parallel and returns results as a dictionary.
     """
+    # Default to UNLEASH_ENVIRONMENT or "development" if not provided
+    environment = request.environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
+    
     results = await service.bulk_evaluate_flags(
         flag_names=request.flag_names,
         user_id=request.user_id,
         context=request.context or {},
-        environment=request.environment,
+        environment=environment,
     )
     return {"results": results}
 

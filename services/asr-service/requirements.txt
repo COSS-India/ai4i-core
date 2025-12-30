@@ -1,3 +1,5 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 # FastAPI and ASGI server
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
@@ -16,18 +18,20 @@ pydantic-settings>=2.0.0
 
 # Audio processing
 soundfile>=0.12.1
-librosa>=0.10.0
+librosa==0.10.1        # stable & fast
+scipy==1.11.4          # supports Python 3.10+
+numpy==1.26.4          # compatible with scipy 1.11
 pydub>=0.25.1
-scipy>=1.11.0
-numpy>=1.24.0
 
 # Triton client
 tritonclient[http]>=2.40.0
+
+# Web server performance
 gevent>=23.9.0
 
-# PyTorch (for audio effects)
-torch>=2.0.0
-torchaudio>=2.0.0
+# PyTorch (CPU version)
+torch==2.2.2+cpu           # stable for Python 3.10
+torchaudio==2.2.2+cpu      # matches torch version
 
 # HTTP client
 httpx>=0.25.0
@@ -36,15 +40,9 @@ httpx>=0.25.0
 python-multipart>=0.0.6
 python-dotenv>=1.0.0
 
-# Authentication and security
+# Authentication
 passlib[bcrypt]>=1.7.4
 python-jose[cryptography]>=3.3.0
 
-# WebSocket/Socket.IO for streaming
+# WebSocket
 python-socketio>=5.10.0
-
-# Optional (for development)
-# pytest>=7.4.0
-# pytest-asyncio>=0.21.0
-# black>=23.0.0
-# flake8>=6.0.0
