@@ -14,6 +14,10 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./infrastructure/postgres:/docker-entrypoint-initdb.d
+    command: >
+      postgres
+      -c password_encryption=md5
+      -c listen_addresses='*'
     networks:
       - microservices-network
     healthcheck:
@@ -36,7 +40,9 @@ services:
       - redis-data:/data
       - ./infrastructure/redis/redis.conf:/usr/local/etc/redis/redis.conf
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - redis
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -h localhost -p 6379 -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
@@ -123,13 +129,16 @@ services:
       DATABASE_SSL: "false"
       UNLEASH_URL: http://unleash:4242
       LOG_LEVEL: info
+      BASE_URI_PATH: /feature-flags
+      UNLEASH_PUBLIC_BASE_URL: https://core-v1.ai4inclusion.org/feature-flags
+      TRUST_PROXY: "true"  
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - microservices-network
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4242/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4242/feature-flags/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -146,7 +155,9 @@ services:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: ${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP}
+      # Default map if KAFKA_LISTENER_SECURITY_PROTOCOL_MAP is not set:
+      # map both PLAINTEXT and PLAINTEXT_INTERNAL to PLAINTEXT.
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:-PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT}"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -166,6 +177,123 @@ services:
       start_period: 40s
     restart: unless-stopped
 
+  kong:
+    image: kong:3.4-ubuntu
+    container_name: ai4v-kong-gateway
+    ports:
+      - "8000:8000"
+      - "8443:8443"
+      - "8001:8001"
+      - "8444:8444"
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /tmp/kong-substituted.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_ADMIN_GUI_URL: http://localhost:8002
+      # Load only our custom plugin to avoid missing bundled plugins issues
+      KONG_PLUGINS: token-validator
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      AI4VOICE_API_KEY: ${AI4VOICE_API_KEY}
+      ASR_API_KEY: ${ASR_API_KEY}
+      TTS_API_KEY: ${TTS_API_KEY}
+      NMT_API_KEY: ${NMT_API_KEY}
+      PIPELINE_API_KEY: ${PIPELINE_API_KEY}
+      DEVELOPER_API_KEY: ${DEVELOPER_API_KEY}
+      MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
+      LLM_API_KEY: ${LLM_API_KEY}
+    env_file:
+      - ./.env
+    volumes:
+      - ./services/Konga-API-manager/kong-new-architecture.yml:/kong/kong-new-architecture.yml:ro
+      - ./services/Konga-API-manager/substitute-env.sh:/kong/substitute-env.sh:ro
+      - ./services/Konga-API-manager/plugins/token-validator/kong/plugins:/usr/local/share/lua/5.1/kong/plugins:ro
+    command: >
+      sh -c "
+        sh /kong/substitute-env.sh &&
+        /docker-entrypoint.sh kong docker-start
+      "
+    networks:
+      - microservices-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  postgres-konga:
+    image: postgres:11-alpine
+    container_name: ai4v-postgres-konga
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: konga
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres-konga-data:/var/lib/postgresql/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d konga"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped 
+
+  kong-manager:
+    image: pantsel/konga:latest
+    container_name: ai4v-kong-manager
+    ports:
+      - "8002:1337"
+    environment:
+      NODE_ENV: production
+      DB_ADAPTER: postgres
+      DB_HOST: postgres-konga
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_DATABASE: konga
+      KONGA_HOOK_TIMEOUT: 120000
+      TOKEN_SECRET: ${KONG_MANAGER_TOKEN_SECRET}
+    depends_on:
+      kong:
+        condition: service_healthy
+      postgres-konga:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  # Swagger UI for Kong-facing API documentation
+  swagger-kong-ui:
+    image: swaggerapi/swagger-ui
+    container_name: ai4v-swagger-kong-ui
+    ports:
+      - "8086:8080"
+    volumes:
+      # Generated OpenAPI spec that points to Kong and includes all endpoints.
+      # Mount it at a custom path; the swagger-ui entrypoint will copy it into
+      # /usr/share/nginx/html/openapi.json on startup.
+      - ./docs/kong-openapi.json:/kong-openapi.json:ro
+    environment:
+      SWAGGER_JSON: /kong-openapi.json
+    networks:
+      - microservices-network
+    depends_on:
+      - kong
+
   # Microservices
   api-gateway-service:
     build:
@@ -176,6 +304,9 @@ services:
       - "8080:8080"
     environment:
       - ENV_FILE=.env
+      # Swagger/OpenAPI server URL used in the generated docs
+      # Prod: point Swagger to public API Gateway URL
+      - SWAGGER_SERVER_URL=http://core-v1.ai4inclusion.org:8080  
     env_file:
       - ./services/api-gateway-service/.env
     depends_on:
@@ -195,7 +326,7 @@ services:
 
   auth-service:
     build:
-      context: ./services/auth-service
+      context: ./services/auth-service/
       dockerfile: Dockerfile
     container_name: ai4v-auth-service
     ports:
@@ -210,7 +341,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - auth-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
       # interval: 30s
@@ -221,8 +354,8 @@ services:
 
   config-service:
     build:
-      context: ./services/config-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/config-service/Dockerfile
     container_name: ai4v-config-service
     ports:
       - "8082:8082"
@@ -242,7 +375,9 @@ services:
       unleash:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - config-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
       # interval: 30s
@@ -311,8 +446,8 @@ services:
 
   alerting-service:
     build:
-      context: ./services/alerting-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/alerting-service/Dockerfile
     container_name: ai4v-alerting-service
     ports:
       - "8085:8085"
@@ -368,8 +503,8 @@ services:
 
   asr-service:
     build:
-      context: ./services/asr-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/asr-service/Dockerfile
     container_name: ai4v-asr-service
     ports:
       - "8087:8087"
@@ -388,7 +523,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - asr-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8087/health"]
       # interval: 30s
@@ -399,8 +536,8 @@ services:
 
   tts-service:
     build:
-      context: ./services/tts-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/tts-service/Dockerfile
     container_name: ai4v-tts-service
     ports:
       - "8088:8088"
@@ -417,7 +554,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - tts-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
       # interval: 30s
@@ -428,8 +567,8 @@ services:
 
   nmt-service:
     build:
-      context: ./services/nmt-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/nmt-service/Dockerfile
     container_name: ai4v-nmt-service
     ports:
       - "8091:8089"
@@ -445,13 +584,70 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - nmt-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8089/health"]
       # interval: 30s
       # timeout: 10s
       # retries: 3
       # start_period: 30s
+    restart: unless-stopped
+
+  ocr-service:
+    build:
+      context: .
+      dockerfile: ./services/ocr-service/Dockerfile
+    container_name: ai4v-ocr-service
+    ports:
+      - "8099:8099"
+    environment:
+      - ENV_FILE=.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8099/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    restart: unless-stopped
+
+  ner-service:
+    build:
+      context: .
+      dockerfile: ./services/ner-service/Dockerfile
+    container_name: ai4v-ner-service
+    ports:
+      - "9001:9001"        # host:container (NER listens on 9001 in the container)
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/ner-service/.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   llm-service:
@@ -463,7 +659,7 @@ services:
       - "8093:8090"
     environment:
       - ENV_FILE=.env
-      - TRITON_ENDPOINT=http://13.220.11.146:8000
+      - TRITON_ENDPOINT=http://3.235.56.233:8001
       - TRITON_TIMEOUT=300
     env_file:
       - ./services/llm-service/.env
@@ -473,7 +669,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - llm-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/llm/health"]
       # interval: 30s
@@ -491,6 +689,10 @@ services:
       - "8092:8090"
     environment:
       - ENV_FILE=.env
+      # Direct service URLs to bypass registry discovery failures
+      - ASR_SERVICE_URL=http://asr-service:8087
+      - NMT_SERVICE_URL=http://nmt-service:8089
+      - TTS_SERVICE_URL=http://tts-service:8088
     env_file:
       - ./services/pipeline-service/.env
     depends_on:
@@ -507,7 +709,9 @@ services:
       tts-service:
         condition: service_started
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - pipeline-service
     # healthcheck:
       # test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       # interval: 30s
@@ -516,16 +720,216 @@ services:
       # start_period: 30s
     restart: unless-stopped
 
+  model-management-service:
+    build:
+      context: ./services/model-management-service
+      dockerfile: Dockerfile
+    container_name: ai4v-model-management-service
+    ports:
+      - "8094:8091"
+    environment:
+      - APP_DB_USER=${POSTGRES_USER}
+      - APP_DB_PASSWORD=${POSTGRES_PASSWORD}
+      - APP_DB_HOST=postgres
+      - APP_DB_PORT=5432
+      - APP_DB_NAME=model_management_db
+      - AUTH_DB_USER=${POSTGRES_USER}
+      - AUTH_DB_PASSWORD=${POSTGRES_PASSWORD}
+      - AUTH_DB_HOST=postgres
+      - AUTH_DB_PORT=5432
+      - AUTH_DB_NAME=auth_db
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - RATE_LIMIT_PER_MINUTE=${MODEL_MANAGEMENT_RATE_LIMIT_PER_MINUTE:-60}
+      - RATE_LIMIT_PER_HOUR=${MODEL_MANAGEMENT_RATE_LIMIT_PER_HOUR:-1000}
+      - AUTH_ENABLED=${MODEL_MANAGEMENT_AUTH_ENABLED:-true}
+      - REQUIRE_API_KEY=${MODEL_MANAGEMENT_REQUIRE_API_KEY:-true}
+      - ALLOW_ANONYMOUS_ACCESS=${MODEL_MANAGEMENT_ALLOW_ANONYMOUS_ACCESS:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      microservices-network:
+        aliases:
+          - model-management-service
+    restart: unless-stopped
+
+  transliteration-service:
+    build:
+      context: .
+      dockerfile: ./services/transliteration-service/Dockerfile
+    container_name: ai4v-transliteration-service
+    ports:
+      - "8097:8090"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/transliteration-service/.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  language-detection-service:
+    build:
+      context: .
+      dockerfile: ./services/language-detection-service/Dockerfile
+    container_name: ai4v-language-detection-service
+    ports:
+      - "8098:8090"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/language-detection-service/.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/language-detection/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  speaker-diarization-service:
+    build:
+      context: .
+      dockerfile: ./services/speaker-diarization-service/Dockerfile
+    container_name: ai4v-speaker-diarization-service
+    ports:
+      - "8095:8095"
+    environment:
+      - ENV_FILE=.env
+      - TRITON_ENDPOINT=http://65.1.35.3:8700
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  language-diarization-service:
+    build:
+      context: .
+      dockerfile: ./services/language-diarization-service/Dockerfile
+    container_name: ai4v-language-diarization-service
+    ports:
+      - "9002:8090"
+    environment:
+      - ENV_FILE=.env
+      - TRITON_ENDPOINT=65.1.35.3:8600
+    env_file:
+      - ./services/language-diarization-service/.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  audio-lang-detection-service:
+    build:
+      context: .
+      dockerfile: ./services/audio-lang-detection-service/Dockerfile
+    container_name: ai4v-audio-lang-detection-service
+    ports:
+      - "8096:8096"
+    environment:
+      - ENV_FILE=.env
+      - TRITON_ENDPOINT=65.1.35.3:8100
+    env_file:
+      - ./services/audio-lang-detection-service/.env
+    depends_on:
+      config-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8096/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+
   simple-ui-frontend:
     build:
       context: ./frontend/simple-ui
       dockerfile: Dockerfile
+      args:
+        # Browser talks directly to the API Gateway on host port 8080
+        NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
+        # Service-specific API keys from .env file (no hardcoding)
+        NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
+        NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
+        NEXT_PUBLIC_TTS_API_KEY: ${TTS_API_KEY}
+        NEXT_PUBLIC_NMT_API_KEY: ${NMT_API_KEY}
+        NEXT_PUBLIC_PIPELINE_API_KEY: ${PIPELINE_API_KEY}
+        NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
     container_name: ai4v-simple-ui
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://api-gateway-service:8080
-      - NEXT_PUBLIC_API_KEY=ak_xBy1d54a2F56_8lhh1kMPyab7jEUNzx4ot2FLy4pf4ks
+      # HOSTNAME=0.0.0.0 tells Next.js standalone server to listen on all interfaces
+      - HOSTNAME=0.0.0.0
+      # Route all frontend API calls through the API Gateway on host
+      - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
+      - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
+      # Service-specific API keys for API Gateway authentication / RBAC
+      - NEXT_PUBLIC_ASR_API_KEY=${ASR_API_KEY}
+      - NEXT_PUBLIC_TTS_API_KEY=${TTS_API_KEY}
+      - NEXT_PUBLIC_NMT_API_KEY=${NMT_API_KEY}
+      - NEXT_PUBLIC_PIPELINE_API_KEY=${PIPELINE_API_KEY}
+      - NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${MODEL_MANAGEMENT_API_KEY}
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
       - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
     depends_on:
@@ -541,8 +945,78 @@ services:
       # start_period: 40s
     restart: unless-stopped
 
+  # Observability: Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ai4v-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
+      # - '--web.external-url=http://localhost:9090'
+
+      - '--web.route-prefix=/'
+    networks:
+      - microservices-network
+    depends_on:
+      - nmt-service
+      - tts-service
+      - asr-service
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Observability: Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ai4v-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+
+      # Combined from both HEAD and remote commits
+      - GF_INSTALL_PLUGINS=
+      - GF_SERVER_DOMAIN=core-v1.ai4inclusion.org
+      - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - microservices-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+
+
 volumes:
   postgres-data:
+    driver: local
+    driver_opts:
+          type: "none"
+          o: "bind"
+          device: "/home/ubuntu/ai4i-v/volumes/pg_data"
+  postgres-konga-data:
     driver: local
   redis-data:
     driver: local
@@ -555,6 +1029,10 @@ volumes:
   zookeeper-data:
     driver: local
   zookeeper-logs:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
     driver: local
 
 networks:

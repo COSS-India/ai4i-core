@@ -17,6 +17,7 @@ import {
   Link,
   Select,
   FormErrorMessage,
+  useToast,
 } from '@chakra-ui/react';
 import { ViewIcon, ViewOffIcon } from '@chakra-ui/icons';
 import { useAuth } from '../../hooks/useAuth';
@@ -31,6 +32,7 @@ interface RegisterFormProps {
 
 const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin, onRegisterSuccess }) => {
   const { register, isLoading, error, clearError } = useAuth();
+  const toast = useToast();
   const [formData, setFormData] = useState<RegisterRequest>({
     email: '',
     username: '',
@@ -75,6 +77,16 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
 
     try {
       await register(formData);
+      
+      // Show success toast
+      toast({
+        title: "Registration Successful",
+        description: "Your account has been created successfully! Please sign in to continue.",
+        status: "success",
+        duration: 5000,
+        isClosable: true,
+      });
+      
       // After successful registration, switch to login page
       if (onRegisterSuccess) {
         onRegisterSuccess();
@@ -83,9 +95,91 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
       } else {
         onSuccess?.();
       }
-    } catch (error) {
-      // Error is handled by the hook
+    } catch (error: any) {
       console.error('Registration failed:', error);
+      
+      // Extract error message from response
+      let errorMessage = 'Registration failed. Please try again.';
+      let errorTitle = 'Registration Error';
+      
+      // Check if error has response data
+      if (error?.response) {
+        const status = error.response.status;
+        const errorData = error.response.data || error.response;
+        
+        // Extract error message from different possible formats
+        if (typeof errorData === 'string') {
+          errorMessage = errorData;
+        } else if (errorData?.detail) {
+          errorMessage = String(errorData.detail);
+        } else if (errorData?.message) {
+          errorMessage = String(errorData.message);
+        } else if (Array.isArray(errorData)) {
+          errorMessage = errorData.map((err: any) => 
+            err.detail || err.message || String(err)
+          ).join(', ');
+        } else if (typeof errorData === 'object' && Object.keys(errorData).length > 0) {
+          // Try to extract meaningful error from object
+          const errorText = errorData.detail || errorData.message || errorData.error;
+          errorMessage = errorText ? String(errorText) : JSON.stringify(errorData);
+        }
+        
+        // Provide user-friendly messages based on status code
+        if (status === 400) {
+          errorTitle = 'Invalid Registration Data';
+          if (!errorMessage.includes('already') && !errorMessage.includes('exists')) {
+            errorMessage = errorMessage || 'Please check your registration information and try again.';
+          }
+        } else if (status === 409 || errorMessage.toLowerCase().includes('already exists') || 
+                   errorMessage.toLowerCase().includes('already registered') ||
+                   errorMessage.toLowerCase().includes('duplicate')) {
+          errorTitle = 'Account Already Exists';
+          if (errorMessage.toLowerCase().includes('email')) {
+            errorMessage = 'An account with this email already exists. Please use a different email or sign in.';
+          } else if (errorMessage.toLowerCase().includes('username')) {
+            errorMessage = 'This username is already taken. Please choose a different username.';
+          } else {
+            errorMessage = 'An account with this information already exists. Please sign in instead.';
+          }
+        } else if (status === 422) {
+          errorTitle = 'Validation Error';
+          errorMessage = errorMessage || 'Please check that all fields are filled correctly.';
+        } else if (status === 500) {
+          errorTitle = 'Server Error';
+          errorMessage = 'An internal server error occurred. Please try again later.';
+        } else if (status === 503) {
+          errorTitle = 'Service Unavailable';
+          errorMessage = 'The registration service is temporarily unavailable. Please try again later.';
+        }
+      } else if (error?.message) {
+        // Handle Error objects
+        const errorMsg = error.message;
+        errorMessage = errorMsg;
+        
+        // Provide user-friendly messages for common error types
+        if (errorMsg.includes('timeout') || errorMsg.includes('Timeout')) {
+          errorTitle = 'Request Timeout';
+          errorMessage = 'The request took too long. Please check your connection and try again.';
+        } else if (errorMsg.includes('NetworkError') || errorMsg.includes('Failed to fetch')) {
+          errorTitle = 'Network Error';
+          errorMessage = 'Unable to connect to the server. Please check your internet connection and try again.';
+        } else if (errorMsg.includes('400')) {
+          errorTitle = 'Invalid Registration Data';
+          errorMessage = 'Please check your registration information and try again.';
+        } else if (errorMsg.includes('409')) {
+          errorTitle = 'Account Already Exists';
+          errorMessage = 'An account with this information already exists. Please sign in instead.';
+        }
+      }
+      
+      // Show error toast
+      toast({
+        title: errorTitle,
+        description: errorMessage,
+        status: "error",
+        duration: 7000,
+        isClosable: true,
+      });
     }
   };
 

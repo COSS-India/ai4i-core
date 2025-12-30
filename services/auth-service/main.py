@@ -20,11 +20,14 @@ from models import (
     LoginRequest, LoginResponse, TokenRefreshRequest, TokenRefreshResponse,
     TokenValidationResponse, PasswordChangeRequest, PasswordResetRequest,
     PasswordResetConfirm, LogoutRequest, LogoutResponse, APIKeyCreate,
-    APIKeyResponse, OAuth2Provider, OAuth2Callback, Role, UserRole
+    APIKeyResponse, OAuth2Provider, OAuth2Callback, Role, UserRole,
+    APIKeyValidationRequest, APIKeyValidationResponse, Permission,
+    UserDetailResponse, PermissionResponse, UserListResponse
 )
 from pydantic import BaseModel
 from auth_utils import AuthUtils
 from oauth_utils import OAuthUtils
+from casbin_enforcer import load_policies_from_db, check_roles_permission
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -123,12 +126,40 @@ async def startup_event():
     
     try:
         # Initialize Redis connection
+        redis_host = os.getenv('REDIS_HOST', 'redis')
+        redis_port = os.getenv('REDIS_PORT', '6379')
+        redis_password = os.getenv('REDIS_PASSWORD', '')
+        
+        # Build Redis URL - only include password if it's set
+        if redis_password:
+            redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
+        else:
+            redis_url = f"redis://{redis_host}:{redis_port}"
+        
         redis_client = redis.from_url(
-            f"redis://:{os.getenv('REDIS_PASSWORD', 'redis_secure_password_2024')}@"
-            f"{os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', '6379')}"
+            redis_url,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True
         )
-        await redis_client.ping()
-        logger.info("Connected to Redis")
+        
+        # Try to connect with retries
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                await redis_client.ping()
+                logger.info("Connected to Redis")
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Redis ping attempt {attempt + 1}/{max_retries} failed: {e}, retrying...")
+                    await asyncio.sleep(2)
+                else:
+                    logger.warning(f"Redis connection failed after {max_retries} attempts: {e}")
+                    logger.warning("Proceeding without Redis (session management disabled)")
+                    redis_client = None
+                    break
         
         # Initialize PostgreSQL connection
         database_url = os.getenv(
@@ -147,6 +178,15 @@ async def startup_event():
             expire_on_commit=False
         )
         logger.info("Connected to PostgreSQL")
+        
+        # Load Casbin policies from database
+        try:
+            async with db_session() as session:
+                await load_policies_from_db(session)
+                logger.info("Loaded Casbin policies from database")
+        except Exception as e:
+            logger.warning(f"Failed to load Casbin policies from database: {e}")
+            logger.warning("Casbin will use empty policies (may cause permission checks to fail)")
         
     except Exception as e:
         logger.error(f"Failed to initialize connections: {e}")
@@ -208,6 +248,30 @@ async def health_check():
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail="Service unhealthy")
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness check endpoint for Kubernetes probes"""
+    try:
+        # Check PostgreSQL connectivity (required for readiness)
+        if db_engine:
+            try:
+                async with db_engine.begin() as conn:
+                    await conn.execute(text("SELECT 1"))
+                return {
+                    "status": "ready",
+                    "service": "auth-service"
+                }
+            except Exception as e:
+                logger.error(f"PostgreSQL readiness check failed: {e}")
+                raise HTTPException(status_code=503, detail="Service not ready")
+        else:
+            raise HTTPException(status_code=503, detail="Database not initialized")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        raise HTTPException(status_code=503, detail="Service not ready")
 
 @app.get("/api/v1/auth/status")
 async def auth_status():
@@ -275,18 +339,63 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     db.add(db_user)
     await db.flush()  # Flush to ensure the user is added to the session
     
-    # Assign default USER role to new users
-    result = await db.execute(select(Role).where(Role.name == 'USER'))
-    user_role_obj = result.scalar_one_or_none()
-    if user_role_obj:
-        user_role = UserRole(user_id=db_user.id, role_id=user_role_obj.id)
-        db.add(user_role)
+    # Check if user already has any role (shouldn't happen for new users, but safety check)
+    existing_roles = await db.execute(
+        select(UserRole).where(UserRole.user_id == db_user.id)
+    )
+    existing_role = existing_roles.scalar_one_or_none()
+    if existing_role:
+        logger.warning(f"User {user_data.email} already has a role assigned. Skipping default role assignment.")
+    else:
+        # Assign default USER role to new users (only if no role exists)
+        result = await db.execute(select(Role).where(Role.name == 'USER'))
+        user_role_obj = result.scalar_one_or_none()
+        if user_role_obj:
+            user_role = UserRole(user_id=db_user.id, role_id=user_role_obj.id)
+            db.add(user_role)
+            logger.info(f"Assigned default USER role to new user: {user_data.email}")
+        else:
+            logger.warning(f"USER role not found in database. User {user_data.email} registered without default role.")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="System configuration error: Default USER role not found. Please contact administrator."
+            )
     
     await db.commit()
     await db.refresh(db_user)
     
-    logger.info(f"New user registered: {user_data.email}")
-    return db_user
+    # Get user roles directly (query immediately after commit to ensure we get the role)
+    role_result = await db.execute(
+        select(Role.name)
+        .join(UserRole, Role.id == UserRole.role_id)
+        .where(UserRole.user_id == db_user.id)
+        .order_by(UserRole.assigned_at.desc())
+        .limit(1)
+    )
+    user_roles = list(role_result.scalars().all())
+    
+    logger.info(f"New user registered: {user_data.email} with roles: {user_roles}")
+    
+    # Create response dict with roles
+    user_dict = {
+        "id": db_user.id,
+        "email": db_user.email,
+        "username": db_user.username,
+        "full_name": db_user.full_name,
+        "phone_number": db_user.phone_number,
+        "timezone": db_user.timezone,
+        "language": db_user.language,
+        "is_active": db_user.is_active,
+        "is_verified": db_user.is_verified,
+        "is_superuser": db_user.is_superuser,
+        "created_at": db_user.created_at,
+        "updated_at": db_user.updated_at,
+        "last_login": db_user.last_login,
+        "avatar_url": db_user.avatar_url,
+        "roles": user_roles
+    }
+    
+    return user_dict
 
 @app.post("/api/v1/auth/login", response_model=LoginResponse)
 async def login(
@@ -459,11 +568,12 @@ async def logout(
     )
 
 @app.get("/api/v1/auth/validate", response_model=TokenValidationResponse)
+@app.post("/api/v1/auth/validate", response_model=TokenValidationResponse)
 async def validate_token(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Validate token and return user info"""
+    """Validate token and return user info (supports both GET and POST for Kong introspection)"""
     permissions = await AuthUtils.get_user_permissions(db, current_user.id)
     roles = await AuthUtils.get_user_roles(db, current_user.id)
     
@@ -473,6 +583,92 @@ async def validate_token(
         username=current_user.username,
         permissions=permissions,
         roles=roles
+    )
+
+@app.post("/api/v1/auth/validate-api-key", response_model=APIKeyValidationResponse)
+async def validate_api_key(
+    validation_data: APIKeyValidationRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Validate API key with permission checking for service and action
+    
+    This endpoint validates:
+    1. API key exists and is active
+    2. API key has not expired
+    3. API key has the required permission (e.g., asr.inference)
+    4. If action is 'inference' but key only has 'read', returns appropriate error
+    
+    Examples:
+    - API key with ['asr.read', 'asr.inference'] can access asr.read and asr.inference
+    - API key with ['asr.read'] can only access asr.read, not asr.inference
+    - API key with ['asr.read', 'nmt.read', 'nmt.inference'] can access both ASR and NMT services
+    """
+    # Normalize service name (handle variations)
+    service = validation_data.service.lower().strip()
+    action = validation_data.action.lower().strip()
+    
+    # Validate service name
+    valid_services = [
+        'asr', 'tts', 'nmt', 'pipeline', 'model-management', 'llm',
+        'audio-lang-detection', 'language-detection', 'language-diarization',
+        'ner', 'ocr', 'speaker-diarization', 'transliteration'
+    ]
+    if service not in valid_services:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid service name. Must be one of: {', '.join(valid_services)}"
+        )
+    
+    # Validate action
+    valid_actions = ['read', 'inference']
+    if action not in valid_actions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid action. Must be one of: {', '.join(valid_actions)}"
+        )
+    
+    # Map service names to permission resource names (for compatibility)
+    # Permissions use resource names like "audio-lang" but services may send "audio-lang-detection"
+    service_to_resource = {
+        'audio-lang-detection': 'audio-lang',
+        'language-detection': 'language-detection',
+        'language-diarization': 'language-diarization',
+        'ner': 'ner',
+        'ocr': 'ocr',
+        'speaker-diarization': 'speaker-diarization',
+        'transliteration': 'transliteration',
+        'asr': 'asr',
+        'tts': 'tts',
+        'nmt': 'nmt',
+        'pipeline': 'pipeline',
+        'model-management': 'model-management',
+        'llm': 'llm'
+    }
+    # Use mapped resource name for permission checking
+    resource_name = service_to_resource.get(service, service)
+    
+    # Validate API key
+    is_valid, api_key_obj, error_message = await AuthUtils.validate_api_key(
+        db=db,
+        api_key=validation_data.api_key,
+        service=resource_name,
+        action=action
+    )
+    
+    if not is_valid:
+        return APIKeyValidationResponse(
+            valid=False,
+            message=error_message,
+            permissions=[]
+        )
+    
+    # Return success with permissions
+    return APIKeyValidationResponse(
+        valid=True,
+        message="API key is valid and has required permissions",
+        user_id=api_key_obj.user_id,
+        permissions=api_key_obj.permissions or []
     )
 
 @app.get("/api/v1/auth/me", response_model=UserResponse)
@@ -588,18 +784,89 @@ async def reset_password(
     logger.info(f"Password reset attempted with token: {reset_data.token[:10]}...")
     return {"message": "Password reset functionality would be implemented with email verification"}
 
+
+def require_permission(resource: str, action: str):
+    """
+    Dependency factory: ensure current user (by roles) has given permission
+    using Casbin policies loaded from role_permissions.
+
+    Example:
+        current_user: User = Depends(require_permission("apiKey", "create"))
+    """
+
+    async def _dep(
+        current_user: User = Depends(get_current_active_user),
+        db: AsyncSession = Depends(get_db),
+    ) -> User:
+        user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+        allowed = await check_roles_permission(
+            roles=user_roles,
+            obj=resource,
+            act=action,
+            tenant="default",
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Insufficient permissions: requires '{resource}.{action}'",
+            )
+        return current_user
+
+    return _dep
+
+
+# Backwards-compatible admin helper (still used by some admin endpoints)
+async def require_admin(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """Dependency to ensure current user is an admin role (ADMIN or superuser)."""
+    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    if "ADMIN" not in user_roles and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can access this endpoint"
+        )
+    return current_user
+
+
 # API Key Management
 
 @app.post("/api/v1/auth/api-keys", response_model=APIKeyResponse)
 async def create_api_key(
     api_key_data: APIKeyCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_permission("apiKey", "create")),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new API key"""
+    """Create a new API key. Only accessible by ADMIN role. Admins can create keys for other users by providing user_id."""
+    # Determine target user ID
+    target_user_id = current_user.id
+    target_user = current_user
+    
+    # If user_id is provided, verify admin permissions and target user exists
+    if api_key_data.user_id is not None:
+        # Check if current user is admin
+        user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+        if "ADMIN" not in user_roles and not current_user.is_superuser:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only administrators can create API keys for other users"
+            )
+        
+        # Verify target user exists
+        target_user = await AuthUtils.get_user_by_id(db, api_key_data.user_id)
+        if not target_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with ID {api_key_data.user_id} not found"
+            )
+        
+        target_user_id = api_key_data.user_id
+    
     # Generate API key
     api_key_value = AuthUtils.generate_api_key()
     api_key_hash = AuthUtils.hash_api_key(api_key_value)
+    api_key_encrypted = AuthUtils.encrypt_api_key(api_key_value)
     
     # Set expiration
     expires_at = None
@@ -608,9 +875,10 @@ async def create_api_key(
     
     # Create API key record
     db_api_key = APIKey(
-        user_id=current_user.id,
+        user_id=target_user_id,
         key_name=api_key_data.key_name,
         key_hash=api_key_hash,
+        key_value_encrypted=api_key_encrypted,
         permissions=api_key_data.permissions,
         expires_at=expires_at
     )
@@ -619,7 +887,7 @@ async def create_api_key(
     await db.commit()
     await db.refresh(db_api_key)
     
-    logger.info(f"API key created for user: {current_user.email}")
+    logger.info(f"API key created for user: {target_user.email} (created by: {current_user.email})")
     
     return APIKeyResponse(
         id=db_api_key.id,
@@ -637,7 +905,7 @@ async def list_api_keys(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """List user's API keys"""
+    """List user's API keys. Accessible by any authenticated user."""
     result = await db.execute(
         select(APIKey).where(APIKey.user_id == current_user.id)
     )
@@ -647,7 +915,7 @@ async def list_api_keys(
         APIKeyResponse(
             id=key.id,
             key_name=key.key_name,
-            key_value="***",  # Never return actual key value
+            key_value=AuthUtils.decrypt_api_key(key.key_value_encrypted) or "***",  # Decrypt and return actual value
             permissions=key.permissions,
             is_active=key.is_active,
             created_at=key.created_at,
@@ -660,7 +928,7 @@ async def list_api_keys(
 @app.delete("/api/v1/auth/api-keys/{key_id}")
 async def revoke_api_key(
     key_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_permission("apiKey", "delete")),
     db: AsyncSession = Depends(get_db)
 ):
     """Revoke an API key"""
@@ -936,24 +1204,67 @@ async def assign_role(
             detail=f"Role '{role_data.role_name}' not found"
         )
     
-    # Check if user already has this role
+    # Check if user already has this exact role
     result = await db.execute(
         select(UserRole).where(
             UserRole.user_id == role_data.user_id,
             UserRole.role_id == role.id
         )
     )
-    existing = result.scalar_one_or_none()
-    if existing:
+    existing_same_role = result.scalar_one_or_none()
+    if existing_same_role:
         return {"message": f"User already has role '{role_data.role_name}'"}
     
-    # Assign role
+    # Check if user has any other roles (only one role per user allowed)
+    result = await db.execute(
+        select(UserRole).where(UserRole.user_id == role_data.user_id)
+    )
+    existing_roles = list(result.scalars().all())
+    
+    if existing_roles:
+        # Get role names for logging
+        role_ids = [r.role_id for r in existing_roles]
+        if role_ids:
+            role_result = await db.execute(
+                select(Role.name).where(Role.id.in_(role_ids))
+            )
+            existing_role_names = list(role_result.scalars().all())
+        else:
+            existing_role_names = []
+        
+        # Remove ALL existing roles before assigning new one (only one role per user)
+        for existing_role in existing_roles:
+            await db.delete(existing_role)
+        
+        if existing_role_names:
+            logger.warning(
+                f"User {target_user.email} had {len(existing_roles)} role(s) [{', '.join(existing_role_names)}]. "
+                f"Removed all existing roles before assigning new role '{role_data.role_name}'"
+            )
+        else:
+            logger.warning(
+                f"User {target_user.email} had {len(existing_roles)} role(s). "
+                f"Removed all existing roles before assigning new role '{role_data.role_name}'"
+            )
+    
+    # Assign the new role (only one role per user)
     user_role = UserRole(user_id=role_data.user_id, role_id=role.id)
     db.add(user_role)
     await db.commit()
     
     logger.info(f"Role '{role_data.role_name}' assigned to user {target_user.email} by {current_user.email}")
-    return {"message": f"Role '{role_data.role_name}' assigned successfully"}
+    
+    # Prepare response message
+    if existing_roles:
+        response_message = f"Role '{role_data.role_name}' assigned successfully. Previous role(s) were replaced."
+    else:
+        response_message = f"Role '{role_data.role_name}' assigned successfully."
+    
+    return {
+        "message": response_message,
+        "user_id": role_data.user_id,
+        "new_role": role_data.role_name
+    }
 
 @app.post("/api/v1/auth/roles/remove", response_model=dict, tags=["Role Management"])
 async def remove_role(
@@ -1011,46 +1322,216 @@ async def get_user_roles_endpoint(
     db: AsyncSession = Depends(get_db)
 ):
     """Get roles for a user (Admin or self)"""
-    # Check if current user is admin or viewing own profile
-    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
-    if user_id != current_user.id and "ADMIN" not in user_roles and not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can view other users' roles"
+    try:
+        # Check if current user is admin or viewing own profile
+        user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+        if user_id != current_user.id and "ADMIN" not in user_roles and not current_user.is_superuser:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only administrators can view other users' roles"
+            )
+        
+        target_user = await AuthUtils.get_user_by_id(db, user_id)
+        if not target_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Clean up duplicate roles before getting roles (ensure only one role per user)
+        user_roles_result = await db.execute(
+            select(UserRole)
+            .where(UserRole.user_id == user_id)
+            .order_by(UserRole.assigned_at.desc())
         )
-    
-    target_user = await AuthUtils.get_user_by_id(db, user_id)
-    if not target_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+        all_user_roles = list(user_roles_result.scalars().all())
+        
+        logger.info(f"[GET_ROLES] Found {len(all_user_roles)} role(s) for user {user_id} (email: {target_user.email})")
+        
+        if len(all_user_roles) > 1:
+            # Get role names for logging
+            role_ids = [ur.role_id for ur in all_user_roles]
+            role_names_result = await db.execute(
+                select(Role).where(Role.id.in_(role_ids))
+            )
+            roles_list = list(role_names_result.scalars().all())
+            role_map = {r.id: r.name for r in roles_list}
+            old_role_names = [role_map.get(ur.role_id, "UNKNOWN") for ur in all_user_roles[1:]]
+            most_recent_role_name = role_map.get(all_user_roles[0].role_id, "UNKNOWN")
+            
+            # Keep only the most recent role, delete all others
+            deleted_count = 0
+            for old_role in all_user_roles[1:]:
+                await db.delete(old_role)
+                deleted_count += 1
+            
+            await db.flush()
+            await db.commit()
+            
+            logger.warning(
+                f"Cleaned up {deleted_count} duplicate role(s) [{', '.join(old_role_names)}] "
+                f"for user {user_id} (email: {target_user.email}). Kept only: {most_recent_role_name}"
+            )
+        
+        # Refresh the session to ensure we see the latest data after cleanup
+        await db.refresh(target_user)
+        
+        # Now get the roles (should be only one after cleanup)
+        # Query directly to ensure we get the current state
+        if len(all_user_roles) > 1:
+            # After cleanup, query again to get only the remaining role
+            remaining_role_result = await db.execute(
+                select(Role.name)
+                .join(UserRole, Role.id == UserRole.role_id)
+                .where(UserRole.user_id == user_id)
+                .order_by(UserRole.assigned_at.desc())
+                .limit(1)
+            )
+            roles = list(remaining_role_result.scalars().all())
+        else:
+            # Use the utility function if no cleanup was needed
+            roles = await AuthUtils.get_user_roles(db, user_id)
+        
+        logger.info(f"Returning {len(roles)} role(s) for user {user_id}: {roles}")
+        return UserRolesResponse(
+            user_id=target_user.id,
+            username=target_user.username,
+            email=target_user.email,
+            roles=roles
         )
-    
-    roles = await AuthUtils.get_user_roles(db, user_id)
-    return UserRolesResponse(
-        user_id=target_user.id,
-        username=target_user.username,
-        email=target_user.email,
-        roles=roles
-    )
+    except Exception as e:
+        logger.error(f"Error in get_user_roles_endpoint for user {user_id}: {str(e)}", exc_info=True)
+        raise
 
 @app.get("/api/v1/auth/roles/list", response_model=List[dict], tags=["Role Management"])
 async def list_roles(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """List all available roles (Admin only)"""
-    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
-    if "ADMIN" not in user_roles and not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can list roles"
-        )
-    
     result = await db.execute(select(Role))
     roles = result.scalars().all()
     return [{"id": role.id, "name": role.name, "description": role.description} for role in roles]
 
+
+# Admin endpoints
+@app.get("/api/v1/auth/users/{user_id}", response_model=UserDetailResponse, tags=["Admin"])
+async def get_user_details(
+    user_id: int,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get user details by user ID (Admin only)
+    
+    Returns user information including:
+    - userid
+    - username
+    - emailid
+    - phonenumber
+    - full_name
+    - is_active
+    - is_verified
+    - is_superuser
+    - created_at
+    - last_login
+    """
+    user = await AuthUtils.get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with ID {user_id} not found"
+        )
+    
+    return UserDetailResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        phone_number=user.phone_number,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        is_verified=user.is_verified,
+        is_superuser=user.is_superuser,
+        created_at=user.created_at,
+        last_login=user.last_login
+    )
+
+
+@app.get("/api/v1/auth/permissions", response_model=List[PermissionResponse], tags=["Admin"])
+async def get_all_permissions(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all permissions from the permissions table (Admin only)
+    
+    Returns a list of all permissions with:
+    - id
+    - name
+    - resource
+    - action
+    - created_at
+    """
+    result = await db.execute(select(Permission).order_by(Permission.name))
+    permissions = result.scalars().all()
+    
+    return [
+        PermissionResponse(
+            id=perm.id,
+            name=perm.name,
+            resource=perm.resource,
+            action=perm.action,
+            created_at=perm.created_at
+        )
+        for perm in permissions
+    ]
+
+
+@app.get("/api/v1/auth/permission/list", response_model=List[str], tags=["Role Management"])
+async def get_permission_list(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get list of all permission names from the permissions table
+    
+    Returns a list of permission names only
+    """
+    result = await db.execute(select(Permission.name).order_by(Permission.name))
+    permission_names = result.scalars().all()
+    
+    return list(permission_names)
+
+
+@app.get("/api/v1/auth/users", response_model=List[UserListResponse], tags=["Admin"])
+async def get_all_users(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all users (Admin only)
+    
+    Returns a list of all users with:
+    - userid
+    - username
+    - emailid
+    - phonenumber
+    """
+    result = await db.execute(select(User).order_by(User.id))
+    users = result.scalars().all()
+    
+    return [
+        UserListResponse(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            phone_number=user.phone_number
+        )
+        for user in users
+    ]
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8081)
+

@@ -74,15 +74,44 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 -- Create a default admin user (password: admin123)
 -- Note: This is for development only - use a proper password hashing in production
 INSERT INTO users (email, username, password_hash, is_active, is_verified) VALUES
-('admin@dhruva-platform.com', 'admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj4J/9QZQK2O', true, true)
+('admin@ai4i.com', 'admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj4J/9QZQK2O', true, true)
 ON CONFLICT (email) DO NOTHING;
 
 -- Assign ADMIN role to the default admin user
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'admin@dhruva-platform.com' AND r.name = 'ADMIN'
+WHERE u.email = 'admin@ai4i.com' AND r.name = 'ADMIN'
 ON CONFLICT (user_id, role_id) DO NOTHING;
+
+-- Additional user_roles INSERT queries
+-- Assign USER role to regular users (example: if you have other users)
+-- INSERT INTO user_roles (user_id, role_id)
+-- SELECT u.id, r.id
+-- FROM users u, roles r
+-- WHERE u.email = 'user@example.com' AND r.name = 'USER'
+-- ON CONFLICT (user_id, role_id) DO NOTHING;
+
+-- Assign MODERATOR role to moderators (example)
+-- INSERT INTO user_roles (user_id, role_id)
+-- SELECT u.id, r.id
+-- FROM users u, roles r
+-- WHERE u.email = 'moderator@example.com' AND r.name = 'MODERATOR'
+-- ON CONFLICT (user_id, role_id) DO NOTHING;
+
+-- Assign GUEST role to guest users (example)
+-- INSERT INTO user_roles (user_id, role_id)
+-- SELECT u.id, r.id
+-- FROM users u, roles r
+-- WHERE u.email = 'guest@example.com' AND r.name = 'GUEST'
+-- ON CONFLICT (user_id, role_id) DO NOTHING;
+
+-- Assign multiple roles to a user (example: user with both USER and MODERATOR roles)
+-- INSERT INTO user_roles (user_id, role_id)
+-- SELECT u.id, r.id
+-- FROM users u, roles r
+-- WHERE u.email = 'poweruser@example.com' AND r.name IN ('USER', 'MODERATOR')
+-- ON CONFLICT (user_id, role_id) DO NOTHING;
 
 -- Connect to config_db and insert sample feature flags
 \c config_db;
@@ -163,11 +192,11 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- Sample ASR Requests
 INSERT INTO asr_requests (user_id, model_id, language, audio_duration, processing_time, status, error_message) VALUES
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'vakyansh-asr-en', 'en', 5.5, 0.8, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'vakyansh-asr-hi', 'hi', 12.3, 1.5, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'conformer-asr-multilingual', 'ta', 30.0, 3.2, 'processing', NULL),
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'vakyansh-asr-en', 'en', 8.7, 1.1, 'failed', 'Audio format not supported'),
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'conformer-asr-multilingual', 'te', 15.2, 2.1, 'completed', NULL)
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'vakyansh-asr-en', 'en', 5.5, 0.8, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'vakyansh-asr-hi', 'hi', 12.3, 1.5, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'conformer-asr-multilingual', 'ta', 30.0, 3.2, 'processing', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'vakyansh-asr-en', 'en', 8.7, 1.1, 'failed', 'Audio format not supported'),
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'conformer-asr-multilingual', 'te', 15.2, 2.1, 'completed', NULL)
 ON CONFLICT DO NOTHING;
 
 -- Sample ASR Results
@@ -188,11 +217,11 @@ ON CONFLICT DO NOTHING;
 
 -- Sample TTS Requests
 INSERT INTO tts_requests (user_id, model_id, voice_id, language, text_length, processing_time, status, error_message) VALUES
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'indic-tts-en', 'female-1', 'en', 50, 1.2, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'indic-tts-hi', 'male-1', 'hi', 120, 2.5, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'glow-tts-multilingual', 'female-2', 'ta', 200, 4.0, 'processing', NULL),
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'indic-tts-en', 'male-2', 'en', 75, 1.8, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'glow-tts-multilingual', 'custom-voice', 'te', 150, 3.2, 'completed', NULL)
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'indic-tts-en', 'female-1', 'en', 50, 1.2, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'indic-tts-hi', 'male-1', 'hi', 120, 2.5, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'glow-tts-multilingual', 'female-2', 'ta', 200, 4.0, 'processing', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'indic-tts-en', 'male-2', 'en', 75, 1.8, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'glow-tts-multilingual', 'custom-voice', 'te', 150, 3.2, 'completed', NULL)
 ON CONFLICT DO NOTHING;
 
 -- Sample TTS Results
@@ -209,11 +238,11 @@ ON CONFLICT DO NOTHING;
 
 -- Sample NMT Requests
 INSERT INTO nmt_requests (user_id, model_id, source_language, target_language, text_length, processing_time, status, error_message) VALUES
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'indictrans-v2', 'en', 'hi', 45, 0.5, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'nmt-en-hi', 'hi', 'en', 100, 1.0, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'nmt-multilingual', 'en', 'ta', 250, 2.0, 'processing', NULL),
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'indictrans-v2', 'ta', 'en', 80, 1.2, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@dhruva-platform.com'), 'nmt-multilingual', 'te', 'en', 120, 1.5, 'completed', NULL)
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'indictrans-v2', 'en', 'hi', 45, 0.5, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'nmt-en-hi', 'hi', 'en', 100, 1.0, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'nmt-multilingual', 'en', 'ta', 250, 2.0, 'processing', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'indictrans-v2', 'ta', 'en', 80, 1.2, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'nmt-multilingual', 'te', 'en', 120, 1.5, 'completed', NULL)
 ON CONFLICT DO NOTHING;
 
 -- Sample NMT Results
