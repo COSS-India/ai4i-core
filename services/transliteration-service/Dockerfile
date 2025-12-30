@@ -52,6 +52,7 @@ ENV PYTHONUNBUFFERED=1
 
 # Copy AI4ICore Model Management Plugin
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
+COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 
 # Copy app code
 COPY services/transliteration-service /app

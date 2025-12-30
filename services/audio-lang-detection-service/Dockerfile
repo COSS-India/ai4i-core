@@ -44,6 +44,11 @@ RUN useradd --create-home --shell /bin/bash app
 # Copy Python packages from builder
 COPY --from=builder /root/.local /home/app/.local
 
+# Set PATH to include user-installed binaries
+ENV PATH="/home/app/.local/bin:$PATH"
+ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
+
 # Copy AI4ICore Observability Plugin
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 
