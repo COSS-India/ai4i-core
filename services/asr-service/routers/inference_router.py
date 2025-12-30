@@ -134,7 +134,7 @@ async def run_inference(
                 )
             elif "connect" in error_msg.lower() or "connection" in error_msg.lower() or "refused" in error_msg.lower():
                 raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail=f"Cannot connect to Triton server: {error_msg}"
                 )
             elif "timeout" in error_msg.lower():
@@ -146,7 +146,7 @@ async def run_inference(
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail=f"Triton inference error: {error_msg}"
-                )
+            )
         
         # Audio processing errors
         elif "audio" in error_msg.lower():

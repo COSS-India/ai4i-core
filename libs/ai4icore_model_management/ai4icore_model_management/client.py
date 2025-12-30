@@ -327,18 +327,47 @@ class ModelManagementClient:
             endpoint = data.get("endpoint")
             api_key = data.get("api_key")
             
-            # Default to "transliteration" for this service
-            triton_model = "transliteration"
-            
-            # Try to extract model name from model's inferenceEndPoint if available
+            # Extract model data first to determine task type
             model_data = data.get("model", {})
+            
+            # Determine default model name based on task type
+            task_type = None
+            if model_data:
+                task = model_data.get("task", {})
+                if isinstance(task, dict):
+                    task_type = task.get("type", "").lower()
+            
+            # Set default triton_model based on task type
+            default_model_names = {
+                "ocr": "surya_ocr",
+                "transliteration": "transliteration",
+                "nmt": "nmt",
+                "asr": "asr",
+                "tts": "tts",
+                "ner": "ner",
+                "language_detection": "language_detection",
+                "speaker_diarization": "speaker_diarization",
+                "language_diarization": "language_diarization",
+                "audio_lang_detection": "audio_lang_detection",
+                "llm": "llm"
+            }
+            
+            triton_model = default_model_names.get(task_type, "transliteration")  # Fallback to transliteration if unknown
+            
+            # Try to extract model name from model's inferenceEndPoint if available (this takes precedence)
             if model_data:
                 inference_endpoint = model_data.get("inferenceEndPoint", {})
                 if isinstance(inference_endpoint, dict):
                     # Check if there's a model name in the inference endpoint config
-                    model_name_from_endpoint = inference_endpoint.get("modelName")
+                    # Try both camelCase (modelName) and snake_case (model_name) for compatibility
+                    model_name_from_endpoint = inference_endpoint.get("modelName") or inference_endpoint.get("model_name")
                     if model_name_from_endpoint:
                         triton_model = model_name_from_endpoint
+                        logger.debug(f"Using model name from inference endpoint: {triton_model}")
+                    else:
+                        logger.debug(f"Using default model name based on task type '{task_type}': {triton_model}")
+            else:
+                logger.warning(f"No model data found for service {service_id}, using default model name: {triton_model}")
             
             # Extract model information from service response
             # ServiceViewResponse includes full model object

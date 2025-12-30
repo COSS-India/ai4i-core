@@ -100,13 +100,35 @@ class TritonClient:
         outputs = [http_client.InferRequestedOutput("OUTPUT_TEXT")]
         return inputs, outputs
 
-    def run_ocr_batch(self, images_base64: List[str]) -> List[Dict]:
+    def list_models(self) -> List[str]:
+        """List all available models on the Triton server."""
+        try:
+            models = self.client.get_model_repository_index()
+            model_names = []
+            if models:
+                for model in models:
+                    model_names.append(model.get('name', ''))
+            logger.info(f"Found {len(model_names)} models at '{self.triton_url}': {model_names}")
+            return model_names
+        except Exception as e:
+            logger.error(f"Failed to list models from Triton server at '{self.triton_url}': {e}", exc_info=True)
+            return []
+
+    def run_ocr_batch(self, images_base64: List[str], model_name: str = "surya_ocr") -> List[Dict]:
         """
         Run OCR on a batch of base64-encoded images.
 
-        Returns a list of parsed JSON objects from the OCR model, one per input.
+        Args:
+            images_base64: List of base64-encoded images
+            model_name: Triton model name (default: "surya_ocr")
+
+        Returns:
+            List of parsed JSON objects from the OCR model, one per input.
         If a particular result cannot be parsed, an empty dict is returned in
         that position.
+            
+        Raises:
+            TritonInferenceError: If Triton inference fails
         """
         if not images_base64:
             return []
@@ -118,15 +140,63 @@ class TritonClient:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         try:
+            # Check server health
+            if not self.client.is_server_ready():
+                raise TritonInferenceError(
+                    f"Triton server at '{self.triton_url}' is not ready. "
+                    f"Please verify the endpoint is correct and the server is running."
+                )
+            
             response = self.client.infer(
-                model_name="surya_ocr",
+                model_name=model_name,
                 inputs=inputs,
                 outputs=outputs,
                 headers=headers or None,
             )
-        except Exception as exc:  # pragma: no cover - external failure path
-            logger.error("Triton OCR inference failed: %s", exc, exc_info=True)
-            raise TritonInferenceError(f"Triton OCR inference failed: {exc}") from exc
+        except TritonInferenceError:
+            # Re-raise TritonInferenceError as-is
+            raise
+        except Exception as exc:
+            error_msg = str(exc)
+            logger.error(
+                f"Triton OCR inference request failed for model '{model_name}' at '{self.triton_url}': {exc}",
+                exc_info=True
+            )
+            # Provide more helpful error messages
+            if "404" in error_msg or "Not Found" in error_msg or "model" in error_msg.lower() and "not found" in error_msg.lower():
+                # Try to list available models to provide helpful error message
+                try:
+                    available_models = self.list_models()
+                    if available_models:
+                        raise TritonInferenceError(
+                            f"Triton model '{model_name}' not found at endpoint '{self.triton_url}'. "
+                            f"Available models: {', '.join(available_models)}. "
+                            f"Please verify the model name (service ID) is correct."
+                        )
+                    else:
+                        raise TritonInferenceError(
+                            f"Triton model '{model_name}' not found at endpoint '{self.triton_url}'. "
+                            f"Could not retrieve available models. Please verify the model name (service ID) and endpoint are correct."
+                        )
+                except Exception:
+                    # If listing models fails, just provide the basic error
+                    raise TritonInferenceError(
+                        f"Triton model '{model_name}' not found at endpoint '{self.triton_url}'. "
+                        f"Please verify the model name (service ID) and endpoint are correct."
+                    )
+            elif "Connection" in error_msg or "connect" in error_msg.lower() or "refused" in error_msg.lower():
+                raise TritonInferenceError(
+                    f"Cannot connect to Triton server at endpoint '{self.triton_url}'. "
+                    f"Please verify the endpoint is correct and the server is running."
+                )
+            elif "timeout" in error_msg.lower():
+                raise TritonInferenceError(
+                    f"Triton inference request timed out for model '{model_name}' at endpoint '{self.triton_url}'. "
+                    f"The server may be overloaded or the request is too large."
+                )
+            raise TritonInferenceError(
+                f"Triton OCR inference request failed for model '{model_name}' at endpoint '{self.triton_url}': {exc}"
+            ) from exc
 
         result = response.as_numpy("OUTPUT_TEXT")
         if result is None:
