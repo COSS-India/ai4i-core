@@ -225,23 +225,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Observability
+# Initialize AI4ICore Observability Plugin
+# Plugin automatically extracts metrics from request bodies - no manual recording needed!
 config = PluginConfig.from_env()
-config.enabled = True
+config.enabled = True  # Enable plugin
 if not config.customers:
-    config.customers = []
+    config.customers = []  # Will be extracted from JWT/headers automatically
 if not config.apps:
-    config.apps = ["ocr"]
+    config.apps = ["ocr"]  # Service name
 
-observability_plugin = ObservabilityPlugin(config)
-observability_plugin.register_plugin(app)
-logger.info("AI4ICore Observability Plugin initialized for OCR service")
+plugin = ObservabilityPlugin(config)
+plugin.register_plugin(app)
+logger.info("✅ AI4ICore Observability Plugin initialized for OCR service")
 
-# Model Management Plugin - single source of truth for Triton endpoint/model (no env fallback)
+# Model Management Plugin - registered AFTER Observability
+# so that Model Management runs first and Observability can use cached body
 try:
     from ai4icore_model_management import ModelManagementConfig
     mm_config = ModelManagementConfig(
-        model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://localhost:8094"),
+        model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
         model_management_api_key=None,
         cache_ttl_seconds=300,
         triton_endpoint_cache_ttl=300,

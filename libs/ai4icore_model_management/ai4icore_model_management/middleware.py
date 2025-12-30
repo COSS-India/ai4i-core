@@ -281,9 +281,17 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             # For POST requests, try to extract serviceId from body
             service_id = None
             if request.method == "POST":
-                # Simply read the body - FastAPI caches it automatically in request._body
-                # No need to create custom receive callables!
-                body = await request.body()
+                # Check if body was already read by another middleware (e.g., Observability)
+                body_was_cached = hasattr(request, '_body') and request._body is not None
+                
+                if body_was_cached:
+                    # Use cached body - another middleware already read it
+                    body = request._body
+                else:
+                    # Read the body - FastAPI caches it automatically in request._body
+                    # FastAPI also automatically restores the receive callable, so we don't need to do it manually
+                    # This avoids conflicts with Starlette's disconnect listener
+                    body = await request.body()
                 
                 service_id = extract_service_id_from_body(body)
                 

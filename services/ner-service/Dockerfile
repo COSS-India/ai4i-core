@@ -55,9 +55,9 @@ COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observab
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
 # Copy service code
-COPY services/ner-service .
+COPY services/ner-service /app
 
-# Adjust ownership and permissions
+# Adjust ownership and permissions (must be done as root before switching user)
 RUN chown -R app:app /app /home/app/.local \
     && chmod +x /home/app/.local/bin/* || true
 
@@ -66,12 +66,6 @@ USER app
 ENV PATH="/home/app/.local/bin:$PATH"
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
-
-# Copy app code
-COPY services/ner-service /app
-
-RUN chown -R app:app /app
-USER app
 
 EXPOSE 9001
 

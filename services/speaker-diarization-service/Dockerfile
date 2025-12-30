@@ -57,6 +57,8 @@ ENV PYTHONUNBUFFERED=1
 
 # Copy AI4ICore Model Management Plugin
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
+# Copy AI4ICore Observability Plugin
+COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 
 # Copy application code
 COPY services/speaker-diarization-service .
