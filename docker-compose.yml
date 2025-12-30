@@ -1055,6 +1055,24 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+  # OpenSearch initialization - ensures index template is created on startup
+  opensearch-init:
+    image: curlimages/curl:latest
+    container_name: ai4v-opensearch-init
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    volumes:
+      - ./infrastructure/opensearch/init-opensearch.sh:/init-opensearch.sh:ro
+      - ./infrastructure/opensearch/index-template.json:/index-template.json:ro
+    environment:
+      - OPENSEARCH_URL=http://opensearch:9200
+      - TEMPLATE_FILE=/index-template.json
+    command: ["sh", "/init-opensearch.sh"]
+    restart: "no"
+
   # Telemetry: OpenSearch Dashboards (for log visualization)
   opensearch-dashboards:
     image: opensearchproject/opensearch-dashboards:2.11.0
