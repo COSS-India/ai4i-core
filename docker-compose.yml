@@ -612,6 +612,9 @@ services:
 
       - ENV_FILE=.env
 
+    env_file:
+      - ./services/ocr-service/.env
+
     depends_on:
 
       config-service:
@@ -1007,9 +1010,17 @@ services:
 
       # Combined from both HEAD and remote commits
       - GF_INSTALL_PLUGINS=
-      - GF_SERVER_DOMAIN=core-v1.ai4inclusion.org
-      - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
+      # - GF_SERVER_DOMAIN=core-v1.ai4inclusion.org
+      # - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
+      - GF_SERVER_ROOT_URL=http://localhost:3001
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      # SMTP Configuration
+      - GF_SMTP_ENABLED=true
+      - GF_SMTP_HOST=smtp.gmail.com:587
+      - GF_SMTP_USER=bharathia0704@gmail.com
+      - GF_SMTP_PASSWORD=ypuaofsbatebvwye
+      - GF_SMTP_FROM_ADDRESS=bharathia0704@gmail.com
+      - GF_SMTP_FROM_NAME=Grafana Alerts
 
     volumes:
       - grafana-data:/var/lib/grafana
@@ -1091,10 +1102,13 @@ services:
   fluent-bit:
     image: fluent/fluent-bit:latest
     container_name: ai4v-fluent-bit
+    user: root  # Required to access Docker container logs
     volumes:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Docker installed via snap uses /var/snap/docker/common/var-lib-docker as root
+      # Mount to standard path inside container where fluent-bit expects it
+      - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - microservices-network
