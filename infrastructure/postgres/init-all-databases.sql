@@ -41,15 +41,25 @@ CREATE DATABASE unleash
     TABLESPACE = pg_default
     CONNECTION LIMIT = -1;
 
+-- Create model_management_db
+-- (Error can be ignored if database already exists)
+CREATE DATABASE model_management_db
+    WITH TEMPLATE = template0
+    ENCODING = 'UTF8'
+    LOCALE_PROVIDER = libc
+    LOCALE = 'en_US.utf8';
+
 -- Grant all privileges on each database to the configured PostgreSQL user
 GRANT ALL PRIVILEGES ON DATABASE auth_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE config_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE unleash TO dhruva_user;
+GRANT ALL PRIVILEGES ON DATABASE model_management_db TO dhruva_user;
 
 -- Add comments documenting which service uses each database
 COMMENT ON DATABASE auth_db IS 'Authentication & Authorization Service database';
 COMMENT ON DATABASE config_db IS 'Configuration Management Service database';
 COMMENT ON DATABASE unleash IS 'Unleash feature flag management database';
+COMMENT ON DATABASE model_management_db IS 'Model Management Service database';
 
 -- Re-enable error stopping for schema creation (we want to catch real errors)
 \set ON_ERROR_STOP on

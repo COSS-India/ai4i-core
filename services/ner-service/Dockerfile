@@ -55,7 +55,7 @@ ENV PATH="/home/app/.local/bin:$PATH"
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
 
-# Copy app code
+# Copy app code (includes middleware directory)
 COPY services/ner-service /app
 
 RUN chown -R app:app /app

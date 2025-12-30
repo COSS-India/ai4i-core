@@ -29,6 +29,7 @@ from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from models import database_models
 from models import auth_models  # Import to ensure auth tables are created
+from ai4icore_model_management import ModelManagementClient
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -57,6 +58,12 @@ DATABASE_URL = os.getenv(
 # Default to Dhruva NER Triton endpoint provided by user
 TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "65.1.35.3:8300")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
+
+# Model Management Service
+MODEL_MANAGEMENT_SERVICE_URL = os.getenv(
+    "MODEL_MANAGEMENT_SERVICE_URL",
+    "http://model-management-service:8091",
+)
 
 redis_client: Optional[redis.Redis] = None
 db_engine: Optional[AsyncEngine] = None
@@ -159,6 +166,25 @@ async def lifespan(app: FastAPI):
     app.state.triton_endpoint = TRITON_ENDPOINT
     app.state.triton_api_key = TRITON_API_KEY
 
+    # Initialize Model Management Client (REQUIRED)
+    try:
+        logger.info(f"Initializing Model Management Client with URL: {MODEL_MANAGEMENT_SERVICE_URL}")
+        model_management_client = ModelManagementClient(
+            base_url=MODEL_MANAGEMENT_SERVICE_URL,
+            cache_ttl_seconds=300,
+            timeout=10.0
+        )
+        logger.info("✓ Model Management Client initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Model Management Client: {e}")
+        logger.error("Model Management Service is REQUIRED for NER service to operate.")
+        raise RuntimeError(
+            f"Failed to initialize Model Management Client: {e}. "
+            "Ensure MODEL_MANAGEMENT_SERVICE_URL is set correctly and the service is accessible."
+        )
+
+    app.state.model_management_client = model_management_client
+
     # Service registry
     try:
         registry_client = ServiceRegistryHttpClient()
@@ -203,6 +229,15 @@ async def lifespan(app: FastAPI):
                 await registry_client.deregister(service_name, registered_instance_id)
         except Exception as e:
             logger.warning("Service registry deregistration error: %s", e)
+
+        # Cleanup model management client
+        model_management_client = getattr(app.state, "model_management_client", None)
+        if model_management_client:
+            try:
+                await model_management_client.close()
+                logger.info("Model Management Client closed")
+            except Exception as e:
+                logger.warning(f"Error closing Model Management Client: {e}")
 
         if redis_client:
             await redis_client.close()

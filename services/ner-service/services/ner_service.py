@@ -7,7 +7,7 @@ into the microservice structure used by ASR/TTS/NMT/OCR in this repo.
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -18,8 +18,14 @@ from models.ner_response import (
     NerTokenPrediction,
 )
 from utils.triton_client import TritonClient, TritonInferenceError
+from ai4icore_model_management import ModelManagementClient
 
 logger = logging.getLogger(__name__)
+
+
+class ModelManagementError(Exception):
+    """Error when fetching model configuration from model management service"""
+    pass
 
 
 class NerService:
@@ -28,38 +34,177 @@ class NerService:
 
     Responsibilities:
     - Take NerInferenceRequest
+    - Fetch model configuration from Model Management Service
     - Prepare Triton inputs (INPUT_TEXT, LANG_ID)
     - Call Triton NER model
     - Decode JSON output and align entities to tokens
     - Return NerInferenceResponse
     """
 
-    def __init__(self, triton_client: TritonClient):
-        self.triton_client = triton_client
+    def __init__(
+        self,
+        model_management_client: ModelManagementClient,
+        redis_client=None
+    ):
+        self.model_management_client = model_management_client
+        self.redis_client = redis_client
+        # Cache: service_id -> (TritonClient, endpoint, model_name)
+        self._triton_clients: Dict[str, Tuple[TritonClient, str, str]] = {}
 
-    def run_inference(self, request: NerInferenceRequest) -> NerInferenceResponse:
+    async def _get_triton_client(
+        self,
+        service_id: str,
+        auth_headers: Optional[Dict[str, str]] = None
+    ) -> Tuple[TritonClient, str]:
         """
-        Synchronous NER inference entrypoint.
+        Get Triton client and model name for the given service ID from model management.
+        
+        Args:
+            service_id: Service ID from request
+            auth_headers: Auth headers to forward to model management service
+            
+        Returns:
+            Tuple of (TritonClient, model_name)
+            
+        Raises:
+            ModelManagementError: If service not found or configuration invalid
+        """
+        # Fetch service info from model management first to get current endpoint
+        logger.info(f"Fetching service configuration for serviceId: {service_id}")
+        service_info = await self.model_management_client.get_service(
+            service_id=service_id,
+            use_cache=False,  # Always fetch fresh to detect endpoint changes
+            redis_client=self.redis_client,
+            auth_headers=auth_headers
+        )
+        
+        if not service_info:
+            raise ModelManagementError(
+                f"Service '{service_id}' not found in model management service. "
+                f"Please verify the serviceId is correct and the service is registered in model management."
+            )
+        
+        if not service_info.endpoint:
+            raise ModelManagementError(
+                f"Service '{service_id}' does not have a Triton endpoint configured in model management. "
+                f"Please update the service configuration with a valid endpoint."
+            )
+        
+        if not service_info.triton_model:
+            raise ModelManagementError(
+                f"Service '{service_id}' does not have a Triton model name configured in model management. "
+                f"Please update the service configuration with a valid model name."
+            )
+        
+        # Normalize endpoint for comparison
+        current_endpoint = service_info.endpoint.replace("http://", "").replace("https://", "")
+        
+        # Check cache and validate endpoint hasn't changed
+        cache_key = f"triton_client:{service_id}"
+        if cache_key in self._triton_clients:
+            cached_client, cached_endpoint, cached_model = self._triton_clients[cache_key]
+            # Check if endpoint has changed - if so, invalidate cache
+            if cached_endpoint != current_endpoint:
+                logger.info(
+                    f"Endpoint changed for {service_id}: {cached_endpoint} -> {current_endpoint}. "
+                    f"Invalidating cache and creating new client."
+                )
+                del self._triton_clients[cache_key]
+            else:
+                # Endpoint unchanged, use cached client
+                logger.debug(f"Using cached Triton client for {service_id} with endpoint {current_endpoint}")
+                return cached_client, service_info.triton_model
+        
+        # Create Triton client with current endpoint
+        triton_client = TritonClient(
+            triton_url=service_info.endpoint,
+            api_key=service_info.api_key
+        )
+        
+        # Cache the client with endpoint and model name for validation
+        self._triton_clients[cache_key] = (triton_client, current_endpoint, service_info.triton_model)
+        
+        logger.info(
+            f"Using Triton endpoint: {service_info.endpoint}, "
+            f"model: {service_info.triton_model} for service: {service_id}"
+        )
+        
+        return triton_client, service_info.triton_model
 
-        NOTE: This is intentionally synchronous like OCR core service; the
-        FastAPI router can call it from an async endpoint.
+    async def run_inference(
+        self,
+        request: NerInferenceRequest,
+        auth_headers: Optional[Dict[str, str]] = None
+    ) -> NerInferenceResponse:
         """
+        Async NER inference entrypoint.
+
+        Fetches model configuration from model management service and performs inference.
+        
+        Args:
+            request: NER inference request
+            auth_headers: Optional auth headers to forward to model management service
+            
+        Returns:
+            NER inference response
+            
+        Raises:
+            ModelManagementError: If service configuration cannot be fetched
+            TritonInferenceError: If Triton inference fails
+        """
+        service_id = request.config.serviceId
+        
+        if not service_id:
+            raise ValueError(
+                "serviceId is required in request.config. "
+                "Please provide a valid serviceId from model management."
+            )
+        
+        # Get Triton client and model name from model management
+        try:
+            triton_client, model_name = await self._get_triton_client(
+                service_id=service_id,
+                auth_headers=auth_headers
+            )
+        except ModelManagementError as e:
+            logger.error(f"Failed to get model configuration: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error fetching model configuration: {e}", exc_info=True)
+            raise ModelManagementError(
+                f"Failed to fetch model configuration for service '{service_id}': {e}"
+            ) from e
+        
         # Prepare input texts (normalize newlines/whitespace)
         input_texts: List[str] = []
         for text_input in request.input:
             normalized = (text_input.source or " ").replace("\n", " ").strip()
+            if not normalized:
+                logger.warning("Empty text input detected, skipping")
+                continue
             input_texts.append(normalized)
 
+        if not input_texts:
+            raise ValueError(
+                "No valid text inputs provided. All inputs are empty or invalid."
+            )
+        
         language = request.config.language.sourceLanguage
+        
+        if not language:
+            raise ValueError(
+                "sourceLanguage is required in request.config.language. "
+                "Please provide a valid language code."
+            )
 
         # Prepare Triton inputs/outputs
         try:
-            inputs, outputs = self.triton_client.get_ner_io_for_triton(
+            inputs, outputs = triton_client.get_ner_io_for_triton(
                 input_texts, language
             )
 
-            response = self.triton_client.send_triton_request(
-                model_name="ner",
+            response = triton_client.send_triton_request(
+                model_name=model_name,
                 inputs=inputs,
                 outputs=outputs,
             )
@@ -67,8 +212,13 @@ class NerService:
             # Let TritonInferenceError bubble up to router for 503 mapping
             raise
         except Exception as exc:
-            logger.error("Triton NER inference failed: %s", exc, exc_info=True)
-            raise TritonInferenceError(f"Triton NER inference failed: {exc}") from exc
+            logger.error(
+                f"Triton NER inference failed for service '{service_id}', model '{model_name}': {exc}",
+                exc_info=True
+            )
+            raise TritonInferenceError(
+                f"Triton NER inference failed for model '{model_name}': {exc}"
+            ) from exc
 
         # Decode Triton OUTPUT_TEXT
         encoded_result = response.as_numpy("OUTPUT_TEXT")

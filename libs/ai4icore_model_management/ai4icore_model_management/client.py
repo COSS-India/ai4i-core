@@ -327,32 +327,23 @@ class ModelManagementClient:
             endpoint = data.get("endpoint")
             api_key = data.get("api_key")
             
-            # Extract model data first to determine task type
+            # Extract model data first
             model_data = data.get("model", {})
             
-            # Determine default model name based on task type
+            # Determine task type for fallback defaults
             task_type = None
             if model_data:
                 task = model_data.get("task", {})
                 if isinstance(task, dict):
                     task_type = task.get("type", "").lower()
             
-            # Set default triton_model based on task type
-            default_model_names = {
-                "ocr": "surya_ocr",
-                "transliteration": "transliteration",
-                "nmt": "nmt",
-                "asr": "asr",
-                "tts": "tts",
-                "ner": "ner",
-                "language_detection": "language_detection",
-                "speaker_diarization": "speaker_diarization",
-                "language_diarization": "language_diarization",
-                "audio_lang_detection": "audio_lang_detection",
-                "llm": "llm"
-            }
+            # Priority order for determining Triton model name:
+            # 1. model_name from inference_endpoint (snake_case - actual Triton model name)
+            # 2. modelName from inference_endpoint (camelCase - may be task type, validate)
+            # 3. model_id (often matches Triton model name)
+            # 4. Hardcoded defaults based on task type (last resort)
             
-            triton_model = default_model_names.get(task_type, "transliteration")  # Fallback to transliteration if unknown
+            triton_model = None
             
             # Try to extract model name from model's inferenceEndPoint if available (this takes precedence)
             if model_data:
@@ -365,9 +356,36 @@ class ModelManagementClient:
                         triton_model = model_name_from_endpoint
                         logger.debug(f"Using model name from inference endpoint: {triton_model}")
                     else:
-                        logger.debug(f"Using default model name based on task type '{task_type}': {triton_model}")
-            else:
-                logger.warning(f"No model data found for service {service_id}, using default model name: {triton_model}")
+                        logger.debug(f"No model name found in inference endpoint for service {service_id}")
+            
+            # Priority 3: Use model_id as fallback (often matches Triton model name)
+            if not triton_model and model_data:
+                model_id = model_data.get("modelId", "")
+                if model_id:
+                    triton_model = model_id
+                    logger.debug(f"Using model_id as Triton model name: {triton_model}")
+            
+            # Priority 4: Hardcoded defaults based on task type (last resort)
+            if not triton_model:
+                default_model_names = {
+                    "ocr": "surya_ocr",
+                    "transliteration": "transliteration",
+                    "nmt": "nmt",
+                    "asr": "asr",
+                    "tts": "tts",
+                    "ner": "ner",
+                    "language_detection": "indiclid",  # Language detection uses IndicLID model
+                    "speaker_diarization": "speaker_diarization",
+                    "language_diarization": "language_diarization",
+                    "audio_lang_detection": "audio_lang_detection",
+                    "llm": "llm"
+                }
+                triton_model = default_model_names.get(task_type, "transliteration")
+                logger.warning(
+                    f"No model name found in database for service {service_id} (task_type: {task_type}). "
+                    f"Using hardcoded default: {triton_model}. "
+                    f"Please update the model's inference_endpoint.model_name in the database."
+                )
             
             # Extract model information from service response
             # ServiceViewResponse includes full model object
