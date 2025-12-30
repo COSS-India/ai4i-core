@@ -17,6 +17,16 @@ export interface User {
   updated_at?: string;
   last_login?: string;
   avatar_url?: string;
+  preferences?: Record<string, any>;
+  roles?: string[];
+}
+
+export interface UserUpdateRequest {
+  full_name?: string;
+  phone_number?: string;
+  timezone?: string;
+  language?: string;
+  preferences?: Record<string, any>;
 }
 
 export interface LoginRequest {
@@ -86,6 +96,7 @@ export interface APIKeyCreate {
   key_name: string;
   permissions: string[];
   expires_days?: number;
+  user_id?: number; // Optional: for admin creating keys for other users
 }
 
 export interface APIKeyResponse {
@@ -104,6 +115,14 @@ export interface OAuth2Provider {
   client_id: string;
   authorization_url: string;
   scope: string[];
+}
+
+export interface Permission {
+  id: number;
+  name: string;
+  resource: string;
+  action: string;
+  created_at: string;
 }
 
 export interface AuthState {

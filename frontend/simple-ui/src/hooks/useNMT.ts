@@ -59,13 +59,32 @@ export const useNMT = (): UseNMTReturn => {
     },
     onError: (error: any) => {
       console.error('NMT inference error:', error);
-      setError('Failed to translate text. Please try again.');
+      
+      // Check for 401 authentication errors
+      let errorMessage = 'Failed to translate text. Please try again.';
+      let errorTitle = 'Translation Error';
+      
+      if (error?.response?.status === 401 || error?.status === 401 || error?.message?.includes('401')) {
+        errorTitle = 'Authentication Failed';
+        // Check if it's an API key issue
+        if (error?.message?.includes('API key') || error?.message?.includes('api key')) {
+          errorMessage = 'API key is missing or invalid. Please set a valid API key in your profile.';
+        } else if (error?.message?.includes('token') || error?.message?.includes('Token')) {
+          errorMessage = 'Your session has expired. Please sign in again.';
+        } else {
+          errorMessage = 'Authentication failed. Please check your API key and login status, then try again.';
+        }
+      } else if (error?.message) {
+        errorMessage = error.message;
+      }
+      
+      setError(errorMessage);
       setFetching(false);
       toast({
-        title: 'Translation Error',
-        description: 'Failed to translate text. Please check your connection and try again.',
+        title: errorTitle,
+        description: errorMessage,
         status: 'error',
-        duration: 5000,
+        duration: 7000,
         isClosable: true,
       });
     },
@@ -126,7 +145,7 @@ export const useNMT = (): UseNMTReturn => {
     } catch (err) {
       console.error('Inference error:', err);
     }
-  }, [nmtMutation, languagePair, toast]);
+  }, [nmtMutation, languagePair, toast, selectedServiceId]);
 
   // Set input text with validation
   const setInputTextWithValidation = useCallback((text: string) => {

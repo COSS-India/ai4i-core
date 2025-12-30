@@ -58,6 +58,9 @@ logs/
 # Database
 *.db
 *.sqlite3
+# SQL dump files (may contain sensitive data)
+all_databases.sql
+auth_db_dump.sql
 
 # Docker
 .dockerignore

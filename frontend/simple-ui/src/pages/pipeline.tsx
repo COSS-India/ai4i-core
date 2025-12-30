@@ -22,6 +22,8 @@ import {
   Textarea,
   useToast,
   VStack,
+  HStack,
+  Flex,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
@@ -46,9 +48,7 @@ const PipelinePage: React.FC = () => {
   const [sourceLanguage, setSourceLanguage] = useState("hi");
   const [targetLanguage, setTargetLanguage] = useState("mr");
   const [asrServiceId, setAsrServiceId] = useState("asr_am_ensemble");
-  const [nmtServiceId, setNmtServiceId] = useState(
-    "ai4bharat/indictrans-v2-all-gpu"
-  );
+  const [nmtServiceId, setNmtServiceId] = useState<string>("");
   const [ttsServiceId, setTtsServiceId] = useState(
     "indic-tts-coqui-indo_aryan"
   );
@@ -77,6 +77,14 @@ const PipelinePage: React.FC = () => {
     queryFn: listNMTServices,
     staleTime: 5 * 60 * 1000,
   });
+
+  // Auto-select first available NMT service when list loads
+  React.useEffect(() => {
+    if (!nmtServices || nmtServices.length === 0) return;
+    if (!nmtServiceId) {
+      setNmtServiceId(nmtServices[0].service_id);
+    }
+  }, [nmtServices, nmtServiceId]);
 
   const { data: ttsVoices } = useQuery({
     queryKey: ["tts-voices"],
@@ -142,39 +150,43 @@ const PipelinePage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box w="full" maxW="1200px" mx="auto">
-            <Box
-              display="flex"
-              justifyContent="space-between"
-              alignItems="center"
-              mb={2}
+            <Flex
+              direction="row"
+              justify="space-between"
+              align="center"
+              mb={4}
+              w="full"
             >
-              <Heading size="xl" color="gray.800">
-                Pipeline (Speech-to-Speech)
-              </Heading>
+              <Box flex={1} textAlign="center">
+                <Heading size="lg" color="gray.800" mb={1}>
+                  Pipeline (Speech-to-Speech)
+                </Heading>
+                <Text color="gray.600" fontSize="sm">
+                  Chain Speech, Translation, and Voice models for end-to-end speech
+                  conversion.
+                </Text>
+              </Box>
               <Button
                 size="sm"
                 variant="outline"
-                colorScheme="gray"
+                colorScheme="orange"
                 onClick={() => router.push("/pipeline-builder")}
+                ml={4}
               >
-                📝 Customize Pipeline
+                Customize Pipeline
               </Button>
-            </Box>
-            <Text color="gray.600" fontSize="lg">
-              Chain Speech, Translation, and Voice models for end-to-end speech
-              conversion.
-            </Text>
-          </Box>
+            </Flex>
 
-          {/* Info Alert */}
-          <Alert status="info" borderRadius="md" maxW="800px">
-            <AlertIcon />
-            <AlertDescription>
-              The pipeline chains Automatic Speech Recognition (ASR), Neural
-              Machine Translation (NMT), and Text-to-Speech (TTS) services to
-              convert speech from one language to another.
-            </AlertDescription>
-          </Alert>
+            {/* Info Alert */}
+            <Alert status="info" borderRadius="md" alignItems="center">
+              <AlertIcon />
+              <AlertDescription>
+                The pipeline chains Automatic Speech Recognition (ASR), Neural
+                Machine Translation (NMT), and Text-to-Speech (TTS) services to
+                convert speech from one language to another.
+              </AlertDescription>
+            </Alert>
+          </Box>
 
           <Grid
             templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
@@ -250,9 +262,6 @@ const PipelinePage: React.FC = () => {
                     value={nmtServiceId}
                     onChange={(e) => setNmtServiceId(e.target.value)}
                   >
-                    <option value="ai4bharat/indictrans-v2-all-gpu">
-                      ai4bharat/indictrans-v2-all-gpu (Default)
-                    </option>
                     {nmtServices
                       ?.filter(
                         (service) =>

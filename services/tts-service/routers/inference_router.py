@@ -24,16 +24,15 @@ from utils.validation_utils import (
     validate_text_input,
     validate_audio_duration
 )
-from middleware.auth_provider import AuthProvider
 from middleware.exceptions import AuthenticationError, AuthorizationError
 
 logger = logging.getLogger(__name__)
 
 # Create router
+# Authentication is handled by Kong + Auth Service, no need for AuthProvider here
 inference_router = APIRouter(
     prefix="/api/v1/tts", 
     tags=["TTS Inference"]
-    # Authentication disabled for development
 )
 
 
@@ -96,7 +95,6 @@ async def run_inference(
         # Log request
         logger.info(f"Processing TTS inference request with {len(request.input)} text inputs - user_id={user_id} api_key_id={api_key_id}")
         
-        # Run inference with auth context
         response = await tts_service.run_inference(
             request=request,
             user_id=user_id,

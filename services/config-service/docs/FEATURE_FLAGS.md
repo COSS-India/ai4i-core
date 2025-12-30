@@ -208,7 +208,8 @@ The feature flag system uses a **Redis and Unleash only** architecture:
 
 ```bash
 # Unleash Configuration
-UNLEASH_URL=http://unleash:4242/api
+# Note: Include /feature-flags base path when BASE_URI_PATH is configured in Unleash
+UNLEASH_URL=http://unleash:4242/feature-flags/api
 UNLEASH_APP_NAME=config-service
 UNLEASH_INSTANCE_ID=config-service-1
 UNLEASH_API_TOKEN=your-admin-token-here  # Must be Admin token, not Client token

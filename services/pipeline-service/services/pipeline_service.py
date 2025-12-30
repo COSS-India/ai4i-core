@@ -25,6 +25,7 @@ class PipelineService:
     async def run_pipeline_inference(
         self,
         request: PipelineInferenceRequest,
+        jwt_token: Optional[str] = None,
         api_key: Optional[str] = None
     ) -> PipelineInferenceResponse:
         """
@@ -32,6 +33,7 @@ class PipelineService:
         
         Args:
             request: Pipeline inference request with tasks and input data
+            jwt_token: JWT token for authentication
             api_key: API key for authentication
             
         Returns:
@@ -51,6 +53,7 @@ class PipelineService:
                 task_output = await self._execute_task(
                     task=pipeline_task,
                     input_data=previous_output,
+                    jwt_token=jwt_token,
                     api_key=api_key,
                     control_config=request.controlConfig
                 )
@@ -78,6 +81,7 @@ class PipelineService:
         self,
         task: PipelineTask,
         input_data: Dict[str, Any],
+        jwt_token: Optional[str] = None,
         api_key: Optional[str] = None,
         control_config: Optional[Dict[str, Any]] = None
     ) -> PipelineTaskOutput:
@@ -112,7 +116,7 @@ class PipelineService:
             logger.info(f"ASR request: {asr_request}")
             
             # Call ASR service
-            response = await self.service_client.call_asr_service(asr_request, api_key)
+            response = await self.service_client.call_asr_service(asr_request, jwt_token=jwt_token, api_key=api_key)
             
             return PipelineTaskOutput(
                 taskType="asr",
@@ -132,7 +136,7 @@ class PipelineService:
             }
             
             # Call NMT service
-            response = await self.service_client.call_nmt_service(nmt_request, api_key)
+            response = await self.service_client.call_nmt_service(nmt_request, jwt_token=jwt_token, api_key=api_key)
             
             return PipelineTaskOutput(
                 taskType="translation",
@@ -158,7 +162,7 @@ class PipelineService:
             logger.info(f"TTS request: {tts_request}")
             
             # Call TTS service
-            response = await self.service_client.call_tts_service(tts_request, api_key)
+            response = await self.service_client.call_tts_service(tts_request, jwt_token=jwt_token, api_key=api_key)
             
             logger.info(f"TTS response: {response}")
             
