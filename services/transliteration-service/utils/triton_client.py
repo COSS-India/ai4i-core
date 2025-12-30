@@ -149,6 +149,9 @@ class TritonClient:
             result = response.get_result(block=True, timeout=20)
             return result
             
+        except TritonInferenceError:
+            # Re-raise TritonInferenceError as-is
+            raise
         except Exception as e:
             error_msg = str(e)
             logger.error(
@@ -156,17 +159,40 @@ class TritonClient:
                 exc_info=True
             )
             # Provide more helpful error messages
-            if "404" in error_msg or "Not Found" in error_msg:
+            if "404" in error_msg or "Not Found" in error_msg or "model" in error_msg.lower() and "not found" in error_msg.lower():
+                # Try to list available models to provide helpful error message
+                try:
+                    available_models = self.list_models()
+                    if available_models:
+                        raise TritonInferenceError(
+                            f"Triton model '{model_name}' not found at endpoint '{self.triton_url}'. "
+                            f"Available models: {', '.join(available_models)}. "
+                            f"Please verify the model name (service ID) is correct."
+                        )
+                    else:
+                        raise TritonInferenceError(
+                            f"Triton model '{model_name}' not found at endpoint '{self.triton_url}'. "
+                            f"Could not retrieve available models. Please verify the model name (service ID) and endpoint are correct."
+                        )
+                except Exception:
+                    # If listing models fails, just provide the basic error
+                    raise TritonInferenceError(
+                        f"Triton model '{model_name}' not found at endpoint '{self.triton_url}'. "
+                        f"Please verify the model name (service ID) and endpoint are correct."
+                    )
+            elif "Connection" in error_msg or "connect" in error_msg.lower() or "refused" in error_msg.lower():
                 raise TritonInferenceError(
-                    f"Triton model '{model_name}' not found at '{self.triton_url}'. "
-                    f"Please verify the model name and endpoint are correct."
-                )
-            elif "Connection" in error_msg or "connect" in error_msg.lower():
-                raise TritonInferenceError(
-                    f"Cannot connect to Triton server at '{self.triton_url}'. "
+                    f"Cannot connect to Triton server at endpoint '{self.triton_url}'. "
                     f"Please verify the endpoint is correct and the server is running."
                 )
-            raise TritonInferenceError(f"Triton inference request failed: {e}")
+            elif "timeout" in error_msg.lower():
+                raise TritonInferenceError(
+                    f"Triton inference request timed out for model '{model_name}' at endpoint '{self.triton_url}'. "
+                    f"The server may be overloaded or the request is too large."
+                )
+            raise TritonInferenceError(
+                f"Triton inference request failed for model '{model_name}' at endpoint '{self.triton_url}': {e}"
+            )
     
     def is_server_ready(self) -> bool:
         """Check if Triton server is ready"""

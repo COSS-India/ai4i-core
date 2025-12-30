@@ -213,7 +213,10 @@ class TritonClient:
             
             # Check server health
             if not client.is_server_ready():
-                raise TritonInferenceError("Triton server is not ready")
+                raise TritonInferenceError(
+                    f"Triton server at '{self.triton_url}' is not ready. "
+                    f"Please verify the endpoint is correct and the server is running."
+                )
             
             # Prepare headers
             request_headers = {}
@@ -238,9 +241,50 @@ class TritonClient:
             logger.debug(f"Triton inference completed for model {model_name}")
             return result
             
+        except TritonInferenceError:
+            # Re-raise TritonInferenceError as-is
+            raise
         except Exception as e:
-            logger.error(f"Triton inference failed for model {model_name}: {e}")
-            raise TritonInferenceError(f"Triton inference failed: {e}")
+            error_msg = str(e)
+            logger.error(
+                f"Triton inference request failed for model '{model_name}' at '{self.triton_url}': {e}",
+                exc_info=True
+            )
+            # Provide more helpful error messages
+            if "404" in error_msg or "Not Found" in error_msg or "model" in error_msg.lower() and "not found" in error_msg.lower():
+                # Try to list available models to provide helpful error message
+                try:
+                    available_models = self.list_models()
+                    if available_models:
+                        raise TritonInferenceError(
+                            f"Triton model '{model_name}' not found at endpoint '{self.triton_url}'. "
+                            f"Available models: {', '.join(available_models)}. "
+                            f"Please verify the model name (service ID) is correct."
+                        )
+                    else:
+                        raise TritonInferenceError(
+                            f"Triton model '{model_name}' not found at endpoint '{self.triton_url}'. "
+                            f"Could not retrieve available models. Please verify the model name (service ID) and endpoint are correct."
+                        )
+                except Exception:
+                    # If listing models fails, just provide the basic error
+                    raise TritonInferenceError(
+                        f"Triton model '{model_name}' not found at endpoint '{self.triton_url}'. "
+                        f"Please verify the model name (service ID) and endpoint are correct."
+                    )
+            elif "Connection" in error_msg or "connect" in error_msg.lower() or "refused" in error_msg.lower():
+                raise TritonInferenceError(
+                    f"Cannot connect to Triton server at endpoint '{self.triton_url}'. "
+                    f"Please verify the endpoint is correct and the server is running."
+                )
+            elif "timeout" in error_msg.lower():
+                raise TritonInferenceError(
+                    f"Triton inference request timed out for model '{model_name}' at endpoint '{self.triton_url}'. "
+                    f"The server may be overloaded or the request is too large."
+                )
+            raise TritonInferenceError(
+                f"Triton inference request failed for model '{model_name}' at endpoint '{self.triton_url}': {e}"
+            )
     
     def _pad_batch(self, batch_data: List[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
         """Pad batch data to same length."""
@@ -304,3 +348,18 @@ class TritonClient:
         uint8_input.set_data_from_numpy(uint8_array)
         
         return uint8_input
+    
+    def list_models(self) -> List[str]:
+        """List all available models on the Triton server."""
+        try:
+            client = self._get_client()
+            models = client.get_model_repository_index()
+            model_names = []
+            if models:
+                for model in models:
+                    model_names.append(model.get('name', ''))
+            logger.info(f"Found {len(model_names)} models at '{self.triton_url}': {model_names}")
+            return model_names
+        except Exception as e:
+            logger.error(f"Failed to list models from Triton server at '{self.triton_url}': {e}", exc_info=True)
+            return []

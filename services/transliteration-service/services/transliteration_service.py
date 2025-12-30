@@ -108,13 +108,19 @@ class TransliterationService:
             )
             
             if service_info is None:
-                error_msg = f"Service '{service_id}' not found in model management service. Please register the service first."
+                error_msg = (
+                    f"Service ID '{service_id}' not found in model management service. "
+                    f"Please verify the service ID is correct and register the service in the model management service."
+                )
                 logger.error(error_msg)
                 raise ValueError(error_msg)
             
             # Validate service info has required fields
             if not service_info.endpoint:
-                error_msg = f"Service '{service_id}' has no endpoint configured in model management service"
+                error_msg = (
+                    f"Service ID '{service_id}' has no Triton endpoint configured in model management service. "
+                    f"Please configure the endpoint for this service."
+                )
                 logger.error(error_msg)
                 raise ValueError(error_msg)
             
@@ -129,8 +135,14 @@ class TransliterationService:
             logger.info(f"Successfully fetched and cached service info for {service_id}")
             return service_info
             
+        except ValueError:
+            # Re-raise ValueError as-is (already has proper error message)
+            raise
         except Exception as e:
-            error_msg = f"Failed to fetch service info for {service_id} from model management service: {e}"
+            error_msg = (
+                f"Failed to fetch service info for service ID '{service_id}' from model management service: {e}. "
+                f"Please verify the model management service is available and the service ID is correct."
+            )
             logger.error(error_msg, exc_info=True)
             raise ValueError(error_msg) from e
     

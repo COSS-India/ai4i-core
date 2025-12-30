@@ -113,23 +113,53 @@ async def run_inference(
             detail=str(e)
         )
     except Exception as e:
-        logger.error(f"ASR inference failed: {e}")
+        logger.error(f"ASR inference failed: {e}", exc_info=True)
         
         # Return appropriate error based on exception type
-        if "Triton" in str(e):
+        error_msg = str(e)
+        
+        # Service ID not found errors
+        if "service" in error_msg.lower() and ("not found" in error_msg.lower() or "does not exist" in error_msg.lower()):
             raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="ASR service temporarily unavailable"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Service ID '{request.config.serviceId}' not found. Please verify the service ID is correct and registered."
             )
-        elif "audio" in str(e).lower():
+        
+        # Triton endpoint errors
+        if "Triton" in error_msg or "triton" in error_msg.lower():
+            if "not found" in error_msg.lower() or "404" in error_msg:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Triton model not found: {error_msg}"
+                )
+            elif "connect" in error_msg.lower() or "connection" in error_msg.lower() or "refused" in error_msg.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"Cannot connect to Triton server: {error_msg}"
+                )
+            elif "timeout" in error_msg.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                    detail=f"Triton inference request timed out: {error_msg}"
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"Triton inference error: {error_msg}"
+                )
+        
+        # Audio processing errors
+        elif "audio" in error_msg.lower():
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Audio processing failed"
+                detail=f"Audio processing failed: {error_msg}"
             )
+        
+        # Generic errors
         else:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Internal server error"
+                detail=f"Internal server error: {error_msg}"
             )
 
 

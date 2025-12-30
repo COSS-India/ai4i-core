@@ -149,8 +149,59 @@ async def run_inference(
         logger.warning(f"Validation error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     
+    except ValueError as e:
+        # Handle service ID not found errors from model management service
+        error_msg = str(e)
+        if "not found" in error_msg.lower() or "does not exist" in error_msg.lower():
+            logger.warning(f"Service ID not found: {e}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Service ID '{request.config.serviceId}' not found. Please verify the service ID is correct and registered in the model management service."
+            )
+        elif "endpoint" in error_msg.lower() and ("not configured" in error_msg.lower() or "no endpoint" in error_msg.lower()):
+            logger.warning(f"Service endpoint not configured: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Service ID '{request.config.serviceId}' has no endpoint configured. Please configure the endpoint in the model management service."
+            )
+        else:
+            logger.warning(f"Validation error: {e}")
+            raise HTTPException(status_code=400, detail=str(e))
+    
     except Exception as e:
         logger.error(f"Transliteration inference failed: {e}", exc_info=True)
+        error_msg = str(e)
+        
+        # Service ID not found errors
+        if "service" in error_msg.lower() and ("not found" in error_msg.lower() or "does not exist" in error_msg.lower()):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Service ID '{request.config.serviceId}' not found. Please verify the service ID is correct and registered."
+            )
+        
+        # Triton endpoint errors
+        if "Triton" in error_msg or "triton" in error_msg.lower():
+            if "not found" in error_msg.lower() or "404" in error_msg:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Triton model not found: {error_msg}"
+                )
+            elif "connect" in error_msg.lower() or "connection" in error_msg.lower() or "refused" in error_msg.lower():
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Cannot connect to Triton server: {error_msg}"
+                )
+            elif "timeout" in error_msg.lower():
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"Triton inference request timed out: {error_msg}"
+                )
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Triton inference error: {error_msg}"
+                )
+        
         # Return more detailed error in development, generic in production
         import traceback
         error_detail = {
