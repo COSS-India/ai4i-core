@@ -23,7 +23,7 @@ load_dotenv()
 from routers import health_router, inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
 from utils.triton_client import TritonClient
-from utils.model_management_client import ModelManagementClient
+from ai4icore_model_management import ModelManagementClient
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware

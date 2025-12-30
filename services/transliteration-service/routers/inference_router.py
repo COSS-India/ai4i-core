@@ -16,8 +16,7 @@ from repositories.transliteration_repository import TransliterationRepository
 from services.transliteration_service import TransliterationService
 from services.text_service import TextService
 from utils.triton_client import TritonClient
-from utils.model_management_client import ModelManagementClient
-from utils.auth_utils import extract_auth_headers
+from ai4icore_model_management import ModelManagementClient, extract_auth_headers
 from utils.validation_utils import (
     validate_language_pair, validate_service_id, validate_batch_size,
     InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError

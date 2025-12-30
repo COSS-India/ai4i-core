@@ -15,7 +15,7 @@ from models.transliteration_response import TransliterationInferenceResponse, Tr
 from repositories.transliteration_repository import TransliterationRepository
 from services.text_service import TextService
 from utils.triton_client import TritonClient
-from utils.model_management_client import ModelManagementClient, ServiceInfo
+from ai4icore_model_management import ModelManagementClient, ServiceInfo
 
 logger = logging.getLogger(__name__)
 

@@ -28,6 +28,12 @@ COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 # ✅ INSTALL PLUGIN AS NORMAL PACKAGE (FIX)
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_observability
 
+# Copy model management plugin
+COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
+# Install model management plugin
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_model_management
+
 
 # -----------------------------
 # STAGE 2 — RUNTIME

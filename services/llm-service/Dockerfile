@@ -11,11 +11,17 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy AI4ICore plugins
+COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
 # Copy requirements from build context
 COPY requirements.txt .
 
 # Install Python dependencies (NO --user)
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir /app/libs/ai4icore_model_management
 
 # ---------------- Final stage ----------------
 FROM python:3.11-slim
