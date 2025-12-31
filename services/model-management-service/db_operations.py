@@ -1,6 +1,6 @@
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import select , delete , update, func as sql_func, and_
+from sqlalchemy import select , delete , update, func as sql_func, and_, case, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 from typing import Dict, Any, List
@@ -216,7 +216,10 @@ async def update_by_filter(filters: Dict[str, Any], data: Dict[str, Any]) -> int
         result = await db.execute(query)
         records = result.scalars().all()
 
+        logger.info(f"update_by_filter: Found {len(records)} record(s) matching filters {filters}")
+        
         if not records:
+            logger.warning(f"update_by_filter: No records found matching filters {filters}")
             return 0
 
         json_fields = {
@@ -229,14 +232,19 @@ async def update_by_filter(filters: Dict[str, Any], data: Dict[str, Any]) -> int
         }
 
         for record in records:
+            logger.debug(f"update_by_filter: Updating record {record.id} (model_id={record.model_id}, version={record.version})")
             for field, value in data.items():
+                old_value = getattr(record, field, None)
                 setattr(record, field, value)
+                logger.debug(f"update_by_filter: Field '{field}' changed from {old_value} to {value}")
 
                 # MUST DO THIS for JSONB fields
                 if field in json_fields:
                     flag_modified(record, field)
 
+        logger.info(f"update_by_filter: Committing changes for {len(records)} record(s)")
         await db.commit()
+        logger.info(f"update_by_filter: Successfully updated {len(records)} record(s)")
         return len(records)
 
     except Exception as e:
@@ -261,7 +269,10 @@ async def update_model(payload: ModelUpdateRequest):
 
     logger.info(f"Attempting to update model: {payload.modelId} v{payload.version}")
 
-    request_dict = payload.model_dump(exclude_none=True)
+    # Use exclude_unset=True for PATCH semantics - include fields that are explicitly set
+    request_dict = payload.model_dump(exclude_unset=True)
+    logger.info(f"Request dict from payload (exclude_unset=True): {request_dict}")
+    logger.info(f"Payload versionStatus value: {payload.versionStatus} (type: {type(payload.versionStatus)})")
     now_epoch = int(time.time())
 
     db: AsyncSession = AppDatabase()
@@ -302,20 +313,32 @@ async def update_model(payload: ModelUpdateRequest):
         # 1. Update DB first
         postgres_data = {}
 
-        for key, value in request_dict.items():
-            if value is None:
-                continue    # PATCH: skip null fields
+        # Handle versionStatus separately - check payload directly to ensure we catch it
+        if payload.versionStatus is not None:
+            if isinstance(payload.versionStatus, VersionStatus):
+                postgres_data["version_status"] = payload.versionStatus
+            elif isinstance(payload.versionStatus, str):
+                postgres_data["version_status"] = VersionStatus(payload.versionStatus)
+            else:
+                postgres_data["version_status"] = payload.versionStatus
+            postgres_data["version_status_updated_at"] = datetime.now()
+            logger.info(f"Setting version_status to {postgres_data['version_status']} (type: {type(postgres_data['version_status'])}) from payload.versionStatus")
 
+        for key, value in request_dict.items():
             # Skip modelId and version (used only for filtering, not updated)
             if key in ("modelId", "version"):
                 continue
 
-            # Handle version_status update
+            # Skip versionStatus as we handle it above
             if key == "versionStatus":
-                postgres_data["version_status"] = value
-                postgres_data["version_status_updated_at"] = datetime.now()
+                continue
+
+            # Skip None values for PATCH
+            if value is None:
+                continue
+
             # Custom snake_case mapping
-            elif key == "refUrl":
+            if key == "refUrl":
                 postgres_data["ref_url"] = value
             elif key == "inferenceEndPoint":
                 postgres_data["inference_endpoint"] = _json_safe(value)
@@ -333,6 +356,16 @@ async def update_model(payload: ModelUpdateRequest):
             {"model_id": payload.modelId, "version": payload.version}, 
             postgres_data
         )
+        
+        if result == 0:
+            logger.error(f"update_model: No records were updated for model {payload.modelId} v{payload.version}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No records found or updated for model {payload.modelId} version {payload.version}"
+            )
+        
+        logger.info(f"update_model: Successfully updated {result} record(s) for model {payload.modelId} v{payload.version}")
+            
     except HTTPException:
         raise
     except Exception as e:
@@ -447,13 +480,30 @@ async def delete_model_by_uuid(id_str: str) -> int:
 async def get_model_details(model_id: str, version: str = None) -> Dict[str, Any]:
     """
     Get model details by model_id. If version is provided, returns that specific version.
-    If version is not provided, returns the first matching model.
+    If version is not provided, returns the latest ACTIVE version first, then falls back to
+    latest DEPRECATED version if no ACTIVE versions exist.
+    
+    Ordering priority:
+    1. ACTIVE versions first
+    2. Within same status, ordered by submitted_on descending (latest first)
     """
     db: AsyncSession = AppDatabase()
     try:
         query = select(Model).where(Model.model_id == model_id)
         if version:
+            # Specific version requested
             query = query.where(Model.version == version)
+        else:
+            # No version specified - prioritize ACTIVE versions, then latest by submitted_on
+            # Use case() to prioritize ACTIVE (0) over DEPRECATED (1)
+            status_priority = case(
+                (Model.version_status == VersionStatus.ACTIVE, 0),
+                else_=1
+            )
+            query = query.order_by(
+                status_priority,  # ACTIVE first
+                desc(Model.submitted_on)  # Latest first within same status
+            )
         
         result = await db.execute(query)
         model = result.scalars().first()
@@ -497,14 +547,44 @@ async def get_model_details(model_id: str, version: str = None) -> Dict[str, Any
          await db.close()
     
 
-async def list_all_models(task_type: TaskTypeEnum | None) -> List[Dict[str, Any]]:
-    """Fetch all model records from DB and convert to response format."""
+async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bool = True) -> List[Dict[str, Any]]:
+    """
+    Fetch all model records from DB and convert to response format.
+    
+    Args:
+        task_type: Optional filter by task type (asr, nmt, tts, etc.)
+        include_deprecated: If False, only returns ACTIVE versions. Defaults to True.
+    
+    Ordering:
+    1. By model_id (grouped together)
+    2. ACTIVE versions first within each model
+    3. Latest (by submitted_on) first within same status
+    """
 
     db: AsyncSession = AppDatabase()
     try:
+        # Prioritize ACTIVE versions
+        status_priority = case(
+            (Model.version_status == VersionStatus.ACTIVE, 0),
+            else_=1
+        )
+        
         query = select(Model)
+        
+        # Filter by task type if provided
         if task_type:
             query = query.where(Model.task['type'].astext == task_type.value)
+        
+        # Filter out deprecated versions if requested
+        if not include_deprecated:
+            query = query.where(Model.version_status == VersionStatus.ACTIVE)
+        
+        # Order by model_id, then ACTIVE first, then latest first
+        query = query.order_by(
+            Model.model_id,
+            status_priority,
+            desc(Model.submitted_on)
+        )
 
         result = await db.execute(query)
         models = result.scalars().all()
