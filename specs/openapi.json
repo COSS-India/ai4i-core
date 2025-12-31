@@ -1,8 +1,8 @@
 {
     "openapi": "3.1.0",
     "info": {
-      "title": "API Gateway Service",
-      "description": "Central entry point for all microservice requests",
+      "title": "AI4I-Core",
+      "description": "A comprehensive microservices based platform to handle language based AI models inferences at scale.",
       "version": "1.0.0"
     },
     "paths": {
