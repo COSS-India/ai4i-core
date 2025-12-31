@@ -50,6 +50,8 @@ async def create_model_request(payload: ModelCreateRequest):
 @router_admin.patch("/update/model", response_model=str)
 async def update_model_request(payload: ModelUpdateRequest):
     try:
+        # Log the incoming payload to debug
+        logger.info(f"Received update request - modelId: {payload.modelId}, version: {payload.version}, versionStatus: {payload.versionStatus}")
         result = await update_model(payload)
 
         if result == 0:

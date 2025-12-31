@@ -47,14 +47,17 @@ async def view_model_request(payload: ModelViewRequest):
 
 
 @router_details.get("/list_models" , response_model=List[ModelViewResponse])
-async def list_models_request(task_type: Union[str, None] = None):
+async def list_models_request(
+    task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
+    include_deprecated: bool = Query(True, description="Include deprecated versions. Set to false to show only ACTIVE versions.")
+):
     try:
         if not task_type or task_type.lower() == "none":
             task_type_enum = None
         else:
             task_type_enum = TaskTypeEnum(task_type)
 
-        data = await list_all_models(task_type_enum)
+        data = await list_all_models(task_type_enum, include_deprecated=include_deprecated)
         if data is None:
             raise HTTPException(
                 status_code=404,
