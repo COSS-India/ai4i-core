@@ -31,7 +31,23 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         api_key_id = getattr(request.state, 'api_key_id', None)
         
         # Process request
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except RuntimeError as e:
+            # Handle "No response returned" - this can happen if body stream is exhausted incorrectly
+            if "No response returned" in str(e):
+                logger.error(f"Error processing request {method} {path}: {e}", exc_info=True)
+                # Return a 500 error response instead of letting it propagate
+                from starlette.responses import JSONResponse
+                return JSONResponse(
+                    status_code=500,
+                    content={"detail": "Internal server error: Request processing failed"}
+                )
+            raise
+        except Exception as e:
+            # If an exception occurs, log it and re-raise to let FastAPI's error handler deal with it
+            logger.error(f"Error processing request {method} {path}: {e}", exc_info=True)
+            raise
         
         # Calculate processing time
         processing_time = time.time() - start_time
