@@ -16,6 +16,9 @@ from typing import Optional
 # Context variable for trace ID (async-safe)
 _trace_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('trace_id', default=None)
 
+# Context variable for organization (async-safe)
+_organization_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('organization', default=None)
+
 
 def set_trace_id(trace_id: str) -> None:
     """
@@ -52,6 +55,33 @@ def generate_trace_id() -> str:
         A new trace ID string
     """
     return str(uuid.uuid4())
+
+
+def set_organization(organization: str) -> None:
+    """
+    Set the organization for the current async context.
+    
+    Args:
+        organization: The organization name to set
+    """
+    _organization_var.set(organization)
+
+
+def get_organization() -> Optional[str]:
+    """
+    Get the organization for the current async context.
+    
+    Returns:
+        The organization name if set, None otherwise
+    """
+    return _organization_var.get()
+
+
+def clear_organization() -> None:
+    """
+    Clear the organization for the current async context.
+    """
+    _organization_var.set(None)
 
 
 @contextmanager

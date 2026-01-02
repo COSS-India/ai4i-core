@@ -10,7 +10,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from .context import get_trace_id
+from .context import get_trace_id, get_organization
 
 # Try to import OpenTelemetry for trace ID extraction
 try:
@@ -118,6 +118,28 @@ class JSONFormatter(logging.Formatter):
             # IMPORTANT: This should never happen in normal operation, but ensures logs always have trace_id
             from .context import generate_trace_id
             log_data["trace_id"] = generate_trace_id()
+        
+        # Get organization from context (if available)
+        # Also check log record's extra context (set by RequestLoggingMiddleware)
+        organization = None
+        try:
+            organization = get_organization()
+        except Exception:
+            pass
+        
+        # Fallback: check if organization is in the log record's extra context
+        if not organization:
+            context = getattr(record, "context", None)
+            if context and isinstance(context, dict):
+                organization = context.get("organization")
+        
+        # Always add organization field, even if None or "unknown" for debugging
+        # This helps identify if organization extraction is working
+        if organization:
+            log_data["organization"] = organization
+        else:
+            # Add organization field with "unknown" to indicate it was checked but not found
+            log_data["organization"] = "unknown"
         
         # Add service metadata
         log_data["service_version"] = self.service_version

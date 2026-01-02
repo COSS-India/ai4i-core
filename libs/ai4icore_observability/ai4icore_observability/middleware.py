@@ -43,6 +43,25 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # Extract organization and app (including from JWT token)
         organization, app = self._extract_customer_app(request)
         
+        # Store organization in request.state for other middlewares to access
+        # IMPORTANT: Set this BEFORE await call_next() so it's available to inner middlewares
+        request.state.organization = organization
+        # Always print (not just in debug) to verify it's being set
+        print(f"💾 Stored organization in request.state: {organization} (type: {type(organization)})")
+        print(f"🔍 request.state.organization after setting: {getattr(request.state, 'organization', 'NOT_SET')}")
+        
+        # Set organization in logging context for log formatter
+        try:
+            from ai4icore_logging.context import set_organization
+            set_organization(organization)
+            if self.config.debug:
+                print(f"📝 Set organization in logging context: {organization}")
+        except Exception as e:
+            # Log error for debugging
+            if self.config.debug:
+                print(f"⚠️ Failed to set organization in context: {e}")
+            pass
+        
         # Initialize body_bytes variable for potential reuse
         body_bytes = None
         body_already_read = False
@@ -268,18 +287,29 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         """
         organization: Optional[str] = None
 
-        # Determine API key source: prefer Authorization, fall back to X-API-Key
+        # Determine API key source: prefer X-API-Key over Authorization header
+        # X-API-Key is the actual API key for organization mapping
+        # Authorization header may contain JWT token which is not suitable for hashing
         auth_header = request.headers.get("authorization", "")
         api_key_header = request.headers.get("X-API-Key")
 
+        if self.config.debug:
+            print(f"🔍 Organization extraction - auth_header present: {bool(auth_header)}, X-API-Key present: {bool(api_key_header)}")
+
         api_key: Optional[str] = None
-        if auth_header:
+        # Prefer X-API-Key header for organization mapping (it's the actual API key)
+        if api_key_header:
+            api_key = api_key_header
+            if self.config.debug:
+                print(f"🔑 Extracted API key from X-API-Key header (length: {len(api_key)})")
+        elif auth_header:
+            # Only use Authorization header if X-API-Key is not present
             # Extract the API key (remove "Bearer " prefix if present)
             api_key = auth_header
             if auth_header.startswith("Bearer "):
                 api_key = auth_header[7:]
-        elif api_key_header:
-            api_key = api_key_header
+            if self.config.debug:
+                print(f"🔑 Extracted API key from Authorization header (length: {len(api_key)})")
 
         if api_key:
             # Always map API key to organization using consistent hashing
@@ -289,16 +319,20 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 print(f"🏢 Mapped API key to organization using hash: {organization}")
         else:
             # No API key found; fall back to token claim or header if available
+            if self.config.debug:
+                print(f"⚠️ No API key found, trying JWT token extraction...")
             organization = self._extract_customer_from_token(request)
 
             if organization is None:
                 organization = request.headers.get("X-Customer-ID")
+                if organization and self.config.debug:
+                    print(f"🔑 Found organization from X-Customer-ID header: {organization}")
 
         # If still no organization, use "unknown"
         if organization is None:
             organization = "unknown"
             if self.config.debug:
-                print(f"⚠️ No organization found,  using: {organization}")
+                print(f"⚠️ No organization found, using: {organization}")
 
         # Get app from header or use "unknown"
         app = request.headers.get("X-App-ID")
