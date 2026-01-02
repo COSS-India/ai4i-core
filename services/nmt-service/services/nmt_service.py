@@ -214,16 +214,26 @@ class NMTService:
 
         # Try to infer model name from model inference endpoint metadata when provided
         if service_info.model_inference_endpoint:
-            # Common keys we might see; keep this flexible for future providers
             model_name = (
                 service_info.model_inference_endpoint.get("model_name")
                 or service_info.model_inference_endpoint.get("modelName")
                 or service_info.model_inference_endpoint.get("model")
-                or model_name
+                or model_name    
             )
-        
+            
+            # If not found at top level, check inside schema (common structure)
+            if not model_name or model_name == "unknown":
+                schema = service_info.model_inference_endpoint.get("schema", {})
+                if isinstance(schema, dict):
+                    model_name = (
+                        schema.get("model_name")
+                        or schema.get("modelName")
+                        or schema.get("name")
+                        or model_name
+                    )
+
         # No fallback - Model Management must provide the model name
-        if not model_name:
+        if not model_name or model_name == "unknown":
             logger.error(
                 f"Model Management did not provide model name for service {service_id}. "
                 f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
