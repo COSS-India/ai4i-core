@@ -10,6 +10,7 @@ class ModelProcessingType(BaseModel):
 
 class Schema(BaseModel):
     modelProcessingType: ModelProcessingType
+    model_name: Optional[str] = None
     request: Dict[str, Any] = {}
     response: Dict[str, Any] = {}
 

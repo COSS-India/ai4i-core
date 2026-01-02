@@ -1,7 +1,7 @@
 [project]
-name = "ai4icore-observability"
-version = "1.0.9"
-description = "AI4ICore Observability Plugin - enterprise-grade observability features for AI4ICore services"
+name = "ai4icore-model-management"
+version = "1.0.0"
+description = "AI4ICore Model Management Plugin - reusable model management integration with caching for AI4ICore services"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -9,15 +9,16 @@ authors = [
     {name = "AI4X Team"},
     {email = "team@ai4x.com"}
 ]
-keywords = ["observability", "metrics", "prometheus", "fastapi", "enterprise", "ai4icore"]
+keywords = ["model-management", "triton", "caching", "fastapi", "enterprise", "ai4icore"]
 dependencies = [
     "fastapi>=0.104.0",
-    "prometheus-client>=0.19.0",
     "starlette>=0.27.0",
     "python-dotenv>=1.0.0",
-    "psutil>=5.9.0",
-    "PyJWT>=2.8.0",
     "httpx>=0.25.0",
+    "pydantic>=2.0.0",
+    "tritonclient[http]>=2.40.0",
+    "numpy>=1.24.0",
+    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]
@@ -33,7 +34,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["ai4icore_observability"]
+packages = ["ai4icore_model_management"]
 
 [tool.black]
 line-length = 100
