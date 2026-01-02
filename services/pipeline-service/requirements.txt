@@ -5,3 +5,20 @@ pydantic==2.5.0
 python-dotenv==1.0.0
 # Redis for rate limiting
 redis>=5.0.0
+
+# OpenTelemetry for distributed tracing (Jaeger)
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+opentelemetry-instrumentation-fastapi>=0.41b0
+opentelemetry-exporter-otlp-proto-grpc>=1.20.0
+opentelemetry-instrumentation-httpx>=0.41b0
+
+# Structured logging
+python-json-logger>=2.0.7
+
+# Authentication and security
+passlib[bcrypt]>=1.7.4
+python-jose[cryptography]>=3.3.0
+
+# AI4ICore libraries are installed in Dockerfile
+# (not in requirements.txt due to path issues during Docker build)

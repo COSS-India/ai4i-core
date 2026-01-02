@@ -18,13 +18,81 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 # Import middleware components
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.error_handler_middleware import add_error_handlers
+from middleware.request_logging import RequestLoggingMiddleware
 
-# Configure logging
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+# Import AI4ICore libraries for observability, logging, and tracing
+try:
+    from ai4icore_observability import ObservabilityPlugin, PluginConfig
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    OBSERVABILITY_AVAILABLE = False
+    logging.warning("ai4icore_observability not available, observability plugin disabled")
+
+try:
+    from ai4icore_logging import (
+        get_logger,
+        CorrelationMiddleware,
+        configure_logging,
+    )
+    LOGGING_AVAILABLE = True
+except ImportError:
+    LOGGING_AVAILABLE = False
+    logging.warning("ai4icore_logging not available, using standard logging")
+
+try:
+    from ai4icore_telemetry import setup_tracing
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
+    logging.warning("ai4icore_telemetry not available, distributed tracing disabled")
+
+# Configure structured logging
+if LOGGING_AVAILABLE:
+    configure_logging(
+        service_name=os.getenv("SERVICE_NAME", "pipeline-service"),
+        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
+    )
+    logger = get_logger(__name__)
+    
+    # Aggressively disable uvicorn access logger BEFORE uvicorn starts
+    # This must happen before uvicorn imports/creates its loggers
+    uvicorn_access = logging.getLogger("uvicorn.access")
+    uvicorn_access.handlers.clear()
+    uvicorn_access.propagate = False
+    uvicorn_access.disabled = True
+    uvicorn_access.setLevel(logging.CRITICAL + 1)  # Set above CRITICAL to ensure nothing logs
+    
+    # Also disable at root level by filtering out uvicorn.access messages
+    class UvicornAccessFilter(logging.Filter):
+        """Filter to block uvicorn.access log messages."""
+        def filter(self, record):
+            # Block uvicorn.access logger
+            if record.name == "uvicorn.access":
+                return False
+            # Also block messages that look like uvicorn access logs
+            # Format: "INFO: IP:PORT "METHOD PATH HTTP/1.1" STATUS"
+            message = str(record.getMessage())
+            if 'HTTP/1.1"' in message:
+                import re
+                # Match uvicorn access log pattern: INFO: IP:PORT "METHOD PATH HTTP/1.1" STATUS
+                if re.search(r'INFO:\s+\d+\.\d+\.\d+\.\d+:\d+\s+"(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+.*HTTP/1\.1"\s+\d+', message):
+                    return False
+            return True
+    
+    # Add filter to root logger to catch any uvicorn.access messages
+    root_logger = logging.getLogger()
+    uvicorn_filter = UvicornAccessFilter()
+    for handler in root_logger.handlers:
+        handler.addFilter(uvicorn_filter)
+else:
+    # Configure standard logging
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO"),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    logger = logging.getLogger(__name__)
 
 # Global variable for Redis connection
 redis_client: redis.Redis = None
@@ -130,8 +198,51 @@ app = FastAPI(
             "description": "Service health and readiness checks"
         }
     ],
+    contact={
+        "name": "AI4ICore Team",
+        "url": "https://github.com/AI4X",
+        "email": "support@ai4x.com",
+    },
+    license_info={
+        "name": "MIT",
+        "url": "https://opensource.org/licenses/MIT",
+    },
     lifespan=lifespan
 )
+
+# Observability Plugin (OpenSearch metrics)
+if OBSERVABILITY_AVAILABLE:
+    try:
+        config = PluginConfig.from_env()
+        config.enabled = True
+        if not config.customers:
+            config.customers = []
+        if not config.apps:
+            config.apps = ["pipeline"]
+        
+        plugin = ObservabilityPlugin(config)
+        plugin.register_plugin(app)
+        logger.info("✅ AI4ICore Observability Plugin initialized for Pipeline service")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to initialize observability plugin: {e}")
+
+# Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+if TRACING_AVAILABLE:
+    try:
+        tracer = setup_tracing("pipeline-service")
+        if tracer:
+            logger.info("✅ Distributed tracing initialized for Pipeline service")
+            # Instrument FastAPI to automatically create spans for all requests
+            FastAPIInstrumentor.instrument_app(app)
+            logger.info("✅ FastAPI instrumentation enabled for tracing")
+            # Instrument HTTPX to trace outgoing HTTP requests to other services
+            HTTPXClientInstrumentor().instrument()
+            logger.info("✅ HTTPX instrumentation enabled for tracing service calls")
+        else:
+            logger.warning("⚠️ Tracing setup returned None")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to setup tracing: {e}")
 
 # Add CORS middleware
 app.add_middleware(
@@ -141,6 +252,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Correlation middleware (MUST be added if logging is available)
+# This extracts X-Correlation-ID from headers and sets it in logging context
+if LOGGING_AVAILABLE:
+    app.add_middleware(CorrelationMiddleware)
+    logger.info("✅ Correlation middleware added for distributed tracing")
+    
+    # Request logging middleware (MUST be after CorrelationMiddleware)
+    # This logs API requests and errors to OpenSearch
+    app.add_middleware(RequestLoggingMiddleware)
+    logger.info("✅ Request logging middleware added for API request tracking")
 
 # Add rate limiting middleware
 # Redis client will be initialized in lifespan and stored in app.state
