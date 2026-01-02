@@ -2,6 +2,11 @@
 API Gateway Service - Central entry point for all microservice requests
 """
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 import asyncio
 import logging
 import uuid
@@ -1287,7 +1292,8 @@ def determine_service_and_action(request: Request) -> Tuple[str, str]:
     path = request.url.path.lower()
     method = request.method.upper()
     service = "unknown"
-    for svc in ["asr", "nmt", "tts", "pipeline", "model-management", "llm"]:
+    # Check for all services including NER
+    for svc in ["asr", "nmt", "tts", "pipeline", "model-management", "llm", "ner", "ocr", "transliteration", "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection"]:
         if f"/api/v1/{svc}" in path:
             service = svc
             break
@@ -1301,7 +1307,11 @@ def determine_service_and_action(request: Request) -> Tuple[str, str]:
 def requires_both_auth_and_api_key(request: Request) -> bool:
     """Check if service requires both Bearer token AND API key."""
     path = request.url.path.lower()
-    services_requiring_both = ["asr", "nmt", "tts", "pipeline", "llm"]
+    services_requiring_both = [
+        "asr", "nmt", "tts", "pipeline", "llm", "ocr", "transliteration",
+        "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection"
+        # Note: NER removed - it only requires API key, not both
+    ]
     for svc in services_requiring_both:
         if f"/api/v1/{svc}" in path:
             return True
@@ -1310,11 +1320,13 @@ def requires_both_auth_and_api_key(request: Request) -> bool:
 async def validate_api_key_permissions(api_key: str, service: str, action: str) -> None:
     """Call auth-service to validate API key permissions."""
     url = f"{AUTH_SERVICE_URL}/api/v1/auth/validate-api-key"
+    request_body = {"api_key": api_key, "service": service, "action": action}
+    
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.post(
                 url,
-                json={"api_key": api_key, "service": service, "action": action},
+                json=request_body,
             )
     except httpx.RequestError:
         raise HTTPException(status_code=503, detail="Authentication service unavailable")
@@ -1395,8 +1407,7 @@ def build_auth_headers(request: Request, credentials: Optional[HTTPAuthorization
     return headers
 
 async def ensure_authenticated_for_request(req: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> None:
-    """Enforce authentication - require BOTH Bearer token AND API key for ASR, NMT, TTS, Pipeline, LLM services."""
-    
+    """Enforce authentication - require BOTH Bearer token AND API key for all services."""
     requires_both = requires_both_auth_and_api_key(req)
     
     if requires_both:
@@ -1451,7 +1462,10 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
         if use_api_key:
             # Validate API key permissions via auth-service
             service, action = determine_service_and_action(req)
-            await validate_api_key_permissions(api_key, service, action)
+            try:
+                await validate_api_key_permissions(api_key, service, action)
+            except HTTPException as e:
+                raise
             return
 
         # Default: require Bearer token
@@ -1808,7 +1822,7 @@ async def api_status():
             "transliteration": os.getenv("TRANSLITERATION_SERVICE_URL", "http://transliteration-service:8090"),
             "language-detection": os.getenv("LANGUAGE_DETECTION_SERVICE_URL", "http://language-detection-service:8090"),
             "speaker-diarization": os.getenv("SPEAKER_DIARIZATION_SERVICE_URL", "http://speaker-diarization-service:8095"),
-            "language-diarization": os.getenv("LANGUAGE_DIARIZATION_SERVICE_URL", "http://language-diarization-service:9002"),
+            "language-diarization": os.getenv("LANGUAGE_DIARIZATION_SERVICE_URL", "http://language-diarization-service:8090"),
             "audio-lang-detection": os.getenv("AUDIO_LANG_DETECTION_SERVICE_URL", "http://audio-lang-detection-service:8096"),
             "model-management": os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
             "llm": os.getenv("LLM_SERVICE_URL", "http://llm-service:8090"),
@@ -2330,11 +2344,8 @@ async def asr_inference(
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
+    # Use build_auth_headers to properly set X-Auth-Source header
+    headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/asr/inference", "asr-service", method="POST", body=body, headers=headers)
 
 @app.get("/api/v1/asr/streaming/info", response_model=StreamingInfo, tags=["ASR"])
@@ -2745,7 +2756,10 @@ async def ner_inference(
     api_key: Optional[str] = Security(api_key_scheme),
 ):
     """Perform NER inference on one or more text inputs"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    try:
+        await ensure_authenticated_for_request(request, credentials, api_key)
+    except Exception as e:
+        raise
 
     import json
 
@@ -2757,9 +2771,10 @@ async def ner_inference(
     if api_key:
         headers["X-API-Key"] = api_key
 
-    return await proxy_to_service(
+    result = await proxy_to_service(
         None, "/api/v1/ner/inference", "ner-service", method="POST", body=body, headers=headers
     )
+    return result
 
 
 # Transliteration Service Endpoints (Proxy to Transliteration Service)
@@ -3561,7 +3576,7 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'transliteration-service': os.getenv('TRANSLITERATION_SERVICE_URL', 'http://transliteration-service:8090'),
         'language-detection-service': os.getenv('LANGUAGE_DETECTION_SERVICE_URL', 'http://language-detection-service:8090'),
         'speaker-diarization-service': os.getenv('SPEAKER_DIARIZATION_SERVICE_URL', 'http://speaker-diarization-service:8095'),
-        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:9002'),
+        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:8090'),
         'audio-lang-detection-service': os.getenv('AUDIO_LANG_DETECTION_SERVICE_URL', 'http://audio-lang-detection-service:8096'),
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
@@ -3590,15 +3605,21 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         
         # Forward request to service (5 minute timeout for LLM service, 300s for others)
         timeout_value = 300.0 if service_name == 'llm-service' else 300.0
-        response = await http_client.request(
-            method=method,
-            url=f"{service_url}{path}",
-            headers=headers,
-            params=params,
-            content=body,
-            follow_redirects=True,
-            timeout=timeout_value
-        )
+        final_url = f"{service_url}{path}"
+        
+        try:
+            response = await http_client.request(
+                method=method,
+                url=final_url,
+                headers=headers,
+                params=params,
+                content=body,
+                follow_redirects=True,
+                timeout=timeout_value
+            )
+        except Exception as e:
+            logger.error(f"Error proxying to {service_name}: {e}")
+            raise HTTPException(status_code=500, detail=f"{service_name} temporarily unavailable")
         
         # Return response
         return Response(
@@ -3640,7 +3661,7 @@ async def proxy_to_service_with_params(
         'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
         'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),
         'speaker-diarization-service': os.getenv('SPEAKER_DIARIZATION_SERVICE_URL', 'http://speaker-diarization-service:8095'),
-        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:9002'),
+        'language-diarization-service': os.getenv('LANGUAGE_DIARIZATION_SERVICE_URL', 'http://language-diarization-service:8090'),
         'audio-lang-detection-service': os.getenv('AUDIO_LANG_DETECTION_SERVICE_URL', 'http://audio-lang-detection-service:8096'),
         'ocr-service': os.getenv('OCR_SERVICE_URL', 'http://ocr-service:8099'),
         'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),

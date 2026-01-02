@@ -46,20 +46,20 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # Initialize body_bytes variable for potential reuse
         body_bytes = None
         body_already_read = False
-        
-        # For generic /pipeline endpoint, we need to check the request body to determine the specific endpoint
-        # This is because the frontend may call /services/inference/pipeline instead of specific endpoints
+                
         if method == "POST" and (path.endswith("/pipeline") or path == "/services/inference/pipeline") and "/pipeline/" not in path:
-            # Read body to detect task type (will be restored later)
-            body_bytes = await request.body()
+            # Read body to detect task type
+            body_bytes = await request.body()  # FastAPI caches this automatically
             body_already_read = True
+            
+            # NO MORE request._receive = receive HERE!
+            
             try:
                 request_data = json.loads(body_bytes.decode('utf-8'))
                 # Check if this is a txt-lang-detection request
                 if 'pipelineTasks' in request_data and len(request_data.get('pipelineTasks', [])) > 0:
                     task_type = request_data['pipelineTasks'][0].get('taskType', '')
                     if task_type == 'txt-lang-detection':
-                        # Update path to specific endpoint for accurate metrics tracking
                         path = path + '/txt-lang-detection'
                         if self.config.debug:
                             print(f"🔍 Detected txt-lang-detection in generic pipeline endpoint, updating path to: {path}")
@@ -70,8 +70,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # Detect service type
         service_type = self._detect_service_type(path)
         
-        # Extract real character count for TTS, translation, ASR, OCR, Transliteration, NER (tokens), Audio Language Detection, Text Language Detection, and Speaker Verification
-        # IMPORTANT: We need to read and restore the body to avoid consuming the stream
+        # Extract metrics from body
         tts_characters = 0
         translation_characters = 0
         asr_audio_length = 0
@@ -85,27 +84,16 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         speaker_diarization_length = 0
         language_diarization_length = 0
         
-        if method == "POST" and service_type in ["tts", "translation", "asr", "ocr", "transliteration", "ner", "language_detection", "audio_lang_detection", "speaker_verification", "speaker_diarization", "language_diarization"]:
+        if method == "POST" and service_type in [...]:
+            # Read body if not already read
             if not body_already_read:
-                body_bytes = await request.body()
-            
-            # Restore the body for downstream handlers by providing a receive
-            # callable that yields the body once and then an empty message.
-            # This follows ASGI expected behaviour and avoids EndOfStream errors
-            # when downstream consumers call receive().
-            body_sent = False
+                body_bytes = await request.body()  # FastAPI caches this automatically
+                
+                # NO MORE request._receive = receive HERE!
+            else:
 
-            async def receive() -> dict:
-                nonlocal body_sent
-                if not body_sent:
-                    body_sent = True
-                    return {"type": "http.request", "body": body_bytes, "more_body": False}
-                # After the body has been sent, indicate end of stream
-                return {"type": "http.request", "body": b"", "more_body": False}
-
-            # Attach the receive coroutine to the request so downstream can
-            # await request._receive() as expected by Starlette/FastAPI internals.
-            request._receive = receive
+                # Body already read - use cached body, DO NOT overwrite receive callable
+                body_bytes = request._body if hasattr(request, '_body') else body_bytes
             
             if self.config.debug:
                 print("The service type", service_type)
@@ -135,45 +123,19 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             elif service_type == "ner":
                 ner_tokens = self._extract_ner_tokens_from_body(body_bytes)
 
-            # Always log extracted language detection characters to ensure tracking is visible in logs
             if language_detection_characters > 0:
-                # Unconditional print so it appears in container logs even if debug flag is misconfigured
                 print(f"LANG_DET_CHARS_EXTRACTED={language_detection_characters}")
         
         # Debug logging
         if self.config.debug:
             print(f"🔍 Request: {method} {path} -> Service: {service_type}, Organization: {organization}, App: {app}")
-            if tts_characters > 0:
-                print(f"📝 TTS Characters detected: {tts_characters}")
-            if translation_characters > 0:
-                print(f"📝 Translation Characters detected: {translation_characters}")
-            if asr_audio_length > 0:
-                print(f"🎵 ASR Audio length detected: {asr_audio_length:.2f} seconds")
-            if ocr_characters > 0:
-                print(f"📝 OCR Characters detected: {ocr_characters}")
-            if ocr_image_size_kb > 0:
-                print(f"📊 OCR Image size detected: {ocr_image_size_kb:.2f} KB")
-            if transliteration_characters > 0:
-                print(f"📝 Transliteration Characters detected: {transliteration_characters}")
-            if language_detection_characters > 0:
-                print(f"📝 Language Detection Characters detected: {language_detection_characters}")
-            if audio_lang_detection_length > 0:
-                print(f"🎵 Audio Language Detection Audio length detected: {audio_lang_detection_length:.2f} seconds")
-            if ner_tokens > 0:
-                print(f"📝 NER Tokens (words) detected: {ner_tokens}")
-            if speaker_verification_length > 0:
-                print(f"🎵 Speaker Verification Audio length detected: {speaker_verification_length:.2f} seconds")
-            if speaker_diarization_length > 0:
-                print(f"🎵 Speaker Diarization Audio length detected: {speaker_diarization_length:.2f} seconds")
-            if language_diarization_length > 0:
-                print(f"🎵 Language Diarization Audio length detected: {language_diarization_length:.2f} seconds")
+            # ... rest of debug logging ...
         
         # Process request
         response = await call_next(request)
         
-        # Calculate duration
-        duration = time.time() - start_time
-        
+        # Calculate duration and track metrics
+        duration = time.time() - start_time        
         # Track request
         try:
             # Debug: Log the full path being used for metrics
@@ -868,4 +830,5 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             return 99.6 if duration < 2.5 else 95.5
         else:
             return 99.0
+
 

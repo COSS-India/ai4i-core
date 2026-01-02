@@ -250,7 +250,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
-    restart: unless-stopped
+    restart: unless-stopped 
 
   kong-manager:
     image: pantsel/konga:latest
@@ -304,6 +304,9 @@ services:
       - "8080:8080"
     environment:
       - ENV_FILE=.env
+      # Swagger/OpenAPI server URL used in the generated docs
+      # Prod: point Swagger to public API Gateway URL
+      - SWAGGER_SERVER_URL=http://core-v1.ai4inclusion.org:8080  
     env_file:
       - ./services/api-gateway-service/.env
     depends_on:
@@ -323,7 +326,7 @@ services:
 
   auth-service:
     build:
-      context: ./services/auth-service
+      context: ./services/auth-service/
       dockerfile: Dockerfile
     container_name: ai4v-auth-service
     ports:
@@ -351,8 +354,8 @@ services:
 
   config-service:
     build:
-      context: ./services/config-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/config-service/Dockerfile
     container_name: ai4v-config-service
     ports:
       - "8082:8082"
@@ -443,8 +446,8 @@ services:
 
   alerting-service:
     build:
-      context: ./services/alerting-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/alerting-service/Dockerfile
     container_name: ai4v-alerting-service
     ports:
       - "8085:8085"
@@ -501,7 +504,7 @@ services:
   asr-service:
     build:
       context: .
-      dockerfile: services/asr-service/Dockerfile
+      dockerfile: ./services/asr-service/Dockerfile
     container_name: ai4v-asr-service
     ports:
       - "8087:8087"
@@ -534,7 +537,7 @@ services:
   tts-service:
     build:
       context: .
-      dockerfile: services/tts-service/Dockerfile
+      dockerfile: ./services/tts-service/Dockerfile
     container_name: ai4v-tts-service
     ports:
       - "8088:8088"
@@ -565,7 +568,7 @@ services:
   nmt-service:
     build:
       context: .
-      dockerfile: services/nmt-service/Dockerfile
+      dockerfile: ./services/nmt-service/Dockerfile
     container_name: ai4v-nmt-service
     ports:
       - "8091:8089"
@@ -593,40 +596,23 @@ services:
     restart: unless-stopped
 
   ocr-service:
-
     build:
-
       context: .
-
-      dockerfile: services/ocr-service/Dockerfile
-
+      dockerfile: ./services/ocr-service/Dockerfile
     container_name: ai4v-ocr-service
-
     ports:
       - "8099:8099"
-
     environment:
-
       - ENV_FILE=.env
-
     depends_on:
-
       config-service:
-
         condition: service_healthy
-
       postgres:
-
         condition: service_healthy
-
       redis:
-
         condition: service_healthy
-
     networks:
-
       - microservices-network
-
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8099/health"]
       interval: 30s
@@ -639,7 +625,7 @@ services:
   ner-service:
     build:
       context: .
-      dockerfile: services/ner-service/Dockerfile
+      dockerfile: ./services/ner-service/Dockerfile
     container_name: ai4v-ner-service
     ports:
       - "9001:9001"        # host:container (NER listens on 9001 in the container)
@@ -799,7 +785,7 @@ services:
   transliteration-service:
     build:
       context: .
-      dockerfile: services/transliteration-service/Dockerfile
+      dockerfile: ./services/transliteration-service/Dockerfile
     container_name: ai4v-transliteration-service
     ports:
       - "8097:8090"
@@ -827,7 +813,7 @@ services:
   language-detection-service:
     build:
       context: .
-      dockerfile: services/language-detection-service/Dockerfile
+      dockerfile: ./services/language-detection-service/Dockerfile
     container_name: ai4v-language-detection-service
     ports:
       - "8098:8090"
@@ -855,7 +841,7 @@ services:
   speaker-diarization-service:
     build:
       context: .
-      dockerfile: services/speaker-diarization-service/Dockerfile
+      dockerfile: ./services/speaker-diarization-service/Dockerfile
     container_name: ai4v-speaker-diarization-service
     ports:
       - "8095:8095"
@@ -882,10 +868,10 @@ services:
   language-diarization-service:
     build:
       context: .
-      dockerfile: services/language-diarization-service/Dockerfile
+      dockerfile: ./services/language-diarization-service/Dockerfile
     container_name: ai4v-language-diarization-service
     ports:
-      - "9002:9002"
+      - "9002:8090"
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=65.1.35.3:8600
@@ -901,7 +887,7 @@ services:
     networks:
       - microservices-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9002/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -911,7 +897,7 @@ services:
   audio-lang-detection-service:
     build:
       context: .
-      dockerfile: services/audio-lang-detection-service/Dockerfile
+      dockerfile: ./services/audio-lang-detection-service/Dockerfile
     container_name: ai4v-audio-lang-detection-service
     ports:
       - "8096:8096"
@@ -944,7 +930,6 @@ services:
       dockerfile: Dockerfile
       args:
         # Browser talks directly to the API Gateway on host port 8080
-        #NEXT_PUBLIC_API_URL: http://localhost:8080
         NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
         # Service-specific API keys from .env file (no hardcoding)
         NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
@@ -957,8 +942,9 @@ services:
     ports:
       - "3000:3000"
     environment:
+      # HOSTNAME=0.0.0.0 tells Next.js standalone server to listen on all interfaces
+      - HOSTNAME=0.0.0.0
       # Route all frontend API calls through the API Gateway on host
-      #- NEXT_PUBLIC_API_URL=http://localhost:8080
       - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
       - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
       # Service-specific API keys for API Gateway authentication / RBAC
@@ -1049,6 +1035,10 @@ services:
 volumes:
   postgres-data:
     driver: local
+    driver_opts:
+          type: "none"
+          o: "bind"
+          device: "/home/ubuntu/ai4i-v/volumes/pg_data"
   postgres-konga-data:
     driver: local
   redis-data:

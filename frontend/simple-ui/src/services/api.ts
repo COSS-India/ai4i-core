@@ -139,8 +139,8 @@ llmApiClient.interceptors.request.use(
     // Add request start time for timing calculation
     config.headers['request-startTime'] = new Date().getTime().toString();
     
-    // Check endpoint type to determine authentication method
-    const url = config.url || '';
+    // Check endpoint type to determine authentication method (case-insensitive)
+    const url = (config.url || '').toLowerCase();
     const isLLMEndpoint = url.includes('/api/v1/llm');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     
@@ -282,26 +282,29 @@ apiClient.interceptors.request.use(
     // Add request start time for timing calculation
     config.headers['request-startTime'] = new Date().getTime().toString();
     
-    // Check endpoint type to determine authentication method
-    const url = config.url || '';
+    // Check endpoint type to determine authentication method (case-insensitive)
+    const url = (config.url || '').toLowerCase();
     const isModelManagementEndpoint = url.includes('/model-management');
     const isASREndpoint = url.includes('/api/v1/asr');
     const isNMSEndpoint = url.includes('/api/v1/nmt');
     const isTTSEndpoint = url.includes('/api/v1/tts');
     const isLLMEndpoint = url.includes('/api/v1/llm');
     const isPipelineEndpoint = url.includes('/api/v1/pipeline');
+    const isNEREndpoint = url.includes('/api/v1/ner');
+    const isOCREndpoint = url.includes('/api/v1/ocr');
+    const isTransliterationEndpoint = url.includes('/api/v1/transliteration');
+    const isLanguageDetectionEndpoint = url.includes('/api/v1/language-detection');
+    const isSpeakerDiarizationEndpoint = url.includes('/api/v1/speaker-diarization');
+    const isLanguageDiarizationEndpoint = url.includes('/api/v1/language-diarization');
+    const isAudioLangDetectionEndpoint = url.includes('/api/v1/audio-lang-detection');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     
     // Services that require JWT tokens (routed via Kong with token-validator)
     const requiresJWT = isModelManagementEndpoint || isASREndpoint || isNMSEndpoint || 
                         isTTSEndpoint || isLLMEndpoint || isPipelineEndpoint ||
-                        url.includes('/api/v1/audio-lang-detection') ||
-                        url.includes('/api/v1/language-detection') ||
-                        url.includes('/api/v1/language-diarization') ||
-                        url.includes('/api/v1/speaker-diarization') ||
-                        url.includes('/api/v1/ner') ||
-                        url.includes('/api/v1/ocr') ||
-                        url.includes('/api/v1/transliteration');
+                        isAudioLangDetectionEndpoint || isLanguageDetectionEndpoint ||
+                        isLanguageDiarizationEndpoint || isSpeakerDiarizationEndpoint ||
+                        isNEREndpoint || isOCREndpoint || isTransliterationEndpoint;
     
     if (requiresJWT && !isAuthEndpoint) {
       // For services that require JWT tokens, use JWT token
@@ -313,8 +316,10 @@ apiClient.interceptors.request.use(
         }
       } 
       
-      // ASR, NMT, TTS, Pipeline, LLM require BOTH JWT token AND API key
-      if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint) {
+      // All services require BOTH JWT token AND API key
+      if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint || isNEREndpoint ||
+          isOCREndpoint || isTransliterationEndpoint || isLanguageDetectionEndpoint || 
+          isSpeakerDiarizationEndpoint || isLanguageDiarizationEndpoint || isAudioLangDetectionEndpoint) {
         const apiKey = getApiKey();
         if (apiKey) {
           config.headers['X-API-Key'] = apiKey;
@@ -373,169 +378,220 @@ apiClient.interceptors.response.use(
         case 401:
           // Unauthorized - handle based on endpoint type
           if (typeof window !== 'undefined') {
-            const isModelManagementEndpoint = error.config?.url?.includes('/model-management');
+            const url = (error.config?.url || '').toLowerCase();
+            const isModelManagementEndpoint = url.includes('/model-management');
             
-            if (isModelManagementEndpoint) {
-              // For model-management endpoints, try to refresh token
-              if (!originalRequest._retry) {
+            // Check if it's a service endpoint or model-management endpoint
+            // These should NOT automatically logout - let the UI handle the error
+            const isServiceEndpoint = url.includes('/api/v1/asr') || 
+                                     url.includes('/api/v1/tts') ||
+                                     url.includes('/api/v1/nmt') ||
+                                     url.includes('/api/v1/llm') ||
+                                     url.includes('/api/v1/pipeline') ||
+                                     url.includes('/api/v1/ocr') ||
+                                     url.includes('/api/v1/ner') ||
+                                     url.includes('/api/v1/transliteration') ||
+                                     url.includes('/api/v1/language-detection') ||
+                                     url.includes('/api/v1/speaker-diarization') ||
+                                     url.includes('/api/v1/language-diarization') ||
+                                     url.includes('/api/v1/audio-lang-detection') ||
+                                     isModelManagementEndpoint;
+            
+            if (isServiceEndpoint || isModelManagementEndpoint) {
+              // For service endpoints and model-management endpoints
+              // Check if it's a token expiration issue - if so, redirect to sign-in
+              
+              // Extract error message from response for better debugging
+              let errorMessage = 'Authentication failed';
+              try {
+                const errorData = (data as any);
+                if (errorData?.detail) {
+                  errorMessage = String(errorData.detail);
+                } else if (errorData?.message) {
+                  errorMessage = String(errorData.message);
+                }
+              } catch (e) {
+                // Ignore parsing errors
+              }
+              
+              // Check if error indicates token expiration
+              const errorMessageLower = errorMessage.toLowerCase();
+              const isTokenExpired = errorMessageLower.includes('expired') ||
+                                   errorMessageLower.includes('token expired') ||
+                                   errorMessageLower.includes('invalid token') ||
+                                   errorMessageLower.includes('token invalid') ||
+                                   errorMessageLower.includes('jwt expired') ||
+                                   errorMessageLower.includes('access token expired');
+              
+              // Log detailed error information
+              const jwtToken = getJwtToken();
+              const apiKey = getApiKey();
+              const endpointType = isModelManagementEndpoint ? 'model-management' : 'service';
+              console.warn(`${endpointType} endpoint 401 error:`, {
+                url,
+                errorMessage,
+                isTokenExpired,
+                hasJWT: !!jwtToken,
+                hasAPIKey: !!apiKey,
+                jwtLength: jwtToken?.length || 0,
+                apiKeyLength: apiKey?.length || 0,
+                responseData: data,
+              });
+              
+              // Try to refresh token if it exists and we haven't retried yet
+              if (jwtToken && !originalRequest._retry) {
                 originalRequest._retry = true;
                 
-                if (isRefreshing) {
-                  // If already refreshing, queue this request
-                  return new Promise((resolve, reject) => {
-                    failedQueue.push({ resolve, reject });
-                  })
-                    .then((token) => {
-                      originalRequest.headers['Authorization'] = `Bearer ${token}`;
-                      return apiClient(originalRequest);
-                    })
-                    .catch((err) => {
-                      return Promise.reject(err);
-                    });
-                }
-                
-                isRefreshing = true;
-                
                 try {
-                  // Import authService dynamically to avoid circular dependencies
                   const { default: authService } = await import('./authService');
                   const refreshToken = authService.getRefreshToken();
                   
-                  if (!refreshToken) {
-                    throw new Error('No refresh token available');
+                  if (refreshToken) {
+                    // Try to refresh the token
+                    const response = await authService.refreshToken();
+                    const newAccessToken = response.access_token;
+                    const rememberMe = localStorage.getItem('remember_me') === 'true';
+                    authService.setAccessToken(newAccessToken, rememberMe);
+                    
+                    // Retry the request with new token
+                    originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+                    return apiClient(originalRequest);
                   }
+                } catch (refreshError: any) {
+                  // Refresh failed - check if it's because token expired
+                  const refreshErrorMsg = (refreshError?.message || '').toLowerCase();
+                  const refreshFailedDueToExpiration = refreshErrorMsg.includes('expired') ||
+                                                      refreshErrorMsg.includes('invalid') ||
+                                                      refreshErrorMsg.includes('401') ||
+                                                      refreshErrorMsg.includes('unauthorized');
                   
-                  // Call refresh token API
-                  const response = await authService.refreshToken();
-                  const newAccessToken = response.access_token;
-                  
-                  // Update the token in storage
-                  const rememberMe = localStorage.getItem('remember_me') === 'true';
-                  authService.setAccessToken(newAccessToken, rememberMe);
-                  
-                  // Update the original request with new token
-                  originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
-                  
-                  // Process queued requests
-                  processQueue(null, newAccessToken);
-                  isRefreshing = false;
-                  
-                  // Retry the original request
-                  return apiClient(originalRequest);
-                } catch (refreshError) {
-                  // Refresh failed, clear tokens and logout
-                  processQueue(refreshError, null);
-                  isRefreshing = false;
-                  
-                  console.error('Token refresh failed:', refreshError);
-                  
-                  // Clear tokens and redirect to auth page
-                  const { default: authService } = await import('./authService');
-                  authService.clearAuthTokens();
-                  authService.clearStoredUser();
-                  
-                  if (typeof window !== 'undefined') {
-                    window.location.href = '/auth';
+                  if (refreshFailedDueToExpiration || isTokenExpired) {
+                    // Token expired - redirect to sign-in page
+                    console.warn(`Token expired for ${endpointType} endpoint - redirecting to sign-in`);
+                    const { default: authService } = await import('./authService');
+                    authService.clearAuthTokens();
+                    authService.clearStoredUser();
+                    
+                    if (typeof window !== 'undefined') {
+                      window.location.href = '/';
+                    }
+                    return Promise.reject(new Error('Session expired. Please sign in again.'));
+                  } else {
+                    // Refresh failed for other reasons - don't logout, let UI handle it
+                    console.warn(`Token refresh failed for ${endpointType} endpoint:`, refreshError);
                   }
-                  
-                  return Promise.reject(refreshError);
                 }
-              } else {
-                // Already retried, redirect to auth
+              } else if (isTokenExpired && !jwtToken) {
+                // Token expired and no token available - redirect to sign-in
+                console.warn(`Token expired and no token available for ${endpointType} endpoint - redirecting to sign-in`);
                 const { default: authService } = await import('./authService');
                 authService.clearAuthTokens();
                 authService.clearStoredUser();
                 
                 if (typeof window !== 'undefined') {
-                  window.location.href = '/auth';
+                  window.location.href = '/';
                 }
+                return Promise.reject(new Error('Session expired. Please sign in again.'));
               }
-            } else {
-              // For service endpoints (ASR, TTS, NMT, LLM, Pipeline, etc.)
-              // Don't automatically logout - let the UI handle the error
-              // Check if it's a service endpoint that requires both JWT and API key
-              const url = error.config?.url || '';
-              const isServiceEndpoint = url.includes('/api/v1/asr') || 
-                                       url.includes('/api/v1/tts') ||
-                                       url.includes('/api/v1/nmt') ||
-                                       url.includes('/api/v1/llm') ||
-                                       url.includes('/api/v1/pipeline') ||
-                                       url.includes('/api/v1/ocr') ||
-                                       url.includes('/api/v1/ner') ||
-                                       url.includes('/api/v1/transliteration') ||
-                                       url.includes('/api/v1/language-detection') ||
-                                       url.includes('/api/v1/speaker-diarization') ||
-                                       url.includes('/api/v1/language-diarization') ||
-                                       url.includes('/api/v1/audio-lang-detection');
               
-              if (isServiceEndpoint) {
-                // Extract error message from response for better debugging
-                let errorMessage = 'Authentication failed';
-                try {
-                  const errorData = (data as any);
-                  if (errorData?.detail) {
-                    errorMessage = String(errorData.detail);
-                  } else if (errorData?.message) {
-                    errorMessage = String(errorData.message);
-                  }
-                } catch (e) {
-                  // Ignore parsing errors
-                }
-                
-                // Log detailed error information
-                const jwtToken = getJwtToken();
-                const apiKey = getApiKey();
-                console.error('Service endpoint 401 error:', {
-                  url,
-                  errorMessage,
-                  hasJWT: !!jwtToken,
-                  hasAPIKey: !!apiKey,
-                  jwtLength: jwtToken?.length || 0,
-                  apiKeyLength: apiKey?.length || 0,
-                  responseData: data,
-                });
-                
-                // For service endpoints, try to refresh token if it's expired
-                // Only logout if refresh fails or if it's clearly an API key issue
-                if (jwtToken && !originalRequest._retry) {
-                  // Try to refresh token once
-                  originalRequest._retry = true;
-                  
-                  try {
-                    const { default: authService } = await import('./authService');
-                    const refreshToken = authService.getRefreshToken();
-                    
-                    if (refreshToken) {
-                      // Try to refresh the token
-                      const response = await authService.refreshToken();
-                      const newAccessToken = response.access_token;
-                      const rememberMe = localStorage.getItem('remember_me') === 'true';
-                      authService.setAccessToken(newAccessToken, rememberMe);
-                      
-                      // Retry the request with new token
-                      originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
-                      return apiClient(originalRequest);
-                    }
-                  } catch (refreshError) {
-                    // Refresh failed - this might be an API key issue or token issue
-                    // Don't logout, just let the error propagate to the UI
-                    console.warn('Token refresh failed for service endpoint - may need API key:', refreshError);
-                  }
-                }
-                
-                // Enhance error with more details
-                const enhancedError = new Error(
-                  apiKey 
-                    ? `Authentication failed: ${errorMessage}. Please check your API key and login status.`
-                    : `API key is required. Please set an API key in your profile or header.`
-                );
-                (enhancedError as any).status = 401;
-                (enhancedError as any).response = error.response;
-                return Promise.reject(enhancedError);
+              // For non-expiration errors (API key issues, validation errors, etc.)
+              // Don't redirect - let the UI handle the error
+              let enhancedErrorMessage = errorMessage;
+              if (isModelManagementEndpoint) {
+                enhancedErrorMessage = `Model management error: ${errorMessage}. Please check your authentication and try again.`;
+              } else if (!apiKey) {
+                enhancedErrorMessage = `API key is required. Please set an API key in your profile or header.`;
               } else {
-                // For other non-service endpoints, handle normally
-                localStorage.removeItem('api_key');
-                window.location.href = '/';
+                enhancedErrorMessage = `Authentication failed: ${errorMessage}. Please check your API key and login status.`;
+              }
+              
+              const enhancedError = new Error(enhancedErrorMessage);
+              (enhancedError as any).status = 401;
+              (enhancedError as any).response = error.response;
+              return Promise.reject(enhancedError);
+            } else {
+              // For auth endpoints and other non-service endpoints
+              // Check if token expired and redirect to sign-in if so
+              
+              // Extract error message to check for expiration
+              let errorMessage = '';
+              try {
+                const errorData = (data as any);
+                if (errorData?.detail) {
+                  errorMessage = String(errorData.detail);
+                } else if (errorData?.message) {
+                  errorMessage = String(errorData.message);
+                }
+              } catch (e) {
+                // Ignore parsing errors
+              }
+              
+              const errorMessageLower = errorMessage.toLowerCase();
+              const isTokenExpired = errorMessageLower.includes('expired') ||
+                                   errorMessageLower.includes('token expired') ||
+                                   errorMessageLower.includes('invalid token') ||
+                                   errorMessageLower.includes('token invalid') ||
+                                   errorMessageLower.includes('jwt expired') ||
+                                   errorMessageLower.includes('access token expired');
+              
+              if (!originalRequest._retry) {
+                originalRequest._retry = true;
+                
+                try {
+                  const { default: authService } = await import('./authService');
+                  const refreshToken = authService.getRefreshToken();
+                  
+                  if (refreshToken) {
+                    const response = await authService.refreshToken();
+                    const newAccessToken = response.access_token;
+                    const rememberMe = localStorage.getItem('remember_me') === 'true';
+                    authService.setAccessToken(newAccessToken, rememberMe);
+                    
+                    originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+                    return apiClient(originalRequest);
+                  }
+                } catch (refreshError: any) {
+                  // Refresh failed - check if it's due to expiration
+                  const refreshErrorMsg = (refreshError?.message || '').toLowerCase();
+                  const refreshFailedDueToExpiration = refreshErrorMsg.includes('expired') ||
+                                                      refreshErrorMsg.includes('invalid') ||
+                                                      refreshErrorMsg.includes('401') ||
+                                                      refreshErrorMsg.includes('unauthorized');
+                  
+                  if (refreshFailedDueToExpiration || isTokenExpired) {
+                    // Token expired - redirect to sign-in
+                    console.warn('Token expired for auth endpoint - redirecting to sign-in');
+                    const { default: authService } = await import('./authService');
+                    authService.clearAuthTokens();
+                    authService.clearStoredUser();
+                    
+                    if (typeof window !== 'undefined') {
+                      window.location.href = '/';
+                    }
+                    return Promise.reject(new Error('Session expired. Please sign in again.'));
+                  } else {
+                    // Other refresh error - logout
+                    console.error('Token refresh failed for auth endpoint:', refreshError);
+                    const { default: authService } = await import('./authService');
+                    authService.clearAuthTokens();
+                    authService.clearStoredUser();
+                    
+                    if (typeof window !== 'undefined') {
+                      window.location.href = '/';
+                    }
+                  }
+                }
+              } else {
+                // Already retried - token likely expired, redirect to sign-in
+                console.warn('Token refresh already attempted - redirecting to sign-in');
+                const { default: authService } = await import('./authService');
+                authService.clearAuthTokens();
+                authService.clearStoredUser();
+                
+                if (typeof window !== 'undefined') {
+                  window.location.href = '/';
+                }
+                return Promise.reject(new Error('Session expired. Please sign in again.'));
               }
             }
           }
