@@ -56,22 +56,17 @@ async def health_check(request: Request, response: Response) -> Dict[str, Any]:
         logger.warning(f"/health: PostgreSQL check failed: {e}")
     
     # Check Triton (optional - don't fail health if Triton is down)
-    # Use timeout to prevent hanging
+    # Note: Triton endpoint must be resolved via Model Management - no hardcoded fallback
+    triton_ok = False
     try:
         import asyncio
         from utils.triton_client import TritonClient
-        triton_url = getattr(request.app.state, "triton_endpoint", "localhost:8000")
-        triton_client = TritonClient(triton_url=triton_url, api_key=None)
-        # Run Triton check with 2 second timeout
-        triton_ok = await asyncio.wait_for(
-            asyncio.to_thread(triton_client.is_server_ready),
-            timeout=2.0
-        )
-    except asyncio.TimeoutError:
-        logger.warning(f"/health: Triton check timed out after 2 seconds")
-        triton_ok = False
+        # Try to get Triton endpoint from a test request if available
+        # For health check, we skip Triton validation as it requires serviceId
+        # Health check focuses on Redis and DB availability
+        logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
     except Exception as e:
-        logger.warning(f"/health: Triton check failed: {e}")
+        logger.warning(f"/health: Triton check skipped: {e}")
         triton_ok = False
     
     status_str = "ok" if (redis_ok and db_ok) else "degraded"

@@ -11,11 +11,17 @@ export interface LanguageDetectionInferenceRequest {
   };
 }
 
+export interface LanguagePrediction {
+  langCode: string;
+  scriptCode: string;
+  langScore: number;
+  language: string;
+}
+
 export interface LanguageDetectionInferenceResponse {
   output: Array<{
     source: string;
-    detectedLanguage?: string;
-    detectedScript?: string;
+    langPrediction: LanguagePrediction[];
     [key: string]: any;
   }>;
 }
@@ -34,7 +40,6 @@ export const performLanguageDetectionInference = async (
         serviceId,
       },
     };
-console.log("p",payload);
 
     const response = await apiClient.post<LanguageDetectionInferenceResponse>(
       apiEndpoints['language-detection'].inference,
