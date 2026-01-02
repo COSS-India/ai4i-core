@@ -6,15 +6,16 @@ WORKDIR /app
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        gcc g++ curl libpq-dev ffmpeg libsndfile1-dev build-essential git libgomp1 \
+        gcc g++ curl libpq-dev ffmpeg libsndfile1-dev \
+        build-essential git libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy plugins (note the ../.. because build context is services/asr-service)
-COPY ../../libs/ai4icore_observability /app/libs/ai4icore_observability
-COPY ../../libs/ai4icore_model_management /app/libs/ai4icore_model_management
+# ---- shared plugins (repo-root paths) ----
+COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
-# Copy requirements from current context root
-COPY requirements.txt .
+# ---- requirements ----
+COPY services/asr-service/requirements.txt .
 
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir --user -r requirements.txt
@@ -25,12 +26,13 @@ RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
 # -----------------------------
 # STAGE 2 — RUNTIME
 # -----------------------------
-FROM python:3.11-slim AS runtime
+FROM python:3.11-slim
 WORKDIR /app
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        curl libpq5 libssl3 libnss3 libstdc++6 ca-certificates ffmpeg libsndfile1 libgomp1 \
+        curl libpq5 libssl3 libnss3 libstdc++6 \
+        ca-certificates ffmpeg libsndfile1 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /root/.local /root/.local
@@ -39,8 +41,8 @@ ENV PATH=/root/.local/bin:$PATH
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
-# Copy app code from context root (services/asr-service)
-COPY . .
+# ---- application code ----
+COPY services/asr-service /app
 
 RUN rm -f /app/.env || true
 
