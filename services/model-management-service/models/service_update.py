@@ -13,16 +13,17 @@ class LanguagePair(BaseModel):
 
 class ServiceUpdateRequest(BaseModel):
     serviceId: str
-    name: str
+    name: Optional[str] = None
     serviceDescription: Optional[str] = None
     hardwareDescription: Optional[str] = None
     publishedOn: Optional[int] = None
-    modelId: str
+    modelId: Optional[str] = None
     modelVersion: Optional[str] = None  
     endpoint: Optional[str] = None
     api_key: Optional[str] = None
     languagePair: Optional[LanguagePair] = None
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
+    isPublished: Optional[bool] = None
     
 

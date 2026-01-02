@@ -12,8 +12,6 @@ from db_operations import (
     list_all_models,
     save_model_to_db,
     update_model,
-    publish_model,
-    unpublish_model
 )
 from logger import logger
 from typing import List, Union, Optional
@@ -103,40 +101,5 @@ async def update_model_restful(payload: ModelUpdateRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"kind": "DBError", "message": "Model update not successful"}
         )
-
-
-@router_restful.post("/publish", response_model=str)
-async def publish_model_restful(model_id: str = Query(..., alias="model_id")):
-    """Publish a model - RESTful endpoint"""
-    try:
-        await publish_model(model_id)
-        logger.info(f"Model '{model_id}' published successfully.")
-        return f"Model '{model_id}' published successfully."
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Error while publishing model.")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"kind": "DBError", "message": "Model publish not successful"}
-        )
-
-
-@router_restful.post("/unpublish", response_model=str)
-async def unpublish_model_restful(model_id: str = Query(..., alias="model_id")):
-    """Unpublish a model - RESTful endpoint"""
-    try:
-        await unpublish_model(model_id)
-        logger.info(f"Model '{model_id}' unpublished successfully.")
-        return f"Model '{model_id}' unpublished successfully."
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Error while unpublishing model.")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"kind": "DBError", "message": "Model unpublish not successful"}
-        )
-
 
 

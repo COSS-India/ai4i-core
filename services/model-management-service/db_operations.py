@@ -292,23 +292,33 @@ async def update_model(payload: ModelUpdateRequest):
             )
 
         # Check max active versions if changing status to ACTIVE
-        if "versionStatus" in request_dict and request_dict["versionStatus"] == VersionStatus.ACTIVE:
-            if existing_model.version_status != VersionStatus.ACTIVE:
-                # Count active versions for this model_id (excluding current version)
-                active_count_stmt = select(sql_func.count(Model.id)).where(
-                    Model.model_id == payload.modelId,
-                    Model.version_status == VersionStatus.ACTIVE,
-                    Model.version != payload.version  # Exclude current version
+        # Use payload.versionStatus directly to handle both enum and string values
+        is_setting_active = False
+        if payload.versionStatus is not None:
+            if isinstance(payload.versionStatus, VersionStatus):
+                is_setting_active = payload.versionStatus == VersionStatus.ACTIVE
+            elif isinstance(payload.versionStatus, str):
+                is_setting_active = payload.versionStatus.upper() == "ACTIVE"
+        
+        if is_setting_active and existing_model.version_status != VersionStatus.ACTIVE:
+            # Changing from non-ACTIVE to ACTIVE - check the limit
+            # Count active versions for this model_id (excluding current version)
+            active_count_stmt = select(sql_func.count(Model.id)).where(
+                Model.model_id == payload.modelId,
+                Model.version_status == VersionStatus.ACTIVE,
+                Model.version != payload.version  # Exclude current version
+            )
+            active_count_result = await db.execute(active_count_stmt)
+            active_count = active_count_result.scalar() or 0
+            
+            logger.info(f"Max active versions check: model={payload.modelId}, current_active={active_count}, limit={MAX_ACTIVE_VERSIONS_PER_MODEL}")
+            
+            if active_count >= MAX_ACTIVE_VERSIONS_PER_MODEL:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Maximum number of active versions ({MAX_ACTIVE_VERSIONS_PER_MODEL}) reached for model {payload.modelId}. "
+                           f"Please deprecate an existing active version before activating this one."
                 )
-                active_count_result = await db.execute(active_count_stmt)
-                active_count = active_count_result.scalar() or 0
-                
-                if active_count >= MAX_ACTIVE_VERSIONS_PER_MODEL:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Maximum number of active versions ({MAX_ACTIVE_VERSIONS_PER_MODEL}) reached for model {payload.modelId}. "
-                               f"Please deprecate an existing active version before activating this one."
-                    )
 
         # 1. Update DB first
         postgres_data = {}
@@ -535,9 +545,6 @@ async def get_model_details(model_id: str, version: str = None) -> Dict[str, Any
             "inferenceEndPoint": model.inference_endpoint,
             "source": model.ref_url or "",
             "task": model.task,
-            "isPublished": model.is_published,
-            "publishedAt": datetime.fromtimestamp(model.published_at).isoformat() if model.published_at else None,
-            "unpublishedAt": datetime.fromtimestamp(model.unpublished_at).isoformat() if model.unpublished_at else None,
          }
      
     except Exception as e:
@@ -623,9 +630,6 @@ async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bo
                 "inferenceEndPoint": data.get("inference_endpoint"),
                 "source": data.get("ref_url"),
                 "task": data.get("task", {}),
-                "isPublished": data.get("is_published", {}),
-                "publishedAt": datetime.fromtimestamp(data.get("published_at", None)).isoformat() if data.get("published_at", None) else None ,
-                "unpublishedAt": datetime.fromtimestamp( data.get("unpublished_at", None)).isoformat() if  data.get("unpublished_at", None) else None,
             })
 
         return result
@@ -635,81 +639,6 @@ async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bo
     finally:
         await db.close()
 
-
-async def publish_model(payload_modelId: str):
-    """
-    Publish a model by setting is_published to True and updating published_at timestamp.
-    """
-    db: AsyncSession = AppDatabase()
-    try:
-        stmt = select(Model).where(Model.model_id == payload_modelId)
-        result = await db.execute(stmt)
-        model = result.scalars().first()
-
-        if not model:
-            logger.warning(f"Model with ID {payload_modelId} not found for publish.")
-            return 0
-
-        now_epoch = int(time.time())
-
-        await db.execute(
-                update(Model)
-                .where(Model.model_id == payload_modelId)
-                .values(
-                    is_published=True,
-                    published_at=now_epoch,
-                    unpublished_at=None
-                )
-            )
-
-        await db.commit()
-        logger.info(f"Model {payload_modelId} published successfully.")
-
-        return 1
-
-    except Exception as e:
-        await db.rollback()
-        logger.exception("Error while publishing model.")
-        raise Exception("Publish failed due to internal DB error") from e
-    finally:
-        await db.close()
-    
-async def unpublish_model(payload_modelId: str):
-    """
-    Unpublish a model by setting is_published to False and updating unpublished_at timestamp.
-    """
-    db: AsyncSession = AppDatabase()
-    try:
-        stmt = select(Model).where(Model.model_id == payload_modelId)
-        result = await db.execute(stmt)
-        model = result.scalars().first()
-
-        if not model:
-            logger.warning(f"Model with ID {payload_modelId} not found for unpublish.")
-            return 0
-
-        now_epoch = int(time.time())
-
-        await db.execute(
-                update(Model)
-                .where(Model.model_id == payload_modelId)
-                .values(
-                    is_published=False,
-                    unpublished_at=now_epoch
-                )
-            )
-
-        await db.commit()
-        logger.info(f"Model {payload_modelId} unpublished successfully.")
-
-        return 1
-
-    except Exception as e:
-        await db.rollback()
-        logger.exception("Error while unpublishing model.")
-        raise Exception("Unpublish failed due to internal DB error") from e
-    finally:
-        await db.close()
 
 ####################################################### Service Functions #######################################################
 
@@ -750,6 +679,10 @@ async def save_service_to_db(payload: ServiceCreateRequest):
         payload_dict["publishedOn"] = now_epoch
 
         # Create new service record
+        # Handle isPublished - default to False if not provided
+        is_published = payload_dict.get("isPublished", False)
+        published_at = int(time.time()) if is_published else None
+        
         new_service = Service(
             service_id=payload_dict.get("serviceId"),
             name=payload_dict.get("name"),
@@ -762,6 +695,8 @@ async def save_service_to_db(payload: ServiceCreateRequest):
             api_key=payload_dict.get("apiKey"),
             health_status=payload_dict.get("healthStatus", {}),
             benchmarks=payload_dict.get("benchmarks", []),
+            is_published=is_published,
+            published_at=published_at,
         )
         db.add(new_service)
         await db.commit()
@@ -825,6 +760,21 @@ async def update_service(request: ServiceUpdateRequest):
         if "benchmarks" in request_dict:
             db_update["benchmarks"] = _json_safe(request_dict["benchmarks"])
         # languagePair is not persisted on services table; skip
+        
+        # Handle isPublished - automatically set published_at/unpublished_at timestamps
+        if "isPublished" in request_dict:
+            is_published = request_dict["isPublished"]
+            db_update["is_published"] = is_published
+            now_epoch = int(time.time())
+            if is_published:
+                # Publishing: set published_at, clear unpublished_at
+                db_update["published_at"] = now_epoch
+                db_update["unpublished_at"] = None
+                logger.info(f"Service {request.serviceId} will be published")
+            else:
+                # Unpublishing: set unpublished_at, keep published_at
+                db_update["unpublished_at"] = now_epoch
+                logger.info(f"Service {request.serviceId} will be unpublished")
 
         if not db_update:
             logger.warning("No valid update fields provided for service update")
@@ -839,20 +789,21 @@ async def update_service(request: ServiceUpdateRequest):
             logger.warning(f"No DB record found for service {request.serviceId}")
             return 0
         
-        # Validate model exists - use modelVersion if provided, otherwise use existing service's model_version
-        model_version_to_check = request_dict.get("modelVersion") or db_service.model_version
-        result_model = await db.execute(
-            select(Model).where(
-                Model.model_id == request.modelId,
-                Model.version == model_version_to_check
+        # Validate model exists only if modelId is being updated
+        if request.modelId is not None:
+            model_version_to_check = request_dict.get("modelVersion") or db_service.model_version
+            result_model = await db.execute(
+                select(Model).where(
+                    Model.model_id == request.modelId,
+                    Model.version == model_version_to_check
+                )
             )
-        )
-        model_exists = result_model.scalars().first()
-        if not model_exists:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Model with ID {request.modelId} and version {model_version_to_check} does not exist, cannot update service."
-            )
+            model_exists = result_model.scalars().first()
+            if not model_exists:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Model with ID {request.modelId} and version {model_version_to_check} does not exist, cannot update service."
+                )
         
         stmt_update = (
             update(Service)
@@ -1019,6 +970,9 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
             "api_key": service.api_key,
             "healthStatus": service.health_status,
             "benchmarks": service.benchmarks,
+            "isPublished": service.is_published,
+            "publishedAt": datetime.fromtimestamp(service.published_at).isoformat() if service.published_at else None,
+            "unpublishedAt": datetime.fromtimestamp(service.unpublished_at).isoformat() if service.unpublished_at else None,
         }
 
         result = await db.execute(
@@ -1158,6 +1112,10 @@ async def list_all_services(task_type: TaskTypeEnum | None) -> List[Dict[str, An
                     endpoint=getattr(service, "endpoint", None),
                     healthStatus=getattr(service, "health_status", None),
                     benchmarks=getattr(service, "benchmarks", None),
+                    # Publish status fields
+                    isPublished=getattr(service, "is_published", False),
+                    publishedAt=datetime.fromtimestamp(service.published_at).isoformat() if service.published_at else None,
+                    unpublishedAt=datetime.fromtimestamp(service.unpublished_at).isoformat() if service.unpublished_at else None,
 
                     # From MODEL table
                     task=getattr(model, "task", {}) if model else {},
@@ -1252,5 +1210,82 @@ async def update_service_health(payload: ServiceHeartbeatRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"kind": "DBError", "message": "Service health update not successful"}
         ) from e
+    finally:
+        await db.close()
+
+
+async def publish_service(service_id: str):
+    """
+    Publish a service by setting is_published to True and updating published_at timestamp.
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        stmt = select(Service).where(Service.service_id == service_id)
+        result = await db.execute(stmt)
+        service = result.scalars().first()
+
+        if not service:
+            logger.warning(f"Service with ID {service_id} not found for publish.")
+            return 0
+
+        now_epoch = int(time.time())
+
+        await db.execute(
+            update(Service)
+            .where(Service.service_id == service_id)
+            .values(
+                is_published=True,
+                published_at=now_epoch,
+                unpublished_at=None
+            )
+        )
+
+        await db.commit()
+        logger.info(f"Service {service_id} published successfully.")
+
+        return 1
+
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Error while publishing service.")
+        raise Exception("Publish failed due to internal DB error") from e
+    finally:
+        await db.close()
+
+
+async def unpublish_service(service_id: str):
+    """
+    Unpublish a service by setting is_published to False and updating unpublished_at timestamp.
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        stmt = select(Service).where(Service.service_id == service_id)
+        result = await db.execute(stmt)
+        service = result.scalars().first()
+
+        if not service:
+            logger.warning(f"Service with ID {service_id} not found for unpublish.")
+            return 0
+
+        now_epoch = int(time.time())
+
+        await db.execute(
+            update(Service)
+            .where(Service.service_id == service_id)
+            .values(
+                is_published=False,
+                unpublished_at=now_epoch
+            )
+        )
+
+        await db.commit()
+        logger.info(f"Service {service_id} unpublished successfully.")
+
+        return 1
+
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Error while unpublishing service.")
+        raise Exception("Unpublish failed due to internal DB error") from e
     finally:
         await db.close()

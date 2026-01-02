@@ -1,5 +1,6 @@
 -- Model Versioning Migration Script
 -- This script migrates the models and services tables to support versioning
+-- Also removes publish/unpublish feature from models (moved to services only)
 -- Run this script on the model_management_db database
 
 \c model_management_db;
@@ -142,4 +143,29 @@ SET version_status_updated_at = created_at
 WHERE version_status_updated_at IS NULL OR version_status_updated_at < created_at;
 
 COMMENT ON FUNCTION update_version_status_updated_at() IS 'Trigger function to update version_status_updated_at when version_status changes';
+
+-- ============================================================================
+-- Step 11: Remove publish/unpublish feature from MODELS table
+-- (Publish/Unpublish is now a feature of SERVICES only)
+-- ============================================================================
+
+-- Remove publish-related columns from models table
+ALTER TABLE models 
+    DROP COLUMN IF EXISTS is_published,
+    DROP COLUMN IF EXISTS published_at,
+    DROP COLUMN IF EXISTS unpublished_at;
+
+-- Ensure services table has the publish columns (they should already exist)
+ALTER TABLE services 
+    ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS published_at BIGINT DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS unpublished_at BIGINT DEFAULT NULL;
+
+-- Add index on services.is_published for faster queries
+CREATE INDEX IF NOT EXISTS idx_services_is_published ON services(is_published);
+
+-- Add comments for service publish columns
+COMMENT ON COLUMN services.is_published IS 'Whether the service is published and publicly available';
+COMMENT ON COLUMN services.published_at IS 'Unix timestamp when the service was published';
+COMMENT ON COLUMN services.unpublished_at IS 'Unix timestamp when the service was unpublished';
 

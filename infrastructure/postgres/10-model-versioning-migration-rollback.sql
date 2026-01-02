@@ -2,6 +2,7 @@
 -- This script reverts all changes made by 10-model-versioning-migration.sql
 -- Run this script on the model_management_db database to rollback model versioning changes
 -- WARNING: This will remove all versioning-related columns and constraints
+-- Also restores publish/unpublish columns to models table (and removes from services)
 
 -- !!ROLLBACK SCRIPT!!
 
@@ -119,6 +120,31 @@ BEGIN
         DROP TYPE version_status;
     END IF;
 END $$;
+
+-- ============================================================================
+-- Step 11: Restore publish/unpublish columns to MODELS table
+-- (Rollback of moving publish feature to services only)
+-- ============================================================================
+
+-- Drop index on services.is_published
+DROP INDEX IF EXISTS idx_services_is_published;
+
+-- Remove comments from services publish columns
+COMMENT ON COLUMN services.is_published IS NULL;
+COMMENT ON COLUMN services.published_at IS NULL;
+COMMENT ON COLUMN services.unpublished_at IS NULL;
+
+-- Remove publish-related columns from services table
+ALTER TABLE services 
+    DROP COLUMN IF EXISTS is_published,
+    DROP COLUMN IF EXISTS published_at,
+    DROP COLUMN IF EXISTS unpublished_at;
+
+-- Restore publish-related columns to models table
+ALTER TABLE models 
+    ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS published_at BIGINT DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS unpublished_at BIGINT DEFAULT NULL;
 
 -- Rollback complete
 -- The database should now be in the state before the versioning migration

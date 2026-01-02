@@ -35,3 +35,4 @@ class ServiceCreateRequest(BaseModel):
     api_key: str
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
+    isPublished: Optional[bool] = False
