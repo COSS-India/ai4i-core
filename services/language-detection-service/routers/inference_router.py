@@ -25,25 +25,80 @@ async def get_language_detection_service(
     request: Request,
     db: AsyncSession = Depends(get_db_session)
 ) -> LanguageDetectionService:
+    """
+    Dependency to construct LanguageDetectionService with Triton client resolved
+    exclusively via Model Management (no environment variable fallback).
+
+    ModelResolutionMiddleware (from ai4icore_model_management) must:
+    - Extract config.serviceId from the request body
+    - Resolve serviceId → triton_endpoint + model_name
+    - Attach to request.state:
+        - request.state.triton_endpoint
+        - request.state.triton_model_name
+        - request.state.service_id
+    """
     repository = LanguageDetectionRepository(db)
     text_service = TextService()
+
+    triton_endpoint = getattr(request.state, "triton_endpoint", None)
+    triton_api_key = getattr(request.app.state, "triton_api_key", "")
+
+    if not triton_endpoint:
+        service_id = getattr(request.state, "service_id", None)
+        model_mgmt_error = getattr(request.state, "model_management_error", None)
+        
+        if service_id:
+            error_detail = (
+                f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
+                f"Please ensure the service is registered in Model Management database."
+            )
+            if model_mgmt_error:
+                error_detail += f" Error: {model_mgmt_error}"
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_detail,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Request must include config.serviceId. "
+                "Language Detection service requires Model Management database resolution."
+            ),
+        )
+
+    # Get resolved model name from middleware (MUST be resolved by Model Management)
+    model_name = getattr(request.state, "triton_model_name", None)
     
-    default_triton_client = TritonClient(
-        triton_url=request.app.state.triton_endpoint,
-        api_key=request.app.state.triton_api_key
-    )
-    
-    def get_triton_client_for_endpoint(endpoint: str) -> TritonClient:
-        return TritonClient(
-            triton_url=endpoint,
-            api_key=request.app.state.triton_api_key
+    if not model_name or model_name == "unknown":
+        service_id = getattr(request.state, "service_id", None)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                f"Model Management failed to resolve Triton model name for serviceId: {service_id}. "
+                f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+            ),
         )
     
+    logger.info(
+        "Using Triton endpoint=%s model_name=%s for serviceId=%s from Model Management",
+        triton_endpoint,
+        model_name,
+        getattr(request.state, "service_id", "unknown"),
+    )
+
+    triton_client = TritonClient(triton_endpoint, triton_api_key or None)
+
+    # LanguageDetectionService already supports dynamic endpoints internally if needed;
+    # we pass the resolved client as the primary path.
+    def get_triton_client_for_endpoint(endpoint: str) -> TritonClient:
+        return TritonClient(triton_url=endpoint, api_key=triton_api_key or None)
+
     return LanguageDetectionService(
         repository,
         text_service,
-        default_triton_client,
-        get_triton_client_for_endpoint
+        triton_client,
+        get_triton_client_for_endpoint,
+        resolved_model_name=model_name,
     )
 
 
@@ -73,12 +128,40 @@ async def run_inference(
         logger.info("Language detection completed successfully")
         return response
         
-    except Exception as e:
-        logger.error(f"Language detection failed: {e}", exc_info=True)
+    except ValueError as exc:
+        logger.warning("Validation error in Language Detection inference: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        service_id = getattr(http_request.state, "service_id", None)
+        triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+        error_detail = str(exc)
+        
+        # Include model management context in error message
+        if service_id and triton_endpoint:
+            error_detail = (
+                f"Language Detection inference failed for serviceId '{service_id}' at endpoint '{triton_endpoint}': {error_detail}. "
+                "Please verify the model is registered in Model Management and the Triton server is accessible."
+            )
+        elif service_id:
+            error_detail = (
+                f"Language Detection inference failed for serviceId '{service_id}': {error_detail}. "
+                "Model Management resolved the serviceId but Triton endpoint may be misconfigured."
+            )
+        else:
+            error_detail = (
+                f"Language Detection inference failed: {error_detail}. "
+                "Please ensure config.serviceId is provided and the service is registered in Model Management."
+            )
+        
+        logger.error("Language Detection inference failed: %s (serviceId=%s, endpoint=%s)", 
+                    exc, service_id, triton_endpoint)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {e}"
-        )
+            detail=error_detail,
+        ) from exc
 
 
 @inference_router.get(

@@ -45,7 +45,6 @@ class NMTService:
         self,
         repository: NMTRepository,
         text_service: TextService,
-        default_triton_client: Optional[TritonClient],
         get_triton_client_func=None,
         model_management_client: Optional[ModelManagementClient] = None,
         redis_client = None,
@@ -53,7 +52,6 @@ class NMTService:
     ):
         self.repository = repository
         self.text_service = text_service
-        self.default_triton_client = default_triton_client
         self.get_triton_client_func = get_triton_client_func
         self.model_management_client = model_management_client
         self.redis_client = redis_client
@@ -93,16 +91,20 @@ class NMTService:
                         self._service_registry_cache[service_id] = (endpoint, model_name, expires_at)
                 return service_info
             except Exception as e:
-                logger.warning(
-                    f"Failed to fetch service info for {service_id} from model management service: {e}. "
-                    "Will use default Triton client as fallback."
+                logger.error(
+                    f"Failed to fetch service info for {service_id} from Model Management service: {e}"
                 )
-                # Fallback to default behavior - return None to use default client
-                return None
+                # No fallback - Model Management is required
+                raise TritonInferenceError(
+                    f"Model Management service unavailable for service {service_id}: {e}. "
+                    f"Please ensure the service is registered in Model Management database."
+                )
         else:
-            logger.debug("Model management client not available, using default Triton client")
-        
-        return None
+            logger.error("Model Management client not available")
+            raise TritonInferenceError(
+                f"Model Management client not configured. Cannot resolve endpoint for service {service_id}. "
+                f"Please ensure Model Management is properly configured."
+            )
     
     async def _get_service_registry_entry(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> Optional[Tuple[str, str]]:
         """Get service registry entry (endpoint, model_name) for service_id"""
@@ -135,7 +137,7 @@ class NMTService:
         return None
     
     async def get_triton_client(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> TritonClient:
-        """Get Triton client for the given service ID with fallback to default"""
+        """Get Triton client for the given service ID via Model Management (no fallback)"""
         # Check cache first
         cached_client = self._triton_clients.get(service_id)
         if cached_client:
@@ -163,44 +165,47 @@ class NMTService:
                     self._triton_clients[service_id] = (client, endpoint, expires_at)
                     return client
         except Exception as e:
-            logger.warning(
-                f"Error getting service registry entry for {service_id}: {e}. "
-                "Falling back to default Triton client."
+            logger.error(
+                f"Error getting service registry entry for {service_id}: {e}"
+            )
+            raise TritonInferenceError(
+                f"Model Management did not resolve serviceId: {service_id} and no default endpoint is allowed. "
+                f"Error: {e}. Please ensure the service is registered in Model Management database."
             )
         
-        # Fallback to default client if service not found or error occurred
-        if self.default_triton_client:
-            logger.debug(f"Using default Triton client for service {service_id}")
-            return self.default_triton_client
+        # If we reach here, Model Management failed to resolve the endpoint
         raise TritonInferenceError(
-            f"No Triton endpoint available for service {service_id} and no default client configured."
+            f"Model Management did not resolve serviceId: {service_id} and no default endpoint is allowed. "
+            f"Please ensure the service is registered in Model Management database."
         )
     
     async def get_model_name(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> str:
-        """Get Triton model name based on service ID with fallback"""
+        """Get Triton model name based on service ID from Model Management (no fallback)"""
         try:
             service_entry = await self._get_service_registry_entry(service_id, auth_headers)
             if service_entry:
                 model_name = service_entry[1]  # Return model name
                 if model_name and model_name != "unknown":
                     return model_name
+                else:
+                    raise TritonInferenceError(
+                        f"Model Management returned 'unknown' model name for service {service_id}. "
+                        f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+                    )
+        except TritonInferenceError:
+            raise
         except Exception as e:
-            logger.debug(f"Error getting model name for {service_id}: {e}")
+            logger.error(f"Error getting model name for {service_id}: {e}")
+            raise TritonInferenceError(
+                f"Model Management did not resolve model name for serviceId: {service_id}. "
+                f"Error: {e}. Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+            )
         
-        # Try to extract from service_id as last resort
-        # e.g., "ai4bharat/indictrans--gpu-t4" -> "indictrans"
-        parts = service_id.split("/")
-        if len(parts) > 1:
-            model_part = parts[-1]
-        else:
-            model_part = service_id
-        
-        if "--" in model_part:
-            return model_part.split("--")[0]
-        
-        # Final fallback: return the service_id itself (better than "nmt" task type)
-        logger.warning(f"Could not determine model name for {service_id}, using service_id as fallback")
-        return service_id
+        # If we reach here, Model Management failed to resolve the model name
+        raise TritonInferenceError(
+            f"Model Management did not resolve model name for serviceId: {service_id}. "
+            f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+        )
 
     def _extract_triton_metadata(self, service_info: ServiceInfo, service_id: str = None) -> Tuple[str, str]:
         """Extract normalized Triton endpoint and model name from service info"""
@@ -209,37 +214,31 @@ class NMTService:
 
         # Try to infer model name from model inference endpoint metadata when provided
         if service_info.model_inference_endpoint:
-            # Common keys we might see; keep this flexible for future providers
             model_name = (
                 service_info.model_inference_endpoint.get("model_name")
                 or service_info.model_inference_endpoint.get("modelName")
                 or service_info.model_inference_endpoint.get("model")
-                or model_name
+                or model_name    
             )
-        
-        # If still no model name, try to extract from service_id as fallback
-        # e.g., "ai4bharat/indictrans--gpu-t4" -> "indictrans"
-        if not model_name and service_id:
-            # Extract model name from service_id (format: "org/model--variant" or "model--variant")
-            parts = service_id.split("/")
-            if len(parts) > 1:
-                model_part = parts[-1]  # Get last part after "/"
-            else:
-                model_part = service_id
             
-            # Remove variant suffix (e.g., "--gpu-t4" -> "indictrans")
-            if "--" in model_part:
-                model_name = model_part.split("--")[0]
-            else:
-                model_name = model_part
-        
-        # Final fallback: use a placeholder that indicates unknown (not task type)
-        if not model_name:
-            model_name = "unknown"
-            logger.warning(
-                f"Could not determine Triton model name for service {service_id}. "
-                f"Using placeholder 'unknown'. Please ensure Model Management provides model name."
+            # If not found at top level, check inside schema (common structure)
+            if not model_name or model_name == "unknown":
+                schema = service_info.model_inference_endpoint.get("schema", {})
+                if isinstance(schema, dict):
+                    model_name = (
+                        schema.get("model_name")
+                        or schema.get("modelName")
+                        or schema.get("name")
+                        or model_name
+                    )
+
+        # No fallback - Model Management must provide the model name
+        if not model_name or model_name == "unknown":
+            logger.error(
+                f"Model Management did not provide model name for service {service_id}. "
+                f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
             )
+            model_name = "unknown"  # Will cause error downstream
         
         return endpoint, model_name
 
