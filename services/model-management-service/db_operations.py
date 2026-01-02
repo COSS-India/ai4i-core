@@ -6,6 +6,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from typing import Dict, Any, List
 
 from models.db_models import Model , Service
+from models.auth_models import ApiKeyDB
 from models.cache_models_services import ModelCache , ServiceCache
 from models.model_create import ModelCreateRequest
 from models.model_update import ModelUpdateRequest
@@ -16,7 +17,7 @@ from models.service_list import ServiceListResponse
 from models.service_health import ServiceHeartbeatRequest
 from models.type_enum import TaskTypeEnum
 
-from db_connection import AppDatabase
+from db_connection import AppDatabase , AuthDatabase
 from uuid import UUID
 from logger import logger
 import json
@@ -801,7 +802,7 @@ async def delete_service_by_uuid(id_str: str) -> int:
         await db.close()
 
 
-async def get_service_details(service_id: str) -> Dict[str, Any]:
+async def get_service_details(service_id: str, user_id: str) -> Dict[str, Any]:
     """
     Full service view API
     """
@@ -809,6 +810,8 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
     logger.info(f"Fetching service view for: {service_id}")
 
     db: AsyncSession = AppDatabase()
+
+    auth_db: AsyncSession = AuthDatabase()
 
     try:
 
@@ -867,47 +870,29 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
             submitter=model.submitter,
         )
         # 3. API Key + Usage — COMMENTED OUT FOR NOW
-        # api_keys = []
-        # total_usage = 0
-        #
-        # # TODO: Uncomment once ApiKey, Usage models exist
-        # key_rows = db.query(ApiKey).all()
-        #
-        # for k in key_rows:
-        #     usage_entries = (
-        #         db.query(ServiceUsage)
-        #           .filter(ServiceUsage.key_id == k.id)
-        #           .all()
-        #     )
-        #
-        #     service_usage_list = [
-        #         {"service_id": u.service_id, "usage": u.usage}
-        #         for u in usage_entries
-        #     ]
-        #
-        #     total_usage += sum([u.usage for u in usage_entries])
-        #
-        #     api_keys.append(
-        #         _ApiKey(
-        #             id=str(k.id),
-        #             name=k.name,
-        #             masked_key=k.masked_key,
-        #             active=k.active,
-        #             type=k.key_type,
-        #             created_timestamp=k.created_timestamp,
-        #             services=service_usage_list,
-        #             data_tracking=k.data_tracking,
-        #         )
-        #     )
-
-        # Provide empty since API key system is not ready now
         api_keys = []
         total_usage = 0
+
+        result = await auth_db.execute(select(ApiKeyDB).where(ApiKeyDB.user_id == int(user_id)))
+        api_keys = result.scalars().all()
+
+        api_key_list = [
+            {
+                "id": key.id,
+                "name": key.key_name,
+                "active": key.is_active,
+                "expiresAt": key.expires_at,
+                "createdAt": key.created_at,
+                "lastUsedAt": key.last_used,
+            }
+            for key in api_keys
+        ]
+        total_usage = len(api_keys)
 
         response = ServiceViewResponse(
             **service_dict,
             model=model_payload,
-            key_usage=api_keys,
+            key_usage=api_key_list,
             total_usage=total_usage
         )
 

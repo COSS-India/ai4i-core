@@ -95,25 +95,6 @@ async def get_auth_db_session():
     async with AuthDBSessionLocal() as session:
         yield session
 
-# def create_tables():
-#     """Check existing tables and create missing ones"""
-#     if app_db_engine is None:
-#         init_postgresql_connections()
-
-#     # check_or_create_schema()
-
-#     inspector = inspect(app_db_engine)
-#     # existing_tables = inspector.get_table_names(schema=DB_SCHEMA)
-#     existing_tables = inspector.get_table_names()
-#     all_tables = AppDBBase.metadata.tables.keys()
-
-#     missing_tables = [t for t in all_tables if t not in existing_tables]
-#     if missing_tables:
-#         logger.info(f"Creating missing tables: {missing_tables}")
-#         AppDBBase.metadata.create_all(bind=app_db_engine)
-#     else:
-#         logger.info("All database tables already exist.")
-
 async def create_tables():
     """Create missing tables for async engine"""
 

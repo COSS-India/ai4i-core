@@ -13,6 +13,8 @@ from logger import logger
 from typing import List , Union
 from models.type_enum import TaskTypeEnum
 
+from auth.request_session_provider import InjectRequestSession , RequestSession
+
 
 # Authentication is handled by Kong + Auth Service, no need for AuthProvider here
 router_details = APIRouter(
@@ -76,10 +78,10 @@ async def list_models_request(task_type: Union[str, None] = None):
 
 
 @router_details.post("/view_service", response_model=ServiceViewResponse)
-async def view_service_request(payload: ServiceViewRequest):
+async def view_service_request(payload: ServiceViewRequest,session: RequestSession = Depends(InjectRequestSession)):
     
     try: 
-        data = await get_service_details(payload.serviceId)
+        data = await get_service_details(payload.serviceId, session.id)
 
         if not data:
             raise HTTPException(status_code=404, detail="Service not found")

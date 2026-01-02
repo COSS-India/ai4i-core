@@ -4,7 +4,7 @@ Async repository for API key database operations
 """
 
 import logging
-from typing import Optional
+from typing import Optional , Any
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -98,3 +98,21 @@ class ApiKeyRepository:
             await self.db.rollback()
             logger.error(f"Failed to update API key last used timestamp: {e}")
             raise DatabaseError(f"Failed to update API key: {e}")
+        
+    async def find_one(self, **filters: Any) -> Optional[ApiKeyDB]:
+        """
+        Find one API key record matching dynamic filters.
+        """
+        try:
+            stmt = select(ApiKeyDB).options(selectinload(ApiKeyDB.user))
+
+            for key, value in filters.items():
+                if hasattr(ApiKeyDB, key):
+                    stmt = stmt.where(getattr(ApiKeyDB, key) == value)
+
+            result = await self.db.execute(stmt)
+            return result.scalar_one_or_none()
+
+        except Exception as e:
+            logger.error(f"Failed to find API key with filters {filters}: {e}")
+            raise DatabaseError(f"Failed to find API key: {e}")
