@@ -10,7 +10,7 @@ from db_operations import (
     list_all_services
 )
 from logger import logger
-from typing import List , Union
+from typing import List , Union, Optional
 from models.type_enum import TaskTypeEnum
 
 
@@ -59,10 +59,7 @@ async def list_models_request(
 
         data = await list_all_models(task_type_enum, include_deprecated=include_deprecated)
         if data is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No valid models found for task type: '{task_type_enum.value if task_type_enum else None}'"
-            )
+            return []  # Return empty list instead of 404
 
         return data
     except HTTPException:
@@ -99,20 +96,20 @@ async def view_service_request(payload: ServiceViewRequest):
     
 
 @router_details.get("/list_services" , response_model=List[ServiceListResponse])
-async def list_services_request(task_type: Union[str, None] = None):
+async def list_services_request(
+    task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
+    is_published: Optional[bool] = Query(None, description="Filter by publish status. True = published only, False = unpublished only, None = all services")
+):
     try:
         if not task_type or task_type.lower() == "none":
             task_type_enum = None
         else:
             task_type_enum = TaskTypeEnum(task_type)
 
-        data = await list_all_services(task_type_enum)
+        data = await list_all_services(task_type_enum, is_published=is_published)
 
         if data is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No valid services found for task type: '{task_type_enum.value if task_type_enum else None}'"
-            )
+            return []  # Return empty list instead of 404
 
         return data
     except HTTPException:

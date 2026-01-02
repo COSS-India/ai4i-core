@@ -3200,18 +3200,22 @@ async def delete_model(
 @app.get("/api/v1/model-management/services/", response_model=List[ServiceListResponse], tags=["Model Management"])
 async def list_services(
     request: Request,
-    task_type: Union[ModelTaskTypeEnum,None] = None,
+    task_type: Union[ModelTaskTypeEnum,None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
+    is_published: Optional[bool] = Query(None, description="Filter by publish status. True = published only, False = unpublished only, None = all services"),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """List all deployed services."""
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
+    params = {"task_type": task_type.value if task_type else None}
+    if is_published is not None:
+        params["is_published"] = str(is_published).lower()
     return await proxy_to_service_with_params(
         None, 
         "/services/details/list_services", 
         "model-management-service",
-        {"task_type": task_type.value if task_type else None}, 
+        params, 
         method="GET", 
         headers=headers
         )
