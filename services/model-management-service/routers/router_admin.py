@@ -127,6 +127,13 @@ async def update_service_request(payload: ServiceUpdateRequest):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Service not found in database"
             )
+        
+        if result == -1:
+            logger.warning(f"No valid update fields provided for service {payload.serviceId}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No valid update fields provided. Valid fields: name, serviceDescription, hardwareDescription, endpoint, modelId, modelVersion, healthStatus, benchmarks, isPublished"
+            )
 
         return f"Service '{payload.serviceId}' updated successfully."
 

@@ -676,9 +676,11 @@ async def save_service_to_db(payload: ServiceCreateRequest):
         payload_dict = _json_safe(payload.model_dump(by_alias=True))
 
         now_epoch = int(time.time())
-        payload_dict["publishedOn"] = now_epoch
+        
+        # Auto-generate publishedOn if not provided
+        if not payload_dict.get("publishedOn"):
+            payload_dict["publishedOn"] = now_epoch
 
-        # Create new service record
         # Handle isPublished - default to False if not provided
         is_published = payload_dict.get("isPublished", False)
         published_at = int(time.time()) if is_published else None
@@ -776,18 +778,18 @@ async def update_service(request: ServiceUpdateRequest):
                 db_update["unpublished_at"] = now_epoch
                 logger.info(f"Service {request.serviceId} will be unpublished")
 
-        if not db_update:
-            logger.warning("No valid update fields provided for service update")
-            return 0
-
-        # 2. Update DB
+        # 2. First check if service exists in DB
         stmt_select = select(Service).where(Service.service_id == request.serviceId)
         result = await db.execute(stmt_select)
         db_service = result.scalars().first()
 
         if db_service is None:
             logger.warning(f"No DB record found for service {request.serviceId}")
-            return 0
+            return 0  # Service not found
+
+        if not db_update:
+            logger.warning("No valid update fields provided for service update. Valid fields: name, serviceDescription, hardwareDescription, endpoint, api_key, modelId, modelVersion, healthStatus, benchmarks, isPublished")
+            return -1  # No valid fields provided
         
         # Validate model exists only if modelId is being updated
         if request.modelId is not None:
@@ -1119,7 +1121,10 @@ async def list_all_services(task_type: TaskTypeEnum | None) -> List[Dict[str, An
 
                     # From MODEL table
                     task=getattr(model, "task", {}) if model else {},
-                    languages=getattr(model, "languages", []) if model else []
+                    languages=getattr(model, "languages", []) if model else [],
+                    # Model version info
+                    modelVersion=service.model_version,
+                    versionStatus=model.version_status.value if model and model.version_status else None
                 )
             )
 
