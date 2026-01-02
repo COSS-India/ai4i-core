@@ -305,12 +305,14 @@ class ModelManagementClient:
             # Extract triton endpoint and model name
             endpoint = data.get("endpoint")
             api_key = data.get("api_key")
-            triton_model = data.get("task", {}).get("type", "unknown")
             
             # Extract model information from service response
             model_data = data.get("model", {})
             languages = model_data.get("languages", []) if model_data else []
             
+            # Extract triton_model from model.task (not top-level task)
+            triton_model = model_data.get("task", {}).get("type", "unknown") if model_data else "unknown"
+
             service_info = ServiceInfo(
                 service_id=data.get("serviceId", service_id),
                 model_id=data.get("modelId", ""),
