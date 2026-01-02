@@ -28,6 +28,36 @@ from datetime import datetime
 MAX_ACTIVE_VERSIONS_PER_MODEL = int(os.getenv("MAX_ACTIVE_VERSIONS_PER_MODEL", "5"))
 
 
+async def is_model_version_used_by_published_service(model_id: str, version: str) -> tuple[bool, List[str]]:
+    """
+    Check if a specific model version is being used by any published service.
+    
+    Args:
+        model_id: The model ID to check
+        version: The version to check
+        
+    Returns:
+        Tuple of (is_used, list_of_service_ids) - is_used is True if the model version
+        is being used by at least one published service, along with the list of service IDs
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        stmt = select(Service.service_id).where(
+            Service.model_id == model_id,
+            Service.model_version == version,
+            Service.is_published == True
+        )
+        result = await db.execute(stmt)
+        service_ids = [row[0] for row in result.fetchall()]
+        
+        return len(service_ids) > 0, service_ids
+    except Exception as e:
+        logger.error(f"Error checking if model version is used by published service: {e}")
+        raise
+    finally:
+        await db.close()
+
+
 
 def _json_safe(value: Any) -> Any:
     """
@@ -259,7 +289,9 @@ async def update_model(payload: ModelUpdateRequest):
     """
     Update model record in PostgreSQL and refresh Redis cache.
     Note: modelId and version are used as identifiers to identify which version to update.
-        """
+    
+    Model versions associated with published services are immutable and cannot be updated.
+    """
 
     if not payload.version:
         raise HTTPException(
@@ -268,6 +300,25 @@ async def update_model(payload: ModelUpdateRequest):
         )
 
     logger.info(f"Attempting to update model: {payload.modelId} v{payload.version}")
+
+    # Check if model version is used by any published service (immutability check)
+    is_immutable, published_service_ids = await is_model_version_used_by_published_service(
+        payload.modelId, payload.version
+    )
+    if is_immutable:
+        logger.warning(
+            f"Cannot update model {payload.modelId} v{payload.version}: "
+            f"Used by published services: {published_service_ids}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "kind": "ImmutableModelVersion",
+                "message": f"Model version '{payload.modelId}' v{payload.version} cannot be modified because it is "
+                           f"associated with {len(published_service_ids)} published service(s): {', '.join(published_service_ids)}. "
+                           f"Unpublish the service(s) first to modify this model version."
+            }
+        )
 
     # Use exclude_unset=True for PATCH semantics - include fields that are explicitly set
     request_dict = payload.model_dump(exclude_unset=True)
@@ -438,7 +489,11 @@ async def update_model(payload: ModelUpdateRequest):
 
 
 async def delete_model_by_uuid(id_str: str) -> int:
-    """Delete model by internal UUID (id)"""
+    """
+    Delete model by internal UUID (id).
+    
+    Model versions associated with published services are immutable and cannot be deleted.
+    """
 
     db: AsyncSession = AppDatabase()
 
@@ -459,6 +514,26 @@ async def delete_model_by_uuid(id_str: str) -> int:
             return 0
 
         model_id = model.model_id
+        model_version = model.version
+
+        # Check if model version is used by any published service (immutability check)
+        is_immutable, published_service_ids = await is_model_version_used_by_published_service(
+            model_id, model_version
+        )
+        if is_immutable:
+            logger.warning(
+                f"Cannot delete model {model_id} v{model_version}: "
+                f"Used by published services: {published_service_ids}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "kind": "ImmutableModelVersion",
+                    "message": f"Model version '{model_id}' v{model_version} cannot be deleted because it is "
+                               f"associated with {len(published_service_ids)} published service(s): {', '.join(published_service_ids)}. "
+                               f"Unpublish the service(s) first to delete this model version."
+                }
+            )
 
         # ---- Delete from Cache ----
         try:
