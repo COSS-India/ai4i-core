@@ -282,9 +282,30 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Observability
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Correlation middleware (MUST be before RequestLoggingMiddleware)
+# This extracts X-Correlation-ID from headers and sets it in logging context
+app.add_middleware(CorrelationMiddleware)
+
+# Request logging (added BEFORE ObservabilityMiddleware)
+# FastAPI middleware runs in REVERSE order, so this will run AFTER ObservabilityMiddleware
+# This ensures organization is set in context before logging
+app.add_middleware(RequestLoggingMiddleware)
+
+# Observability (MUST be added AFTER RequestLoggingMiddleware)
+# FastAPI middleware runs in REVERSE order, so this will run FIRST
+# This ensures organization is extracted and set in context before RequestLoggingMiddleware logs
 config = PluginConfig.from_env()
 config.enabled = True
+config.debug = True  # Enable debug logging for organization extraction
 if not config.customers:
     config.customers = []
 if not config.apps:
@@ -304,22 +325,6 @@ if tracer:
     logger.info("✅ FastAPI instrumentation enabled for tracing")
 else:
     logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
-
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Correlation middleware (MUST be before RequestLoggingMiddleware)
-# This extracts X-Correlation-ID from headers and sets it in logging context
-app.add_middleware(CorrelationMiddleware)
-
-# Request logging
-app.add_middleware(RequestLoggingMiddleware)
 
 # Rate limiting (Redis client will be picked from app.state)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))

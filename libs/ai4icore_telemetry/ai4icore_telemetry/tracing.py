@@ -13,9 +13,10 @@ logger = logging.getLogger(__name__)
 
 try:
     from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace import TracerProvider, SpanProcessor
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
     from opentelemetry.sdk.resources import Resource
+    from opentelemetry.trace import Span
     
     # Try OTLP exporter first (recommended)
     try:
@@ -91,7 +92,12 @@ def setup_tracing(service_name: str, jaeger_endpoint: Optional[str] = None) -> O
             logger.error("❌ No tracing exporter available")
             return None
         
-        # Add span processor
+        # Add span processors
+        # First add organization processor to add org attribute to all spans
+        organization_processor = OrganizationSpanProcessor()
+        tracer_provider.add_span_processor(organization_processor)
+        
+        # Then add batch processor for exporting
         span_processor = BatchSpanProcessor(exporter)
         tracer_provider.add_span_processor(span_processor)
         
@@ -104,6 +110,40 @@ def setup_tracing(service_name: str, jaeger_endpoint: Optional[str] = None) -> O
     except Exception as e:
         logger.error(f"❌ Failed to setup tracing: {e}")
         return None
+
+
+class OrganizationSpanProcessor(SpanProcessor):
+    """
+    Span processor that adds organization attribute to all spans.
+    
+    Reads organization from logging context and adds it as a span attribute.
+    """
+    
+    def on_start(self, span: Span, parent_context=None) -> None:
+        """Called when a span is started."""
+        try:
+            # Try to import organization context
+            from ai4icore_logging.context import get_organization
+            organization = get_organization()
+            if organization:
+                span.set_attribute("organization", organization)
+        except Exception:
+            # Silently fail if context is not available
+            pass
+    
+    def on_end(self, span: Span) -> None:
+        """Called when a span is ended."""
+        # No action needed
+        pass
+    
+    def shutdown(self) -> None:
+        """Called when the processor is shut down."""
+        # No cleanup needed
+        pass
+    
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        """Force flush any pending spans."""
+        return True
 
 
 def get_tracer(service_name: str) -> Optional[object]:
