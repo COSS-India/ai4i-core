@@ -1138,8 +1138,20 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
 
 
 
-async def list_all_services(task_type: TaskTypeEnum | None) -> List[Dict[str, Any]]:
-    """Fetch all service records from DB and convert to response format."""
+async def list_all_services(
+    task_type: TaskTypeEnum | None, 
+    is_published: bool | None = None
+) -> List[Dict[str, Any]]:
+    """
+    Fetch all service records from DB and convert to response format.
+    
+    Args:
+        task_type: Optional filter by task type (asr, nmt, tts, etc.)
+        is_published: Optional filter by publish status. 
+                      True = only published services, 
+                      False = only unpublished services, 
+                      None = all services (default)
+    """
 
     db: AsyncSession = AppDatabase()
 
@@ -1154,6 +1166,10 @@ async def list_all_services(task_type: TaskTypeEnum | None) -> List[Dict[str, An
 
         if task_type:
             query = query.where(Model.task['type'].astext == task_type.value)
+        
+        # Filter by publish status if provided
+        if is_published is not None:
+            query = query.where(Service.is_published == is_published)
 
         try:
             result = await db.execute(query)
