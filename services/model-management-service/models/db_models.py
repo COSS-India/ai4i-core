@@ -36,9 +36,6 @@ class Model(AppDBBase):
     inference_endpoint = Column(JSONB, nullable=False)
     benchmarks = Column(JSONB)
     submitter = Column(JSONB, nullable=False)
-    is_published = Column(Boolean, nullable=False, default=False)
-    published_at = Column(BigInteger, default=None)
-    unpublished_at = Column(BigInteger, default=None)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     

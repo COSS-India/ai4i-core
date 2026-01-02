@@ -856,10 +856,12 @@ class ServiceCreateRequest(BaseModel):
     hardwareDescription: str = Field(..., description="Hardware description")
     publishedOn: int = Field(..., description="Publication timestamp")
     modelId: str = Field(..., description="Associated model identifier")
+    modelVersion: str = Field(..., description="Model version")
     endpoint: str = Field(..., description="Service endpoint URL")
     api_key: str = Field(..., description="API key for the service")
     healthStatus: Optional[ServiceStatus] = Field(None, description="Health status")
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = Field(None, description="Benchmark data")
+    isPublished: Optional[bool] = Field(False, description="Whether the service is published (defaults to false)")
 
 class LanguagePair(BaseModel):
     """Language pair configuration."""
@@ -869,18 +871,20 @@ class LanguagePair(BaseModel):
     targetScriptCode: Optional[str] = Field("", description="Target script code")
 
 class ServiceUpdateRequest(BaseModel):
-    """Request model for updating an existing service."""
+    """Request model for updating an existing service. Only serviceId is required, all other fields are optional for partial updates."""
     serviceId: str = Field(..., description="Unique service identifier")
-    name: str = Field(..., description="Service name")
+    name: Optional[str] = Field(None, description="Service name")
     serviceDescription: Optional[str] = Field(None, description="Service description")
     hardwareDescription: Optional[str] = Field(None, description="Hardware description")
     publishedOn: Optional[int] = Field(None, description="Publication timestamp")
     modelId: Optional[str] = Field(None, description="Associated model identifier")
+    modelVersion: Optional[str] = Field(None, description="Model version")
     endpoint: Optional[str] = Field(None, description="Service endpoint URL")
     api_key: Optional[str] = Field(None, description="API key for the service")
     languagePair: Optional[LanguagePair] = Field(None, description="Language pair configuration")
     healthStatus: Optional[ServiceStatus] = Field(None, description="Health status")
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = Field(None, description="Benchmark data")
+    isPublished: Optional[bool] = Field(None, description="Set to true to publish, false to unpublish the service")
 
 class ServiceViewRequest(BaseModel):
     """Request model for viewing a service."""
@@ -3067,50 +3071,6 @@ async def list_models(
         headers=headers
         )
 
-
-
-@app.post("/api/v1/model-management/models/publish", response_model=str, tags=["Model Management"])
-async def publish_model(
-    request: Request,
-    model_id: str = Query(..., description="Model ID to publish"),
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
-):
-    """Fetch metadata for a specific model."""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    headers["Content-Type"] = "application/json"
-    payload = json.dumps({"modelId": model_id}).encode("utf-8")
-    return await proxy_to_service(
-        None,
-        "/services/admin/publish/model",
-        "model-management-service",
-        method="POST",
-        body=payload,
-        headers=headers,
-    )
-
-
-@app.post("/api/v1/model-management/models/unpublish", response_model=str, tags=["Model Management"])
-async def unpublish_model(
-    request: Request,
-    model_id: str = Query(..., description="Model ID to unpublish"),
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
-):
-    """Fetch metadata for a specific model."""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    headers["Content-Type"] = "application/json"
-    payload = json.dumps({"modelId": model_id}).encode("utf-8")
-    return await proxy_to_service(
-        None,
-        "/services/admin/unpublish/model",
-        "model-management-service",
-        method="POST",
-        body=payload,
-        headers=headers,
-    )
 
 
 @app.get("/api/v1/model-management/models/{model_id:path}", response_model=ModelViewResponse, tags=["Model Management"])

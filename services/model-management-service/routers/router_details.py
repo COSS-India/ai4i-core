@@ -111,7 +111,7 @@ async def list_services_request(task_type: Union[str, None] = None):
         if data is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"No valid models found for task type: '{task_type_enum.value if task_type_enum else None}'"
+                detail=f"No valid services found for task type: '{task_type_enum.value if task_type_enum else None}'"
             )
 
         return data
