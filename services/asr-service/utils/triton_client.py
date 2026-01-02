@@ -200,6 +200,21 @@ class TritonClient:
             logger.error(f"Failed to prepare VAD IO for Triton: {e}")
             raise TritonInferenceError(f"Failed to prepare VAD IO: {e}")
     
+    def list_models(self) -> List[str]:
+        """List all available models on the Triton server"""
+        try:
+            client = self._get_client()
+            models = client.get_model_repository_index()
+            model_names = []
+            if models:
+                for model in models:
+                    model_names.append(model.get('name', ''))
+            logger.info(f"Found {len(model_names)} models at '{self.triton_url}': {model_names}")
+            return model_names
+        except Exception as e:
+            logger.error(f"Failed to list models from Triton server at '{self.triton_url}': {e}", exc_info=True)
+            return []
+    
     def send_triton_request(
         self,
         model_name: str,
