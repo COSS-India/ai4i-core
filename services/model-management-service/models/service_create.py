@@ -28,7 +28,7 @@ class ServiceCreateRequest(BaseModel):
     name: str
     serviceDescription: str
     hardwareDescription: str
-    publishedOn: int
+    publishedOn: Optional[int] = None  # Auto-generated if not provided
     modelId: str
     modelVersion: str
     endpoint: str
