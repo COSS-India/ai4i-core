@@ -6,10 +6,12 @@ from .model_create import (
     Submitter,
     Task,
 )
+from .db_models import VersionStatus
 
 class ModelUpdateRequest(BaseModel):
     modelId: str
-    version: Optional[str] = None
+    version: Optional[str] = None  
+    versionStatus: Optional[VersionStatus] = None  
     submittedOn: Optional[int] = None
     updatedOn: Optional[int] = None
     name: Optional[str] = None
