@@ -2,13 +2,24 @@
 HTTP Client utilities for calling other microservices.
 
 Provides an async HTTP client for making requests to ASR, NMT, and TTS services.
+Includes distributed tracing context propagation for end-to-end observability.
 """
 
 import os
 import logging
+import time
 from typing import Dict, Any, Optional
 import httpx
 from .service_registry_client import ServiceRegistryHttpClient
+
+# Import OpenTelemetry for trace context propagation
+try:
+    from opentelemetry import trace
+    from opentelemetry.propagate import inject
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
+    logging.warning("OpenTelemetry not available, trace context propagation disabled")
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +39,18 @@ class ServiceClient:
         
         self._discovered: bool = False
 
-        # Create HTTP client
-        self.client = httpx.AsyncClient(timeout=300.0)  # 5 minute timeout for inference
+        # Create HTTP client with configurable timeout
+        # Use environment variable or default to 120 seconds (2 minutes) for inference
+        # This is more reasonable than 5 minutes and helps identify slow services faster
+        timeout_seconds = float(os.getenv('PIPELINE_HTTP_TIMEOUT', '120.0'))
+        # Use httpx.Timeout for more granular control: connect, read, write, pool
+        timeout = httpx.Timeout(
+            timeout=timeout_seconds,  # Total timeout
+            connect=10.0,  # Connection timeout (10 seconds to establish connection)
+            read=timeout_seconds - 10.0,  # Read timeout (remaining time for response)
+        )
+        self.client = httpx.AsyncClient(timeout=timeout)
+        logger.info(f"Pipeline HTTP client initialized with timeout: {timeout_seconds}s (connect: 10s, read: {timeout_seconds - 10.0}s)")
 
     async def _ensure_urls(self) -> None:
         """Discover service URLs via service registry. Raises if services are not found."""
@@ -79,8 +100,37 @@ class ServiceClient:
             # Mark as attempted to avoid re-discovery per request; TTL/refresh can be added later if needed
             self._discovered = True
     
+    def _inject_trace_context(self, headers: Dict[str, str]) -> None:
+        """
+        Inject OpenTelemetry trace context into headers for distributed tracing.
+        
+        This allows downstream services to continue the trace span, enabling
+        end-to-end observability across the pipeline.
+        
+        Args:
+            headers: Dictionary of HTTP headers to inject trace context into
+        """
+        if not TRACING_AVAILABLE:
+            return
+        
+        try:
+            # Get current span context
+            current_span = trace.get_current_span()
+            if current_span and current_span.is_recording():
+                # Inject trace context into headers (W3C Trace Context format)
+                inject(headers)
+                logger.debug("✅ Trace context injected into request headers")
+            else:
+                logger.debug("⚠️ No active span found, skipping trace context injection")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to inject trace context: {e}")
+    
     async def call_asr_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:
-        """Call ASR service for speech-to-text conversion."""
+        """
+        Call ASR service for speech-to-text conversion.
+        
+        Propagates distributed tracing context to enable end-to-end observability.
+        """
         await self._ensure_urls()
         headers = {}
         if jwt_token:
@@ -91,22 +141,51 @@ class ServiceClient:
         if jwt_token and api_key:
             headers['X-Auth-Source'] = 'BOTH'
         
-        logger.info(f"Calling ASR service: {self.asr_service_url}/api/v1/asr/inference")
+        # Inject trace context for distributed tracing
+        self._inject_trace_context(headers)
+        
+        logger.info(f"🔗 Calling ASR service: {self.asr_service_url}/api/v1/asr/inference")
         
         try:
+            start_time = time.time()
             response = await self.client.post(
                 f"{self.asr_service_url}/api/v1/asr/inference",
                 json=request_data,
                 headers=headers
             )
+            elapsed_time = time.time() - start_time
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.info(f"✅ ASR service completed successfully in {elapsed_time:.2f}s")
+            return result
+        except httpx.TimeoutException as e:
+            timeout_val = self.client.timeout.timeout if hasattr(self.client.timeout, 'timeout') else 'unknown'
+            error_detail = f"ASR service request timed out after {timeout_val}s. The service may be overloaded or unreachable."
+            logger.error(f"❌ ASR service timeout: {error_detail}")
+            raise ValueError(error_detail) from e
+        except httpx.ConnectError as e:
+            error_detail = f"ASR service connection failed. Unable to reach {self.asr_service_url}. Service may be down or unreachable."
+            logger.error(f"❌ ASR service connection error: {error_detail}")
+            raise ValueError(error_detail) from e
+        except httpx.HTTPStatusError as e:
+            error_detail = f"ASR service returned status {e.response.status_code}"
+            try:
+                error_body = e.response.json()
+                error_detail += f": {error_body}"
+            except Exception:
+                error_detail += f": {e.response.text}"
+            logger.error(f"❌ ASR service error: {error_detail}")
+            raise ValueError(error_detail) from e
         except httpx.HTTPError as e:
-            logger.error(f"ASR service error: {e}")
-            raise ValueError(f"ASR service error: {str(e)}") from e
+            logger.error(f"❌ ASR service HTTP error: {e}")
+            raise ValueError(f"ASR service HTTP error: {str(e)}") from e
     
     async def call_nmt_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:
-        """Call NMT service for translation."""
+        """
+        Call NMT service for translation.
+        
+        Propagates distributed tracing context to enable end-to-end observability.
+        """
         await self._ensure_urls()
         headers = {}
         if jwt_token:
@@ -117,22 +196,51 @@ class ServiceClient:
         if jwt_token and api_key:
             headers['X-Auth-Source'] = 'BOTH'
         
-        logger.info(f"Calling NMT service: {self.nmt_service_url}/api/v1/nmt/inference")
+        # Inject trace context for distributed tracing
+        self._inject_trace_context(headers)
+        
+        logger.info(f"🔗 Calling NMT service: {self.nmt_service_url}/api/v1/nmt/inference")
         
         try:
+            start_time = time.time()
             response = await self.client.post(
                 f"{self.nmt_service_url}/api/v1/nmt/inference",
                 json=request_data,
                 headers=headers
             )
+            elapsed_time = time.time() - start_time
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.info(f"✅ NMT service completed successfully in {elapsed_time:.2f}s")
+            return result
+        except httpx.TimeoutException as e:
+            timeout_val = self.client.timeout.timeout if hasattr(self.client.timeout, 'timeout') else 'unknown'
+            error_detail = f"NMT service request timed out after {timeout_val}s. The service may be overloaded or unreachable."
+            logger.error(f"❌ NMT service timeout: {error_detail}")
+            raise ValueError(error_detail) from e
+        except httpx.ConnectError as e:
+            error_detail = f"NMT service connection failed. Unable to reach {self.nmt_service_url}. Service may be down or unreachable."
+            logger.error(f"❌ NMT service connection error: {error_detail}")
+            raise ValueError(error_detail) from e
+        except httpx.HTTPStatusError as e:
+            error_detail = f"NMT service returned status {e.response.status_code}"
+            try:
+                error_body = e.response.json()
+                error_detail += f": {error_body}"
+            except Exception:
+                error_detail += f": {e.response.text}"
+            logger.error(f"❌ NMT service error: {error_detail}")
+            raise ValueError(error_detail) from e
         except httpx.HTTPError as e:
-            logger.error(f"NMT service error: {e}")
-            raise ValueError(f"NMT service error: {str(e)}") from e
+            logger.error(f"❌ NMT service HTTP error: {e}")
+            raise ValueError(f"NMT service HTTP error: {str(e)}") from e
     
     async def call_tts_service(self, request_data: Dict[str, Any], jwt_token: Optional[str] = None, api_key: Optional[str] = None) -> Dict[str, Any]:
-        """Call TTS service for text-to-speech conversion."""
+        """
+        Call TTS service for text-to-speech conversion.
+        
+        Propagates distributed tracing context to enable end-to-end observability.
+        """
         await self._ensure_urls()
         headers = {}
         if jwt_token:
@@ -143,19 +251,44 @@ class ServiceClient:
         if jwt_token and api_key:
             headers['X-Auth-Source'] = 'BOTH'
         
-        logger.info(f"Calling TTS service: {self.tts_service_url}/api/v1/tts/inference")
+        # Inject trace context for distributed tracing
+        self._inject_trace_context(headers)
+        
+        logger.info(f"🔗 Calling TTS service: {self.tts_service_url}/api/v1/tts/inference")
         
         try:
+            start_time = time.time()
             response = await self.client.post(
                 f"{self.tts_service_url}/api/v1/tts/inference",
                 json=request_data,
                 headers=headers
             )
+            elapsed_time = time.time() - start_time
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.info(f"✅ TTS service completed successfully in {elapsed_time:.2f}s")
+            return result
+        except httpx.TimeoutException as e:
+            timeout_val = self.client.timeout.timeout if hasattr(self.client.timeout, 'timeout') else 'unknown'
+            error_detail = f"TTS service request timed out after {timeout_val}s. The service may be overloaded or unreachable."
+            logger.error(f"❌ TTS service timeout: {error_detail}")
+            raise ValueError(error_detail) from e
+        except httpx.ConnectError as e:
+            error_detail = f"TTS service connection failed. Unable to reach {self.tts_service_url}. Service may be down or unreachable."
+            logger.error(f"❌ TTS service connection error: {error_detail}")
+            raise ValueError(error_detail) from e
+        except httpx.HTTPStatusError as e:
+            error_detail = f"TTS service returned status {e.response.status_code}"
+            try:
+                error_body = e.response.json()
+                error_detail += f": {error_body}"
+            except Exception:
+                error_detail += f": {e.response.text}"
+            logger.error(f"❌ TTS service error: {error_detail}")
+            raise ValueError(error_detail) from e
         except httpx.HTTPError as e:
-            logger.error(f"TTS service error: {e}")
-            raise ValueError(f"TTS service error: {str(e)}") from e
+            logger.error(f"❌ TTS service HTTP error: {e}")
+            raise ValueError(f"TTS service HTTP error: {str(e)}") from e
     
     async def close(self):
         """Close the HTTP client."""

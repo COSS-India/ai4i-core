@@ -1,7 +1,8 @@
 """
-Pipeline injector for Pipeline Service
+Pipeline router for Pipeline Service
 
 FastAPI router for pipeline inference endpoints.
+Includes distributed tracing for end-to-end observability.
 """
 
 import logging
@@ -11,6 +12,14 @@ from models.pipeline_request import PipelineInferenceRequest
 from models.pipeline_response import PipelineInferenceResponse
 from services.pipeline_service import PipelineService
 from utils.http_client import ServiceClient
+
+# Import OpenTelemetry for tracing
+try:
+    from opentelemetry import trace
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
+    logging.warning("OpenTelemetry not available, tracing disabled in router")
 
 logger = logging.getLogger(__name__)
 
@@ -47,38 +56,104 @@ async def run_pipeline_inference(
     
     Example: ASR → Translation → TTS for Speech-to-Speech translation
     """
+    tracer = trace.get_tracer(__name__) if TRACING_AVAILABLE else None
+    
     try:
-        # Extract JWT token and API key from request headers
-        jwt_token = None
-        api_key = None
-        
-        auth_header = http_request.headers.get('Authorization')
-        if auth_header and auth_header.startswith('Bearer '):
-            jwt_token = auth_header.replace('Bearer ', '')
-        
-        api_key_header = http_request.headers.get('X-API-Key')
-        if api_key_header:
-            api_key = api_key_header
+        # Create span for authentication/authorization
+        if tracer:
+            with tracer.start_as_current_span("pipeline.authentication") as auth_span:
+                # Extract JWT token and API key from request headers
+                jwt_token = None
+                api_key = None
+                
+                auth_header = http_request.headers.get('Authorization')
+                if auth_header and auth_header.startswith('Bearer '):
+                    jwt_token = auth_header.replace('Bearer ', '')
+                    auth_span.set_attribute("auth.jwt_present", True)
+                else:
+                    auth_span.set_attribute("auth.jwt_present", False)
+                
+                api_key_header = http_request.headers.get('X-API-Key')
+                if api_key_header:
+                    api_key = api_key_header
+                    auth_span.set_attribute("auth.api_key_present", True)
+                else:
+                    auth_span.set_attribute("auth.api_key_present", False)
+                
+                # Add pipeline metadata to span
+                auth_span.set_attribute("pipeline.task_count", len(request.pipelineTasks))
+                auth_span.set_attribute("pipeline.task_types", ",".join([t.taskType.value for t in request.pipelineTasks]))
+                
+                logger.info(f"🔐 Authentication extracted: JWT={'present' if jwt_token else 'absent'}, API_KEY={'present' if api_key else 'absent'}")
+        else:
+            # No tracing, extract auth normally
+            jwt_token = None
+            api_key = None
+            
+            auth_header = http_request.headers.get('Authorization')
+            if auth_header and auth_header.startswith('Bearer '):
+                jwt_token = auth_header.replace('Bearer ', '')
+            
+            api_key_header = http_request.headers.get('X-API-Key')
+            if api_key_header:
+                api_key = api_key_header
         
         # Get pipeline service
         pipeline_service = get_pipeline_service()
         
-        # Execute pipeline
+        # Execute pipeline (this will create its own spans)
         response = await pipeline_service.run_pipeline_inference(
             request=request,
             jwt_token=jwt_token,
             api_key=api_key
         )
         
-        logger.info("Pipeline inference completed successfully")
+        logger.info("✅ Pipeline inference completed successfully")
         return response
         
     except ValueError as e:
-        logger.warning(f"Validation error: {e}")
+        error_msg = f"Validation error: {e}"
+        logger.warning(f"⚠️ {error_msg}")
+        
+        # Record error in span if tracing is available
+        if TRACING_AVAILABLE:
+            current_span = trace.get_current_span()
+            if current_span:
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.type", "ValueError")
+                current_span.set_attribute("error.message", str(e))
+                current_span.record_exception(e)
+        
         raise HTTPException(status_code=400, detail=str(e))
     
+    except RuntimeError as e:
+        error_msg = f"Pipeline execution failed: {e}"
+        logger.error(f"❌ {error_msg}")
+        
+        # Record error in span if tracing is available
+        if TRACING_AVAILABLE:
+            current_span = trace.get_current_span()
+            if current_span:
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.type", "RuntimeError")
+                current_span.set_attribute("error.message", str(e))
+                current_span.record_exception(e)
+        
+        raise HTTPException(status_code=500, detail=str(e))
+    
     except Exception as e:
-        logger.error(f"Pipeline inference failed: {e}")
+        error_msg = f"Unexpected pipeline error: {e}"
+        logger.error(f"❌ {error_msg}")
+        
+        # Record error in span if tracing is available
+        if TRACING_AVAILABLE:
+            current_span = trace.get_current_span()
+            if current_span:
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.type", type(e).__name__)
+                current_span.set_attribute("error.message", str(e))
+                current_span.record_exception(e)
+        
         raise HTTPException(status_code=500, detail=f"Pipeline inference failed: {str(e)}")
 
 

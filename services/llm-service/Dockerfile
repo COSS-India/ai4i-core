@@ -1,10 +1,11 @@
-# Multi-stage Dockerfile for LLM Service
+# -----------------------------
+# STAGE 1 — BUILDER
+# -----------------------------
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     curl \
@@ -12,38 +13,42 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements from build context
-COPY requirements.txt .
+COPY services/llm-service/requirements.txt .
 
-# Install Python dependencies (NO --user)
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies
+RUN pip install --no-cache-dir --user -r requirements.txt
 
-# ---------------- Final stage ----------------
+# -----------------------------
+# STAGE 2 — RUNTIME
+# -----------------------------
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libpq5 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
 RUN useradd --create-home --shell /bin/bash app
 
-# Copy installed Python packages
-COPY --from=builder /usr/local /usr/local
+# Copy Python site-packages
+COPY --from=builder /root/.local /home/app/.local
 
-# Copy application code
-COPY . .
+ENV PATH="/home/app/.local/bin:$PATH"
+ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
 
-# Fix ownership ONLY for app files
-RUN chown -R app:app /app
+# Copy app code
+COPY services/llm-service /app
+
+RUN chown -R app:app /app /home/app/.local
 USER app
 
 EXPOSE 8090
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD curl -f http://localhost:8090/api/v1/llm/health || exit 1
 
 ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8090"]
