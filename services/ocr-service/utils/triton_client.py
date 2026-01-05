@@ -25,13 +25,17 @@ class TritonInferenceError(Exception):
 class TritonClient:
     """Triton Inference Server client for OCR operations."""
 
-    def __init__(self, triton_url: str, api_key: Optional[str] = None):
+    def __init__(self, triton_url: str, api_key: Optional[str] = None, model_name: Optional[str] = None):
         """
         :param triton_url: Triton server URL (host:port or http://host:port).
         :param api_key: Optional Bearer token for Authorization header.
+        :param model_name: Triton model name (REQUIRED - resolved via Model Management).
         """
+        if not model_name:
+            raise ValueError("model_name is required and must be resolved via Model Management")
         self.triton_url = self._normalize_url(triton_url)
         self.api_key = api_key
+        self.model_name = model_name
         self._client: Optional[http_client.InferenceServerClient] = None
 
     @staticmethod
@@ -119,7 +123,7 @@ class TritonClient:
 
         try:
             response = self.client.infer(
-                model_name="surya_ocr",
+                model_name=self.model_name,
                 inputs=inputs,
                 outputs=outputs,
                 headers=headers or None,

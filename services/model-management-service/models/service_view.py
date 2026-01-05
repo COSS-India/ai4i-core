@@ -19,6 +19,9 @@ class ServiceResponse(BaseModel):
     api_key: Optional[str] = None
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
+    isPublished: bool = False
+    publishedAt: Optional[str] = None
+    unpublishedAt: Optional[str] = None
 
 
 class _ServiceUsage(BaseModel):
