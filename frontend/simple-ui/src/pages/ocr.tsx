@@ -45,6 +45,45 @@ const OCRPage: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /**
+   * Validates if a URL is safe to use as an image source.
+   * Only allows http:, https:, blob:, and data:image/* protocols.
+   * Rejects dangerous protocols like javascript: to prevent XSS attacks.
+   */
+  const isSafeImageUrl = (url: string): boolean => {
+    if (!url || url.trim() === "") {
+      return false;
+    }
+
+    try {
+      // Check if it's a blob URL (created by URL.createObjectURL)
+      if (url.startsWith("blob:")) {
+        return true;
+      }
+
+      // Parse the URL to check its protocol
+      const parsedUrl = new URL(url);
+
+      // Allow http and https protocols
+      if (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") {
+        return true;
+      }
+
+      // Allow data URLs, but only for images
+      if (parsedUrl.protocol === "data:") {
+        // Check if it's a data URL with image media type
+        const dataUrlMatch = url.match(/^data:image\//);
+        return dataUrlMatch !== null;
+      }
+
+      // Reject all other protocols (including javascript:, etc.)
+      return false;
+    } catch (error) {
+      // If URL parsing fails, it's not a valid URL
+      return false;
+    }
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -100,10 +139,29 @@ const OCRPage: React.FC = () => {
   };
 
   const handleUriChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setImageUri(e.target.value);
+    const value = e.target.value;
+    setImageUri(value);
     setImageFile(null);
-    setPreviewUrl(e.target.value || null);
     setActiveTab(1);
+
+    // Validate URL before setting preview
+    if (value && value.trim() !== "") {
+      if (isSafeImageUrl(value)) {
+        setPreviewUrl(value);
+      } else {
+        // Clear preview and show error for unsafe URLs
+        setPreviewUrl(null);
+        toast({
+          title: "Invalid URL",
+          description: "Please provide a valid image URL (http://, https://, or data:image/*).",
+          status: "error",
+          duration: 3000,
+          isClosable: true,
+        });
+      }
+    } else {
+      setPreviewUrl(null);
+    }
   };
 
   const fileToBase64 = (file: File): Promise<string> => {
