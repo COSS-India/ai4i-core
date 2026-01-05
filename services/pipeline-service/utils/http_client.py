@@ -8,7 +8,8 @@ Includes distributed tracing context propagation for end-to-end observability.
 import os
 import logging
 import time
-from typing import Dict, Any, Optional
+import json
+from typing import Dict, Any, Optional, Tuple
 import httpx
 from .service_registry_client import ServiceRegistryHttpClient
 
@@ -22,6 +23,60 @@ except ImportError:
     logging.warning("OpenTelemetry not available, trace context propagation disabled")
 
 logger = logging.getLogger(__name__)
+
+
+def parse_service_error_response(response: httpx.Response) -> Tuple[str, Dict[str, Any]]:
+    """
+    Parse error response from a service to extract meaningful error information.
+    
+    Handles nested error structures like:
+    - {"detail": {"message": "...", "code": "...", ...}}
+    - {"detail": "..."}
+    - {"error": "..."}
+    - Plain text responses
+    
+    Returns:
+        Tuple of (error_message, error_details_dict)
+    """
+    try:
+        error_body = response.json()
+        
+        # Handle nested detail structure (common in FastAPI)
+        if isinstance(error_body, dict):
+            detail = error_body.get("detail", error_body)
+            
+            # If detail is a dict with message/code structure
+            if isinstance(detail, dict):
+                message = detail.get("message", detail.get("detail", str(detail)))
+                # Extract nested message if present (e.g., from Triton errors)
+                if isinstance(message, dict):
+                    nested_msg = message.get("message", str(message))
+                    message = nested_msg
+                
+                error_details = {
+                    "code": detail.get("code"),
+                    "type": detail.get("type"),
+                    "message": message,
+                    "raw_detail": detail
+                }
+                return message, error_details
+            
+            # If detail is a string
+            elif isinstance(detail, str):
+                return detail, {"message": detail, "raw_detail": error_body}
+            
+            # Fallback: stringify the detail
+            else:
+                return str(detail), {"message": str(detail), "raw_detail": error_body}
+        
+        # If response is a list or other structure
+        else:
+            return str(error_body), {"message": str(error_body), "raw_detail": error_body}
+            
+    except (json.JSONDecodeError, ValueError):
+        # Not JSON, return text
+        text = response.text[:500]  # Limit length
+        return text, {"message": text, "raw_detail": text}
 
 
 class ServiceClient:
@@ -144,39 +199,133 @@ class ServiceClient:
         # Inject trace context for distributed tracing
         self._inject_trace_context(headers)
         
-        logger.info(f"🔗 Calling ASR service: {self.asr_service_url}/api/v1/asr/inference")
+        service_url = f"{self.asr_service_url}/api/v1/asr/inference"
+        logger.info(f"🔗 Calling ASR service: {service_url}")
+        
+        # Create manual span with proper service name for Jaeger
+        # Use a clear, descriptive name that identifies the service being called
+        if TRACING_AVAILABLE:
+            # Get tracer - use the same service name as the main app to ensure proper nesting
+            tracer = trace.get_tracer("pipeline-service")
+            span_name = "ASR Service Call"
+        else:
+            tracer = None
+            span_name = None
         
         try:
-            start_time = time.time()
-            response = await self.client.post(
-                f"{self.asr_service_url}/api/v1/asr/inference",
-                json=request_data,
-                headers=headers
-            )
-            elapsed_time = time.time() - start_time
-            response.raise_for_status()
-            result = response.json()
-            logger.info(f"✅ ASR service completed successfully in {elapsed_time:.2f}s")
-            return result
+            if tracer:
+                # Create span as child of current active span (task span)
+                # Use explicit context to ensure proper nesting
+                current_span = trace.get_current_span()
+                if current_span and current_span.get_span_context().is_valid:
+                    # Create span as child of current span
+                    with tracer.start_as_current_span(span_name, context=current_span.get_span_context()) as span:
+                        span.set_attribute("http.method", "POST")
+                        span.set_attribute("http.url", service_url)
+                        span.set_attribute("http.service", "asr-service")
+                        span.set_attribute("service.name", "asr")
+                        span.set_attribute("service.type", "asr")
+                        span.set_attribute("span.kind", "client")  # Mark as outgoing client call
+                        
+                        start_time = time.time()
+                        response = await self.client.post(
+                            service_url,
+                            json=request_data,
+                            headers=headers
+                        )
+                        elapsed_time = time.time() - start_time
+                        
+                        span.set_attribute("http.status_code", response.status_code)
+                        span.set_attribute("http.duration_ms", elapsed_time * 1000)
+                        
+                        response.raise_for_status()
+                        result = response.json()
+                        logger.info(f"✅ ASR service completed successfully in {elapsed_time:.2f}s")
+                        return result
+                else:
+                    # No active span, create root span
+                    with tracer.start_as_current_span(span_name) as span:
+                        span.set_attribute("http.method", "POST")
+                        span.set_attribute("http.url", service_url)
+                        span.set_attribute("http.service", "asr-service")
+                        span.set_attribute("service.name", "asr")
+                        span.set_attribute("service.type", "asr")
+                        span.set_attribute("span.kind", "client")
+                        
+                        start_time = time.time()
+                        response = await self.client.post(
+                            service_url,
+                            json=request_data,
+                            headers=headers
+                        )
+                        elapsed_time = time.time() - start_time
+                        
+                        span.set_attribute("http.status_code", response.status_code)
+                        span.set_attribute("http.duration_ms", elapsed_time * 1000)
+                        
+                        response.raise_for_status()
+                        result = response.json()
+                        logger.info(f"✅ ASR service completed successfully in {elapsed_time:.2f}s")
+                        return result
+            else:
+                start_time = time.time()
+                response = await self.client.post(
+                    service_url,
+                    json=request_data,
+                    headers=headers
+                )
+                elapsed_time = time.time() - start_time
+                response.raise_for_status()
+                result = response.json()
+                logger.info(f"✅ ASR service completed successfully in {elapsed_time:.2f}s")
+                return result
         except httpx.TimeoutException as e:
+            if TRACING_AVAILABLE:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "TimeoutException")
+                    current_span.set_attribute("error.message", "ASR service request timed out")
             timeout_val = self.client.timeout.timeout if hasattr(self.client.timeout, 'timeout') else 'unknown'
             error_detail = f"ASR service request timed out after {timeout_val}s. The service may be overloaded or unreachable."
             logger.error(f"❌ ASR service timeout: {error_detail}")
             raise ValueError(error_detail) from e
         except httpx.ConnectError as e:
+            if TRACING_AVAILABLE:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "ConnectError")
+                    current_span.set_attribute("error.message", "ASR service connection failed")
             error_detail = f"ASR service connection failed. Unable to reach {self.asr_service_url}. Service may be down or unreachable."
             logger.error(f"❌ ASR service connection error: {error_detail}")
             raise ValueError(error_detail) from e
         except httpx.HTTPStatusError as e:
-            error_detail = f"ASR service returned status {e.response.status_code}"
-            try:
-                error_body = e.response.json()
-                error_detail += f": {error_body}"
-            except Exception:
-                error_detail += f": {e.response.text}"
+            if TRACING_AVAILABLE:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "HTTPStatusError")
+                    current_span.set_attribute("error.message", f"ASR service returned status {e.response.status_code}")
+                    current_span.set_attribute("http.status_code", e.response.status_code)
+            error_message, error_details = parse_service_error_response(e.response)
+            error_detail = f"ASR service returned status {e.response.status_code}: {error_message}"
             logger.error(f"❌ ASR service error: {error_detail}")
-            raise ValueError(error_detail) from e
+            # Create a structured error that can be parsed upstream
+            error_dict = {
+                "service": "asr",
+                "status_code": e.response.status_code,
+                "message": error_message,
+                "details": error_details
+            }
+            raise ValueError(json.dumps(error_dict)) from e
         except httpx.HTTPError as e:
+            if TRACING_AVAILABLE:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "HTTPError")
+                    current_span.set_attribute("error.message", str(e))
             logger.error(f"❌ ASR service HTTP error: {e}")
             raise ValueError(f"ASR service HTTP error: {str(e)}") from e
     
@@ -199,39 +348,133 @@ class ServiceClient:
         # Inject trace context for distributed tracing
         self._inject_trace_context(headers)
         
-        logger.info(f"🔗 Calling NMT service: {self.nmt_service_url}/api/v1/nmt/inference")
+        service_url = f"{self.nmt_service_url}/api/v1/nmt/inference"
+        logger.info(f"🔗 Calling NMT service: {service_url}")
+        
+        # Create manual span with proper service name for Jaeger
+        # Use a clear, descriptive name that identifies the service being called
+        if TRACING_AVAILABLE:
+            # Get tracer - use the same service name as the main app to ensure proper nesting
+            tracer = trace.get_tracer("pipeline-service")
+            span_name = "NMT Service Call"
+        else:
+            tracer = None
+            span_name = None
         
         try:
-            start_time = time.time()
-            response = await self.client.post(
-                f"{self.nmt_service_url}/api/v1/nmt/inference",
-                json=request_data,
-                headers=headers
-            )
-            elapsed_time = time.time() - start_time
-            response.raise_for_status()
-            result = response.json()
-            logger.info(f"✅ NMT service completed successfully in {elapsed_time:.2f}s")
-            return result
+            if tracer:
+                # Create span as child of current active span (task span)
+                # Use explicit context to ensure proper nesting
+                current_span = trace.get_current_span()
+                if current_span and current_span.get_span_context().is_valid:
+                    # Create span as child of current span
+                    with tracer.start_as_current_span(span_name, context=current_span.get_span_context()) as span:
+                        span.set_attribute("http.method", "POST")
+                        span.set_attribute("http.url", service_url)
+                        span.set_attribute("http.service", "nmt-service")
+                        span.set_attribute("service.name", "nmt")
+                        span.set_attribute("service.type", "nmt")
+                        span.set_attribute("span.kind", "client")  # Mark as outgoing client call
+                        
+                        start_time = time.time()
+                        response = await self.client.post(
+                            service_url,
+                            json=request_data,
+                            headers=headers
+                        )
+                        elapsed_time = time.time() - start_time
+                        
+                        span.set_attribute("http.status_code", response.status_code)
+                        span.set_attribute("http.duration_ms", elapsed_time * 1000)
+                        
+                        response.raise_for_status()
+                        result = response.json()
+                        logger.info(f"✅ NMT service completed successfully in {elapsed_time:.2f}s")
+                        return result
+                else:
+                    # No active span, create root span
+                    with tracer.start_as_current_span(span_name) as span:
+                        span.set_attribute("http.method", "POST")
+                        span.set_attribute("http.url", service_url)
+                        span.set_attribute("http.service", "nmt-service")
+                        span.set_attribute("service.name", "nmt")
+                        span.set_attribute("service.type", "nmt")
+                        span.set_attribute("span.kind", "client")
+                        
+                        start_time = time.time()
+                        response = await self.client.post(
+                            service_url,
+                            json=request_data,
+                            headers=headers
+                        )
+                        elapsed_time = time.time() - start_time
+                        
+                        span.set_attribute("http.status_code", response.status_code)
+                        span.set_attribute("http.duration_ms", elapsed_time * 1000)
+                        
+                        response.raise_for_status()
+                        result = response.json()
+                        logger.info(f"✅ NMT service completed successfully in {elapsed_time:.2f}s")
+                        return result
+            else:
+                start_time = time.time()
+                response = await self.client.post(
+                    service_url,
+                    json=request_data,
+                    headers=headers
+                )
+                elapsed_time = time.time() - start_time
+                response.raise_for_status()
+                result = response.json()
+                logger.info(f"✅ NMT service completed successfully in {elapsed_time:.2f}s")
+                return result
         except httpx.TimeoutException as e:
+            if TRACING_AVAILABLE and tracer:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "TimeoutException")
+                    current_span.set_attribute("error.message", "NMT service request timed out")
             timeout_val = self.client.timeout.timeout if hasattr(self.client.timeout, 'timeout') else 'unknown'
             error_detail = f"NMT service request timed out after {timeout_val}s. The service may be overloaded or unreachable."
             logger.error(f"❌ NMT service timeout: {error_detail}")
             raise ValueError(error_detail) from e
         except httpx.ConnectError as e:
+            if TRACING_AVAILABLE and tracer:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "ConnectError")
+                    current_span.set_attribute("error.message", "NMT service connection failed")
             error_detail = f"NMT service connection failed. Unable to reach {self.nmt_service_url}. Service may be down or unreachable."
             logger.error(f"❌ NMT service connection error: {error_detail}")
             raise ValueError(error_detail) from e
         except httpx.HTTPStatusError as e:
-            error_detail = f"NMT service returned status {e.response.status_code}"
-            try:
-                error_body = e.response.json()
-                error_detail += f": {error_body}"
-            except Exception:
-                error_detail += f": {e.response.text}"
+            if TRACING_AVAILABLE and tracer:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "HTTPStatusError")
+                    current_span.set_attribute("error.message", f"NMT service returned status {e.response.status_code}")
+                    current_span.set_attribute("http.status_code", e.response.status_code)
+            error_message, error_details = parse_service_error_response(e.response)
+            error_detail = f"NMT service returned status {e.response.status_code}: {error_message}"
             logger.error(f"❌ NMT service error: {error_detail}")
-            raise ValueError(error_detail) from e
+            # Create a structured error that can be parsed upstream
+            error_dict = {
+                "service": "nmt",
+                "status_code": e.response.status_code,
+                "message": error_message,
+                "details": error_details
+            }
+            raise ValueError(json.dumps(error_dict)) from e
         except httpx.HTTPError as e:
+            if TRACING_AVAILABLE and tracer:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "HTTPError")
+                    current_span.set_attribute("error.message", str(e))
             logger.error(f"❌ NMT service HTTP error: {e}")
             raise ValueError(f"NMT service HTTP error: {str(e)}") from e
     
@@ -254,39 +497,137 @@ class ServiceClient:
         # Inject trace context for distributed tracing
         self._inject_trace_context(headers)
         
-        logger.info(f"🔗 Calling TTS service: {self.tts_service_url}/api/v1/tts/inference")
+        service_url = f"{self.tts_service_url}/api/v1/tts/inference"
+        logger.info(f"🔗 Calling TTS service: {service_url}")
+        
+        # Create manual span with proper service name for Jaeger
+        # Use a clear, descriptive name that identifies the service being called
+        if TRACING_AVAILABLE:
+            # Get tracer - use the same service name as the main app to ensure proper nesting
+            tracer = trace.get_tracer("pipeline-service")
+            span_name = "TTS Service Call"
+        else:
+            tracer = None
+            span_name = None
         
         try:
-            start_time = time.time()
-            response = await self.client.post(
-                f"{self.tts_service_url}/api/v1/tts/inference",
-                json=request_data,
-                headers=headers
-            )
-            elapsed_time = time.time() - start_time
-            response.raise_for_status()
-            result = response.json()
-            logger.info(f"✅ TTS service completed successfully in {elapsed_time:.2f}s")
-            return result
+            if tracer:
+                # Create span as child of current active span (task span)
+                # Use explicit context to ensure proper nesting
+                current_span = trace.get_current_span()
+                if current_span and current_span.get_span_context().is_valid:
+                    # Create span as child of current span
+                    with tracer.start_as_current_span(span_name, context=current_span.get_span_context()) as span:
+                        span.set_attribute("http.method", "POST")
+                        span.set_attribute("http.url", service_url)
+                        span.set_attribute("http.service", "tts-service")
+                        span.set_attribute("service.name", "tts")
+                        span.set_attribute("service.type", "tts")
+                        span.set_attribute("span.kind", "client")  # Mark as outgoing client call
+                        
+                        start_time = time.time()
+                        response = await self.client.post(
+                            service_url,
+                            json=request_data,
+                            headers=headers
+                        )
+                        elapsed_time = time.time() - start_time
+                        
+                        span.set_attribute("http.status_code", response.status_code)
+                        span.set_attribute("http.duration_ms", elapsed_time * 1000)
+                        
+                        response.raise_for_status()
+                        result = response.json()
+                        logger.info(f"✅ TTS service completed successfully in {elapsed_time:.2f}s")
+                        return result
+                else:
+                    # No active span, create root span
+                    with tracer.start_as_current_span(span_name) as span:
+                        span.set_attribute("http.method", "POST")
+                        span.set_attribute("http.url", service_url)
+                        span.set_attribute("http.service", "tts-service")
+                        span.set_attribute("service.name", "tts")
+                        span.set_attribute("service.type", "tts")
+                        span.set_attribute("span.kind", "client")
+                        
+                        start_time = time.time()
+                        response = await self.client.post(
+                            service_url,
+                            json=request_data,
+                            headers=headers
+                        )
+                        elapsed_time = time.time() - start_time
+                        
+                        span.set_attribute("http.status_code", response.status_code)
+                        span.set_attribute("http.duration_ms", elapsed_time * 1000)
+                        
+                        response.raise_for_status()
+                        result = response.json()
+                        logger.info(f"✅ TTS service completed successfully in {elapsed_time:.2f}s")
+                        return result
+            else:
+                start_time = time.time()
+                response = await self.client.post(
+                    service_url,
+                    json=request_data,
+                    headers=headers
+                )
+                elapsed_time = time.time() - start_time
+                response.raise_for_status()
+                result = response.json()
+                logger.info(f"✅ TTS service completed successfully in {elapsed_time:.2f}s")
+                return result
+                response.raise_for_status()
+                result = response.json()
+                logger.info(f"✅ TTS service completed successfully in {elapsed_time:.2f}s")
+                return result
         except httpx.TimeoutException as e:
+            if TRACING_AVAILABLE:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "TimeoutException")
+                    current_span.set_attribute("error.message", "TTS service request timed out")
             timeout_val = self.client.timeout.timeout if hasattr(self.client.timeout, 'timeout') else 'unknown'
             error_detail = f"TTS service request timed out after {timeout_val}s. The service may be overloaded or unreachable."
             logger.error(f"❌ TTS service timeout: {error_detail}")
             raise ValueError(error_detail) from e
         except httpx.ConnectError as e:
+            if TRACING_AVAILABLE:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "ConnectError")
+                    current_span.set_attribute("error.message", "TTS service connection failed")
             error_detail = f"TTS service connection failed. Unable to reach {self.tts_service_url}. Service may be down or unreachable."
             logger.error(f"❌ TTS service connection error: {error_detail}")
             raise ValueError(error_detail) from e
         except httpx.HTTPStatusError as e:
-            error_detail = f"TTS service returned status {e.response.status_code}"
-            try:
-                error_body = e.response.json()
-                error_detail += f": {error_body}"
-            except Exception:
-                error_detail += f": {e.response.text}"
+            if TRACING_AVAILABLE:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "HTTPStatusError")
+                    current_span.set_attribute("error.message", f"TTS service returned status {e.response.status_code}")
+                    current_span.set_attribute("http.status_code", e.response.status_code)
+            error_message, error_details = parse_service_error_response(e.response)
+            error_detail = f"TTS service returned status {e.response.status_code}: {error_message}"
             logger.error(f"❌ TTS service error: {error_detail}")
-            raise ValueError(error_detail) from e
+            # Create a structured error that can be parsed upstream
+            error_dict = {
+                "service": "tts",
+                "status_code": e.response.status_code,
+                "message": error_message,
+                "details": error_details
+            }
+            raise ValueError(json.dumps(error_dict)) from e
         except httpx.HTTPError as e:
+            if TRACING_AVAILABLE:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "HTTPError")
+                    current_span.set_attribute("error.message", str(e))
             logger.error(f"❌ TTS service HTTP error: {e}")
             raise ValueError(f"TTS service HTTP error: {str(e)}") from e
     

@@ -4,6 +4,7 @@ Request/response logging middleware for tracking Pipeline API usage.
 Uses structured JSON logging with trace correlation.
 """
 
+import os
 import time
 
 from fastapi import Request, Response
@@ -21,6 +22,16 @@ except ImportError:
     def get_correlation_id(request: Request) -> str:
         """Fallback correlation ID getter."""
         return getattr(request.state, 'correlation_id', None) or request.headers.get('x-correlation-id', 'unknown')
+
+# Import OpenTelemetry to extract trace_id
+try:
+    from opentelemetry import trace
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
+
+# Get Jaeger URL from environment or use default
+JAEGER_UI_URL = os.getenv("JAEGER_UI_URL", "http://localhost:16686")
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -46,6 +57,22 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         
         # Get correlation ID (set by CorrelationMiddleware)
         correlation_id = get_correlation_id(request)
+        
+        # Extract trace_id from OpenTelemetry context for Jaeger URL
+        trace_id = None
+        jaeger_trace_url = None
+        if TRACING_AVAILABLE:
+            try:
+                current_span = trace.get_current_span()
+                if current_span and current_span.get_span_context().is_valid:
+                    span_context = current_span.get_span_context()
+                    # Format trace_id as hex string (Jaeger format)
+                    trace_id = format(span_context.trace_id, '032x')
+                    # Create full Jaeger URL
+                    jaeger_trace_url = f"{JAEGER_UI_URL}/trace/{trace_id}"
+            except Exception:
+                # If trace extraction fails, continue without it
+                pass
 
         # Process request
         # Note: FastAPI exception handlers (like RequestValidationError) will catch
@@ -82,6 +109,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_context["api_key_id"] = api_key_id
         if correlation_id:
             log_context["correlation_id"] = correlation_id
+        
+        # Add trace_id and Jaeger URL if available
+        if trace_id:
+            log_context["trace_id"] = trace_id
+        if jaeger_trace_url:
+            log_context["jaeger_trace_url"] = jaeger_trace_url
 
         # Log with appropriate level using structured logging
         if LOGGING_AVAILABLE:

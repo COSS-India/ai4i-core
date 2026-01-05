@@ -6,12 +6,20 @@ Includes distributed tracing for end-to-end observability.
 """
 
 import logging
+import time
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Request
 from models.pipeline_request import PipelineInferenceRequest
 from models.pipeline_response import PipelineInferenceResponse
 from services.pipeline_service import PipelineService
 from utils.http_client import ServiceClient
+from middleware.exceptions import (
+    PipelineError,
+    PipelineTaskError,
+    ServiceUnavailableError,
+    ModelNotFoundError,
+    ErrorDetail
+)
 
 # Import OpenTelemetry for tracing
 try:
@@ -111,9 +119,53 @@ async def run_pipeline_inference(
         logger.info("✅ Pipeline inference completed successfully")
         return response
         
+    except (PipelineTaskError, ModelNotFoundError, ServiceUnavailableError) as e:
+        # Handle pipeline-specific errors with structured response
+        error_detail = ErrorDetail(
+            message=e.message,
+            code=e.error_code,
+            timestamp=time.time()
+        )
+        
+        # Add additional context to error detail
+        error_dict = error_detail.dict()
+        if e.task_index:
+            error_dict["task_index"] = e.task_index
+        if e.task_type:
+            error_dict["task_type"] = e.task_type
+        if e.service_error:
+            error_dict["service_error"] = e.service_error
+        
+        logger.error(f"❌ Pipeline error [{e.error_code}]: {e.message}")
+        
+        # Record error in span if tracing is available
+        if TRACING_AVAILABLE:
+            current_span = trace.get_current_span()
+            if current_span:
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.code", e.error_code)
+                current_span.set_attribute("error.message", e.message)
+                current_span.set_attribute("error.type", type(e).__name__)
+                if e.task_index:
+                    current_span.set_attribute("error.task_index", e.task_index)
+                if e.task_type:
+                    current_span.set_attribute("error.task_type", e.task_type)
+                if e.service_error:
+                    for key, value in e.service_error.items():
+                        current_span.set_attribute(f"error.service.{key}", str(value))
+                current_span.record_exception(e)
+        
+        raise HTTPException(status_code=e.status_code, detail=error_dict)
+    
     except ValueError as e:
         error_msg = f"Validation error: {e}"
         logger.warning(f"⚠️ {error_msg}")
+        
+        error_detail = ErrorDetail(
+            message=error_msg,
+            code="VALIDATION_ERROR",
+            timestamp=time.time()
+        )
         
         # Record error in span if tracing is available
         if TRACING_AVAILABLE:
@@ -121,29 +173,21 @@ async def run_pipeline_inference(
             if current_span:
                 current_span.set_attribute("error", True)
                 current_span.set_attribute("error.type", "ValueError")
+                current_span.set_attribute("error.code", "VALIDATION_ERROR")
                 current_span.set_attribute("error.message", str(e))
                 current_span.record_exception(e)
         
-        raise HTTPException(status_code=400, detail=str(e))
-    
-    except RuntimeError as e:
-        error_msg = f"Pipeline execution failed: {e}"
-        logger.error(f"❌ {error_msg}")
-        
-        # Record error in span if tracing is available
-        if TRACING_AVAILABLE:
-            current_span = trace.get_current_span()
-            if current_span:
-                current_span.set_attribute("error", True)
-                current_span.set_attribute("error.type", "RuntimeError")
-                current_span.set_attribute("error.message", str(e))
-                current_span.record_exception(e)
-        
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=400, detail=error_detail.dict())
     
     except Exception as e:
         error_msg = f"Unexpected pipeline error: {e}"
-        logger.error(f"❌ {error_msg}")
+        logger.error(f"❌ {error_msg}", exc_info=True)
+        
+        error_detail = ErrorDetail(
+            message=error_msg,
+            code="INTERNAL_ERROR",
+            timestamp=time.time()
+        )
         
         # Record error in span if tracing is available
         if TRACING_AVAILABLE:
@@ -151,10 +195,11 @@ async def run_pipeline_inference(
             if current_span:
                 current_span.set_attribute("error", True)
                 current_span.set_attribute("error.type", type(e).__name__)
+                current_span.set_attribute("error.code", "INTERNAL_ERROR")
                 current_span.set_attribute("error.message", str(e))
                 current_span.record_exception(e)
         
-        raise HTTPException(status_code=500, detail=f"Pipeline inference failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=error_detail.dict())
 
 
 @pipeline_router.get(

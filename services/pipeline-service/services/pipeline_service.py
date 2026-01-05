@@ -7,19 +7,36 @@ Includes distributed tracing for end-to-end observability.
 """
 
 import logging
+import json
+import re
 from copy import deepcopy
 from typing import Dict, Any, List, Optional
 from models.pipeline_request import PipelineInferenceRequest, TaskType, PipelineTask
 from models.pipeline_response import PipelineInferenceResponse, PipelineTaskOutput
 from utils.http_client import ServiceClient
+from middleware.exceptions import (
+    PipelineTaskError, 
+    ServiceUnavailableError, 
+    ModelNotFoundError,
+    PipelineError
+)
 
 # Import OpenTelemetry for manual span creation
 try:
     from opentelemetry import trace
+    from opentelemetry.trace import Status, StatusCode
     TRACING_AVAILABLE = True
 except ImportError:
     TRACING_AVAILABLE = False
     logging.warning("OpenTelemetry not available, manual tracing disabled")
+    # Create dummy classes for when tracing is not available
+    class Status:
+        def __init__(self, code, description=None):
+            self.code = code
+            self.description = description
+    class StatusCode:
+        ERROR = "ERROR"
+        OK = "OK"
 
 logger = logging.getLogger(__name__)
 
@@ -137,23 +154,172 @@ class PipelineService:
                 logger.info(f"✅ Task {task_idx} completed successfully")
                 
             except Exception as e:
-                error_msg = f"Pipeline failed at task {task_idx} ({pipeline_task.taskType}): {str(e)}"
-                logger.error(f"❌ Task {task_idx} ({pipeline_task.taskType}) failed: {e}")
+                # Parse structured error if available
+                error_info = self._parse_error(e, task_idx, pipeline_task.taskType)
                 
-                # Record error in span if tracing is available
+                error_msg = error_info["message"]
+                error_code = error_info["code"]
+                service_error = error_info.get("service_error")
+                
+                logger.error(f"❌ Task {task_idx} ({pipeline_task.taskType}) failed: {error_msg}")
+                
+                # Record detailed error in span if tracing is available
                 if TRACING_AVAILABLE and tracer:
                     current_span = trace.get_current_span()
                     if current_span:
                         current_span.set_attribute("task.status", "error")
-                        current_span.set_attribute("error.message", str(e))
+                        current_span.set_attribute("error", True)
+                        current_span.set_attribute("error.message", error_msg)
+                        current_span.set_attribute("error.code", error_code)
                         current_span.set_attribute("error.type", type(e).__name__)
+                        current_span.set_attribute("task.index", task_idx)
+                        current_span.set_attribute("task.type", str(pipeline_task.taskType))
+                        current_span.set_attribute("task.service_id", pipeline_task.config.serviceId)
+                        
+                        # Add service error details if available
+                        if service_error:
+                            if "model" in service_error:
+                                current_span.set_attribute("error.model", service_error["model"])
+                            if "service" in service_error:
+                                current_span.set_attribute("error.service", service_error["service"])
+                            if "status_code" in service_error:
+                                current_span.set_attribute("error.service_status_code", service_error["status_code"])
+                        
+                        # Add error event for better visibility in Jaeger
+                        current_span.add_event("pipeline.task.failed", {
+                            "task_index": task_idx,
+                            "task_type": str(pipeline_task.taskType),
+                            "error_code": error_code,
+                            "error_message": error_msg
+                        })
+                        
                         current_span.record_exception(e)
+                        current_span.set_status(Status(StatusCode.ERROR, error_msg))
                 
-                raise RuntimeError(error_msg) from e
+                # Raise appropriate error type
+                if error_code == "MODEL_NOT_FOUND":
+                    raise ModelNotFoundError(
+                        message=error_msg,
+                        model_name=service_error.get("model", "unknown") if service_error else "unknown",
+                        service_name=service_error.get("service", "unknown") if service_error else "unknown"
+                    )
+                elif error_code == "SERVICE_UNAVAILABLE":
+                    raise ServiceUnavailableError(
+                        message=error_msg,
+                        service_name=service_error.get("service", "unknown") if service_error else "unknown"
+                    )
+                else:
+                    raise PipelineTaskError(
+                        message=error_msg,
+                        task_index=task_idx,
+                        task_type=str(pipeline_task.taskType),
+                        service_error=service_error,
+                        error_code=error_code
+                    )
         
         logger.info(f"✅ Pipeline completed successfully with {len(results)} tasks")
         
         return PipelineInferenceResponse(pipelineResponse=results)
+    
+    def _parse_error(self, error: Exception, task_index: int, task_type: TaskType) -> Dict[str, Any]:
+        """
+        Parse error to extract meaningful information and determine error code.
+        
+        Returns:
+            Dict with message, code, and service_error details
+        """
+        error_str = str(error)
+        error_code = "PIPELINE_TASK_ERROR"
+        service_error = {}
+        
+        # Try to parse structured error from HTTP client
+        try:
+            # Check if error message is a JSON string (from HTTP client)
+            if error_str.startswith("{") or error_str.startswith("["):
+                error_dict = json.loads(error_str)
+                if isinstance(error_dict, dict):
+                    service_name = error_dict.get("service", "unknown")
+                    status_code = error_dict.get("status_code", 500)
+                    message = error_dict.get("message", error_str)
+                    details = error_dict.get("details", {})
+                    
+                    service_error = {
+                        "service": service_name,
+                        "status_code": status_code,
+                        **details
+                    }
+                    
+                    # Extract model name from error message if present
+                    model_match = re.search(r"model[:\s]+['\"]?([^'\"]+)['\"]?", message, re.IGNORECASE)
+                    if model_match:
+                        service_error["model"] = model_match.group(1)
+                    
+                    # Determine error code based on message content
+                    message_lower = message.lower()
+                    if "not found" in message_lower or "404" in message_lower:
+                        if "model" in message_lower:
+                            error_code = "MODEL_NOT_FOUND"
+                        else:
+                            error_code = "SERVICE_NOT_FOUND"
+                    elif "timeout" in message_lower or "timed out" in message_lower:
+                        error_code = "SERVICE_TIMEOUT"
+                    elif "connection" in message_lower or "unreachable" in message_lower:
+                        error_code = "SERVICE_UNAVAILABLE"
+                    elif status_code == 503:
+                        error_code = "SERVICE_UNAVAILABLE"
+                    elif status_code == 404:
+                        error_code = "MODEL_NOT_FOUND"
+                    
+                    # Build user-friendly message
+                    if error_code == "MODEL_NOT_FOUND":
+                        model_name = service_error.get("model", "unknown")
+                        user_message = f"Model '{model_name}' not found in {service_name} service. Please verify the model name and ensure it is loaded in the Triton inference server."
+                    elif error_code == "SERVICE_UNAVAILABLE":
+                        user_message = f"{service_name} service is unavailable. The service may be down or unreachable."
+                    elif error_code == "SERVICE_TIMEOUT":
+                        user_message = f"{service_name} service request timed out. The service may be overloaded."
+                    else:
+                        user_message = f"{service_name} service error: {message}"
+                    
+                    return {
+                        "message": user_message,
+                        "code": error_code,
+                        "service_error": service_error
+                    }
+        except (json.JSONDecodeError, ValueError, KeyError):
+            # Not a structured error, parse from string
+            pass
+        
+        # Parse error message for common patterns
+        error_lower = error_str.lower()
+        
+        # Check for model not found errors
+        model_match = re.search(r"model[:\s]+['\"]?([^'\"]+)['\"]?\s+is\s+not\s+found", error_str, re.IGNORECASE)
+        if model_match:
+            model_name = model_match.group(1)
+            service_error["model"] = model_name
+            error_code = "MODEL_NOT_FOUND"
+            return {
+                "message": f"Model '{model_name}' not found. Please verify the model name and ensure it is loaded in the Triton inference server.",
+                "code": error_code,
+                "service_error": service_error
+            }
+        
+        # Check for service unavailable
+        if "connection" in error_lower or "unreachable" in error_lower or "timeout" in error_lower:
+            error_code = "SERVICE_UNAVAILABLE"
+            return {
+                "message": f"Service unavailable: {error_str}",
+                "code": error_code,
+                "service_error": service_error
+            }
+        
+        # Default: return original error message
+        return {
+            "message": f"Pipeline task failed: {error_str}",
+            "code": error_code,
+            "service_error": service_error
+        }
     
     async def _execute_task(
         self,
