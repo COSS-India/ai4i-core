@@ -224,7 +224,7 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "pipeline",
-    label: "Speech to Speech\nPipeline",
+    label: "Speech to Speech-Pipeline",
     path: "/pipeline",
     icon: DoubleMicrophoneIcon,
     iconSize: 10,
