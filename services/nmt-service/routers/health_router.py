@@ -45,22 +45,14 @@ async def health_check(request: Request) -> Dict[str, Any]:
             logger.error(f"PostgreSQL health check failed: {e}")
             postgres_status = "unhealthy"
         
-        # Check Triton server
-        triton_status = "healthy"
-        try:
-            triton_client = TritonClient(
-                triton_url=request.app.state.triton_endpoint,
-                api_key=request.app.state.triton_api_key
-            )
-            if not triton_client.is_server_ready():
-                triton_status = "unhealthy"
-        except Exception as e:
-            logger.error(f"Triton health check failed: {e}")
-            triton_status = "unhealthy"
+        # Triton endpoint must be resolved via Model Management - no hardcoded fallback
+        # Skip Triton check in health endpoint (requires Model Management serviceId)
+        triton_status = "unknown"
+        logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
         
-        # Determine overall status
+        # Determine overall status (Triton check skipped, only Redis and DB matter)
         overall_status = "healthy" if all(
-            status == "healthy" for status in [redis_status, postgres_status, triton_status]
+            status == "healthy" for status in [redis_status, postgres_status]
         ) else "unhealthy"
         
         response = {
@@ -108,17 +100,10 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
         if not hasattr(request.app.state, 'db_engine') or not request.app.state.db_engine:
             raise HTTPException(status_code=503, detail="Database engine not initialized")
         
-        if not hasattr(request.app.state, 'triton_endpoint') or not request.app.state.triton_endpoint:
-            raise HTTPException(status_code=503, detail="Triton endpoint not configured")
-        
-        # Check that Triton server has NMT models loaded
-        triton_client = TritonClient(
-            triton_url=request.app.state.triton_endpoint,
-            api_key=request.app.state.triton_api_key
-        )
-        
-        if not triton_client.is_server_ready():
-            raise HTTPException(status_code=503, detail="Triton server not ready")
+        # Triton endpoint must be resolved via Model Management - no hardcoded fallback
+        # Skip Triton check in readiness endpoint (requires Model Management serviceId)
+        logger.debug("/ready: Skipping Triton check (requires Model Management serviceId)")
+        # Skip Triton validation - only check Redis and DB
         
         return {
             "status": "ready",

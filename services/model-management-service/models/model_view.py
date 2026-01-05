@@ -6,12 +6,16 @@ from .model_create import InferenceEndPoint , Submitter , Task
 
 class ModelViewRequest(BaseModel):
     modelId: str
+    version: Optional[str] = None  # Optional version to get specific version
 
 
 class ModelViewResponse(BaseModel):
     modelId: str
     uuid: str
     name: str
+    version: str
+    versionStatus: Optional[str] = None  # Version status (ACTIVE or DEPRECATED)
+    versionStatusUpdatedAt: Optional[str] = None  # Version status update timestamp
     description: str
     languages: List[Dict[str, Any]]
     domain: List[str]
@@ -20,6 +24,3 @@ class ModelViewResponse(BaseModel):
     inferenceEndPoint: InferenceEndPoint
     source: Optional[str]  ## ask value for this field
     task: Task
-    isPublished: bool
-    publishedAt: Optional[str]
-    unpublishedAt: Optional[str]

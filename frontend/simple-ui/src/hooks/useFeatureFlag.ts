@@ -72,7 +72,7 @@ export const useFeatureFlag = (options: UseFeatureFlagOptions): UseFeatureFlagRe
     },
     enabled: enabled && !!flagName,
     staleTime: 30 * 1000, // Consider data fresh for 30 seconds
-    cacheTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
+    gcTime: 5 * 60 * 1000, // Keep in cache for 5 minutes (renamed from cacheTime in v5)
     refetchOnWindowFocus: true, // Refetch when window regains focus
     retry: 1,
     // On error, return enabled (true) by default
@@ -153,7 +153,7 @@ export const useFeatureFlagValue = <T extends boolean | string | number | object
     },
     enabled: enabled && !!flagName,
     staleTime: 30 * 1000, // Consider data fresh for 30 seconds
-    cacheTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
+    gcTime: 5 * 60 * 1000, // Keep in cache for 5 minutes (renamed from cacheTime in v5)
     refetchOnWindowFocus: true, // Refetch when window regains focus
     retry: 1,
     retryOnMount: false,

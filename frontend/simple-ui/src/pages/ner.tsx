@@ -63,10 +63,25 @@ const NERPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      setError(err.message || "Failed to perform NER inference");
+      // Prioritize API error message from response
+      let errorMessage = "Failed to perform NER inference";
+      
+      if (err?.response?.data?.detail?.message) {
+        errorMessage = err.response.data.detail.message;
+      } else if (err?.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err?.response?.data?.detail) {
+        if (typeof err.response.data.detail === 'string') {
+          errorMessage = err.response.data.detail;
+        }
+      } else if (err?.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
       toast({
         title: "Error",
-        description: err.message || "Failed to perform NER inference",
+        description: errorMessage,
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -105,31 +120,27 @@ const NERPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <Grid
-          templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
-          gap={8}
-          w="full"
-          maxW="1400px"
-          mx="auto"
-        >
-          {/* Left Column - Service Details */}
-          <GridItem>
-            <VStack spacing={6} align="stretch">
-              <Heading size="lg" color="gray.800">
-                Named Entity Recognition (NER)
-              </Heading>
-              <Text color="gray.600" fontSize="md">
-                Identify key entities like names, locations, and organizations in text
-              </Text>
-            </VStack>
-          </GridItem>
+        <VStack spacing={8} w="full">
+          {/* Page Header */}
+          <Box textAlign="center">
+            <Heading size="xl" color="gray.800" mb={2}>
+              Named Entity Recognition (NER)
+            </Heading>
+            <Text color="gray.600" fontSize="lg">
+              Identify key entities like names, locations, and organizations in text
+            </Text>
+          </Box>
 
-          {/* Right Column - Try it out here! */}
-          <GridItem>
-            <VStack spacing={6} align="stretch">
-              <Heading size="md" color="gray.800">
-                Try it out here!
-              </Heading>
+          <Grid
+            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
+            gap={8}
+            w="full"
+            maxW="1200px"
+            mx="auto"
+          >
+            {/* Configuration Panel */}
+            <GridItem>
+              <VStack spacing={6} align="stretch">
 
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
@@ -156,152 +167,170 @@ const NERPage: React.FC = () => {
                 </Select>
               </FormControl>
 
-              {/* Metrics Box */}
-              {fetched && (
-                <Box
-                  p={4}
-                  bg="orange.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="orange.200"
-                >
-                  <HStack spacing={6}>
-                    <VStack align="start" spacing={0}>
-                      <Text fontSize="xs" color="gray.600">
-                        Response Time
-                      </Text>
-                      <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                        {responseTime.toFixed(3)} seconds
-                      </Text>
-                    </VStack>
-                  </HStack>
-                </Box>
-              )}
+                <FormControl>
+                  <FormLabel fontSize="sm" fontWeight="semibold">
+                    Enter text to identify entities:
+                  </FormLabel>
+                  <Textarea
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    placeholder="Enter text to identify entities..."
+                    rows={6}
+                    isDisabled={fetching}
+                    bg="white"
+                    borderColor="gray.300"
+                  />
+                </FormControl>
 
-              <FormControl>
-                <FormLabel fontSize="sm" fontWeight="semibold">
-                  Enter text to identify entities:
-                </FormLabel>
-                <Textarea
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  placeholder="Enter text to identify entities..."
-                  rows={6}
-                  isDisabled={fetching}
-                  bg="white"
-                  borderColor="gray.300"
-                />
-              </FormControl>
-
-              {fetching && (
-                <Box>
-                  <Text mb={2} fontSize="sm" color="gray.600">
-                    Processing text...
-                  </Text>
-                  <Progress size="xs" isIndeterminate colorScheme="orange" />
-                </Box>
-              )}
-
-              {error && (
-                <Box
-                  p={4}
-                  bg="red.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="red.200"
-                >
-                  <Text color="red.600" fontSize="sm">
-                    {error}
-                  </Text>
-                </Box>
-              )}
-
-              {fetched && result && result.output && result.output.length > 0 && (
-                <Box
-                  p={4}
-                  bg="gray.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="gray.200"
-                >
-                  <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
-                    Identified Entities:
-                  </Text>
-                  <VStack align="stretch" spacing={2}>
-                    {(() => {
-                      // Handle both response formats:
-                      // 1. New format: nerPrediction array with token/tag
-                      // 2. Old format: entities array with text/label
-                      const firstOutput = result.output[0];
-                      let entities: any[] = [];
-                      
-                      if (firstOutput?.nerPrediction) {
-                        // Transform nerPrediction to entities format
-                        entities = firstOutput.nerPrediction
-                          .filter((pred: any) => pred.tag) // Only filter out entries without tags
-                          .map((pred: any) => ({
-                            text: pred.token,
-                            label: pred.tag,
-                            start: pred.tokenStartIndex || 0,
-                            end: pred.tokenEndIndex || 0,
-                          }));
-                      } else if (firstOutput?.entities) {
-                        entities = firstOutput.entities;
-                      }
-                      
-                      if (entities.length === 0) {
-                        return (
-                          <Text fontSize="sm" color="gray.500" fontStyle="italic">
-                            No entities found in the text.
-                          </Text>
-                        );
-                      }
-                      
-                      return entities.map((entity: any, index: number) => (
-                        <HStack key={index} spacing={2}>
-                          <Badge
-                            colorScheme={getEntityColor(entity.label)}
-                            fontSize="xs"
-                            px={2}
-                            py={1}
-                            borderRadius="full"
-                          >
-                            {entity.label}
-                          </Badge>
-                          <Text fontSize="sm" color="gray.700">
-                            {entity.text}
-                          </Text>
-                        </HStack>
-                      ));
-                    })()}
-                  </VStack>
-                </Box>
-              )}
-
-              <Button
-                colorScheme="orange"
-                onClick={handleProcess}
-                isLoading={fetching}
-                loadingText="Processing..."
-                size="md"
-                w="full"
-              >
-                {fetching ? "Processing..." : "Detect Entities"}
-              </Button>
-
-              {fetched && (
                 <Button
-                  onClick={clearResults}
-                  variant="outline"
-                  size="sm"
+                  colorScheme="orange"
+                  onClick={handleProcess}
+                  isLoading={fetching}
+                  loadingText="Processing..."
+                  size="md"
                   w="full"
                 >
-                  Clear Results
+                  {fetching ? "Processing..." : "Detect Entities"}
                 </Button>
-              )}
-            </VStack>
-          </GridItem>
-        </Grid>
+              </VStack>
+            </GridItem>
+
+            {/* Results Panel */}
+            <GridItem>
+              <VStack spacing={6} align="stretch">
+                {/* Progress Indicator */}
+                {fetching && (
+                  <Box>
+                    <Text mb={2} fontSize="sm" color="gray.600">
+                      Processing text...
+                    </Text>
+                    <Progress size="xs" isIndeterminate colorScheme="orange" />
+                  </Box>
+                )}
+
+                {/* Error Display */}
+                {error && (
+                  <Box
+                    p={4}
+                    bg="red.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="red.200"
+                  >
+                    <Text color="red.600" fontSize="sm">
+                      {error}
+                    </Text>
+                  </Box>
+                )}
+
+                {/* Metrics Box */}
+                {fetched && (
+                  <Box
+                    p={4}
+                    bg="orange.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="orange.200"
+                  >
+                    <HStack spacing={6}>
+                      <VStack align="start" spacing={0}>
+                        <Text fontSize="xs" color="gray.600">
+                          Response Time
+                        </Text>
+                        <Text fontSize="lg" fontWeight="bold" color="gray.800">
+                          {responseTime.toFixed(3)} seconds
+                        </Text>
+                      </VStack>
+                    </HStack>
+                  </Box>
+                )}
+
+                {/* NER Results */}
+                {fetched && result && result.output && result.output.length > 0 && (
+                  <>
+                    <Box
+                      p={4}
+                      bg="gray.50"
+                      borderRadius="md"
+                      border="1px"
+                      borderColor="gray.200"
+                    >
+                      <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
+                        Identified Entities:
+                      </Text>
+                      <VStack align="stretch" spacing={2}>
+                        {(() => {
+                          // Handle both response formats:
+                          // 1. New format: nerPrediction array with token/tag
+                          // 2. Old format: entities array with text/label
+                          const firstOutput = result.output[0];
+                          let entities: any[] = [];
+                          
+                          if (firstOutput?.nerPrediction) {
+                            // Transform nerPrediction to entities format
+                            entities = firstOutput.nerPrediction
+                              .filter((pred: any) => pred.tag) // Only filter out entries without tags
+                              .map((pred: any) => ({
+                                text: pred.token,
+                                label: pred.tag,
+                                start: pred.tokenStartIndex || 0,
+                                end: pred.tokenEndIndex || 0,
+                              }));
+                          } else if (firstOutput?.entities) {
+                            entities = firstOutput.entities;
+                          }
+                          
+                          if (entities.length === 0) {
+                            return (
+                              <Text fontSize="sm" color="gray.500" fontStyle="italic">
+                                No entities found in the text.
+                              </Text>
+                            );
+                          }
+                          
+                          return entities.map((entity: any, index: number) => (
+                            <HStack key={index} spacing={2}>
+                              <Badge
+                                colorScheme={getEntityColor(entity.label)}
+                                fontSize="xs"
+                                px={2}
+                                py={1}
+                                borderRadius="full"
+                              >
+                                {entity.label}
+                              </Badge>
+                              <Text fontSize="sm" color="gray.700">
+                                {entity.text}
+                              </Text>
+                            </HStack>
+                          ));
+                        })()}
+                      </VStack>
+                    </Box>
+
+                    {/* Clear Results Button */}
+                    <Box textAlign="center">
+                      <button
+                        onClick={clearResults}
+                        style={{
+                          padding: "8px 16px",
+                          backgroundColor: "#f7fafc",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: "6px",
+                          cursor: "pointer",
+                          fontSize: "14px",
+                          color: "#4a5568",
+                        }}
+                      >
+                        Clear Results
+                      </button>
+                    </Box>
+                  </>
+                )}
+              </VStack>
+            </GridItem>
+          </Grid>
+        </VStack>
       </ContentLayout>
     </>
   );
