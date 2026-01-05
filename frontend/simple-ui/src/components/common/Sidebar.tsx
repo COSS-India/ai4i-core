@@ -35,6 +35,7 @@ import {
 } from "react-icons/io5";
 import { useAuth } from "../../hooks/useAuth";
 import { useFeatureFlag } from "../../hooks/useFeatureFlag";
+import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
 const safeColorMap = {
   asr: { // Coral → Pastel Coral
@@ -115,6 +116,12 @@ const safeColorMap = {
     400: "#FF9FA8",
     600: "#FF6B7A",
   },
+  "services-management": { // Cyan → Pastel Cyan
+    50:  "#E0F7FA",
+    300: "#80DEEA",
+    400: "#4DD0E1",
+    600: "#00ACC1",
+  },
 };
 
 const getColor = (serviceId: string, shade: 50 | 300 | 400 | 600) => {
@@ -160,6 +167,16 @@ const topNavItems: NavItem[] = [
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
     featureFlag: "model-management-enabled",
+  },
+  {
+    id: "services-management",
+    label: "Services Management",
+    path: "/services-management",
+    icon: IoAppsOutline,
+    iconSize: 10,
+    iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
+    featureFlag: "services-management-enabled",
   },
 ];
 
@@ -207,9 +224,9 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "pipeline",
-    label: "Pipeline",
+    label: "Speech to Speech-Pipeline",
     path: "/pipeline",
-    icon: IoGitNetworkOutline,
+    icon: DoubleMicrophoneIcon,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
@@ -301,6 +318,7 @@ const Sidebar: React.FC = () => {
   const llmEnabled = useFeatureFlag({ flagName: "llm-enabled" });
   const pipelineEnabled = useFeatureFlag({ flagName: "pipeline-enabled" });
   const modelManagementEnabled = useFeatureFlag({ flagName: "model-management-enabled" });
+  const servicesManagementEnabled = useFeatureFlag({ flagName: "services-management-enabled" });
   const ocrEnabled = useFeatureFlag({ flagName: "ocr-enabled" });
   const transliterationEnabled = useFeatureFlag({ flagName: "transliteration-enabled" });
   const languageDetectionEnabled = useFeatureFlag({ flagName: "language-detection-enabled" });
@@ -317,6 +335,7 @@ const Sidebar: React.FC = () => {
     "llm-enabled": llmEnabled.isEnabled,
     "pipeline-enabled": pipelineEnabled.isEnabled,
     "model-management-enabled": modelManagementEnabled.isEnabled,
+    "services-management-enabled": servicesManagementEnabled.isEnabled,
     "ocr-enabled": ocrEnabled.isEnabled,
     "transliteration-enabled": transliterationEnabled.isEnabled,
     "language-detection-enabled": languageDetectionEnabled.isEnabled,
@@ -452,7 +471,7 @@ const Sidebar: React.FC = () => {
                 px={isExpanded ? 3 : 0}
               >
                 {isExpanded ? (
-                  <Heading size="sm" color="gray.800" fontWeight="medium">
+                  <Heading size="sm" color="gray.800" fontWeight="medium" whiteSpace="pre-line">
                     {item.label}
                   </Heading>
                 ) : (
@@ -579,7 +598,7 @@ const Sidebar: React.FC = () => {
                     transition="all 0.2s"
                     px={1}
                   >
-                    <Text fontSize="sm" color="gray.800" fontWeight="medium">
+                    <Text fontSize="sm" color="gray.800" fontWeight="medium" whiteSpace="pre-line">
                       {item.label}
                     </Text>
                   </Button>
