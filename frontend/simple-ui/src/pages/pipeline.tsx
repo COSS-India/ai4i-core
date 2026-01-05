@@ -139,7 +139,7 @@ const PipelinePage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Pipeline - Speech-to-Speech | AI4Inclusion Console</title>
+        <title>Speech to Speech | AI4Inclusion Console</title>
         <meta
           name="description"
           content="Speech-to-Speech translation pipeline combining ASR, NMT, and TTS"
@@ -159,7 +159,7 @@ const PipelinePage: React.FC = () => {
             >
               <Box flex={1} textAlign="center">
                 <Heading size="lg" color="gray.800" mb={1}>
-                  Pipeline (Speech-to-Speech)
+                  Speech to Speech
                 </Heading>
                 <Text color="gray.600" fontSize="sm">
                   Chain Speech, Translation, and Voice models for end-to-end speech
