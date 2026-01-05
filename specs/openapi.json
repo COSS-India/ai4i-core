@@ -6239,7 +6239,6 @@
           "required": [
             "modelId",
             "version",
-            "submittedOn",
             "name",
             "description",
             "refUrl",
@@ -6345,7 +6344,6 @@
           "required": [
             "modelId",
             "version",
-            "submittedOn",
             "name",
             "description",
             "refUrl",
