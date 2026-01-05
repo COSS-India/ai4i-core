@@ -1,11 +1,12 @@
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import select , delete , update
+from sqlalchemy import select , delete , update, func as sql_func, and_, case, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 from typing import Dict, Any, List
+import os
 
-from models.db_models import Model , Service
+from models.db_models import Model , Service, VersionStatus
 from models.cache_models_services import ModelCache , ServiceCache
 from models.model_create import ModelCreateRequest
 from models.model_update import ModelUpdateRequest
@@ -22,6 +23,39 @@ from logger import logger
 import json
 import time
 from datetime import datetime
+
+# Model versioning configuration
+MAX_ACTIVE_VERSIONS_PER_MODEL = int(os.getenv("MAX_ACTIVE_VERSIONS_PER_MODEL", "5"))
+
+
+async def is_model_version_used_by_published_service(model_id: str, version: str) -> tuple[bool, List[str]]:
+    """
+    Check if a specific model version is being used by any published service.
+    
+    Args:
+        model_id: The model ID to check
+        version: The version to check
+        
+    Returns:
+        Tuple of (is_used, list_of_service_ids) - is_used is True if the model version
+        is being used by at least one published service, along with the list of service IDs
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        stmt = select(Service.service_id).where(
+            Service.model_id == model_id,
+            Service.model_version == version,
+            Service.is_published == True
+        )
+        result = await db.execute(stmt)
+        service_ids = [row[0] for row in result.fetchall()]
+        
+        return len(service_ids) > 0, service_ids
+    except Exception as e:
+        logger.error(f"Error checking if model version is used by published service: {e}")
+        raise
+    finally:
+        await db.close()
 
 
 
@@ -93,39 +127,66 @@ async def save_model_to_db(payload: ModelCreateRequest):
     """
     Save a new model entry to the database.
     Includes:
-      - Duplicate model_id check
+      - Duplicate (model_id, version) check
+      - Max active versions enforcement
       - Record creation
       - Commit / rollback
 
     """
     db: AsyncSession = AppDatabase()
     try:
-        # Pre-check for duplicates
-
-        stmt = select(Model).where(Model.model_id == payload.modelId)
+        # Pre-check for duplicates: check if (model_id, version) combination already exists
+        stmt = select(Model).where(
+            Model.model_id == payload.modelId,
+            Model.version == payload.version
+        )
         result = await db.execute(stmt)
         existing = result.scalar()
 
         if existing:
-            logger.warning(f"Duplicate model_id: {payload.modelId}")
+            logger.warning(f"Duplicate model_id and version: {payload.modelId} v{payload.version}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Model with ID {payload.modelId} already exists."
+                detail=f"Model with ID {payload.modelId} and version {payload.version} already exists."
             )
+        
+        # Check max active versions if this version is being created as ACTIVE
+        version_status = payload.versionStatus if hasattr(payload, 'versionStatus') and payload.versionStatus else VersionStatus.ACTIVE
+        if version_status == VersionStatus.ACTIVE:
+            # Count active versions for this model_id
+            active_count_stmt = select(sql_func.count(Model.id)).where(
+                Model.model_id == payload.modelId,
+                Model.version_status == VersionStatus.ACTIVE
+            )
+            active_count_result = await db.execute(active_count_stmt)
+            active_count = active_count_result.scalar() or 0
+            
+            if active_count >= MAX_ACTIVE_VERSIONS_PER_MODEL:
+                logger.warning(
+                    f"Max active versions ({MAX_ACTIVE_VERSIONS_PER_MODEL}) reached for model {payload.modelId}. "
+                    f"Current active versions: {active_count}"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Maximum number of active versions ({MAX_ACTIVE_VERSIONS_PER_MODEL}) reached for model {payload.modelId}. "
+                           f"Please deprecate an existing active version before creating a new one."
+                )
         
         payload_dict = _json_safe(payload)
 
         now_epoch = int(time.time())
 
         payload_dict["submittedOn"] = now_epoch
-        payload_dict["updatedOn"] = now_epoch
+        payload_dict["updatedOn"] = None  
 
         # Create new model record
         new_model = Model(
             model_id=payload_dict.get("modelId"),
             version=payload_dict.get("version"),
+            version_status=version_status,
+            version_status_updated_at=datetime.now(),
             submitted_on=payload_dict.get("submittedOn"),
-            updated_on=payload_dict.get("updatedOn"),
+            updated_on=None,  # Null on creation, will be set on updates
             name=payload_dict.get("name"),
             description=payload_dict.get("description"),
             ref_url=payload_dict.get("refUrl"),
@@ -141,16 +202,16 @@ async def save_model_to_db(payload: ModelCreateRequest):
         db.add(new_model)
         await db.commit()
         await db.refresh(new_model)
-        logger.info(f"Model {payload.modelId} successfully saved to DB.")
+        logger.info(f"Model {payload.modelId} v{payload.version} successfully saved to DB.")
 
         # Cache the model in Redis
         try:
             payload_dict = model_redis_safe_payload(payload_dict)
             cache_entry = ModelCache(**payload_dict)
             cache_entry.save()
-            logger.info(f"Model {new_model.model_id} cached in Redis.")
+            logger.info(f"Model {new_model.model_id} v{new_model.version} cached in Redis.")
         except Exception as ce:
-            logger.warning(f"Could not cache model {new_model.model_id}: {ce}")
+            logger.warning(f"Could not cache model {new_model.model_id} v{new_model.version}: {ce}")
 
     except HTTPException:
         raise
@@ -185,7 +246,10 @@ async def update_by_filter(filters: Dict[str, Any], data: Dict[str, Any]) -> int
         result = await db.execute(query)
         records = result.scalars().all()
 
+        logger.info(f"update_by_filter: Found {len(records)} record(s) matching filters {filters}")
+        
         if not records:
+            logger.warning(f"update_by_filter: No records found matching filters {filters}")
             return 0
 
         json_fields = {
@@ -198,14 +262,19 @@ async def update_by_filter(filters: Dict[str, Any], data: Dict[str, Any]) -> int
         }
 
         for record in records:
+            logger.debug(f"update_by_filter: Updating record {record.id} (model_id={record.model_id}, version={record.version})")
             for field, value in data.items():
+                old_value = getattr(record, field, None)
                 setattr(record, field, value)
+                logger.debug(f"update_by_filter: Field '{field}' changed from {old_value} to {value}")
 
                 # MUST DO THIS for JSONB fields
                 if field in json_fields:
                     flag_modified(record, field)
 
+        logger.info(f"update_by_filter: Committing changes for {len(records)} record(s)")
         await db.commit()
+        logger.info(f"update_by_filter: Successfully updated {len(records)} record(s)")
         return len(records)
 
     except Exception as e:
@@ -219,68 +288,167 @@ async def update_by_filter(filters: Dict[str, Any], data: Dict[str, Any]) -> int
 async def update_model(payload: ModelUpdateRequest):
     """
     Update model record in PostgreSQL and refresh Redis cache.
-    Note: modelId is used as identifier and is NOT changed during update.
-        """
+    Note: modelId and version are used as identifiers to identify which version to update.
+    
+    Model versions associated with published services are immutable and cannot be updated.
+    """
 
-    logger.info(f"Attempting to update model: {payload.modelId}")
+    if not payload.version:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Version is required to update a specific model version."
+        )
 
-    request_dict = payload.model_dump(exclude_none=True)
+    logger.info(f"Attempting to update model: {payload.modelId} v{payload.version}")
+
+    # Check if model version is used by any published service (immutability check)
+    is_immutable, published_service_ids = await is_model_version_used_by_published_service(
+        payload.modelId, payload.version
+    )
+    if is_immutable:
+        logger.warning(
+            f"Cannot update model {payload.modelId} v{payload.version}: "
+            f"Used by published services: {published_service_ids}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "kind": "ImmutableModelVersion",
+                "message": f"Model version '{payload.modelId}' v{payload.version} cannot be modified because it is "
+                           f"associated with {len(published_service_ids)} published service(s): {', '.join(published_service_ids)}. "
+                           f"Unpublish the service(s) first to modify this model version."
+            }
+        )
+
+    # Use exclude_unset=True for PATCH semantics - include fields that are explicitly set
+    request_dict = payload.model_dump(exclude_unset=True)
+    logger.info(f"Request dict from payload (exclude_unset=True): {request_dict}")
+    logger.info(f"Payload versionStatus value: {payload.versionStatus} (type: {type(payload.versionStatus)})")
     now_epoch = int(time.time())
 
-    # 1. Update DB first
-    postgres_data = {}
-
-    for key, value in request_dict.items():
-        if value is None:
-            continue    # PATCH: skip null fields
-
-        # Skip modelId (used only for filtering, not updated)
-        if key == "modelId":
-            continue
-
-        # Custom snake_case mapping
-        if key == "refUrl":
-            postgres_data["ref_url"] = value
-        elif key == "inferenceEndPoint":
-            postgres_data["inference_endpoint"] = _json_safe(value)
-        elif key in ("task", "languages", "domain", "benchmarks", "submitter"):
-            postgres_data[key] = _json_safe(value)
-        else:
-            postgres_data[key] = value
-
-    postgres_data["updated_on"] = now_epoch
-    logger.info(f"Updating DB for model {payload.modelId} with fields: {list(postgres_data.keys())}")
-    logger.debug(f"DB update data: {postgres_data}")
-
-    # 2. Repository update
-    result = await update_by_filter({"model_id": payload.modelId}, postgres_data)
-
-    # 3. Update Redis cache
-    # Try to get existing cache, or fetch from DB if cache doesn't exist
+    db: AsyncSession = AppDatabase()
     try:
-        cache = ModelCache.get(payload.modelId)
-        # Cache exists, patch it
-        new_cache = cache.model_dump()
-        model_fields = cache.__class__.model_fields
+        # Check if model version exists
+        stmt = select(Model).where(
+            Model.model_id == payload.modelId,
+            Model.version == payload.version
+        )
+        result = await db.execute(stmt)
+        existing_model = result.scalar()
+        
+        if not existing_model:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Model with ID {payload.modelId} and version {payload.version} not found."
+            )
+
+        # Check max active versions if changing status to ACTIVE
+        # Use payload.versionStatus directly to handle both enum and string values
+        is_setting_active = False
+        if payload.versionStatus is not None:
+            if isinstance(payload.versionStatus, VersionStatus):
+                is_setting_active = payload.versionStatus == VersionStatus.ACTIVE
+            elif isinstance(payload.versionStatus, str):
+                is_setting_active = payload.versionStatus.upper() == "ACTIVE"
+        
+        if is_setting_active and existing_model.version_status != VersionStatus.ACTIVE:
+            # Changing from non-ACTIVE to ACTIVE - check the limit
+            # Count active versions for this model_id (excluding current version)
+            active_count_stmt = select(sql_func.count(Model.id)).where(
+                Model.model_id == payload.modelId,
+                Model.version_status == VersionStatus.ACTIVE,
+                Model.version != payload.version  # Exclude current version
+            )
+            active_count_result = await db.execute(active_count_stmt)
+            active_count = active_count_result.scalar() or 0
+            
+            logger.info(f"Max active versions check: model={payload.modelId}, current_active={active_count}, limit={MAX_ACTIVE_VERSIONS_PER_MODEL}")
+            
+            if active_count >= MAX_ACTIVE_VERSIONS_PER_MODEL:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Maximum number of active versions ({MAX_ACTIVE_VERSIONS_PER_MODEL}) reached for model {payload.modelId}. "
+                           f"Please deprecate an existing active version before activating this one."
+                )
+
+        # 1. Update DB first
+        postgres_data = {}
+
+        # Handle versionStatus separately - check payload directly to ensure we catch it
+        if payload.versionStatus is not None:
+            if isinstance(payload.versionStatus, VersionStatus):
+                postgres_data["version_status"] = payload.versionStatus
+            elif isinstance(payload.versionStatus, str):
+                postgres_data["version_status"] = VersionStatus(payload.versionStatus)
+            else:
+                postgres_data["version_status"] = payload.versionStatus
+            postgres_data["version_status_updated_at"] = datetime.now()
+            logger.info(f"Setting version_status to {postgres_data['version_status']} (type: {type(postgres_data['version_status'])}) from payload.versionStatus")
 
         for key, value in request_dict.items():
-            if key in model_fields and value is not None:
-                new_cache[key] = value
+            # Skip modelId and version (used only for filtering, not updated)
+            if key in ("modelId", "version"):
+                continue
 
-        new_cache["updatedOn"] = now_epoch
-    except Exception:
-        # Cache doesn't exist, fetch from DB and create cache entry
-        logger.info(f"Model {payload.modelId} not found in cache, fetching from DB to create cache entry")
-        db: AsyncSession = AppDatabase()
-        try:
-            stmt = select(Model).where(Model.model_id == payload.modelId)
-            result_db = await db.execute(stmt)
-            db_model = result_db.scalar()
+            # Skip versionStatus as we handle it above
+            if key == "versionStatus":
+                continue
+
+            # Skip None values for PATCH
+            if value is None:
+                continue
+
+            # Custom snake_case mapping
+            if key == "refUrl":
+                postgres_data["ref_url"] = value
+            elif key == "inferenceEndPoint":
+                postgres_data["inference_endpoint"] = _json_safe(value)
+            elif key in ("task", "languages", "domain", "benchmarks", "submitter"):
+                postgres_data[key] = _json_safe(value)
+            else:
+                postgres_data[key] = value
+
+        postgres_data["updated_on"] = now_epoch
+        logger.info(f"Updating DB for model {payload.modelId} v{payload.version} with fields: {list(postgres_data.keys())}")
+        logger.debug(f"DB update data: {postgres_data}")
+
+        # 2. Repository update - filter by both model_id and version
+        result = await update_by_filter(
+            {"model_id": payload.modelId, "version": payload.version}, 
+            postgres_data
+        )
+        
+        if result == 0:
+            logger.error(f"update_model: No records were updated for model {payload.modelId} v{payload.version}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No records found or updated for model {payload.modelId} version {payload.version}"
+            )
+        
+        logger.info(f"update_model: Successfully updated {result} record(s) for model {payload.modelId} v{payload.version}")
             
-            if not db_model:
-                logger.warning(f"Model {payload.modelId} not found in DB")
-                return result
-            
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error updating model {payload.modelId} v{payload.version}")
+        raise
+    finally:
+        await db.close()
+
+    # 3. Update Redis cache
+    # Note: Cache key might need to include version for proper versioning support
+    # For now, we'll refresh from DB
+    db_cache: AsyncSession = AppDatabase()
+    try:
+        stmt = select(Model).where(
+            Model.model_id == payload.modelId,
+            Model.version == payload.version
+        )
+        result_db = await db_cache.execute(stmt)
+        db_model = result_db.scalar()
+        
+        if db_model:
             # Convert DB model to cache format
             new_cache = _json_safe({
                 "modelId": db_model.model_id,
@@ -299,32 +467,20 @@ async def update_model(payload: ModelUpdateRequest):
                 "submitter": db_model.submitter,
             })
             
-            # Apply updates to the fetched data
-            for key, value in request_dict.items():
-                if key != "modelId" and value is not None:
-                    # Map camelCase to snake_case for DB fields
-                    if key == "refUrl":
-                        new_cache["refUrl"] = value
-                    elif key == "inferenceEndPoint":
-                        new_cache["inferenceEndPoint"] = value
-                    else:
-                        new_cache[key] = value
-            
-            new_cache["updatedOn"] = now_epoch
-        except Exception as e:
-            logger.exception(f"Error fetching model from DB for cache: {e}")
-            return result
+            # Convert to Redis-safe format and save
+            try:
+                new_cache = model_redis_safe_payload(new_cache)
+                updated_cache = ModelCache(**new_cache)
+                updated_cache.save()
+                logger.info(f"Cache updated for model {payload.modelId} v{payload.version}")
+            except Exception as ce:
+                logger.warning(f"Failed to update cache for {payload.modelId} v{payload.version}: {ce}")
+    except Exception as e:
+        logger.exception(f"Error fetching model from DB for cache: {e}")
+    finally:
+        await db_cache.close()
 
-    # Convert to Redis-safe format and save
-    try:
-        new_cache = model_redis_safe_payload(new_cache)
-        updated_cache = ModelCache(**new_cache)
-        updated_cache.save()
-        logger.info(f"Cache updated for model {payload.modelId}")
-    except Exception as ce:
-        logger.warning(f"Failed to update cache for {payload.modelId}: {ce}")
-
-    logger.info(f"Model {payload.modelId} successfully updated.")
+    logger.info(f"Model {payload.modelId} v{payload.version} successfully updated.")
 
     return result
 
@@ -333,7 +489,11 @@ async def update_model(payload: ModelUpdateRequest):
 
 
 async def delete_model_by_uuid(id_str: str) -> int:
-    """Delete model by internal UUID (id)"""
+    """
+    Delete model by internal UUID (id).
+    
+    Model versions associated with published services are immutable and cannot be deleted.
+    """
 
     db: AsyncSession = AppDatabase()
 
@@ -354,6 +514,26 @@ async def delete_model_by_uuid(id_str: str) -> int:
             return 0
 
         model_id = model.model_id
+        model_version = model.version
+
+        # Check if model version is used by any published service (immutability check)
+        is_immutable, published_service_ids = await is_model_version_used_by_published_service(
+            model_id, model_version
+        )
+        if is_immutable:
+            logger.warning(
+                f"Cannot delete model {model_id} v{model_version}: "
+                f"Used by published services: {published_service_ids}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "kind": "ImmutableModelVersion",
+                    "message": f"Model version '{model_id}' v{model_version} cannot be deleted because it is "
+                               f"associated with {len(published_service_ids)} published service(s): {', '.join(published_service_ids)}. "
+                               f"Unpublish the service(s) first to delete this model version."
+                }
+            )
 
         # ---- Delete from Cache ----
         try:
@@ -382,15 +562,39 @@ async def delete_model_by_uuid(id_str: str) -> int:
 
 
 
-async def get_model_details(model_id: str) -> Dict[str, Any]:
-     
+async def get_model_details(model_id: str, version: str = None) -> Dict[str, Any]:
+    """
+    Get model details by model_id. If version is provided, returns that specific version.
+    If version is not provided, returns the latest ACTIVE version first, then falls back to
+    latest DEPRECATED version if no ACTIVE versions exist.
+    
+    Ordering priority:
+    1. ACTIVE versions first
+    2. Within same status, ordered by submitted_on descending (latest first)
+    """
     db: AsyncSession = AppDatabase()
     try:
-        result = await db.execute(select(Model).where(Model.model_id == model_id))
-        model = result.scalars().first()  # Get the first matching model
+        query = select(Model).where(Model.model_id == model_id)
+        if version:
+            # Specific version requested
+            query = query.where(Model.version == version)
+        else:
+            # No version specified - prioritize ACTIVE versions, then latest by submitted_on
+            # Use case() to prioritize ACTIVE (0) over DEPRECATED (1)
+            status_priority = case(
+                (Model.version_status == VersionStatus.ACTIVE, 0),
+                else_=1
+            )
+            query = query.order_by(
+                status_priority,  # ACTIVE first
+                desc(Model.submitted_on)  # Latest first within same status
+            )
+        
+        result = await db.execute(query)
+        model = result.scalars().first()
 
         if not model:
-            # Fallback:
+            # Fallback: try UUID
             try:
                 uuid = UUID(model_id)
                 model_result = await db.execute(select(Model).where(Model.id == uuid))
@@ -405,17 +609,17 @@ async def get_model_details(model_id: str) -> Dict[str, Any]:
             "modelId": model.model_id,
             "uuid": str(model.id),
             "name": model.name,
+            "version": model.version,
+            "versionStatus": model.version_status.value if model.version_status else None,
+            "versionStatusUpdatedAt": model.version_status_updated_at.isoformat() if model.version_status_updated_at else None,
             "description": model.description,
             "languages": model.languages or [],
             "domain": model.domain,
             "submitter": model.submitter,
             "license": model.license,
             "inferenceEndPoint": model.inference_endpoint,
-            "source": model.ref_url or "",  ## ask value for this field
+            "source": model.ref_url or "",
             "task": model.task,
-            "isPublished": model.is_published,
-            "publishedAt": datetime.fromtimestamp(model.published_at).isoformat() if model.published_at else None,
-            "unpublishedAt": datetime.fromtimestamp(model.unpublished_at).isoformat() if model.unpublished_at else None,
          }
      
     except Exception as e:
@@ -425,14 +629,44 @@ async def get_model_details(model_id: str) -> Dict[str, Any]:
          await db.close()
     
 
-async def list_all_models(task_type: TaskTypeEnum | None) -> List[Dict[str, Any]]:
-    """Fetch all model records from DB and convert to response format."""
+async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bool = True) -> List[Dict[str, Any]]:
+    """
+    Fetch all model records from DB and convert to response format.
+    
+    Args:
+        task_type: Optional filter by task type (asr, nmt, tts, etc.)
+        include_deprecated: If False, only returns ACTIVE versions. Defaults to True.
+    
+    Ordering:
+    1. By model_id (grouped together)
+    2. ACTIVE versions first within each model
+    3. Latest (by submitted_on) first within same status
+    """
 
     db: AsyncSession = AppDatabase()
     try:
+        # Prioritize ACTIVE versions
+        status_priority = case(
+            (Model.version_status == VersionStatus.ACTIVE, 0),
+            else_=1
+        )
+        
         query = select(Model)
+        
+        # Filter by task type if provided
         if task_type:
             query = query.where(Model.task['type'].astext == task_type.value)
+        
+        # Filter out deprecated versions if requested
+        if not include_deprecated:
+            query = query.where(Model.version_status == VersionStatus.ACTIVE)
+        
+        # Order by model_id, then ACTIVE first, then latest first
+        query = query.order_by(
+            Model.model_id,
+            status_priority,
+            desc(Model.submitted_on)
+        )
 
         result = await db.execute(query)
         models = result.scalars().all()
@@ -447,11 +681,22 @@ async def list_all_models(task_type: TaskTypeEnum | None) -> List[Dict[str, Any]
             data = item.__dict__.copy()
             data.pop("_sa_instance_state", None)
 
+            # Extract version_status - it's an enum, need to get its value
+            version_status = data.get("version_status")
+            version_status_value = version_status.value if version_status else None
+            
+            # Extract version_status_updated_at
+            version_status_updated_at = data.get("version_status_updated_at")
+            version_status_updated_at_str = version_status_updated_at.isoformat() if version_status_updated_at else None
+
             # Build response object
             result.append({
                 "modelId": str(data.get("model_id")),
                 "uuid": str(data.get("id")),
                 "name": data.get("name"),
+                "version": data.get("version"),
+                "versionStatus": version_status_value,
+                "versionStatusUpdatedAt": version_status_updated_at_str,
                 "description": data.get("description"),
                 "languages": data.get("languages") or [],
                 "domain": data.get("domain"),
@@ -460,9 +705,6 @@ async def list_all_models(task_type: TaskTypeEnum | None) -> List[Dict[str, Any]
                 "inferenceEndPoint": data.get("inference_endpoint"),
                 "source": data.get("ref_url"),
                 "task": data.get("task", {}),
-                "isPublished": data.get("is_published", {}),
-                "publishedAt": datetime.fromtimestamp(data.get("published_at", None)).isoformat() if data.get("published_at", None) else None ,
-                "unpublishedAt": datetime.fromtimestamp( data.get("unpublished_at", None)).isoformat() if  data.get("unpublished_at", None) else None,
             })
 
         return result
@@ -472,81 +714,6 @@ async def list_all_models(task_type: TaskTypeEnum | None) -> List[Dict[str, Any]
     finally:
         await db.close()
 
-
-async def publish_model(payload_modelId: str):
-    """
-    Publish a model by setting is_published to True and updating published_at timestamp.
-    """
-    db: AsyncSession = AppDatabase()
-    try:
-        stmt = select(Model).where(Model.model_id == payload_modelId)
-        result = await db.execute(stmt)
-        model = result.scalars().first()
-
-        if not model:
-            logger.warning(f"Model with ID {payload_modelId} not found for publish.")
-            return 0
-
-        now_epoch = int(time.time())
-
-        await db.execute(
-                update(Model)
-                .where(Model.model_id == payload_modelId)
-                .values(
-                    is_published=True,
-                    published_at=now_epoch,
-                    unpublished_at=None
-                )
-            )
-
-        await db.commit()
-        logger.info(f"Model {payload_modelId} published successfully.")
-
-        return 1
-
-    except Exception as e:
-        await db.rollback()
-        logger.exception("Error while publishing model.")
-        raise Exception("Publish failed due to internal DB error") from e
-    finally:
-        await db.close()
-    
-async def unpublish_model(payload_modelId: str):
-    """
-    Unpublish a model by setting is_published to False and updating unpublished_at timestamp.
-    """
-    db: AsyncSession = AppDatabase()
-    try:
-        stmt = select(Model).where(Model.model_id == payload_modelId)
-        result = await db.execute(stmt)
-        model = result.scalars().first()
-
-        if not model:
-            logger.warning(f"Model with ID {payload_modelId} not found for unpublish.")
-            return 0
-
-        now_epoch = int(time.time())
-
-        await db.execute(
-                update(Model)
-                .where(Model.model_id == payload_modelId)
-                .values(
-                    is_published=False,
-                    unpublished_at=now_epoch
-                )
-            )
-
-        await db.commit()
-        logger.info(f"Model {payload_modelId} unpublished successfully.")
-
-        return 1
-
-    except Exception as e:
-        await db.rollback()
-        logger.exception("Error while unpublishing model.")
-        raise Exception("Unpublish failed due to internal DB error") from e
-    finally:
-        await db.close()
 
 ####################################################### Service Functions #######################################################
 
@@ -567,21 +734,32 @@ async def save_service_to_db(payload: ServiceCreateRequest):
                 detail=f"Service with ID {payload.serviceId} already exists."
             )
         
-        # Check if associated model exists
-        result = await db.execute(select(Model).where(Model.model_id == payload.modelId))
+        # Check if associated model version exists
+        result = await db.execute(
+            select(Model).where(
+                Model.model_id == payload.modelId,
+                Model.version == payload.modelVersion
+            )
+        )
         model_exists = result.scalars().first()
         if not model_exists:
             raise HTTPException(
                 status_code=400,
-                detail=f"Model with ID {payload.modelId} does not exist, cannot create service."
+                detail=f"Model with ID {payload.modelId} and version {payload.modelVersion} does not exist, cannot create service."
             )
         
         payload_dict = _json_safe(payload.model_dump(by_alias=True))
 
         now_epoch = int(time.time())
-        payload_dict["publishedOn"] = now_epoch
+        
+        # Auto-generate publishedOn if not provided
+        if not payload_dict.get("publishedOn"):
+            payload_dict["publishedOn"] = now_epoch
 
-        # Create new service record
+        # Handle isPublished - default to False if not provided
+        is_published = payload_dict.get("isPublished", False)
+        published_at = int(time.time()) if is_published else None
+        
         new_service = Service(
             service_id=payload_dict.get("serviceId"),
             name=payload_dict.get("name"),
@@ -589,10 +767,13 @@ async def save_service_to_db(payload: ServiceCreateRequest):
             hardware_description=payload_dict.get("hardwareDescription"),
             published_on=payload_dict.get("publishedOn"),
             model_id=payload_dict.get("modelId"),
+            model_version=payload_dict.get("modelVersion"),
             endpoint=payload_dict.get("endpoint"),
             api_key=payload_dict.get("apiKey"),
             health_status=payload_dict.get("healthStatus", {}),
             benchmarks=payload_dict.get("benchmarks", []),
+            is_published=is_published,
+            published_at=published_at,
         )
         db.add(new_service)
         await db.commit()
@@ -649,32 +830,57 @@ async def update_service(request: ServiceUpdateRequest):
             db_update["api_key"] = request_dict["api_key"]
         if "modelId" in request_dict:
             db_update["model_id"] = request_dict["modelId"]
+        if "modelVersion" in request_dict:
+            db_update["model_version"] = request_dict["modelVersion"]
         if "healthStatus" in request_dict:
             db_update["health_status"] = _json_safe(request_dict["healthStatus"])
         if "benchmarks" in request_dict:
             db_update["benchmarks"] = _json_safe(request_dict["benchmarks"])
         # languagePair is not persisted on services table; skip
+        
+        # Handle isPublished - automatically set published_at/unpublished_at timestamps
+        if "isPublished" in request_dict:
+            is_published = request_dict["isPublished"]
+            db_update["is_published"] = is_published
+            now_epoch = int(time.time())
+            if is_published:
+                # Publishing: set published_at, clear unpublished_at
+                db_update["published_at"] = now_epoch
+                db_update["unpublished_at"] = None
+                logger.info(f"Service {request.serviceId} will be published")
+            else:
+                # Unpublishing: set unpublished_at, keep published_at
+                db_update["unpublished_at"] = now_epoch
+                logger.info(f"Service {request.serviceId} will be unpublished")
 
-        if not db_update:
-            logger.warning("No valid update fields provided for service update")
-            return 0
-
-        # 2. Update DB
+        # 2. First check if service exists in DB
         stmt_select = select(Service).where(Service.service_id == request.serviceId)
         result = await db.execute(stmt_select)
         db_service = result.scalars().first()
 
         if db_service is None:
             logger.warning(f"No DB record found for service {request.serviceId}")
-            return 0
+            return 0  # Service not found
+
+        if not db_update:
+            logger.warning("No valid update fields provided for service update. Valid fields: name, serviceDescription, hardwareDescription, endpoint, api_key, modelId, modelVersion, healthStatus, benchmarks, isPublished")
+            return -1  # No valid fields provided
         
-        result_model = await db.execute(select(Model).where(Model.model_id == request.modelId))
-        model_exists = result_model.scalars().first()
-        if not model_exists:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Model with ID {request.modelId} does not exist, cannot update service."
+        # Validate model exists only if modelId is being updated
+        if request.modelId is not None:
+            model_version_to_check = request_dict.get("modelVersion") or db_service.model_version
+            result_model = await db.execute(
+                select(Model).where(
+                    Model.model_id == request.modelId,
+                    Model.version == model_version_to_check
+                )
             )
+            model_exists = result_model.scalars().first()
+            if not model_exists:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Model with ID {request.modelId} and version {model_version_to_check} does not exist, cannot update service."
+                )
         
         stmt_update = (
             update(Service)
@@ -841,13 +1047,24 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
             "api_key": service.api_key,
             "healthStatus": service.health_status,
             "benchmarks": service.benchmarks,
+            "isPublished": service.is_published,
+            "publishedAt": datetime.fromtimestamp(service.published_at).isoformat() if service.published_at else None,
+            "unpublishedAt": datetime.fromtimestamp(service.unpublished_at).isoformat() if service.unpublished_at else None,
         }
 
-        result = await db.execute(select(Model).where(Model.model_id == service.model_id))
+        result = await db.execute(
+            select(Model).where(
+                Model.model_id == service.model_id,
+                Model.version == service.model_version
+            )
+        )
         model = result.scalars().first()
 
         if not model:
-            raise HTTPException(status_code=404, detail=f"Model with ID {service.model_id} does not exist")
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Model with ID {service.model_id} and version {service.model_version} does not exist"
+            )
 
         # Convert model SQLAlchemy → request format
         model_payload = ModelCreateRequest(
@@ -921,16 +1138,38 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
 
 
 
-async def list_all_services(task_type: TaskTypeEnum | None) -> List[Dict[str, Any]]:
-    """Fetch all service records from DB and convert to response format."""
+async def list_all_services(
+    task_type: TaskTypeEnum | None, 
+    is_published: bool | None = None
+) -> List[Dict[str, Any]]:
+    """
+    Fetch all service records from DB and convert to response format.
+    
+    Args:
+        task_type: Optional filter by task type (asr, nmt, tts, etc.)
+        is_published: Optional filter by publish status. 
+                      True = only published services, 
+                      False = only unpublished services, 
+                      None = all services (default)
+    """
 
     db: AsyncSession = AppDatabase()
 
     try:
-        query = select(Service, Model).join(Model, Model.model_id == Service.model_id)
+        query = select(Service, Model).join(
+            Model, 
+            and_(
+                Model.model_id == Service.model_id,
+                Model.version == Service.model_version
+            )
+        )
 
         if task_type:
             query = query.where(Model.task['type'].astext == task_type.value)
+        
+        # Filter by publish status if provided
+        if is_published is not None:
+            query = query.where(Service.is_published == is_published)
 
         try:
             result = await db.execute(query)
@@ -966,10 +1205,17 @@ async def list_all_services(task_type: TaskTypeEnum | None) -> List[Dict[str, An
                     endpoint=getattr(service, "endpoint", None),
                     healthStatus=getattr(service, "health_status", None),
                     benchmarks=getattr(service, "benchmarks", None),
+                    # Publish status fields
+                    isPublished=getattr(service, "is_published", False),
+                    publishedAt=datetime.fromtimestamp(service.published_at).isoformat() if service.published_at else None,
+                    unpublishedAt=datetime.fromtimestamp(service.unpublished_at).isoformat() if service.unpublished_at else None,
 
                     # From MODEL table
                     task=getattr(model, "task", {}) if model else {},
-                    languages=getattr(model, "languages", []) if model else []
+                    languages=getattr(model, "languages", []) if model else [],
+                    # Model version info
+                    modelVersion=service.model_version,
+                    versionStatus=model.version_status.value if model and model.version_status else None
                 )
             )
 
@@ -1060,5 +1306,82 @@ async def update_service_health(payload: ServiceHeartbeatRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"kind": "DBError", "message": "Service health update not successful"}
         ) from e
+    finally:
+        await db.close()
+
+
+async def publish_service(service_id: str):
+    """
+    Publish a service by setting is_published to True and updating published_at timestamp.
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        stmt = select(Service).where(Service.service_id == service_id)
+        result = await db.execute(stmt)
+        service = result.scalars().first()
+
+        if not service:
+            logger.warning(f"Service with ID {service_id} not found for publish.")
+            return 0
+
+        now_epoch = int(time.time())
+
+        await db.execute(
+            update(Service)
+            .where(Service.service_id == service_id)
+            .values(
+                is_published=True,
+                published_at=now_epoch,
+                unpublished_at=None
+            )
+        )
+
+        await db.commit()
+        logger.info(f"Service {service_id} published successfully.")
+
+        return 1
+
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Error while publishing service.")
+        raise Exception("Publish failed due to internal DB error") from e
+    finally:
+        await db.close()
+
+
+async def unpublish_service(service_id: str):
+    """
+    Unpublish a service by setting is_published to False and updating unpublished_at timestamp.
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        stmt = select(Service).where(Service.service_id == service_id)
+        result = await db.execute(stmt)
+        service = result.scalars().first()
+
+        if not service:
+            logger.warning(f"Service with ID {service_id} not found for unpublish.")
+            return 0
+
+        now_epoch = int(time.time())
+
+        await db.execute(
+            update(Service)
+            .where(Service.service_id == service_id)
+            .values(
+                is_published=False,
+                unpublished_at=now_epoch
+            )
+        )
+
+        await db.commit()
+        logger.info(f"Service {service_id} unpublished successfully.")
+
+        return 1
+
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Error while unpublishing service.")
+        raise Exception("Unpublish failed due to internal DB error") from e
     finally:
         await db.close()
