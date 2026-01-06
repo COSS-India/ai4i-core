@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import redis.asyncio as redis
+import redis as redis_sync  # For synchronous Redis client for middleware
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -23,6 +24,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
@@ -38,6 +40,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Observability plugin (optional)
+try:
+    from ai4icore_observability import ObservabilityPlugin, PluginConfig
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    OBSERVABILITY_AVAILABLE = False
+    logger.warning("AI4ICore Observability Plugin not available - continuing without it")
+
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
@@ -48,8 +58,8 @@ DATABASE_URL = os.getenv(
     "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db",
 )
 
-# Default to Dhruva NER Triton endpoint provided by user
-TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "65.1.35.3:8300")
+# NOTE: Triton endpoint/model MUST come from Model Management for inference.
+# No environment variable fallback - all resolution via Model Management database.
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
 
 redis_client: Optional[redis.Redis] = None
@@ -125,9 +135,11 @@ async def lifespan(app: FastAPI):
 
         logger.info("Testing PostgreSQL connection...")
         try:
-            async with asyncio.timeout(60):
+            # Use asyncio.wait_for for Python 3.10 compatibility
+            async def test_connection():
                 async with db_engine.begin() as conn:
                     await conn.execute(text("SELECT 1"))
+            await asyncio.wait_for(test_connection(), timeout=60.0)
         except asyncio.TimeoutError:
             raise Exception("PostgreSQL connection timeout after 60 seconds")
 
@@ -148,7 +160,7 @@ async def lifespan(app: FastAPI):
     app.state.redis_client = redis_client
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
-    app.state.triton_endpoint = TRITON_ENDPOINT
+    # Triton endpoint/model resolved via Model Management middleware - no hardcoded fallback
     app.state.triton_api_key = TRITON_API_KEY
 
     # Service registry
@@ -233,17 +245,66 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Observability
-config = PluginConfig.from_env()
-config.enabled = True
-if not config.customers:
-    config.customers = []
-if not config.apps:
-    config.apps = ["ner"]
+# Observability (optional)
+if OBSERVABILITY_AVAILABLE:
+    try:
+        config = PluginConfig.from_env()
+        config.enabled = True
+        if not config.customers:
+            config.customers = []
+        if not config.apps:
+            config.apps = ["ner"]
 
-plugin = ObservabilityPlugin(config)
-plugin.register_plugin(app)
-logger.info("AI4ICore Observability Plugin initialized for NER service")
+        observability_plugin = ObservabilityPlugin(config)
+        observability_plugin.register_plugin(app)
+        logger.info("AI4ICore Observability Plugin initialized for NER service")
+    except Exception as e:
+        logger.warning(f"Failed to initialize Observability Plugin: {e}")
+
+# Initialize Redis client early for middleware (synchronous for Model Management Plugin)
+redis_client_sync = None
+try:
+    redis_host = os.getenv("REDIS_HOST", "redis")
+    redis_port = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
+    redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+    
+    redis_client_sync = redis_sync.Redis(
+        host=redis_host,
+        port=redis_port,
+        password=redis_password,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        retry_on_timeout=True
+    )
+    
+    # Test Redis connection (synchronous ping)
+    redis_client_sync.ping()
+    logger.info("Redis client created for middleware (connection tested)")
+except Exception as e:
+    logger.warning(f"Redis connection failed for middleware: {e}")
+    redis_client_sync = None
+
+# Model Management Plugin - single source of truth for Triton endpoint/model (no env fallback)
+# MUST be registered BEFORE app starts (before other middleware) to avoid "Cannot add middleware after application has started" error
+try:
+    mm_config = ModelManagementConfig(
+        model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
+        model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
+        cache_ttl_seconds=300,
+        triton_endpoint_cache_ttl=300,
+        # Explicitly disable default Triton fallback – Model Management must resolve everything
+        default_triton_endpoint="",
+        default_triton_api_key=TRITON_API_KEY,
+        middleware_enabled=True,
+        middleware_paths=["/api/v1/ner"],
+        request_timeout=10.0,
+    )
+    model_mgmt_plugin = ModelManagementPlugin(config=mm_config)
+    model_mgmt_plugin.register_plugin(app, redis_client=redis_client_sync)
+    logger.info("✅ Model Management Plugin initialized for NER service")
+except Exception as e:
+    logger.warning(f"Failed to initialize Model Management Plugin: {e}")
 
 # CORS
 app.add_middleware(

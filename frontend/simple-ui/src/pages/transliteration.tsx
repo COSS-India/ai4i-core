@@ -66,10 +66,25 @@ const TransliterationPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      setError(err.message || "Failed to perform transliteration");
+      // Prioritize API error message from response
+      let errorMessage = "Failed to perform transliteration";
+      
+      if (err?.response?.data?.detail?.message) {
+        errorMessage = err.response.data.detail.message;
+      } else if (err?.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err?.response?.data?.detail) {
+        if (typeof err.response.data.detail === 'string') {
+          errorMessage = err.response.data.detail;
+        }
+      } else if (err?.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
       toast({
         title: "Error",
-        description: err.message || "Failed to perform transliteration",
+        description: errorMessage,
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -97,31 +112,27 @@ const TransliterationPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <Grid
-          templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
-          gap={8}
-          w="full"
-          maxW="1400px"
-          mx="auto"
-        >
-          {/* Left Column - Service Details */}
-          <GridItem>
-            <VStack spacing={6} align="stretch">
-              <Heading size="lg" color="gray.800">
-                Transliteration Service
-              </Heading>
-              <Text color="gray.600" fontSize="md">
-                Convert text from one script to another while keeping pronunciation intact
-              </Text>
-            </VStack>
-          </GridItem>
+        <VStack spacing={8} w="full">
+          {/* Page Header */}
+          <Box textAlign="center">
+            <Heading size="xl" color="gray.800" mb={2}>
+              Transliteration Service
+            </Heading>
+            <Text color="gray.600" fontSize="lg">
+              Convert text from one script to another while keeping pronunciation intact
+            </Text>
+          </Box>
 
-          {/* Right Column - Try it out here! */}
-          <GridItem>
-            <VStack spacing={6} align="stretch">
-              <Heading size="md" color="gray.800">
-                Try it out here!
-              </Heading>
+          <Grid
+            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
+            gap={8}
+            w="full"
+            maxW="1200px"
+            mx="auto"
+          >
+            {/* Configuration Panel */}
+            <GridItem>
+              <VStack spacing={6} align="stretch">
 
               <HStack spacing={4}>
                 <FormControl>
@@ -175,116 +186,134 @@ const TransliterationPage: React.FC = () => {
                 </FormControl>
               </HStack>
 
-              {/* Metrics Box */}
-              {fetched && (
-                <Box
-                  p={4}
-                  bg="orange.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="orange.200"
-                >
-                  <HStack spacing={6}>
-                    <VStack align="start" spacing={0}>
-                      <Text fontSize="xs" color="gray.600">
-                        Response Time
-                      </Text>
-                      <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                        {responseTime.toFixed(2)} seconds
-                      </Text>
-                    </VStack>
-                  </HStack>
-                </Box>
-              )}
+                <FormControl>
+                  <FormLabel fontSize="sm" fontWeight="semibold">
+                    Enter text to transliterate:
+                  </FormLabel>
+                  <Textarea
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    placeholder="Enter text to transliterate..."
+                    rows={6}
+                    isDisabled={fetching}
+                    bg="white"
+                    borderColor="gray.300"
+                  />
+                </FormControl>
 
-              <FormControl>
-                <FormLabel fontSize="sm" fontWeight="semibold">
-                  Enter text to transliterate:
-                </FormLabel>
-                <Textarea
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  placeholder="Enter text to transliterate..."
-                  rows={6}
-                  isDisabled={fetching}
-                  bg="white"
-                  borderColor="gray.300"
-                />
-              </FormControl>
-
-              {fetching && (
-                <Box>
-                  <Text mb={2} fontSize="sm" color="gray.600">
-                    Processing text...
-                  </Text>
-                  <Progress size="xs" isIndeterminate colorScheme="cyan" />
-                </Box>
-              )}
-
-              {error && (
-                <Box
-                  p={4}
-                  bg="red.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="red.200"
-                >
-                  <Text color="red.600" fontSize="sm">
-                    {error}
-                  </Text>
-                </Box>
-              )}
-
-              {fetched && result && result.output && result.output.length > 0 && (
-                <Box
-                  p={4}
-                  bg="blue.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="blue.200"
-                >
-                  <Text fontSize="sm" fontWeight="semibold" mb={2} color="gray.700">
-                    Transliterated Text:
-                  </Text>
-                  {result.output.map((item: any, index: number) => (
-                    <Box key={index}>
-                      {item.source && (
-                        <Text fontSize="xs" color="gray.600" mb={1}>
-                          Source: {item.source}
-                        </Text>
-                      )}
-                      <Text fontSize="md" fontWeight="semibold" color="blue.700">
-                        {item.target}
-                      </Text>
-                    </Box>
-                  ))}
-                </Box>
-              )}
-
-              <Button
-                colorScheme="orange"
-                onClick={handleProcess}
-                isLoading={fetching}
-                loadingText="Processing..."
-                size="md"
-                w="full"
-              >
-                Transliterate
-              </Button>
-
-              {fetched && (
                 <Button
-                  onClick={clearResults}
-                  variant="outline"
-                  size="sm"
+                  colorScheme="orange"
+                  onClick={handleProcess}
+                  isLoading={fetching}
+                  loadingText="Processing..."
+                  size="md"
                   w="full"
                 >
-                  Clear Results
+                  Transliterate
                 </Button>
-              )}
-            </VStack>
-          </GridItem>
-        </Grid>
+              </VStack>
+            </GridItem>
+
+            {/* Results Panel */}
+            <GridItem>
+              <VStack spacing={6} align="stretch">
+                {/* Progress Indicator */}
+                {fetching && (
+                  <Box>
+                    <Text mb={2} fontSize="sm" color="gray.600">
+                      Processing text...
+                    </Text>
+                    <Progress size="xs" isIndeterminate colorScheme="orange" />
+                  </Box>
+                )}
+
+                {/* Error Display */}
+                {error && (
+                  <Box
+                    p={4}
+                    bg="red.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="red.200"
+                  >
+                    <Text color="red.600" fontSize="sm">
+                      {error}
+                    </Text>
+                  </Box>
+                )}
+
+                {/* Metrics Box */}
+                {fetched && (
+                  <Box
+                    p={4}
+                    bg="orange.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="orange.200"
+                  >
+                    <HStack spacing={6}>
+                      <VStack align="start" spacing={0}>
+                        <Text fontSize="xs" color="gray.600">
+                          Response Time
+                        </Text>
+                        <Text fontSize="lg" fontWeight="bold" color="gray.800">
+                          {responseTime.toFixed(2)} seconds
+                        </Text>
+                      </VStack>
+                    </HStack>
+                  </Box>
+                )}
+
+                {/* Transliteration Results */}
+                {fetched && result && result.output && result.output.length > 0 && (
+                  <>
+                    <Box
+                      p={4}
+                      bg="blue.50"
+                      borderRadius="md"
+                      border="1px"
+                      borderColor="blue.200"
+                    >
+                      <Text fontSize="sm" fontWeight="semibold" mb={2} color="gray.700">
+                        Transliterated Text:
+                      </Text>
+                      {result.output.map((item: any, index: number) => (
+                        <Box key={index}>
+                          {item.source && (
+                            <Text fontSize="xs" color="gray.600" mb={1}>
+                              Source: {item.source}
+                            </Text>
+                          )}
+                          <Text fontSize="md" fontWeight="semibold" color="blue.700">
+                            {item.target}
+                          </Text>
+                        </Box>
+                      ))}
+                    </Box>
+
+                    {/* Clear Results Button */}
+                    <Box textAlign="center">
+                      <button
+                        onClick={clearResults}
+                        style={{
+                          padding: "8px 16px",
+                          backgroundColor: "#f7fafc",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: "6px",
+                          cursor: "pointer",
+                          fontSize: "14px",
+                          color: "#4a5568",
+                        }}
+                      >
+                        Clear Results
+                      </button>
+                    </Box>
+                  </>
+                )}
+              </VStack>
+            </GridItem>
+          </Grid>
+        </VStack>
       </ContentLayout>
     </>
   );

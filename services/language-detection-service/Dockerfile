@@ -5,23 +5,27 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     curl \
     libpq-dev \
-    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements (context-relative)
-COPY requirements.txt .
-
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-# Copy vendored observability plugin
+# Copy AI4ICore Observability Plugin
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+
+# Copy AI4ICore Model Management Plugin
+COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
+COPY services/language-detection-service/requirements.txt .
+
+RUN pip install --upgrade pip setuptools wheel
+
+# Install Python deps
+RUN pip install --no-cache-dir --user -r requirements.txt
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
 
 
 # -----------------------------
@@ -31,39 +35,35 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Runtime dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libpq5 \
-    libssl3 \
-    libnss3 \
-    libstdc++6 \
     ca-certificates \
-    iputils-ping \
-    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root user
 RUN useradd --create-home --shell /bin/bash app
 
-# Copy Python deps from builder
+# Copy Python site-packages
 COPY --from=builder /root/.local /home/app/.local
-ENV PATH=/home/app/.local/bin:$PATH
 
-# Copy observability plugin
+ENV PATH="/home/app/.local/bin:$PATH"
+ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
+
+# Copy AI4ICore Model Management Plugin
+COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
+# Copy AI4ICore Observability Plugin
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 
-# Copy application source (ENTIRE CONTEXT)
-COPY . .
+# Copy app code
+COPY services/language-detection-service /app
 
-RUN chown -R app:app /app /home/app/.local \
-    && chmod +x /home/app/.local/bin/*
-
+RUN chown -R app:app /app
 USER app
 
 EXPOSE 8090
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD curl -f http://localhost:8090/health || exit 1
 
 ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8090"]
