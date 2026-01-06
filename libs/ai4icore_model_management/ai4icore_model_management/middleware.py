@@ -139,28 +139,30 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
     def _extract_triton_metadata(self, service_info: ServiceInfo, service_id: str = None) -> Tuple[str, str]:
         """Extract normalized Triton endpoint and model name from service info"""
         endpoint = service_info.endpoint.replace("http://", "").replace("https://", "") if service_info.endpoint else ""
-        model_name = service_info.triton_model
+        model_name = None
 
-        # Try to infer model name from model inference endpoint metadata
+        # Try to infer model name from model inference endpoint metadata (highest priority)
         if service_info.model_inference_endpoint:
-            # Check top level first
-            model_name = (
-                service_info.model_inference_endpoint.get("model_name")
-                or service_info.model_inference_endpoint.get("modelName")
-                or service_info.model_inference_endpoint.get("model")
-                or model_name
-            )
+            # Check inside schema FIRST (most specific location for Triton model name)
+            schema = service_info.model_inference_endpoint.get("schema", {})
+            if isinstance(schema, dict):
+                model_name = (
+                    schema.get("model_name")
+                    or schema.get("modelName")
+                    or schema.get("name")
+                )
             
-            # If not found at top level, check inside schema (common structure)
-            if not model_name or model_name == "unknown":
-                schema = service_info.model_inference_endpoint.get("schema", {})
-                if isinstance(schema, dict):
-                    model_name = (
-                        schema.get("model_name")
-                        or schema.get("modelName")
-                        or schema.get("name")
-                        or model_name
-                    )
+            # If not in schema, check top level of inferenceEndPoint
+            if not model_name:
+                model_name = (
+                    service_info.model_inference_endpoint.get("model_name")
+                    or service_info.model_inference_endpoint.get("modelName")
+                    or service_info.model_inference_endpoint.get("model")
+                )
+        
+        # Fall back to triton_model from task.type (least specific)
+        if not model_name:
+            model_name = service_info.triton_model
         
         # If still no model name, try to extract from service_id
         if not model_name and service_id:
