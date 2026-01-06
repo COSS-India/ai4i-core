@@ -29,8 +29,10 @@ def add_error_handlers(app: FastAPI) -> None:
         request: Request, exc: AuthenticationError
     ):  # type: ignore[unused-argument]
         """Handle authentication errors."""
+        # Use message attribute if available, otherwise use detail or str(exc)
+        message = getattr(exc, "message", None) or getattr(exc, "detail", None) or str(exc)
         error_detail = ErrorDetail(
-            message=exc.message,
+            message=message,
             code="AUTHENTICATION_ERROR",
             timestamp=time.time(),
         )
@@ -44,8 +46,10 @@ def add_error_handlers(app: FastAPI) -> None:
         request: Request, exc: AuthorizationError
     ):  # type: ignore[unused-argument]
         """Handle authorization errors."""
+        # Use message attribute if available, otherwise use detail or str(exc)
+        message = getattr(exc, "message", None) or getattr(exc, "detail", None) or str(exc)
         error_detail = ErrorDetail(
-            message=exc.message,
+            message=message,
             code="AUTHORIZATION_ERROR",
             timestamp=time.time(),
         )

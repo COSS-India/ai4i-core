@@ -4,7 +4,6 @@ from models.model_update import ModelUpdateRequest
 from models.service_create import ServiceCreateRequest
 from models.service_update import ServiceUpdateRequest
 from models.service_health import ServiceHeartbeatRequest
-from models.model_view import ModelViewRequest
 from db_operations import (
     save_model_to_db , 
     update_model , 
@@ -12,9 +11,7 @@ from db_operations import (
     save_service_to_db,
     update_service,
     delete_service_by_uuid,
-    update_service_health,
-    publish_model,
-    unpublish_model
+    update_service_health
     )
 from logger import logger
 
@@ -50,6 +47,8 @@ async def create_model_request(payload: ModelCreateRequest):
 @router_admin.patch("/update/model", response_model=str)
 async def update_model_request(payload: ModelUpdateRequest):
     try:
+        # Log the incoming payload to debug
+        logger.info(f"Received update request - modelId: {payload.modelId}, version: {payload.version}, versionStatus: {payload.versionStatus}")
         result = await update_model(payload)
 
         if result == 0:
@@ -94,50 +93,6 @@ async def delete_model_request(id: str):
         )
 
 
-@router_admin.post("/publish/model", response_model=str)
-async def publish_model_request(payload: ModelViewRequest):
-    
-    try: 
-        result = await publish_model(payload.modelId)
-
-        if result == 0:
-            raise HTTPException(status_code=404, detail="Model not found for publish")
-        
-        return f"Model '{payload.modelId}' published successfully."
-    
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Error while updating model published status")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"kind": "DBError", "message": "Error updating model status as published"}
-        )
-    
-
-@router_admin.post("/unpublish/model", response_model=str)
-async def unpublish_model_request(payload: ModelViewRequest):
-    
-    try: 
-        result = await unpublish_model(payload.modelId)
-
-        if result == 0:
-            raise HTTPException(status_code=404, detail="Model not found for unpublish")
-        
-        return f"Model '{payload.modelId}' unpublished successfully."
-    
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Error while updating model unpublished status")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"kind": "DBError", "message": "Error updating model status as unpublished"}
-        )
-
-
-
-
 #################################################### Service apis ####################################################
 
 
@@ -171,6 +126,13 @@ async def update_service_request(payload: ServiceUpdateRequest):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Service not found in database"
+            )
+        
+        if result == -1:
+            logger.warning(f"No valid update fields provided for service {payload.serviceId}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No valid update fields provided. Valid fields: name, serviceDescription, hardwareDescription, endpoint, modelId, modelVersion, healthStatus, benchmarks, isPublished"
             )
 
         return f"Service '{payload.serviceId}' updated successfully."
@@ -230,5 +192,3 @@ async def update_service_health_request(payload: ServiceHeartbeatRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"kind": "DBError", "message": "Service health status update not successful"}
         )
-    
-
