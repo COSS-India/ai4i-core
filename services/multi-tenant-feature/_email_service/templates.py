@@ -12,6 +12,9 @@ Temporary Password: {password}
 Login here:
 {login_url}
 
+
+copy and paste the link in your browser to verify your email address
+
 Please change your password after first login.
 """.strip()
 
