@@ -8,9 +8,10 @@ from models.asr_request import AudioInput
 
 logger = logging.getLogger(__name__)
 
-# Supported languages
+# Supported languages (Indic languages only - Triton model doesn't support English)
+# Note: The Triton asr_greedy_decoder model only supports Indic languages
 SUPPORTED_LANGUAGES = [
-    "en", "hi", "ta", "te", "kn", "ml", "bn", "gu", "mr", "pa", 
+    "hi", "ta", "te", "kn", "ml", "bn", "gu", "mr", "pa", 
     "or", "as", "ur", "sa", "ks", "ne", "sd", "kok", "doi", "mai", 
     "brx", "mni"
 ]

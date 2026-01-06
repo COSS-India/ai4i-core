@@ -12,8 +12,6 @@ from db_operations import (
     list_all_models,
     save_model_to_db,
     update_model,
-    publish_model,
-    unpublish_model
 )
 from logger import logger
 from typing import List, Union, Optional
@@ -27,7 +25,10 @@ router_restful = APIRouter(
 
 
 @router_restful.get("", response_model=List[ModelViewResponse])
-async def list_models_restful(task_type: Union[str, None] = Query(None)):
+async def list_models_restful(
+    task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
+    include_deprecated: bool = Query(True, description="Include deprecated versions. Set to false to show only ACTIVE versions.")
+):
     """List all models - RESTful endpoint"""
     try:
         if not task_type or task_type.lower() == "none":
@@ -35,7 +36,7 @@ async def list_models_restful(task_type: Union[str, None] = Query(None)):
         else:
             task_type_enum = TaskTypeEnum(task_type)
 
-        data = await list_all_models(task_type_enum)
+        data = await list_all_models(task_type_enum, include_deprecated=include_deprecated)
         if data is None:
             return []  # Return empty list instead of 404
 
@@ -51,10 +52,10 @@ async def list_models_restful(task_type: Union[str, None] = Query(None)):
 
 
 @router_restful.get("/{model_id}", response_model=ModelViewResponse)
-async def get_model_by_id_restful(model_id: str):
-    """Get model by ID - RESTful endpoint"""
+async def get_model_by_id_restful(model_id: str, version: Optional[str] = Query(None, description="Optional version to get specific version")):
+    """Get model by ID - RESTful endpoint. If version is provided, returns that specific version. Otherwise returns the first matching model."""
     try:
-        data = await get_model_details(model_id)
+        data = await get_model_details(model_id, version=version)
         if not data:
             raise HTTPException(status_code=404, detail="Model not found")
         return data
@@ -100,40 +101,5 @@ async def update_model_restful(payload: ModelUpdateRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"kind": "DBError", "message": "Model update not successful"}
         )
-
-
-@router_restful.post("/publish", response_model=str)
-async def publish_model_restful(model_id: str = Query(..., alias="model_id")):
-    """Publish a model - RESTful endpoint"""
-    try:
-        await publish_model(model_id)
-        logger.info(f"Model '{model_id}' published successfully.")
-        return f"Model '{model_id}' published successfully."
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Error while publishing model.")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"kind": "DBError", "message": "Model publish not successful"}
-        )
-
-
-@router_restful.post("/unpublish", response_model=str)
-async def unpublish_model_restful(model_id: str = Query(..., alias="model_id")):
-    """Unpublish a model - RESTful endpoint"""
-    try:
-        await unpublish_model(model_id)
-        logger.info(f"Model '{model_id}' unpublished successfully.")
-        return f"Model '{model_id}' unpublished successfully."
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Error while unpublishing model.")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"kind": "DBError", "message": "Model unpublish not successful"}
-        )
-
 
 

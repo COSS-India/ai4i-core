@@ -748,6 +748,7 @@ services:
       - AUTH_ENABLED=${MODEL_MANAGEMENT_AUTH_ENABLED:-true}
       - REQUIRE_API_KEY=${MODEL_MANAGEMENT_REQUIRE_API_KEY:-true}
       - ALLOW_ANONYMOUS_ACCESS=${MODEL_MANAGEMENT_ALLOW_ANONYMOUS_ACCESS:-false}
+      - MAX_ACTIVE_VERSIONS_PER_MODEL=${MAX_ACTIVE_VERSIONS_PER_MODEL:-5}
     depends_on:
       postgres:
         condition: service_healthy
@@ -757,6 +758,29 @@ services:
       microservices-network:
         aliases:
           - model-management-service
+    restart: unless-stopped
+
+  
+  multi-tenant-service:
+    build:
+      context: ./services/multi-tenant-feature
+      dockerfile: Dockerfile
+    container_name: ai4v-multi-tenant-service
+    ports:
+      - "8100:8001"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/multi-tenant-feature/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      microservices-network:
+        aliases:
+          - multi-tenant-service
     restart: unless-stopped
 
   transliteration-service:
