@@ -760,6 +760,29 @@ services:
           - model-management-service
     restart: unless-stopped
 
+  
+  multi-tenant-service:
+    build:
+      context: ./services/multi-tenant-feature
+      dockerfile: Dockerfile
+    container_name: ai4v-multi-tenant-service
+    ports:
+      - "8100:8001"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/multi-tenant-feature/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      microservices-network:
+        aliases:
+          - multi-tenant-service
+    restart: unless-stopped
+
   transliteration-service:
     build:
       context: .
