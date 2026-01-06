@@ -282,8 +282,8 @@ export const usePipeline = () => {
               console.warn('processRecordedAudioRef not set, audio blob saved but not processed');
             }
           };
-          reader.onerror = (error) => {
-            console.error('FileReader error:', error);
+          reader.onerror = (event) => {
+            console.error('FileReader error:', event);
             toast({
               title: 'Recording Error',
               description: 'Failed to process recording.',
@@ -527,9 +527,26 @@ export const usePipeline = () => {
     } catch (error: any) {
       console.error('Pipeline error:', error);
       
+      // Extract error message safely - handle both string and object formats
+      let errorMessage = 'Failed to execute pipeline';
+      if (error?.response?.data?.detail) {
+        const detail = error.response.data.detail;
+        if (typeof detail === 'string') {
+          errorMessage = detail;
+        } else if (detail?.message) {
+          errorMessage = detail.message;
+        } else if (detail?.error) {
+          errorMessage = typeof detail.error === 'string' ? detail.error : detail.error?.message || 'Pipeline execution failed';
+        } else {
+          errorMessage = JSON.stringify(detail);
+        }
+      } else if (error?.message) {
+        errorMessage = error.message;
+      }
+      
       toast({
         title: 'Pipeline Failed',
-        description: error.response?.data?.detail || error.message || 'Failed to execute pipeline',
+        description: errorMessage,
         status: 'error',
         duration: 5000,
         isClosable: true,

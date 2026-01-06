@@ -26,15 +26,19 @@ class TritonInferenceError(Exception):
 class TritonClient:
     """Triton Inference Server client for Speaker Diarization operations."""
 
-    def __init__(self, triton_url: str, api_key: Optional[str] = None, timeout: float = 300.0):
+    def __init__(self, triton_url: str, api_key: Optional[str] = None, timeout: float = 300.0, model_name: Optional[str] = None):
         """
         :param triton_url: Triton server URL (host:port or http://host:port).
         :param api_key: Optional Bearer token for Authorization header.
         :param timeout: Request timeout in seconds (default: 300.0).
+        :param model_name: Triton model name (REQUIRED - resolved via Model Management).
         """
+        if not model_name:
+            raise ValueError("model_name is required and must be resolved via Model Management")
         self.triton_url = self._normalize_url(triton_url)
         self.api_key = api_key
         self.timeout = timeout
+        self.model_name = model_name
         self._client: Optional[http_client.InferenceServerClient] = None
 
     @staticmethod
@@ -136,7 +140,7 @@ class TritonClient:
 
         try:
             response = self.client.infer(
-                model_name="speaker_diarization",
+                model_name=self.model_name,
                 inputs=inputs,
                 outputs=outputs,
                 headers=headers or None,

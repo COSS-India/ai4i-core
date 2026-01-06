@@ -31,6 +31,7 @@ from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
 # Configure logging
 logging.basicConfig(
@@ -101,37 +102,50 @@ async def lifespan(app: FastAPI):
             await conn.execute(text("SELECT 1"))
         logger.info("PostgreSQL connection established successfully")
         
-        # Initialize streaming service
+        # NOTE: Triton endpoint/model MUST come from Model Management for inference.
+        # No environment variable fallback - all resolution via Model Management database.
+        TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
+        TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT", "300.0"))
+        
+        # Store Triton config in app state (for use by routers after Model Management resolution)
+        app.state.triton_api_key = TRITON_API_KEY
+        app.state.triton_timeout = TRITON_TIMEOUT
+        
+        # Initialize streaming service (optional - requires Model Management serviceId)
         global streaming_service
         try:
             # Create dependencies
             audio_service = AudioService()
-            triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-            # Strip http:// or https:// scheme from URL
-            if triton_url.startswith(('http://', 'https://')):
-                triton_url = triton_url.split('://', 1)[1]
-            triton_api_key = os.getenv("TRITON_API_KEY")
-            triton_client = TritonClient(triton_url, triton_api_key)
+            # NOTE: Streaming service Triton client will be created per-request via Model Management
+            # For now, skip Triton client initialization here
+            triton_client = None
             
             # Create async session for repository
             async with db_session_factory() as session:
                 repository = ASRRepository(session)
                 
                 # Create streaming service
-                response_frequency_ms = int(os.getenv("STREAMING_RESPONSE_FREQUENCY_MS", "2000"))
-                streaming_service = StreamingASRService(
-                    audio_service=audio_service,
-                    triton_client=triton_client,
-                    repository=repository,
-                    redis_client=redis_client,
-                    response_frequency_in_ms=response_frequency_ms
-                )
+                # NOTE: Streaming service requires Model Management for Triton client resolution
+                # For now, skip streaming service initialization if Triton client is not available
+                if triton_client:
+                    response_frequency_ms = int(os.getenv("STREAMING_RESPONSE_FREQUENCY_MS", "2000"))
+                    streaming_service = StreamingASRService(
+                        audio_service=audio_service,
+                        triton_client=triton_client,
+                        repository=repository,
+                        redis_client=redis_client,
+                        response_frequency_in_ms=response_frequency_ms
+                    )
+                else:
+                    logger.warning("Streaming service skipped - requires Model Management for Triton resolution")
                 
-                logger.info("Streaming service initialized successfully")
-                
-                # Mount Socket.IO streaming endpoint
-                app.mount("/socket.io", streaming_service.app)
-                logger.info("Socket.IO streaming endpoint mounted at /socket.io")
+                # Mount Socket.IO streaming endpoint only if streaming service was initialized
+                if streaming_service:
+                    app.mount("/socket.io", streaming_service.app)
+                    logger.info("Socket.IO streaming endpoint mounted at /socket.io")
+                    logger.info("Streaming service initialized successfully")
+                else:
+                    logger.info("Streaming service initialization skipped - not available")
         except Exception as e:
             logger.error(f"Failed to initialize streaming service: {e}")
             # Continue without streaming (optional feature)
@@ -140,8 +154,20 @@ async def lifespan(app: FastAPI):
         app.state.redis_client = redis_client
         app.state.db_session_factory = db_session_factory
         
+        # NOTE: Triton endpoint/model MUST come from Model Management for inference.
+        # No environment variable fallback - all resolution via Model Management database.
+        TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
+        TRITON_TIMEOUT = float(os.getenv("TRITON_TIMEOUT", "300.0"))
+        
+        # Store Triton config in app state (for use by routers after Model Management resolution)
+        app.state.triton_api_key = TRITON_API_KEY
+        app.state.triton_timeout = TRITON_TIMEOUT
+        
         # Register error handlers
         add_error_handlers(app)
+        
+        # NOTE: Model Management Plugin is registered BEFORE app starts (outside lifespan)
+        # to ensure middleware can be added. See line ~330 for registration.
         
         # Register service in central registry via config-service
         try:
@@ -253,6 +279,23 @@ plugin = ObservabilityPlugin(config)
 plugin.register_plugin(app)
 logger.info("✅ AI4ICore Observability Plugin initialized for ASR service")
 
+# Model Management Plugin - registered AFTER Observability
+# so that Model Management runs first and Observability can use cached body
+TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
+model_mgmt_config = ModelManagementConfig(
+    model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
+    model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
+    cache_ttl_seconds=300,
+    triton_endpoint_cache_ttl=300,
+    default_triton_endpoint="",  # No fallback - must come from Model Management
+    default_triton_api_key=TRITON_API_KEY,
+    middleware_enabled=True,
+    middleware_paths=["/api/v1"]
+)
+model_mgmt_plugin = ModelManagementPlugin(model_mgmt_config)
+model_mgmt_plugin.register_plugin(app, redis_client=redis_client)
+logger.info("✅ Model Management Plugin initialized for ASR service")
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -279,12 +322,15 @@ try:
         retry_on_timeout=True
     )
     
-    # Test Redis connection
-    redis_client.ping()
-    logger.info("Redis connection established for middleware")
+    # Test Redis connection - skip ping test here (async Redis requires await)
+    # Connection will be properly tested in lifespan function
+    logger.info("Redis client created for middleware (connection will be tested in lifespan)")
 except Exception as e:
     logger.warning(f"Redis connection failed for middleware: {e}")
     redis_client = None
+
+# NOTE: Model Management Plugin is now registered BEFORE Observability (above)
+# so that Observability runs first and caches the body, then Model Management can use cached body
 
 # Add middleware after FastAPI app creation
 # Add request logging middleware
@@ -388,31 +434,17 @@ async def health_check() -> Dict[str, Any]:
         health_status["postgres"] = "unhealthy"
     
     try:
-        # Check Triton server connectivity
-        import tritonclient.http as http_client
-        import os
-        
-        triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-        # Strip scheme from URL if present (Triton client expects host:port format)
-        if triton_url.startswith(('http://', 'https://')):
-            triton_url = triton_url.split('://', 1)[1]
-        
-        client = http_client.InferenceServerClient(url=triton_url)
-        
-        if client.is_server_ready():
-            health_status["triton"] = "healthy"
-        else:
-            health_status["triton"] = "unhealthy"
-    except ImportError:
-        health_status["triton"] = "unhealthy"
+        # Triton endpoint must be resolved via Model Management - no hardcoded fallback
+        # Skip Triton check in health endpoint (requires Model Management serviceId)
+        logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
+        health_status["triton"] = "unknown"
     except Exception as e:
-        logger.warning(f"Triton health check failed: {e}")
-        health_status["triton"] = "unhealthy"
+        logger.warning(f"Triton health check skipped: {e}")
+        health_status["triton"] = "unknown"
     
-    # Determine overall status - all dependencies must be healthy
+    # Determine overall status (Triton check skipped, only Redis and DB matter)
     if (health_status["redis"] == "healthy" and 
-        health_status["postgres"] == "healthy" and 
-        health_status["triton"] == "healthy"):
+        health_status["postgres"] == "healthy"):
         health_status["status"] = "healthy"
     else:
         health_status["status"] = "unhealthy"
@@ -443,5 +475,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port,
         log_level=log_level,
-        reload=False
+        reload=False  # Enable auto-reload for development
     )

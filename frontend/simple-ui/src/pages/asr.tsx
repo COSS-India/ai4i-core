@@ -22,7 +22,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import LoadingSpinner from "../components/common/LoadingSpinner";
 import { ASR_SUPPORTED_LANGUAGES } from "../config/constants";
 import { useASR } from "../hooks/useASR";
-import { listASRModels } from "../services/asrService";
+import { listASRServices, ASRServiceDetails } from "../services/asrService";
 
 const ASRPage: React.FC = () => {
   const toast = useToast();
@@ -49,12 +49,21 @@ const ASRPage: React.FC = () => {
     clearResults,
   } = useASR();
 
-  // Fetch available ASR models
-  const { data: modelsData, isLoading: modelsLoading } = useQuery({
-    queryKey: ["asr-models"],
-    queryFn: listASRModels,
+  // Fetch available ASR services from model management
+  const { data: asrServices, isLoading: servicesLoading } = useQuery<ASRServiceDetails[]>({
+    queryKey: ["asr-services"],
+    queryFn: listASRServices,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
+
+  // Auto-select first available ASR service when list loads
+  React.useEffect(() => {
+    if (!asrServices || asrServices.length === 0) return;
+    if (!serviceId || serviceId === "asr_am_ensemble") {
+      // If no service selected or still using default, select first available
+      setServiceId(asrServices[0].service_id);
+    }
+  }, [asrServices, serviceId, setServiceId]);
 
   const handleRecordingChange = (isRecording: boolean) => {
     if (isRecording) {
@@ -133,11 +142,14 @@ const ASRPage: React.FC = () => {
                   <Select
                     value={serviceId}
                     onChange={(e) => setServiceId(e.target.value)}
-                    isDisabled={fetching}
+                    isDisabled={fetching || servicesLoading}
+                    placeholder={servicesLoading ? "Loading services..." : "Select an ASR service"}
                   >
-                    <option value="asr_am_ensemble">
-                      ai4bharat/conformer-multilingual-asr
-                    </option>
+                    {asrServices?.map((service) => (
+                      <option key={service.service_id} value={service.service_id}>
+                        {service.service_id}
+                      </option>
+                    ))}
                   </Select>
                 </FormControl>
 
@@ -241,10 +253,10 @@ const ASRPage: React.FC = () => {
             </GridItem>
           </Grid>
 
-          {/* Models Loading Indicator */}
-          {modelsLoading && (
+          {/* Services Loading Indicator */}
+          {servicesLoading && (
             <Box textAlign="center">
-              <LoadingSpinner label="Loading ASR models..." />
+              <LoadingSpinner label="Loading ASR services..." />
             </Box>
           )}
         </VStack>
