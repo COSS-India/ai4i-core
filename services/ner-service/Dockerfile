@@ -12,19 +12,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first
+# Copy AI4ICore Observability Plugin from monorepo
+COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+
+# Copy AI4ICore Model Management Plugin from monorepo
+COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
+# Copy service requirements
 COPY services/ner-service/requirements.txt .
 
 RUN pip install --upgrade pip setuptools wheel
 
 # Install Python deps
 RUN pip install --no-cache-dir --user -r requirements.txt
-
-# Copy observability plugin
-COPY libs/ai4icore_observability /app/libs/ai4icore_observability
-
-# ✅ INSTALL PLUGIN AS NORMAL PACKAGE (FIX)
-RUN pip install --no-cache-dir --user /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
 
 
 # -----------------------------
@@ -44,16 +46,26 @@ RUN useradd --create-home --shell /bin/bash app
 
 # Copy Python site-packages
 COPY --from=builder /root/.local /home/app/.local
+ENV PATH=/home/app/.local/bin:$PATH
+
+# Copy AI4ICore Observability Plugin
+COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+
+# Copy AI4ICore Model Management Plugin
+COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
+# Copy service code
+COPY services/ner-service /app
+
+# Adjust ownership and permissions (must be done as root before switching user)
+RUN chown -R app:app /app /home/app/.local \
+    && chmod +x /home/app/.local/bin/* || true
+
+USER app
 
 ENV PATH="/home/app/.local/bin:$PATH"
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
-
-# Copy app code
-COPY services/ner-service /app
-
-RUN chown -R app:app /app
-USER app
 
 EXPOSE 9001
 

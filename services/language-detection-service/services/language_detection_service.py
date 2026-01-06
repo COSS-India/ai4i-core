@@ -87,58 +87,35 @@ class LanguageDetectionService:
         "other": "Other"
     }
     
-    # Service registry mapping serviceId to (triton_endpoint, triton_model_name)
-    # Each entry: service_id -> (endpoint, model_name)
-    # Note: Triton HTTP client expects host:port format (without http://), and model names should not contain special characters
-    SERVICE_REGISTRY = {
-        "ai4bharat/indiclid": ("65.1.35.3:8000", "indiclid"),
-        "ai4bharat-indiclid": ("65.1.35.3:8000", "indiclid"),
-        "indiclid": ("65.1.35.3:8000", "indiclid"),
-        "default": ("65.1.35.3:8000", "indiclid")
-    }
-    
     def __init__(
         self,
         repository: LanguageDetectionRepository,
         text_service: TextService,
         default_triton_client: TritonClient,
-        get_triton_client_func=None
+        get_triton_client_func=None,
+        resolved_model_name: Optional[str] = None
     ):
         self.repository = repository
         self.text_service = text_service
         self.default_triton_client = default_triton_client
         self.get_triton_client_func = get_triton_client_func
+        self.resolved_model_name = resolved_model_name  # Model name from Model Management
         self._triton_clients = {}
     
     def get_triton_client(self, service_id: str) -> TritonClient:
-        """Get Triton client for the given service ID"""
-        # Check cache first
-        if service_id in self._triton_clients:
-            return self._triton_clients[service_id]
-        
-        # Get endpoint and model info from registry
-        service_info = self.SERVICE_REGISTRY.get(service_id)
-        if service_info:
-            endpoint, _ = service_info
-        else:
-            # Use default client if service not in registry
-            return self.default_triton_client
-        
-        # Create client using factory function if available
-        if self.get_triton_client_func:
-            client = self.get_triton_client_func(endpoint)
-            self._triton_clients[service_id] = client
-            return client
-        else:
-            # Fallback to default client
-            return self.default_triton_client
+        """Get Triton client for the given service ID (resolved via Model Management)"""
+        # Use the default client resolved from Model Management
+        # The router already resolved the endpoint via Model Management middleware
+        return self.default_triton_client
     
     def get_model_name(self, service_id: str) -> str:
-        """Get Triton model name based on service ID"""
-        service_info = self.SERVICE_REGISTRY.get(service_id)
-        if service_info:
-            return service_info[1]  # Return model name
-        return "indiclid"  # Default to "indiclid" if not found
+        """Get Triton model name resolved via Model Management (REQUIRED - no fallback)"""
+        if not self.resolved_model_name:
+            raise TritonInferenceError(
+                f"Model name not resolved via Model Management for serviceId: {service_id}. "
+                f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+            )
+        return self.resolved_model_name
     
     def normalize_confidence_score(self, confidence: float) -> float:
         """Normalize confidence score to be between 0.0 and 1.0.
@@ -200,11 +177,9 @@ class LanguageDetectionService:
             )
             request_id = request_record.id
             
-            # Get Triton client
+            # Get Triton client (already resolved via Model Management)
             triton_client = self.get_triton_client(service_id)
-            service_info = self.SERVICE_REGISTRY.get(service_id)
-            endpoint = service_info[0] if service_info else "default"
-            logger.info(f"Using Triton endpoint: {endpoint}, model: {model_name} for service: {service_id}")
+            logger.info(f"Using Triton model: {model_name} for service: {service_id} (resolved via Model Management)")
             
             # Prepare Triton inputs/outputs
             inputs, outputs = triton_client.get_language_detection_io_for_triton(input_texts)

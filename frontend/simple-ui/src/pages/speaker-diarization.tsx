@@ -96,10 +96,25 @@ const SpeakerDiarizationPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      setError(err.message || "Failed to perform speaker diarization");
+      // Prioritize API error message from response
+      let errorMessage = "Failed to perform speaker diarization";
+      
+      if (err?.response?.data?.detail?.message) {
+        errorMessage = err.response.data.detail.message;
+      } else if (err?.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err?.response?.data?.detail) {
+        if (typeof err.response.data.detail === 'string') {
+          errorMessage = err.response.data.detail;
+        }
+      } else if (err?.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
       toast({
         title: "Error",
-        description: err.message || "Failed to perform speaker diarization",
+        description: errorMessage,
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -127,31 +142,27 @@ const SpeakerDiarizationPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
+        <VStack spacing={8} w="full">
+          {/* Page Header */}
+          <Box textAlign="center">
+            <Heading size="xl" color="gray.800" mb={2}>
+              Speaker Diarization
+            </Heading>
+            <Text color="gray.600" fontSize="lg">
+              Separate conversations into segments based on who is speaking. Identify different speakers in audio recordings and segment the audio accordingly.
+            </Text>
+          </Box>
+
         <Grid
           templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
           gap={8}
           w="full"
-          maxW="1400px"
+            maxW="1200px"
           mx="auto"
         >
-          {/* Left Column - Service Details */}
+            {/* Configuration Panel */}
           <GridItem>
             <VStack spacing={6} align="stretch">
-              <Heading size="lg" color="gray.800">
-                Speaker Diarization
-              </Heading>
-              <Text color="gray.600" fontSize="md">
-                Separate conversations into segments based on who is speaking. Identify different speakers in audio recordings and segment the audio accordingly.
-              </Text>
-            </VStack>
-          </GridItem>
-
-          {/* Right Column - Try it out here! */}
-          <GridItem>
-            <VStack spacing={6} align="stretch">
-              <Heading size="md" color="gray.800">
-                Try it out here!
-              </Heading>
 
               <Box>
                 <Text mb={4} fontSize="sm" fontWeight="semibold">
@@ -194,6 +205,36 @@ const SpeakerDiarizationPage: React.FC = () => {
               >
                 Submit for Diarization
               </Button>
+              </VStack>
+            </GridItem>
+
+            {/* Results Panel */}
+            <GridItem>
+              <VStack spacing={6} align="stretch">
+                {/* Progress Indicator */}
+                {fetching && (
+                  <Box>
+                    <Text mb={2} fontSize="sm" color="gray.600">
+                      Processing audio...
+                    </Text>
+                    <Progress size="xs" isIndeterminate colorScheme="orange" />
+                  </Box>
+                )}
+
+                {/* Error Display */}
+                {error && (
+                  <Box
+                    p={4}
+                    bg="red.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="red.200"
+                  >
+                    <Text color="red.600" fontSize="sm">
+                      {error}
+                    </Text>
+                  </Box>
+                )}
 
               {/* Metrics Box */}
               {fetched && (
@@ -217,35 +258,40 @@ const SpeakerDiarizationPage: React.FC = () => {
                 </Box>
               )}
 
-              {fetching && (
-                <Box>
-                  <Text mb={2} fontSize="sm" color="gray.600">
-                    Processing audio...
-                  </Text>
-                  <Progress size="xs" isIndeterminate colorScheme="red" />
-                </Box>
-              )}
-
-              {error && (
-                <Box
-                  p={4}
-                  bg="red.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="red.200"
-                >
-                  <Text color="red.600" fontSize="sm">
-                    {error}
-                  </Text>
-                </Box>
-              )}
-
+              {/* Speaker Diarization Results */}
               {fetched && result && (() => {
-                // Extract data - handle both result.output[0] and direct result structure
-                const data = result.output && result.output[0] ? result.output[0] : result;
+                // Extract data from API response structure: { taskType, output: [{ segments, speakers, ... }], config }
+                const outputData = result.output && Array.isArray(result.output) && result.output.length > 0 
+                  ? result.output[0] 
+                  : null;
+                
+                // If no output data, check if result itself has the structure
+                const data = outputData || (result.segments !== undefined || result.speakers !== undefined ? result : null);
+                
+                if (!data) {
+                  // If structure is completely different, show error message
+                  return (
+                    <Box
+                      p={4}
+                      bg="yellow.50"
+                      borderRadius="md"
+                      border="1px"
+                      borderColor="yellow.200"
+                    >
+                      <Text fontSize="sm" color="yellow.800" fontWeight="semibold" mb={2}>
+                        Unexpected Response Format
+                      </Text>
+                      <Text fontSize="xs" color="yellow.700">
+                        The API response structure is not recognized. Please check the API response format.
+                      </Text>
+                    </Box>
+                  );
+                }
+
                 const segments = data.segments || [];
                 const speakers = data.speakers || [];
-                const numSpeakers = data.num_speakers || speakers.length || 0;
+                const numSpeakers = data.num_speakers !== undefined ? data.num_speakers : (speakers.length || 0);
+                const totalSegments = data.total_segments !== undefined ? data.total_segments : segments.length;
                 
                 const formatTime = (seconds: number) => {
                   const mins = Math.floor(seconds / 60);
@@ -259,196 +305,202 @@ const SpeakerDiarizationPage: React.FC = () => {
                   return colors[speakerIndex % colors.length] || "gray";
                 };
 
-                // Check if we have structured data to display
-                const hasStructuredData = segments.length > 0 || numSpeakers > 0;
-
                 return (
-                  <Box
-                    p={4}
-                    bg="gray.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="gray.200"
-                  >
-                    <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
-                      Diarization Results:
-                    </Text>
-                    
-                    {hasStructuredData ? (
-                      <>
-                        {/* Summary */}
-                        <HStack spacing={4} mb={4}>
-                          <Box
-                            p={3}
-                            bg="orange.100"
-                            borderRadius="md"
-                            border="1px"
-                            borderColor="orange.300"
-                          >
-                            <Text fontSize="xs" color="gray.600" mb={1}>
-                              Total Speakers
-                            </Text>
-                            <Text fontSize="lg" fontWeight="bold" color="orange.700">
-                              {numSpeakers}
-                            </Text>
-                          </Box>
-                          <Box
-                            p={3}
-                            bg="blue.100"
-                            borderRadius="md"
-                            border="1px"
-                            borderColor="blue.300"
-                          >
-                            <Text fontSize="xs" color="gray.600" mb={1}>
-                              Total Segments
-                            </Text>
-                            <Text fontSize="lg" fontWeight="bold" color="blue.700">
-                              {segments.length}
-                            </Text>
-                          </Box>
-                        </HStack>
+                  <>
+                    <Box
+                      p={4}
+                      bg="gray.50"
+                      borderRadius="md"
+                      border="1px"
+                      borderColor="gray.200"
+                    >
+                      <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
+                        Diarization Results:
+                      </Text>
+                      
+                      {/* Summary - Always show, even if empty */}
+                      <HStack spacing={4} mb={4}>
+                        <Box
+                          p={3}
+                          bg="orange.100"
+                          borderRadius="md"
+                          border="1px"
+                          borderColor="orange.300"
+                        >
+                          <Text fontSize="xs" color="gray.600" mb={1}>
+                            Total Speakers
+                          </Text>
+                          <Text fontSize="lg" fontWeight="bold" color="orange.700">
+                            {numSpeakers}
+                          </Text>
+                        </Box>
+                        <Box
+                          p={3}
+                          bg="blue.100"
+                          borderRadius="md"
+                          border="1px"
+                          borderColor="blue.300"
+                        >
+                          <Text fontSize="xs" color="gray.600" mb={1}>
+                            Total Segments
+                          </Text>
+                          <Text fontSize="lg" fontWeight="bold" color="blue.700">
+                            {totalSegments}
+                          </Text>
+                        </Box>
+                      </HStack>
 
-                        {/* Speakers List */}
-                        {speakers.length > 0 && (
-                          <Box mb={4}>
-                            <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={2}>
-                              Identified Speakers:
-                            </Text>
-                            <HStack spacing={2} flexWrap="wrap">
-                              {speakers.map((speaker: string, idx: number) => {
-                                const colorScheme = getSpeakerColor(speaker);
-                                return (
-                                  <Box
-                                    key={speaker}
-                                    px={3}
-                                    py={1}
-                                    bg={`${colorScheme}.100`}
-                                    borderRadius="full"
-                                    border="1px"
-                                    borderColor={`${colorScheme}.300`}
-                                  >
-                                    <Text fontSize="sm" fontWeight="semibold" color={`${colorScheme}.700`}>
-                                      {speaker}
-                                    </Text>
-                                  </Box>
-                                );
-                              })}
-                            </HStack>
-                          </Box>
-                        )}
-
-                        {/* Segments Timeline */}
-                        {segments.length > 0 && (
-                          <Box>
-                            <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={3}>
-                              Timeline Segments (sorted by start time):
-                            </Text>
-                            <Box
-                              p={3}
-                              bg="white"
-                              borderRadius="md"
-                              maxH="400px"
-                              overflowY="auto"
-                              border="1px"
-                              borderColor="gray.200"
-                            >
-                              <VStack align="stretch" spacing={2}>
-                                {(() => {
-                                  // Sort segments by start_time or start
-                                  const sortedSegments = [...segments].sort(
-                                    (a: any, b: any) => {
-                                      const aStart = a.start_time !== undefined ? a.start_time : a.start;
-                                      const bStart = b.start_time !== undefined ? b.start_time : b.start;
-                                      return aStart - bStart;
-                                    }
+                      {/* Show message if no speakers/segments detected */}
+                      {segments.length === 0 && numSpeakers === 0 ? (
+                        <Box
+                          p={4}
+                          bg="blue.50"
+                          borderRadius="md"
+                          border="1px"
+                          borderColor="blue.200"
+                          textAlign="center"
+                        >
+                          <Text fontSize="sm" color="blue.700" fontWeight="semibold" mb={1}>
+                            No Speakers Detected
+                          </Text>
+                          <Text fontSize="xs" color="blue.600">
+                            The audio processing completed, but no speakers or segments were identified in the audio.
+                            This may occur if the audio is too short, contains only silence, or has poor quality.
+                          </Text>
+                        </Box>
+                      ) : (
+                        <>
+                          {/* Speakers List */}
+                          {speakers.length > 0 && (
+                            <Box mb={4}>
+                              <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={2}>
+                                Identified Speakers:
+                              </Text>
+                              <HStack spacing={2} flexWrap="wrap">
+                                {speakers.map((speaker: string, idx: number) => {
+                                  const colorScheme = getSpeakerColor(speaker);
+                                  return (
+                                    <Box
+                                      key={speaker}
+                                      px={3}
+                                      py={1}
+                                      bg={`${colorScheme}.100`}
+                                      borderRadius="full"
+                                      border="1px"
+                                      borderColor={`${colorScheme}.300`}
+                                    >
+                                      <Text fontSize="sm" fontWeight="semibold" color={`${colorScheme}.700`}>
+                                        {speaker}
+                                      </Text>
+                                    </Box>
                                   );
-
-                                  return sortedSegments.map((segment: any, idx: number) => {
-                                    const startTime = segment.start_time !== undefined ? segment.start_time : segment.start;
-                                    const endTime = segment.end_time !== undefined ? segment.end_time : segment.end;
-                                    const duration = segment.duration !== undefined 
-                                      ? segment.duration 
-                                      : (endTime - startTime);
-                                    const speaker = segment.speaker || "Unknown";
-                                    const colorScheme = getSpeakerColor(speaker);
-
-                                    return (
-                                      <Box
-                                        key={idx}
-                                        p={3}
-                                        bg={`${colorScheme}.50`}
-                                        borderRadius="md"
-                                        border="1px"
-                                        borderColor={`${colorScheme}.200`}
-                                      >
-                                        <HStack justify="space-between" align="start" mb={2}>
-                                          <HStack spacing={2}>
-                                            <Box
-                                              px={2}
-                                              py={1}
-                                              bg={`${colorScheme}.200`}
-                                              borderRadius="md"
-                                            >
-                                              <Text fontSize="xs" fontWeight="bold" color={`${colorScheme}.800`}>
-                                                {speaker}
-                                              </Text>
-                                            </Box>
-                                          </HStack>
-                                          <VStack align="end" spacing={0}>
-                                            <Text fontSize="xs" color="gray.600">
-                                              Duration: {formatTime(duration)}
-                                            </Text>
-                                          </VStack>
-                                        </HStack>
-                                        <HStack spacing={2} fontSize="xs" color="gray.600">
-                                          <Text>
-                                            <Text as="span" fontWeight="semibold">Start:</Text> {formatTime(startTime)}
-                                          </Text>
-                                          <Text>•</Text>
-                                          <Text>
-                                            <Text as="span" fontWeight="semibold">End:</Text> {formatTime(endTime)}
-                                          </Text>
-                                        </HStack>
-                                      </Box>
-                                    );
-                                  });
-                                })()}
-                              </VStack>
+                                })}
+                              </HStack>
                             </Box>
-                          </Box>
-                        )}
-                      </>
-                    ) : (
-                      /* Fallback to JSON if structure is different */
-                      <Box
-                        p={3}
-                        bg="white"
-                        borderRadius="md"
-                        maxH="400px"
-                        overflowY="auto"
+                          )}
+
+                          {/* Segments Timeline */}
+                          {segments.length > 0 && (
+                            <Box>
+                              <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={3}>
+                                Timeline Segments (sorted by start time):
+                              </Text>
+                              <Box
+                                p={3}
+                                bg="white"
+                                borderRadius="md"
+                                maxH="400px"
+                                overflowY="auto"
+                                border="1px"
+                                borderColor="gray.200"
+                              >
+                                <VStack align="stretch" spacing={2}>
+                                  {(() => {
+                                    // Sort segments by start_time or start
+                                    const sortedSegments = [...segments].sort(
+                                      (a: any, b: any) => {
+                                        const aStart = a.start_time !== undefined ? a.start_time : a.start;
+                                        const bStart = b.start_time !== undefined ? b.start_time : b.start;
+                                        return (aStart || 0) - (bStart || 0);
+                                      }
+                                    );
+
+                                    return sortedSegments.map((segment: any, idx: number) => {
+                                      const startTime = segment.start_time !== undefined ? segment.start_time : segment.start;
+                                      const endTime = segment.end_time !== undefined ? segment.end_time : segment.end;
+                                      const duration = segment.duration !== undefined 
+                                        ? segment.duration 
+                                        : (endTime && startTime ? endTime - startTime : 0);
+                                      const speaker = segment.speaker || "Unknown";
+                                      const colorScheme = getSpeakerColor(speaker);
+
+                                      return (
+                                        <Box
+                                          key={idx}
+                                          p={3}
+                                          bg={`${colorScheme}.50`}
+                                          borderRadius="md"
+                                          border="1px"
+                                          borderColor={`${colorScheme}.200`}
+                                        >
+                                          <HStack justify="space-between" align="start" mb={2}>
+                                            <HStack spacing={2}>
+                                              <Box
+                                                px={2}
+                                                py={1}
+                                                bg={`${colorScheme}.200`}
+                                                borderRadius="md"
+                                              >
+                                                <Text fontSize="xs" fontWeight="bold" color={`${colorScheme}.800`}>
+                                                  {speaker}
+                                                </Text>
+                                              </Box>
+                                            </HStack>
+                                            <VStack align="end" spacing={0}>
+                                              <Text fontSize="xs" color="gray.600">
+                                                Duration: {formatTime(duration)}
+                                              </Text>
+                                            </VStack>
+                                          </HStack>
+                                          <HStack spacing={2} fontSize="xs" color="gray.600">
+                                            <Text>
+                                              <Text as="span" fontWeight="semibold">Start:</Text> {formatTime(startTime || 0)}
+                                            </Text>
+                                            <Text>•</Text>
+                                            <Text>
+                                              <Text as="span" fontWeight="semibold">End:</Text> {formatTime(endTime || 0)}
+                                            </Text>
+                                          </HStack>
+                                        </Box>
+                                      );
+                                    });
+                                  })()}
+                                </VStack>
+                              </Box>
+                            </Box>
+                          )}
+                        </>
+                      )}
+                    </Box>
+
+                    {/* Clear Results Button */}
+                    <Box textAlign="center">
+                      <Button
+                        onClick={clearResults}
+                        variant="outline"
+                        size="sm"
+                        colorScheme="gray"
                       >
-                        <Text as="pre" fontSize="xs" whiteSpace="pre-wrap" wordBreak="break-word">
-                          {JSON.stringify(result, null, 2)}
-                        </Text>
-                      </Box>
-                    )}
-                  </Box>
+                        Clear Results
+                      </Button>
+                    </Box>
+                  </>
                 );
               })()}
-
-              {fetched && (
-                <Button
-                  onClick={clearResults}
-                  variant="outline"
-                  size="sm"
-                  w="full"
-                >
-                  Clear Results
-                </Button>
-              )}
             </VStack>
           </GridItem>
         </Grid>
+        </VStack>
       </ContentLayout>
     </>
   );
