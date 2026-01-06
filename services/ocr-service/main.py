@@ -23,13 +23,13 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
-from models import database_models
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -47,7 +47,7 @@ DATABASE_URL = os.getenv(
     "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db",
 )
 
-TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "65.1.35.3:8400")
+
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
 
 redis_client: Optional[redis.Redis] = None
@@ -130,15 +130,9 @@ async def lifespan(app: FastAPI):
             raise Exception("PostgreSQL connection timeout after 60 seconds")
 
         logger.info("PostgreSQL connection established successfully")
-
-        # Create tables if they do not exist
-        try:
-            async with db_engine.begin() as conn:
-                await conn.run_sync(database_models.Base.metadata.create_all)
-            logger.info("OCR database tables verified/created successfully")
-        except Exception as e:
-            logger.error("Failed to create OCR database tables: %s", e)
-            raise
+        
+        # NOTE: Tables should already exist in the database (created by migration scripts)
+        # We don't create tables here - just verify connection works
     except Exception as e:
         logger.error("Failed to connect to PostgreSQL: %s", e)
         raise
@@ -146,7 +140,7 @@ async def lifespan(app: FastAPI):
     app.state.redis_client = redis_client
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
-    app.state.triton_endpoint = TRITON_ENDPOINT
+    # Triton endpoint/model resolved via Model Management middleware - no hardcoded fallback
     app.state.triton_api_key = TRITON_API_KEY
 
     # Service registry
@@ -231,17 +225,40 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Observability
+# Initialize AI4ICore Observability Plugin
+# Plugin automatically extracts metrics from request bodies - no manual recording needed!
 config = PluginConfig.from_env()
-config.enabled = True
+config.enabled = True  # Enable plugin
 if not config.customers:
-    config.customers = []
+    config.customers = []  # Will be extracted from JWT/headers automatically
 if not config.apps:
-    config.apps = ["ocr"]
+    config.apps = ["ocr"]  # Service name
 
 plugin = ObservabilityPlugin(config)
 plugin.register_plugin(app)
-logger.info("AI4ICore Observability Plugin initialized for OCR service")
+logger.info("✅ AI4ICore Observability Plugin initialized for OCR service")
+
+# Model Management Plugin - registered AFTER Observability
+# so that Model Management runs first and Observability can use cached body
+try:
+    from ai4icore_model_management import ModelManagementConfig
+    mm_config = ModelManagementConfig(
+        model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
+        model_management_api_key=None,
+        cache_ttl_seconds=300,
+        triton_endpoint_cache_ttl=300,
+        # Explicitly disable default Triton fallback – Model Management must resolve everything
+        default_triton_endpoint="",
+        default_triton_api_key="",
+        middleware_enabled=True,
+        middleware_paths=["/api/v1/ocr"],
+        request_timeout=10.0,
+    )
+    model_mgmt_plugin = ModelManagementPlugin(config=mm_config)
+    model_mgmt_plugin.register_plugin(app, redis_client=redis_client)
+    logger.info("✅ Model Management Plugin initialized for OCR service")
+except Exception as e:
+    logger.warning(f"Failed to initialize Model Management Plugin: {e}")
 
 # CORS
 app.add_middleware(

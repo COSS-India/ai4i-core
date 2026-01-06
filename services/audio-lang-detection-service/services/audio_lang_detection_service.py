@@ -89,7 +89,9 @@ class AudioLangDetectionService:
         # Create request record if repository is available
         if self.repository:
             try:
-                model_id = request.config.serviceId if request.config else "ald"
+                model_id = request.config.serviceId if request.config else None
+                if not model_id:
+                    raise ValueError("config.serviceId is required and must be resolved via Model Management")
                 audio_duration = None  # Could be calculated from audio data if needed
                 
                 request_record = await self.repository.create_request(

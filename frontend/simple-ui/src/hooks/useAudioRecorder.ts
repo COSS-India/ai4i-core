@@ -21,6 +21,7 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
+  const stopRecordingRef = useRef<(() => void) | null>(null);
 
   // Timer effect
   useEffect(() => {
@@ -29,7 +30,10 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
         setTimer(prev => {
           const newTimer = prev + 1;
           if (newTimer >= MAX_RECORDING_DURATION) {
-            stopRecording();
+            // Use ref to avoid dependency issues
+            if (stopRecordingRef.current) {
+              stopRecordingRef.current();
+            }
           }
           return newTimer;
         });
@@ -214,6 +218,11 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
     }
     setIsRecording(false);
   }, []);
+
+  // Update ref when stopRecording changes
+  useEffect(() => {
+    stopRecordingRef.current = stopRecording;
+  }, [stopRecording]);
 
   return {
     isRecording,
