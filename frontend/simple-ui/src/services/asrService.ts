@@ -9,6 +9,17 @@ import {
   ASRModelsResponse 
 } from '../types/asr';
 import { io, Socket } from 'socket.io-client';
+import { listServices } from './modelManagementService';
+
+// ASR Service details from model management
+export interface ASRServiceDetails {
+  service_id: string;
+  model_id: string;
+  name: string;
+  description: string;
+  endpoint: string;
+  languages?: string[];
+}
 
 /**
  * Perform ASR inference on audio content
@@ -112,6 +123,63 @@ export const listASRModels = async (): Promise<ASRModelsResponse> => {
   } catch (error) {
     console.error('Failed to fetch ASR models:', error);
     throw new Error('Failed to fetch ASR models');
+  }
+};
+
+/**
+ * Get list of available ASR services from model management service
+ * @returns Promise with ASR services list
+ */
+export const listASRServices = async (): Promise<ASRServiceDetails[]> => {
+  try {
+    // Fetch services from model management service filtered by task_type='asr'
+    const services = await listServices('asr');
+    const seen = new Set<string>();
+
+    // Transform model management service response to ASRServiceDetails format
+    const normalized = services.map((service: any) => {
+      // Extract languages from service.languages array
+      const supportedLanguages: string[] = [];
+      if (service.languages && Array.isArray(service.languages)) {
+        service.languages.forEach((lang: any) => {
+          if (typeof lang === 'string') {
+            supportedLanguages.push(lang);
+          } else if (lang && typeof lang === 'object') {
+            // Handle different language object formats
+            const langCode = lang.code || lang.sourceLanguage || lang.language;
+            if (langCode) {
+              supportedLanguages.push(langCode);
+            }
+          }
+        });
+      }
+      
+      // Extract endpoint
+      const endpoint = service.endpoint || service.endpoint_url || '';
+      
+      return {
+        service_id: service.serviceId || service.service_id,
+        model_id: service.modelId || service.model_id,
+        name: service.name || service.serviceId || service.service_id || '',
+        description: service.serviceDescription || service.description || '',
+        endpoint: endpoint,
+        languages: Array.from(new Set(supportedLanguages)), // Remove duplicates
+      } as ASRServiceDetails;
+    });
+
+    // Deduplicate by service_id in case API returns duplicates
+    const deduplicated = normalized.filter((service) => {
+      if (seen.has(service.service_id)) {
+        return false;
+      }
+      seen.add(service.service_id);
+      return true;
+    });
+
+    return deduplicated;
+  } catch (error) {
+    console.error('Failed to fetch ASR services:', error);
+    throw new Error('Failed to fetch ASR services');
   }
 };
 
