@@ -20,9 +20,10 @@ from models import (
     LoginRequest, LoginResponse, TokenRefreshRequest, TokenRefreshResponse,
     TokenValidationResponse, PasswordChangeRequest, PasswordResetRequest,
     PasswordResetConfirm, LogoutRequest, LogoutResponse, APIKeyCreate,
-    APIKeyResponse, OAuth2Provider, OAuth2Callback, Role, UserRole,
+    APIKeyUpdate, APIKeyResponse, OAuth2Provider, OAuth2Callback, Role, UserRole,
     APIKeyValidationRequest, APIKeyValidationResponse, Permission,
-    UserDetailResponse, PermissionResponse, UserListResponse
+    UserDetailResponse, PermissionResponse, UserListResponse,
+    AdminAPIKeyWithUserResponse,
 )
 from pydantic import BaseModel
 from auth_utils import AuthUtils, ACCESS_TOKEN_EXPIRE_MINUTES
@@ -838,21 +839,21 @@ async def create_api_key(
     current_user: User = Depends(require_permission("apiKey", "create")),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new API key. Only accessible by ADMIN role. Admins can create keys for other users by providing user_id."""
+    """
+    Create a new API key.
+
+    Access control:
+    - Any role that has the `apiKey.create` permission (via Casbin/role_permissions)
+      can create API keys.
+    - The same permission applies whether the key is for the current user or for
+      another user (when `user_id` is provided).
+    """
     # Determine target user ID
     target_user_id = current_user.id
     target_user = current_user
     
-    # If user_id is provided, verify admin permissions and target user exists
+    # If user_id is provided, verify target user exists
     if api_key_data.user_id is not None:
-        # Check if current user is admin
-        user_roles = await AuthUtils.get_user_roles(db, current_user.id)
-        if "ADMIN" not in user_roles and not current_user.is_superuser:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only administrators can create API keys for other users"
-            )
-        
         # Verify target user exists
         target_user = await AuthUtils.get_user_by_id(db, api_key_data.user_id)
         if not target_user:
@@ -905,9 +906,18 @@ async def list_api_keys(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """List user's API keys. Accessible by any authenticated user."""
+    """
+    List the current user's API keys.
+
+    By default this returns only **active** keys (is_active = true),
+    so revoked keys stay in the database for audit but are not shown
+    in the standard listing.
+    """
     result = await db.execute(
-        select(APIKey).where(APIKey.user_id == current_user.id)
+        select(APIKey).where(
+            APIKey.user_id == current_user.id,
+            APIKey.is_active.is_(True),
+        )
     )
     api_keys = result.scalars().all()
     
@@ -924,6 +934,48 @@ async def list_api_keys(
         )
         for key in api_keys
     ]
+
+
+@app.get(
+    "/api/v1/auth/api-keys/all",
+    response_model=List[AdminAPIKeyWithUserResponse],
+    tags=["Admin"],
+)
+async def list_all_api_keys_with_users(
+    current_user: User = Depends(require_permission("apiKey", "read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List **all** API keys in the system (active and inactive), including basic
+    user details (user_id, email) for each key.
+
+    Intended for admin/moderator dashboards and audits.
+    """
+    result = await db.execute(
+        select(APIKey, User)
+        .join(User, APIKey.user_id == User.id)
+        .order_by(APIKey.created_at.desc())
+    )
+    rows = result.all()
+
+    api_keys: List[AdminAPIKeyWithUserResponse] = []
+    for api_key, user in rows:
+        api_keys.append(
+            AdminAPIKeyWithUserResponse(
+                id=api_key.id,
+                key_name=api_key.key_name,
+                key_value=AuthUtils.decrypt_api_key(api_key.key_value_encrypted) or "***",
+                permissions=api_key.permissions,
+                is_active=api_key.is_active,
+                created_at=api_key.created_at,
+                expires_at=api_key.expires_at,
+                last_used=api_key.last_used,
+                user_id=user.id,
+                user_email=user.email,
+            )
+        )
+
+    return api_keys
 
 @app.delete("/api/v1/auth/api-keys/{key_id}")
 async def revoke_api_key(
@@ -951,6 +1003,55 @@ async def revoke_api_key(
     
     logger.info(f"API key revoked: {key_id} for user: {current_user.email}")
     return {"message": "API key revoked successfully"}
+
+
+@app.patch("/api/v1/auth/api-keys/{key_id}", response_model=APIKeyResponse, tags=["Admin"])
+async def update_api_key(
+    key_id: int,
+    update_data: APIKeyUpdate,
+    current_user: User = Depends(require_permission("apiKey", "update")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Partially update an existing API key.
+
+    - Requires `apiKey.update` permission (e.g. ADMIN, MODERATOR).
+    - Allows changing `key_name` and `permissions`.
+    - Keeps key value unchanged; only metadata is updated.
+    """
+    result = await db.execute(
+        select(APIKey).where(APIKey.id == key_id)
+    )
+    api_key = result.scalar_one_or_none()
+
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found",
+        )
+
+    # Apply updates if provided
+    if update_data.key_name is not None:
+        api_key.key_name = update_data.key_name
+    if update_data.permissions is not None:
+        api_key.permissions = update_data.permissions
+
+    await db.commit()
+    await db.refresh(api_key)
+
+    logger.info(f"API key updated: {key_id} by user: {current_user.email}")
+
+    # For security, we do not re‑expose the raw key value here; use "***"
+    return APIKeyResponse(
+        id=api_key.id,
+        key_name=api_key.key_name,
+        key_value="***",
+        permissions=api_key.permissions,
+        is_active=api_key.is_active,
+        created_at=api_key.created_at,
+        expires_at=api_key.expires_at,
+        last_used=api_key.last_used,
+    )
 
 # OAuth2 Endpoints
 

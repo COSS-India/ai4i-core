@@ -761,6 +761,13 @@ class ModelTaskTypeEnum(str, Enum):
     tts = "tts"
     asr = "asr"
     llm = "llm"
+    transliteration = "transliteration"
+    language_detection = "language-detection"
+    speaker_diarization = "speaker-diarization"
+    audio_lang_detection = "audio-lang-detection"
+    language_diarization = "language-diarization"
+    ocr = "ocr"
+    ner = "ner"
 
 class VersionStatus(str, Enum):
     """Model version status."""
@@ -1007,6 +1014,15 @@ class APIKeyCreateBody(BaseModel):
     permissions: Optional[List[str]] = Field(default_factory=list, description="List of permissions for the API key (e.g., ['read:profile', 'update:profile'])")
     expires_days: Optional[int] = Field(None, ge=1, le=365, description="Number of days until the API key expires (1-365 days, optional)")
     userId: Optional[int] = Field(None, description="User ID for whom the API key is created (Admin only). If not provided, creates key for current user.")
+
+
+class APIKeyUpdateBody(BaseModel):
+    """Partial update body for an existing API key (name, permissions)."""
+    key_name: Optional[str] = Field(None, min_length=1, max_length=100, description="New name/label for the API key")
+    permissions: Optional[List[str]] = Field(
+        None,
+        description="New list of permissions for the API key (replaces existing permissions)",
+    )
 
 class AssignRoleBody(BaseModel):
     user_id: int = Field(..., description="ID of the user to assign role to")
@@ -2290,8 +2306,20 @@ async def list_api_keys(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """List API keys"""
+    """List current user's API keys"""
     return await proxy_to_auth_service(request, "/api/v1/auth/api-keys")
+
+
+@app.get("/api/v1/auth/api-keys/all", tags=["Authentication"])
+async def list_all_api_keys_with_users(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+):
+    """
+    List all API keys (active + inactive) with owning user details.
+    Proxies to auth-service `/api/v1/auth/api-keys/all`.
+    """
+    return await proxy_to_auth_service(request, "/api/v1/auth/api-keys/all")
 
 @app.post("/api/v1/auth/api-keys", tags=["Authentication"])
 async def create_api_key(
@@ -2330,6 +2358,36 @@ async def revoke_api_key(
 ):
     """Revoke API key"""
     return await proxy_to_auth_service(request, f"/api/v1/auth/api-keys/{key_id}")
+
+
+@app.patch("/api/v1/auth/api-keys/{key_id}", tags=["Authentication"])
+async def update_api_key(
+    key_id: int = Path(..., description="API key ID to update"),
+    body: APIKeyUpdateBody = Body(...),
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+):
+    """
+    Update an existing API key (name, permissions).
+    Proxies to auth-service `/api/v1/auth/api-keys/{key_id}`.
+    """
+    import json
+
+    # Convert body to dict, dropping nulls
+    body_dict = body.dict(exclude_none=True)
+    payload = json.dumps(body_dict).encode("utf-8")
+
+    headers = build_auth_headers(request, credentials, None)
+    headers["Content-Type"] = "application/json"
+
+    return await proxy_to_service(
+        None,
+        f"/api/v1/auth/api-keys/{key_id}",
+        "auth-service",
+        method="PATCH",
+        body=payload,
+        headers=headers,
+    )
 
 @app.get("/api/v1/auth/oauth2/providers", tags=["OAuth2"])
 async def get_oauth2_providers(

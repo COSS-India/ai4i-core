@@ -249,7 +249,7 @@ const ProfilePage: React.FC = () => {
     };
 
     fetchUsers();
-  }, [isAuthenticated, authLoading, toast,user?.roles?.includes('ADMIN') ]);
+  }, [isAuthenticated, authLoading, toast, user]);
 
   const handleCopyApiKey = () => {
     const key = getApiKey();
@@ -756,44 +756,44 @@ const ProfilePage: React.FC = () => {
                     <>
                       {/* Only show "Your API Key" input when there are API keys or when loading */}
                       {(apiKeys.length > 0 || isLoadingApiKeys) && (
-                        <FormControl>
-                          <FormLabel fontWeight="semibold">Your API Key</FormLabel>
-                          <InputGroup>
-                            <Input
-                              type={showApiKey ? "text" : "password"}
-                              value={showApiKey ? (apiKey || "") : maskedApiKey}
-                              isReadOnly
-                              bg={inputReadOnlyBg}
-                              placeholder={apiKey ? undefined : "No API key set"}
-                            />
-                            <InputRightElement width="8rem">
-                              <HStack spacing={1}>
+                      <FormControl>
+                        <FormLabel fontWeight="semibold">Your API Key</FormLabel>
+                        <InputGroup>
+                          <Input
+                            type={showApiKey ? "text" : "password"}
+                            value={showApiKey ? (apiKey || "") : maskedApiKey}
+                            isReadOnly
+                            bg={inputReadOnlyBg}
+                            placeholder={apiKey ? undefined : "No API key set"}
+                          />
+                          <InputRightElement width="8rem">
+                            <HStack spacing={1}>
+                              <IconButton
+                                aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                                icon={showApiKey ? <ViewOffIcon /> : <ViewIcon />}
+                                onClick={() => setShowApiKey(!showApiKey)}
+                                variant="ghost"
+                                size="sm"
+                                isDisabled={!apiKey}
+                              />
+                              {apiKey && (
                                 <IconButton
-                                  aria-label={showApiKey ? "Hide API key" : "Show API key"}
-                                  icon={showApiKey ? <ViewOffIcon /> : <ViewIcon />}
-                                  onClick={() => setShowApiKey(!showApiKey)}
+                                  aria-label="Copy API key"
+                                  icon={<CopyIcon />}
+                                  onClick={handleCopyApiKey}
                                   variant="ghost"
                                   size="sm"
-                                  isDisabled={!apiKey}
                                 />
-                                {apiKey && (
-                                  <IconButton
-                                    aria-label="Copy API key"
-                                    icon={<CopyIcon />}
-                                    onClick={handleCopyApiKey}
-                                    variant="ghost"
-                                    size="sm"
-                                  />
-                                )}
-                              </HStack>
-                            </InputRightElement>
-                          </InputGroup>
-                          {!apiKey && (
-                            <Text fontSize="sm" color="gray.500" mt={2}>
-                              You haven&apos;t set an API key yet. Use the &quot;Manage API Key&quot; option in the header to set one.
-                            </Text>
-                          )}
-                        </FormControl>
+                              )}
+                            </HStack>
+                          </InputRightElement>
+                        </InputGroup>
+                        {!apiKey && (
+                          <Text fontSize="sm" color="gray.500" mt={2}>
+                            You haven&apos;t set an API key yet. Use the &quot;Manage API Key&quot; option in the header to set one.
+                          </Text>
+                        )}
+                      </FormControl>
                       )}
                       
                       {/* Display fetched API keys list */}
