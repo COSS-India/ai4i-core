@@ -22,7 +22,7 @@ from middleware.auth_provider import AuthProvider
 router = APIRouter(
     prefix="/admin", 
     tags=["Tenants registeration"],
-    # dependencies=[Depends(AuthProvider)]
+    dependencies=[Depends(AuthProvider)]
 )
 
 @router.post("/register/tenant", response_model=TenantRegisterResponse, status_code=status.HTTP_201_CREATED)

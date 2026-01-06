@@ -14,7 +14,7 @@ class TenantRegisterRequest(BaseModel):
 class TenantRegisterResponse(BaseModel):
     id: UUID
     tenant_id: str
-    subdomain: Optional[str] = None
+    # subdomain: Optional[str] = None
     schema_name: str
     subscriptions: List[str]
     quotas : Dict[str , Any]

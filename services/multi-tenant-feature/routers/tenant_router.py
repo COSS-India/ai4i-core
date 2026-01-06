@@ -10,13 +10,13 @@ from models.tenant_subscription import (
 )
 from tenant_service import add_subscriptions, remove_subscriptions
 from logger import logger
-# from middleware.auth_provider import AuthProvider
+from middleware.auth_provider import AuthProvider
 
 
 router = APIRouter(
     prefix="/tenant",
     tags=["Tenant Subscriptions"],
-    # dependencies=[Depends(AuthProvider)],
+    dependencies=[Depends(AuthProvider)],
 )
 
 

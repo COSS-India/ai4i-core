@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
-from cache.app_cache import get_cache_connection, get_async_cache_connection
+from cache.app_cache import get_async_cache_connection
 
 import os
 
@@ -26,7 +26,7 @@ RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 RATE_LIMIT_PER_HOUR = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
 
 # Sync Redis client for redis_om (model/service caching)
-redis_cache_client = get_cache_connection()
+# redis_cache_client = get_cache_connection()
 
 # Async Redis client for auth and rate limiting
 redis_client = get_async_cache_connection()
@@ -50,12 +50,12 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down FastAPI app...")
 
     # Close sync Redis client (for redis_om caching)
-    try:
-        if redis_cache_client:
-            redis_cache_client.close()
-            logger.info("Sync Redis connection closed.")
-    except Exception as e:
-        logger.error(f"Error closing sync Redis: {e}")
+    # try:
+    #     if redis_cache_client:
+    #         redis_cache_client.close()
+    #         logger.info("Sync Redis connection closed.")
+    # except Exception as e:
+    #     logger.error(f"Error closing sync Redis: {e}")
 
     # Close async Redis client (for auth/rate limiting)
     try:

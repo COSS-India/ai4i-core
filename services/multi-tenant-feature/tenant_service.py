@@ -158,6 +158,12 @@ async def create_new_tenant(
                 raise ValueError("Tenant already active")
             elif existing.status == TenantStatus.SUSPENDED:
                 raise ValueError("Tenant is suspended. Contact support.")
+            
+    if not payload.requested_subscriptions:
+        raise HTTPException(
+            status_code=400,
+            detail="Subscriptions cannot be empty. At least one service must be selected.",
+        )
 
     # Create new tenant
     tenant_id = generate_tenant_id(payload.organization_name)
@@ -171,12 +177,36 @@ async def create_new_tenant(
         "domain": payload.domain,
         # "subdomain": subdomain,
         "schema_name": schema_name,
-        "subscriptions": payload.requested_subscriptions or [],
+        "subscriptions": payload.requested_subscriptions,
         "quotas": payload.requested_quotas or DEFAULT_QUOTAS,
         "status": TenantStatus.PENDING,
         "temp_admin_username": "",
         "temp_admin_password_hash": "",
     }
+
+    # Validate services are active TODO: Implement if service deactivation is supported
+    # services = await tenant_db.scalars(
+    #     select(ServiceConfig).where(
+    #         ServiceConfig.service_name.in_(requested_services),
+    #         ServiceConfig.is_active.is_(True),
+    #     )
+    # )
+    # services = services.all()
+
+    # Extract service names that are valid & active
+    # active_service_names = {service.service_name for service in services}
+    
+    # # Find missing or inactive services
+    # invalid_or_inactive_services = set(tenant_data.get("subscriptions", [])) - set(active_service_names)
+    
+    # if invalid_or_inactive_services:
+    #     raise HTTPException(
+    #         status_code=400,
+    #         detail={
+    #             "message": "One or more services are invalid or inactive",
+    #             "invalid_services": list(invalid_or_inactive_services),
+    #         },
+    #     )
 
     stmt = insert(Tenant).values(**tenant_data).returning(Tenant)
     result = await db.execute(stmt)
@@ -270,7 +300,7 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
 
     admin_username = f"admin@{tenant.tenant_id}"
     plain_password = generate_random_password(length = 8)
-    logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id}")
+    # logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id}")
     hashed_password = hash_password(plain_password)
 
     tenant.temp_admin_username = admin_username
@@ -390,7 +420,7 @@ async def resend_verification_email(
 
     # verification_link = f"https://{tenant.subdomain}/verify-email?token={token}" # TODO : add subdomain if required
 
-    verification_link = f"http://{EMAIL_VERIFICATION_LINK}/email/verify?token={token}"
+    verification_link = f"{EMAIL_VERIFICATION_LINK}/email/verify?token={token}"
 
     # Extract email before adding background task to avoid detached object issues
     contact_email_str = str(tenant.contact_email)
@@ -423,7 +453,7 @@ async def create_service(payload: ServiceCreateRequest,db: AsyncSession,) -> Ser
     if existing.scalar_one_or_none():
         raise HTTPException(
             status_code=409,
-            detail=f"Service '{payload.service_name}' already exists",
+            detail=f"Service '{payload.service_name.value}' already exists",
         )
 
     for _ in range(3):
@@ -453,9 +483,9 @@ async def create_service(payload: ServiceCreateRequest,db: AsyncSession,) -> Ser
         await db.commit()
         await db.refresh(service)
     except IntegrityError as e:
-        logger.error(f"Integrity error while creating service {payload.service_name}: {e}")
+        logger.error(f"Integrity error while creating service {payload.service_name.value}: {e}")
         await db.rollback()
-        raise HTTPException(status_code=409,detail=f"Service creation failed - service '{payload.service_name}' or ID {service_id} may already exist")
+        raise HTTPException(status_code=409,detail=f"Service creation failed - service '{payload.service_name.value}' or ID {service_id} may already exist")
     except Exception as e:
         logger.exception(f"Error committing service creation to database: {e}")
         await db.rollback()
@@ -707,6 +737,12 @@ async def register_user(
     requested_services = set(payload.services)
 
     if not requested_services:
+        raise HTTPException(
+            status_code=400,
+            detail="No active services found for user"
+        )
+    
+    if not requested_services:
         raise HTTPException(status_code=400, detail="At least one service is required")
     
     inactive_services = set(requested_services) - tenant_services
@@ -716,7 +752,7 @@ async def register_user(
             detail=f"One or more services are not enabled for this tenant {inactive_services}",
         )
 
-    # Validate services are active
+    # Validate services are active TODO:
     services = await tenant_db.scalars(
         select(ServiceConfig).where(
             ServiceConfig.service_name.in_(requested_services),
@@ -725,10 +761,19 @@ async def register_user(
     )
     services = services.all()
 
-    if len(services) != len(requested_services):
+    active_service_names = {service.service_name for service in services}
+    
+    # Find missing or inactive services
+    invalid_or_inactive_services = set(requested_services) - set(active_service_names)
+    
+    if invalid_or_inactive_services:
         raise HTTPException(
             status_code=400,
-            detail=f"One or more services are invalid or inactive services : {inactive_services}")
+            detail={
+                "message": "One or more services are invalid or inactive",
+                "invalid_services": list(invalid_or_inactive_services),
+            },
+        )
     
     # Check if user already exists under this tenant
     existing_tenant_user = await tenant_db.scalar(
@@ -777,10 +822,8 @@ async def register_user(
     tenant_db.add(tenant_user)
     await tenant_db.flush()
 
-    # 6️⃣ Create UserBillingRecord entries (TENANT DB)
+    # Create UserBillingRecord entries (TENANT DB)
     billing_month = date.today().replace(day=1)
-
-    #TODO: commenting this out , need to check billing logic
 
     for service in services:
         tenant_db.add(
@@ -860,7 +903,7 @@ async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
     if old_status == new_status:
         raise HTTPException(
             status_code=400,
-            detail=f"Tenant already in {new_status} state",
+            detail=f"Tenant already in {new_status.value} state",
         )
 
     tenant.status = new_status
@@ -974,7 +1017,7 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
     if tenant_user.status == payload.status:
         raise HTTPException(
             status_code=400,
-            detail=f"User already {payload.status}",
+            detail=f"User already {payload.status.value}",
         )
 
     old_status = tenant_user.status
