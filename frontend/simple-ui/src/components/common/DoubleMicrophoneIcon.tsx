@@ -21,7 +21,7 @@ const DoubleMicrophoneIcon = React.forwardRef<SVGSVGElement, any>((props, ref) =
   ) as any;
 });
 
-(DoubleMicrophoneIcon as any).displayName = "DoubleMicrophoneIcon";
+DoubleMicrophoneIcon.displayName = "DoubleMicrophoneIcon";
 
 export default DoubleMicrophoneIcon as IconType;
 
