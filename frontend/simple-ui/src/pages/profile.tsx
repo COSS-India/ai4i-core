@@ -499,7 +499,7 @@ const ProfilePage: React.FC = () => {
                 {(user?.roles?.includes('ADMIN') || user?.is_superuser) && (
                   <>
                     <Tab fontWeight="semibold">Roles</Tab>
-                    <Tab fontWeight="semibold">Permissions</Tab>
+                    <Tab fontWeight="semibold">Create API Key</Tab>
                   </>
                 )}
               </TabList>
