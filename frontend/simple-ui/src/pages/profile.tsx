@@ -114,12 +114,31 @@ const ProfilePage: React.FC = () => {
   // State for fetching API key when tab is clicked
   const [isFetchingApiKey, setIsFetchingApiKey] = useState(false);
   const [activeTabIndex, setActiveTabIndex] = useState(0);
-  const [selectedApiKeyId, setSelectedApiKeyId] = useState<number | null>(null);
   
-  // Effect to find and populate API key based on selected permissions
+  // Load persisted selected API key ID from localStorage on mount
+  const [selectedApiKeyId, setSelectedApiKeyId] = useState<number | null>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('selected_api_key_id');
+      return stored ? parseInt(stored, 10) : null;
+    }
+    return null;
+  });
+  
+  // Persist selected API key ID to localStorage whenever it changes
   useEffect(() => {
-    // Only run if we have selected permissions and API keys loaded
-    if (selectedPermissionsForUser.length > 0 && apiKeys.length > 0) {
+    if (typeof window !== 'undefined') {
+      if (selectedApiKeyId !== null) {
+        localStorage.setItem('selected_api_key_id', selectedApiKeyId.toString());
+      } else {
+        localStorage.removeItem('selected_api_key_id');
+      }
+    }
+  }, [selectedApiKeyId]);
+  
+  // Effect to find and populate API key based on selected permissions (only if no key is currently selected)
+  useEffect(() => {
+    // Only auto-select if no API key is currently selected and we have matching permissions
+    if (selectedApiKeyId === null && selectedPermissionsForUser.length > 0 && apiKeys.length > 0) {
       // Find API key that matches the selected permissions exactly
       const matchingKey = apiKeys.find((key) => {
         if (key.permissions.length !== selectedPermissionsForUser.length) {
@@ -155,16 +174,21 @@ const ProfilePage: React.FC = () => {
             isClosable: true,
           });
         }
-      } else {
-        // No matching key found, clear selection
-        setSelectedApiKeyId(null);
       }
-    } else if (selectedPermissionsForUser.length === 0) {
-      // No permissions selected, clear API key selection
-      setSelectedApiKeyId(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPermissionsForUser, apiKeys]);
+  }, [selectedPermissionsForUser, apiKeys, selectedApiKeyId]);
+  
+  // Load API key value when a persisted selection is restored
+  useEffect(() => {
+    if (selectedApiKeyId !== null && apiKeys.length > 0) {
+      const selectedKey = apiKeys.find(key => key.id === selectedApiKeyId);
+      if (selectedKey && selectedKey.key_value) {
+        // If the selected key has a value, set it
+        setApiKey(selectedKey.key_value);
+      }
+    }
+  }, [selectedApiKeyId, apiKeys, setApiKey]);
 
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
@@ -225,7 +249,7 @@ const ProfilePage: React.FC = () => {
     };
 
     fetchUsers();
-  }, [isAuthenticated, authLoading, toast,user?.roles?.includes('ADMIN') ]);
+  }, [isAuthenticated, authLoading, toast, user]);
 
   const handleCopyApiKey = () => {
     const key = getApiKey();
@@ -730,6 +754,8 @@ const ProfilePage: React.FC = () => {
                     </Center>
                   ) : (
                     <>
+                      {/* Only show "Your API Key" input when there are API keys or when loading */}
+                      {(apiKeys.length > 0 || isLoadingApiKeys) && (
                       <FormControl>
                         <FormLabel fontWeight="semibold">Your API Key</FormLabel>
                         <InputGroup>
@@ -768,9 +794,10 @@ const ProfilePage: React.FC = () => {
                           </Text>
                         )}
                       </FormControl>
+                      )}
                       
                       {/* Display fetched API keys list */}
-                      {apiKeys.length > 0 && (
+                      {apiKeys.length > 0 ? (
                         <Box>
                           <Heading size="sm" mb={4} color="gray.700">
                             Your API Keys ({apiKeys.length})
@@ -794,6 +821,7 @@ const ProfilePage: React.FC = () => {
                                           isChecked={selectedApiKeyId === key.id}
                                           onChange={(e) => {
                                             if (e.target.checked) {
+                                              // User explicitly selected this key - persist it
                                               setSelectedApiKeyId(key.id);
                                               // If key_value is available, set it as the current API key
                                               if (key.key_value) {
@@ -807,15 +835,17 @@ const ProfilePage: React.FC = () => {
                                                 });
                                               } else {
                                                 // Key value not available (only shown once on creation)
+                                                // Still persist the selection even without the value
                                                 toast({
-                                                  title: "Key Value Not Available",
-                                                  description: `API key "${key.key_name}" is selected, but the key value is not available. Only newly created keys have their values displayed.`,
-                                                  status: "warning",
+                                                  title: "API Key Selected",
+                                                  description: `API key "${key.key_name}" is now selected. Key value is not available (only shown once on creation).`,
+                                                  status: "info",
                                                   duration: 4000,
                                                   isClosable: true,
                                                 });
                                               }
                                             } else {
+                                              // User explicitly deselected - clear selection
                                               setSelectedApiKeyId(null);
                                             }
                                           }}
@@ -863,7 +893,19 @@ const ProfilePage: React.FC = () => {
                             ))}
                           </VStack>
                         </Box>
-                      )}
+                      ) : !isLoadingApiKeys ? (
+                        <Alert status="info" borderRadius="md">
+                          <AlertIcon />
+                          <AlertDescription>
+                            <Text fontWeight="semibold" mb={2}>
+                              No API keys found
+                            </Text>
+                            <Text fontSize="sm">
+                              You don&apos;t have any API keys yet. To get an API key, please contact your administrator to add the necessary permissions to your account.
+                            </Text>
+                          </AlertDescription>
+                        </Alert>
+                      ) : null}
                     </>
                   )}
                     </VStack>
@@ -1339,6 +1381,30 @@ const ProfilePage: React.FC = () => {
                                           setSelectedPermissionsForUser(values as string[]);
                                         }}
                                       >
+                                        {/* Select All / Deselect All Button */}
+                                        <Box mb={3} pb={3} borderBottomWidth="1px">
+                                          <HStack justify="space-between" align="center">
+                                            <Checkbox
+                                              isChecked={selectedPermissionsForUser.length === permissions.length && permissions.length > 0}
+                                              onChange={(e) => {
+                                                if (e.target.checked) {
+                                                  setSelectedPermissionsForUser([...permissions]);
+                                                } else {
+                                                  setSelectedPermissionsForUser([]);
+                                                }
+                                              }}
+                                              colorScheme="purple"
+                                            >
+                                              <Text fontSize="sm" fontWeight="semibold">
+                                                Select All
+                                              </Text>
+                                            </Checkbox>
+                                            <Text fontSize="xs" color="gray.500">
+                                              {selectedPermissionsForUser.length}/{permissions.length} selected
+                                            </Text>
+                                          </HStack>
+                                        </Box>
+                                        
                                         <SimpleGrid columns={2} spacing={3}>
                                           {permissions.map((perm) => (
                                             <Checkbox key={perm} value={perm} colorScheme="purple">

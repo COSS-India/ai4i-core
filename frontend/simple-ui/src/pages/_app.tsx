@@ -22,6 +22,7 @@ const layoutRoutes = [
   '/pipeline-builder', 
   '/profile', 
   '/model-management',
+  '/services-management',
   '/ocr',
   '/transliteration',
   '/language-detection',
