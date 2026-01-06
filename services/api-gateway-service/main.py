@@ -12,20 +12,22 @@ import logging
 import uuid
 import time
 import json
-from datetime import datetime
+from datetime import datetime, date
 from typing import Dict, Any, List, Optional, Tuple, Union
 from enum import Enum
+from uuid import UUID
 from urllib.parse import urlencode, urlparse, parse_qs
 from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.openapi.utils import get_openapi
 import redis.asyncio as redis
 import httpx
 from auth_middleware import auth_middleware
+from decimal import Decimal
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -751,6 +753,8 @@ class Task(BaseModel):
     """Task type."""
     type: str = Field(..., description="Task type")
 
+#pydantic models for model management
+
 class ModelTaskTypeEnum(str, Enum):
     
     nmt = "nmt"
@@ -1012,6 +1016,180 @@ class RemoveRoleBody(BaseModel):
     user_id: int = Field(..., description="ID of the user to remove role from")
     role_name: str = Field(..., description="Name of the role to remove")
 
+# multi tenant pydantic models
+class TenantStatus(str, Enum):
+    """Tenant status enumeration."""
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    ACTIVE = "ACTIVE"
+    SUSPENDED = "SUSPENDED"
+
+class TenantUserStatus(str, Enum):
+    """Tenant user status enumeration."""
+    ACTIVE = "ACTIVE"
+    SUSPENDED = "SUSPENDED"
+
+class SubscriptionType(str, Enum):
+    """Subscription type enumeration."""
+    TTS = "tts"
+    ASR = "asr"
+    NMT = "nmt"
+    LLM = "llm"
+    PIPELINE = "pipeline"
+    OCR = "ocr"
+    NER = "ner"
+    Transliteration = "transliteration"
+    Langauage_detection = "language_detection"
+    Speaker_diarization = "speaker_diarization"
+    Language_diarization = "language_diarization"
+    Audio_language_detection = "audio_language_detection"
+
+class ServiceUnitType(str, Enum):
+    """Service unit type enumeration."""
+    CHARACTER = "character"
+    SECOND = "second"
+    MINUTE = "minute"
+    HOUR = "hour"
+    REQUEST = "request"
+
+class ServiceCurrencyType(str, Enum):
+    """Service currency type enumeration."""
+    INR = "INR"
+
+class TenantRegisterRequest(BaseModel):
+    """Request model for tenant registration."""
+    organization_name: str = Field(..., min_length=2, max_length=255)
+    domain: str = Field(..., min_length=3, max_length=255)
+    contact_email: EmailStr = Field(..., description="Contact email for the tenant")
+    requested_subscriptions: Optional[List[SubscriptionType]] = Field(default=[], description="List of requested service subscriptions")
+    requested_quotas: Optional[Dict[str, Any]] = Field(None, description="Requested quotas configuration")
+
+class TenantRegisterResponse(BaseModel):
+    """Response model for tenant registration."""
+    id: UUID = Field(..., description="Tenant UUID")
+    tenant_id: str = Field(..., description="Tenant identifier")
+    subdomain: Optional[str] = Field(None, description="Tenant subdomain")
+    schema_name: str = Field(..., description="Database schema name")
+    subscriptions: List[str] = Field(..., description="List of active subscriptions")
+    quotas: Dict[str, Any] = Field(..., description="Quota configuration")
+    status: str = Field(..., description="Tenant status")
+    token: str = Field(..., description="Email verification token")
+    message: Optional[str] = Field(None, description="Additional message")
+
+class UserRegisterRequest(BaseModel):
+    """Request model for user registration."""
+    tenant_id: str = Field(..., description="Tenant identifier", example="acme-corp-5d448a")
+    email: EmailStr = Field(..., description="User email address")
+    username: str = Field(..., min_length=3, max_length=100, description="Username")
+    password: Optional[str] = Field(None, min_length=8, description="User password (if not provided, a random password will be generated)")
+    services: List[str] = Field(..., description="List of services the user has access to", example=["tts", "asr"])
+    is_approved: bool = Field(False, description="Indicates if the user is approved by tenant admin")
+
+class UserRegisterResponse(BaseModel):
+    """Response model for user registration."""
+    user_id: int = Field(..., description="User ID")
+    tenant_id: str = Field(..., description="Tenant identifier")
+    username: str = Field(..., description="Username")
+    email: str = Field(..., description="User email")
+    services: List[str] = Field(..., description="List of services")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+class TenantStatusUpdateRequest(BaseModel):
+    """Request model for updating tenant status."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    status: TenantStatus = Field(..., description="New tenant status")
+    reason: Optional[str] = Field(None, description="Reason for status change (required if changing to SUSPENDED)")
+    suspended_until: Optional[date] = Field(None, description="Optional suspension end date in ISO format (YYYY-MM-DD)")
+
+class TenantStatusUpdateResponse(BaseModel):
+    """Response model for tenant status update."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    old_status: TenantStatus = Field(..., description="Previous status")
+    new_status: TenantStatus = Field(..., description="New status")
+
+class TenantUserStatusUpdateRequest(BaseModel):
+    """Request model for updating tenant user status."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="User ID")
+    status: TenantUserStatus = Field(..., description="New user status")
+
+class TenantUserStatusUpdateResponse(BaseModel):
+    """Response model for tenant user status update."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="User ID")
+    old_status: TenantUserStatus = Field(..., description="Previous status")
+    new_status: TenantUserStatus = Field(..., description="New status")
+
+class TenantResendEmailVerificationRequest(BaseModel):
+    """Request model for resending email verification."""
+    tenant_id: UUID = Field(..., description="Tenant UUID")
+
+class TenantResendEmailVerificationResponse(BaseModel):
+    """Response model for resending email verification."""
+    tenant_uuid: UUID = Field(..., description="Tenant UUID")
+    tenant_id: str = Field(..., description="Tenant identifier")
+    token: str = Field(..., description="Verification token")
+    message: str = Field(..., description="Response message")
+
+class TenantSubscriptionAddRequest(BaseModel):
+    """Request model for adding tenant subscriptions."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    subscriptions: List[str] = Field(..., min_items=1, description="List of subscriptions to add")
+
+class TenantSubscriptionRemoveRequest(BaseModel):
+    """Request model for removing tenant subscriptions."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    subscriptions: List[str] = Field(..., min_items=1, description="List of subscriptions to remove")
+
+class TenantSubscriptionResponse(BaseModel):
+    """Response model for tenant subscription operations."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    subscriptions: List[str] = Field(..., description="Updated list of subscriptions")
+
+class ServiceCreateRequest(BaseModel):
+    """Request model for creating a service."""
+    service_name: SubscriptionType = Field(..., description="Service name", example="asr")
+    unit_type: ServiceUnitType = Field(..., description="Unit type for pricing")
+    price_per_unit: Decimal = Field(..., gt=0, description="Price per unit")
+    currency: ServiceCurrencyType = Field(default=ServiceCurrencyType.INR, description="Currency")
+    is_active: bool = Field(..., description="Whether the service is active")
+
+class ServiceResponse(BaseModel):
+    """Response model for service information."""
+    id: int = Field(..., description="Service ID")
+    service_name: str = Field(..., description="Service name")
+    unit_type: ServiceUnitType = Field(..., description="Unit type")
+    price_per_unit: Decimal = Field(..., description="Price per unit")
+    currency: ServiceCurrencyType = Field(..., description="Currency")
+    is_active: bool = Field(..., description="Active status")
+    created_at: Optional[datetime] = Field(None, description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Update timestamp")
+
+class ListServicesResponse(BaseModel):
+    """Response model for listing services."""
+    count: int = Field(..., description="Total number of services")
+    services: List[ServiceResponse] = Field(..., description="List of services")
+
+class FieldChange(BaseModel):
+    """Model for tracking field changes."""
+    old: Any = Field(..., description="Old value")
+    new: Any = Field(..., description="New value")
+
+class ServiceUpdateRequest(BaseModel):
+    """Request model for updating a service."""
+    service_id: int = Field(..., description="Service ID")
+    price_per_unit: Optional[Decimal] = Field(None, gt=0, description="New price per unit")
+    unit_type: Optional[ServiceUnitType] = Field(None, description="New unit type")
+    currency: Optional[ServiceCurrencyType] = Field(None, description="New currency")
+    is_active: Optional[bool] = Field(None, description="New active status")
+
+class ServiceUpdateResponse(BaseModel):
+    """Response model for service update."""
+    message: str = Field(..., description="Update message")
+    service: ServiceResponse = Field(..., description="Updated service information")
+    changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
+
+
 class ServiceRegistry:
     """Redis-based service instance management"""
     
@@ -1238,10 +1416,16 @@ tags_metadata = [
         "description": "Feature flag management endpoints. Evaluate, list, and manage feature flags using Unleash.",
     },
     {
+        "name": "Multi-Tenant",
+        "description": "Multi-tenant management endpoints. Tenant registration, user management, billing, and subscriptions.",
+    },
+    {
         "name": "Status",
         "description": "Service status and health check endpoints.",
     },
 ]
+
+# Pydantic models for Multi-Tenant endpoints
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -1847,7 +2031,8 @@ async def api_status():
             "audio-lang-detection": os.getenv("AUDIO_LANG_DETECTION_SERVICE_URL", "http://audio-lang-detection-service:8096"),
             "model-management": os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
             "llm": os.getenv("LLM_SERVICE_URL", "http://llm-service:8090"),
-            "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8090")
+            "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8090"),
+            "multi-tenant": os.getenv("MULTI_TENANT_SERVICE_URL", "http://multi-tenant-service:8001")
         }
     }
 
@@ -1859,7 +2044,6 @@ async def register_user(
     request: Request
 ):
     """Register a new user"""
-    import json
     # Prepare headers without Content-Length (httpx will set it)
     headers = {k: v for k, v in request.headers.items() 
                if k.lower() not in ['content-length', 'host']}
@@ -3536,6 +3720,241 @@ async def get_user_profile(request: Request):
         "message": "User profile data would be fetched here"
     }
 
+
+# Multi-Tenant Endpoints (Proxy to Multi-Tenant Service)
+
+@app.post("/api/v1/multi-tenant/register/tenant", response_model=TenantRegisterResponse, tags=["Multi-Tenant"], status_code=201)
+async def register_tenant(
+    payload: TenantRegisterRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Register a new tenant"""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/admin/register/tenant",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.post("/api/v1/multi-tenant/register/users", response_model=UserRegisterResponse, tags=["Multi-Tenant"], status_code=201)
+async def register_user_multi_tenant(
+    payload: UserRegisterRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Register a new user for a tenant"""
+    
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/admin/register/users",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.patch("/api/v1/multi-tenant/update/tenants/status", response_model=TenantStatusUpdateResponse, tags=["Multi-Tenant"])
+async def update_tenant_status(
+    payload: TenantStatusUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Update tenant status"""
+    
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/admin/update/tenants/status",
+        "multi-tenant-service",
+        method="PATCH",
+        body=body,
+        headers=headers
+    )
+
+@app.patch("/api/v1/multi-tenant/update/users/status", response_model=TenantUserStatusUpdateResponse, tags=["Multi-Tenant"])
+async def update_tenant_user_status(
+    payload: TenantUserStatusUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Update tenant user status"""
+
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/admin/update/users/status",
+        "multi-tenant-service",
+        method="PATCH",
+        body=body,
+        headers=headers
+    )
+
+
+@app.get("/api/v1/multi-tenant/email/verify", tags=["Multi-Tenant"])
+async def verify_email(
+    request: Request,
+    token: str = Query(..., description="Email verification token"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Verify tenant email"""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    query_string = f"?token={token}"
+    return await proxy_to_service(
+        request,
+        f"/email/verify{query_string}",
+        "multi-tenant-service",
+        method="GET",
+        headers=headers
+    )
+
+@app.post("/api/v1/multi-tenant/email/resend", response_model=TenantResendEmailVerificationResponse, tags=["Multi-Tenant"], status_code=201)
+async def resend_verification_email(
+    payload: TenantResendEmailVerificationRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Resend email verification"""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/email/resend",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.post("/api/v1/multi-tenant/subscriptions/add", response_model=TenantSubscriptionResponse, tags=["Multi-Tenant"], status_code=201)
+async def add_tenant_subscriptions(
+    payload: TenantSubscriptionAddRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Add subscriptions to a tenant"""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key) 
+    headers['Content-Type'] = 'application/json'
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/tenant/subscriptions/add",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.post("/api/v1/multi-tenant/subscriptions/remove", response_model=TenantSubscriptionResponse, tags=["Multi-Tenant"])
+async def remove_tenant_subscriptions(
+    payload: TenantSubscriptionRemoveRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Remove subscriptions from a tenant"""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/tenant/subscriptions/remove",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.post("/api/v1/multi-tenant/register/services", response_model=ServiceResponse, tags=["Multi-Tenant"], status_code=201)
+async def register_service(
+    payload: ServiceCreateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Register a new service"""
+    
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/register/services",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.post("/api/v1/multi-tenant/update/services", response_model=ServiceUpdateResponse, tags=["Multi-Tenant"], status_code=201)
+async def update_service(
+    payload: ServiceUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Update a service"""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/update/services",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.get("/api/v1/multi-tenant/list/services", response_model=ListServicesResponse, tags=["Multi-Tenant"])
+async def list_services(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """List all services"""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    return await proxy_to_service(
+        request,
+        "/list/services",
+        "multi-tenant-service",
+        method="GET",
+        headers=headers
+    )
+
 # Helper function to proxy requests to auth service
 async def proxy_to_auth_service(request: Request, path: str):
     """Proxy request to auth service"""
@@ -3594,7 +4013,8 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'audio-lang-detection-service': os.getenv('AUDIO_LANG_DETECTION_SERVICE_URL', 'http://audio-lang-detection-service:8096'),
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
-        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
+        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090'),
+        'multi-tenant-service': os.getenv('MULTI_TENANT_SERVICE_URL', 'http://multi-tenant-service:8001')
     }
     
     try:
@@ -3681,7 +4101,8 @@ async def proxy_to_service_with_params(
         'ner-service': os.getenv('NER_SERVICE_URL', 'http://ner-service:9001'),
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
-        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090')
+        'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090'),
+        'multi-tenant-service': os.getenv('MULTI_TENANT_SERVICE_URL', 'http://multi-tenant-service:8001')
     }
     
     try:

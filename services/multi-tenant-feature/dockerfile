@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 
-COPY services/multi-tenant-feature/requirements.txt .
+COPY . .
 
 # Install dependencies (NO --user)
 RUN pip install --no-cache-dir -r requirements.txt
@@ -40,8 +40,8 @@ RUN useradd --create-home --shell /bin/bash app
 # Copy installed Python packages
 COPY --from=builder /usr/local /usr/local
 
-# Copy application code
-COPY services/multi-tenant-feature/ .
+# # Copy application code
+COPY . .
 
 # Fix permissions
 RUN chown -R app:app /app

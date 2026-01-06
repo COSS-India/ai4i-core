@@ -764,7 +764,7 @@ services:
   multi-tenant-service:
     build:
       context: ./services/multi-tenant-feature
-      dockerfile: dockerfile
+      dockerfile: Dockerfile
     container_name: ai4v-multi-tenant-service
     ports:
       - "8100:8001"
