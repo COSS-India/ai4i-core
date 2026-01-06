@@ -31,6 +31,7 @@ import {
 import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
 import { useFeatureFlag } from "../hooks/useFeatureFlag";
+import DoubleMicrophoneIcon from "../components/common/DoubleMicrophoneIcon";
 
 const safeColorMap:any = {
   asr: { // Coral → Pastel Coral
@@ -212,9 +213,9 @@ const services = [
   },
   {
     id: "pipeline",
-    title: "Pipeline",
+    title: "Speech to Speech\nPipeline",
     description: "Create workflows by chaining together multiple AI language services.",
-    icon: IoGitMergeOutline,
+    icon: DoubleMicrophoneIcon,
     path: "/pipeline",
     color: "purple",
     enabled: pipelineEnabled.isEnabled,
@@ -291,7 +292,7 @@ const services = [
         <title>AI4Inclusion Console</title>
         <meta
           name="description"
-          content="Test ASR, TTS, NMT, LLM (GPT OSS 20B), and Pipeline microservices with a modern web interface"
+          content="Test ASR, TTS, NMT, LLM (GPT OSS 20B), and Speech to Speech microservices with a modern web interface"
         />
       </Head>
 
@@ -366,8 +367,9 @@ const services = [
                       color="gray.800"
                       fontWeight="semibold"
                       textAlign="center"
-                      noOfLines={2}
+                      noOfLines={3}
                       wordBreak="break-word"
+                      whiteSpace="pre-line"
                     >
                       {service.title}
                     </Heading>

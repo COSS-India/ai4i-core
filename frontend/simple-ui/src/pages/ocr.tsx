@@ -45,6 +45,45 @@ const OCRPage: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /**
+   * Validates if a URL is safe to use as an image source.
+   * Only allows http:, https:, blob:, and data:image/* protocols.
+   * Rejects dangerous protocols like javascript: to prevent XSS attacks.
+   */
+  const isSafeImageUrl = (url: string): boolean => {
+    if (!url || url.trim() === "") {
+      return false;
+    }
+
+    try {
+      // Check if it's a blob URL (created by URL.createObjectURL)
+      if (url.startsWith("blob:")) {
+        return true;
+      }
+
+      // Parse the URL to check its protocol
+      const parsedUrl = new URL(url);
+
+      // Allow http and https protocols
+      if (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") {
+        return true;
+      }
+
+      // Allow data URLs, but only for images
+      if (parsedUrl.protocol === "data:") {
+        // Check if it's a data URL with image media type
+        const dataUrlMatch = url.match(/^data:image\//);
+        return dataUrlMatch !== null;
+      }
+
+      // Reject all other protocols (including javascript:, etc.)
+      return false;
+    } catch (error) {
+      // If URL parsing fails, it's not a valid URL
+      return false;
+    }
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -100,10 +139,29 @@ const OCRPage: React.FC = () => {
   };
 
   const handleUriChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setImageUri(e.target.value);
+    const value = e.target.value;
+    setImageUri(value);
     setImageFile(null);
-    setPreviewUrl(e.target.value || null);
     setActiveTab(1);
+
+    // Validate URL before setting preview
+    if (value && value.trim() !== "") {
+      if (isSafeImageUrl(value)) {
+        setPreviewUrl(value);
+      } else {
+        // Clear preview and show error for unsafe URLs
+        setPreviewUrl(null);
+        toast({
+          title: "Invalid URL",
+          description: "Please provide a valid image URL (http://, https://, or data:image/*).",
+          status: "error",
+          duration: 3000,
+          isClosable: true,
+        });
+      }
+    } else {
+      setPreviewUrl(null);
+    }
   };
 
   const fileToBase64 = (file: File): Promise<string> => {
@@ -164,10 +222,25 @@ const OCRPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      setError(err.message || "Failed to perform OCR inference");
+      // Prioritize API error message from response
+      let errorMessage = "Failed to perform OCR inference";
+      
+      if (err?.response?.data?.detail?.message) {
+        errorMessage = err.response.data.detail.message;
+      } else if (err?.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err?.response?.data?.detail) {
+        if (typeof err.response.data.detail === 'string') {
+          errorMessage = err.response.data.detail;
+        }
+      } else if (err?.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
       toast({
         title: "Error",
-        description: err.message || "Failed to perform OCR inference",
+        description: errorMessage,
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -213,67 +286,33 @@ const OCRPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <Grid
-          templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
-          gap={8}
-          w="full"
-          maxW="1400px"
-          mx="auto"
-        >
-          {/* Left Column - Service Details */}
-          <GridItem>
-            <VStack spacing={6} align="stretch">
-              <Heading size="lg" color="gray.800">
-                OCR - GPU T4
-              </Heading>
-              <Text color="gray.600" fontSize="md">
-                OCR service for Indic and English languages running on NVIDIA T4 GPU. Provides high-accuracy text extraction from images with bounding boxes, confidence scores, and line-by-line results. Supports documents, books, forms, and general text images.
-              </Text>
-            </VStack>
-          </GridItem>
+        <VStack spacing={8} w="full">
+          {/* Page Header */}
+          <Box textAlign="center">
+            <Heading size="xl" color="gray.800" mb={2}>
+              OCR - Optical Character Recognition
+            </Heading>
+            <Text color="gray.600" fontSize="lg">
+              OCR service for Indic and English languages running on NVIDIA T4 GPU. Provides high-accuracy text extraction from images with bounding boxes, confidence scores, and line-by-line results.
+            </Text>
+          </Box>
 
-          {/* Right Column - Try it out here! */}
-          <GridItem>
-            <VStack spacing={6} align="stretch">
-              <Heading size="md" color="gray.800">
-                Try it out here!
-              </Heading>
+          <Grid
+            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
+            gap={8}
+            w="full"
+            maxW="1200px"
+            mx="auto"
+          >
+            {/* Configuration Panel */}
+            <GridItem>
+              <VStack spacing={6} align="stretch">
 
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
                   Upload Image for OCR:
                 </FormLabel>
 
-                {/* Metrics Box */}
-                {fetched && (
-                  <Box
-                    p={4}
-                    bg="orange.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="orange.200"
-                    mb={4}
-                  >
-                    <HStack spacing={6}>
-                      <VStack align="start" spacing={0}>
-                        <Text fontSize="xs" color="gray.600">
-                          Characters Extracted
-                        </Text>
-                        <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                          {characterCount} characters
-                        </Text>
-                      </VStack>
-                      <VStack align="start" spacing={0}>
-                        <Text fontSize="xs" color="gray.600">
-                          Response Time
-                        </Text>
-                        <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                          {responseTime.toFixed(2)} seconds
-                        </Text>
-                      </VStack>
-                    </HStack>
-                  </Box>
-                )}
 
                 <Tabs index={activeTab} onChange={setActiveTab} mb={4}>
                   <TabList>
@@ -390,106 +429,154 @@ const OCRPage: React.FC = () => {
                 </Tabs>
               </FormControl>
 
-              {previewUrl && (
-                <Box>
-                  <Text fontSize="sm" fontWeight="semibold" mb={2}>
-                    Image Preview:
-                  </Text>
-                  <Box
-                    border="1px"
-                    borderColor="gray.300"
-                    borderRadius="md"
-                    overflow="hidden"
-                    bg="gray.50"
-                    p={2}
-                  >
-                    <img
-                      src={previewUrl}
-                      alt="Preview"
-                      style={{ maxWidth: "100%", height: "auto", display: "block" }}
-                    />
-                  </Box>
-                </Box>
-              )}
-
-              {fetching && (
-                <Box>
-                  <Text mb={2} fontSize="sm" color="gray.600">
-                    Processing image...
-                  </Text>
-                  <Progress size="xs" isIndeterminate colorScheme="indigo" />
-                </Box>
-              )}
-
-              {error && (
-                <Box
-                  p={4}
-                  bg="red.50"
-                  borderRadius="md"
-                  border="1px"
-                  borderColor="red.200"
-                >
-                  <Text color="red.600" fontSize="sm">
-                    {error}
-                  </Text>
-                </Box>
-              )}
-
-              {fetched && extractedText && (
-                <Box>
-                  <HStack justify="space-between" mb={2}>
-                    <Text fontSize="sm" fontWeight="semibold">
-                      Extracted Text:
+                {previewUrl && (
+                  <Box>
+                    <Text fontSize="sm" fontWeight="semibold" mb={2}>
+                      Image Preview:
                     </Text>
-                    <IconButton
-                      aria-label="Copy text"
-                      icon={copied ? <CheckIcon /> : <CopyIcon />}
-                      size="sm"
-                      onClick={handleCopy}
-                      colorScheme={copied ? "green" : "gray"}
-                    />
-                  </HStack>
+                    <Box
+                      border="1px"
+                      borderColor="gray.300"
+                      borderRadius="md"
+                      overflow="hidden"
+                      bg="gray.50"
+                      p={2}
+                    >
+                      <img
+                        src={previewUrl}
+                        alt="Preview"
+                        style={{ maxWidth: "100%", height: "auto", display: "block" }}
+                      />
+                    </Box>
+                  </Box>
+                )}
+
+                <Button
+                  colorScheme="orange"
+                  onClick={handleProcess}
+                  isLoading={fetching}
+                  loadingText="Processing..."
+                  size="md"
+                  w="full"
+                  isDisabled={!imageFile && !imageUri}
+                >
+                  Extract Text
+                </Button>
+              </VStack>
+            </GridItem>
+
+            {/* Results Panel */}
+            <GridItem>
+              <VStack spacing={6} align="stretch">
+                {/* Progress Indicator */}
+                {fetching && (
+                  <Box>
+                    <Text mb={2} fontSize="sm" color="gray.600">
+                      Processing image...
+                    </Text>
+                    <Progress size="xs" isIndeterminate colorScheme="orange" />
+                  </Box>
+                )}
+
+                {/* Error Display */}
+                {error && (
                   <Box
                     p={4}
-                    bg="white"
+                    bg="red.50"
                     borderRadius="md"
                     border="1px"
-                    borderColor="gray.300"
-                    maxH="300px"
-                    overflowY="auto"
+                    borderColor="red.200"
                   >
-                    <Text fontSize="sm" whiteSpace="pre-wrap" wordBreak="break-word">
-                      {extractedText}
+                    <Text color="red.600" fontSize="sm">
+                      {error}
                     </Text>
                   </Box>
-                </Box>
-              )}
+                )}
 
-              <Button
-                colorScheme="orange"
-                onClick={handleProcess}
-                isLoading={fetching}
-                loadingText="Processing..."
-                size="md"
-                w="full"
-                isDisabled={!imageFile && !imageUri}
-              >
-                Extract Text
-              </Button>
+                {/* Metrics Box */}
+                {fetched && (
+                  <Box
+                    p={4}
+                    bg="orange.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="orange.200"
+                  >
+                    <HStack spacing={6}>
+                      <VStack align="start" spacing={0}>
+                        <Text fontSize="xs" color="gray.600">
+                          Characters Extracted
+                        </Text>
+                        <Text fontSize="lg" fontWeight="bold" color="gray.800">
+                          {characterCount} characters
+                        </Text>
+                      </VStack>
+                      <VStack align="start" spacing={0}>
+                        <Text fontSize="xs" color="gray.600">
+                          Response Time
+                        </Text>
+                        <Text fontSize="lg" fontWeight="bold" color="gray.800">
+                          {responseTime.toFixed(2)} seconds
+                        </Text>
+                      </VStack>
+                    </HStack>
+                  </Box>
+                )}
 
-              {fetched && (
-                <Button
-                  onClick={clearResults}
-                  variant="outline"
-                  size="sm"
-                  w="full"
-                >
-                  Clear Results
-                </Button>
-              )}
-            </VStack>
-          </GridItem>
-        </Grid>
+                {/* OCR Results */}
+                {fetched && extractedText && (
+                  <>
+                    <Box>
+                      <HStack justify="space-between" mb={2}>
+                        <Text fontSize="sm" fontWeight="semibold">
+                          Extracted Text:
+                        </Text>
+                        <IconButton
+                          aria-label="Copy text"
+                          icon={copied ? <CheckIcon /> : <CopyIcon />}
+                          size="sm"
+                          onClick={handleCopy}
+                          colorScheme={copied ? "green" : "gray"}
+                        />
+                      </HStack>
+                      <Box
+                        p={4}
+                        bg="white"
+                        borderRadius="md"
+                        border="1px"
+                        borderColor="gray.300"
+                        maxH="300px"
+                        overflowY="auto"
+                      >
+                        <Text fontSize="sm" whiteSpace="pre-wrap" wordBreak="break-word">
+                          {extractedText}
+                        </Text>
+                      </Box>
+                    </Box>
+
+                    {/* Clear Results Button */}
+                    <Box textAlign="center">
+                      <button
+                        onClick={clearResults}
+                        style={{
+                          padding: "8px 16px",
+                          backgroundColor: "#f7fafc",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: "6px",
+                          cursor: "pointer",
+                          fontSize: "14px",
+                          color: "#4a5568",
+                        }}
+                      >
+                        Clear Results
+                      </button>
+                    </Box>
+                  </>
+                )}
+              </VStack>
+            </GridItem>
+          </Grid>
+        </VStack>
       </ContentLayout>
     </>
   );
