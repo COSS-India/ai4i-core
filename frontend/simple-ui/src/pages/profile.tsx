@@ -249,7 +249,7 @@ const ProfilePage: React.FC = () => {
     };
 
     fetchUsers();
-  }, [isAuthenticated, authLoading, toast,user?.roles?.includes('ADMIN') ]);
+  }, [isAuthenticated, authLoading, toast, user]);
 
   const handleCopyApiKey = () => {
     const key = getApiKey();
