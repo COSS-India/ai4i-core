@@ -9,6 +9,8 @@ import json
 import logging
 import httpx
 import os
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from repositories.api_key_repository import ApiKeyRepository
 from repositories.user_repository import UserRepository
@@ -17,6 +19,7 @@ from models.auth_models import ApiKeyDB, UserDB
 from middleware.exceptions import AuthenticationError, InvalidAPIKeyError, ExpiredAPIKeyError, AuthorizationError
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer("nmt-service")
 
 # Constants for auth service communication
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
@@ -77,11 +80,8 @@ def determine_service_and_action(request: Request) -> Tuple[str, str]:
     return service, action
 
 
-async def authenticate_bearer_token(request: Request, authorization: Optional[str]) -> Dict[str, Any]:
-    """
-    Validate JWT access token locally (signature + expiry check).
-    Kong already validated the token, this is a defense-in-depth check.
-    """
+async def _authenticate_bearer_token_impl(request: Request, authorization: Optional[str]) -> Dict[str, Any]:
+    """Internal implementation of bearer token authentication."""
     from jose import JWTError, jwt
     
     if not authorization or not authorization.startswith("Bearer "):
@@ -142,21 +142,55 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
         raise AuthenticationError("Failed to verify token")
 
 
-async def validate_api_key_permissions(api_key: str, service: str, action: str) -> bool:
+async def authenticate_bearer_token(request: Request, authorization: Optional[str]) -> Dict[str, Any]:
     """
-    Validate API key has required permissions by calling auth-service.
-    
-    Args:
-        api_key: The API key to validate
-        service: Service name (asr, nmt, tts, etc.)
-        action: Action type (read, inference)
-    
-    Returns:
-        True if permission is granted, False otherwise
-    
-    Raises:
-        AuthorizationError: If permission check fails
+    Validate JWT access token locally (signature + expiry check).
+    Kong already validated the token, this is a defense-in-depth check.
     """
+    if not tracer:
+        return await _authenticate_bearer_token_impl(request, authorization)
+    
+    with tracer.start_as_current_span("auth.verify_jwt") as span:
+        # Decision point: Check if token is present
+        with tracer.start_as_current_span("auth.decision.check_token_presence") as decision_span:
+            decision_span.set_attribute("auth.decision", "check_token_presence")
+            if not authorization or not authorization.startswith("Bearer "):
+                decision_span.set_attribute("auth.decision.result", "rejected")
+                decision_span.set_attribute("error", True)
+                decision_span.set_attribute("error.type", "MissingToken")
+                decision_span.set_attribute("error.reason", "token_missing")
+                decision_span.set_attribute("error.message", "Missing bearer token")
+                decision_span.set_status(Status(StatusCode.ERROR, "Missing bearer token"))
+                
+                span.set_attribute("error", True)
+                span.set_attribute("error.type", "MissingToken")
+                span.set_attribute("error.reason", "token_missing")
+                span.set_status(Status(StatusCode.ERROR, "Missing bearer token"))
+                raise AuthenticationError("Missing bearer token")
+            decision_span.set_attribute("auth.decision.result", "passed")
+            decision_span.set_status(Status(StatusCode.OK))
+
+        token = authorization.split(" ", 1)[1]
+        span.set_attribute("auth.token_present", True)
+        span.set_attribute("auth.token_length", len(token))
+
+        try:
+            result = await _authenticate_bearer_token_impl(request, authorization)
+            span.set_attribute("auth.verification_result", "approved")
+            span.set_attribute("auth.user_id", str(result.get("user_id", "")))
+            span.set_status(Status(StatusCode.OK))
+            return result
+        except AuthenticationError as e:
+            span.set_attribute("auth.verification_result", "rejected")
+            span.set_attribute("error.type", "AuthenticationError")
+            span.set_attribute("error.reason", "jwt_verification_failed")
+            span.set_attribute("error.message", str(e))
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            raise
+
+
+async def _validate_api_key_permissions_impl(api_key: str, service: str, action: str) -> None:
+    """Internal implementation of API key permission validation."""
     try:
         validate_url = f"{AUTH_SERVICE_URL}/api/v1/auth/validate-api-key"
         
@@ -174,7 +208,7 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
             if response.status_code == 200:
                 result = response.json()
                 if result.get("valid"):
-                    return True
+                    return
                 else:
                     error_msg = result.get("message", "Permission denied")
                     raise AuthorizationError(error_msg)
@@ -193,6 +227,75 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
     except Exception as e:
         logger.error(f"Unexpected error validating permissions: {e}")
         raise AuthorizationError("Permission validation failed")
+
+
+async def validate_api_key_permissions(api_key: str, service: str, action: str) -> None:
+    """
+    Validate API key has required permissions by calling auth-service.
+    
+    Args:
+        api_key: The API key to validate
+        service: Service name (asr, nmt, tts, etc.)
+        action: Action type (read, inference)
+    
+    Raises:
+        AuthorizationError: If permission check fails
+    """
+    if not tracer:
+        return await _validate_api_key_permissions_impl(api_key, service, action)
+    
+    with tracer.start_as_current_span("auth.validate") as validate_span:
+        validate_span.set_attribute("auth.operation", "validate_api_key")
+        validate_span.set_attribute("auth.service", service)
+        validate_span.set_attribute("auth.action", action)
+        validate_span.set_attribute("auth.api_key_present", bool(api_key))
+        validate_span.set_attribute("auth.api_key_length", len(api_key) if api_key else 0)
+        
+        # Decision point: Check if API key is present
+        with tracer.start_as_current_span("auth.decision.check_api_key") as decision_span:
+            decision_span.set_attribute("auth.decision", "check_api_key_presence")
+            if not api_key:
+                decision_span.set_attribute("auth.decision.result", "rejected")
+                decision_span.set_attribute("error", True)
+                decision_span.set_attribute("error.type", "MissingAPIKey")
+                decision_span.set_attribute("error.reason", "api_key_missing")
+                decision_span.set_attribute("error.message", "API key is missing")
+                decision_span.set_status(Status(StatusCode.ERROR, "API key missing"))
+                validate_span.set_attribute("error", True)
+                validate_span.set_attribute("error.type", "MissingAPIKey")
+                validate_span.set_attribute("error.reason", "api_key_missing")
+                validate_span.set_status(Status(StatusCode.ERROR, "API key missing"))
+                raise AuthorizationError("API key is missing")
+            decision_span.set_attribute("auth.decision.result", "passed")
+            decision_span.set_status(Status(StatusCode.OK))
+        
+        # Call auth-service
+        with tracer.start_as_current_span("auth.validate_api_key") as span:
+            try:
+                await _validate_api_key_permissions_impl(api_key, service, action)
+                span.set_attribute("auth.validation_result", "approved")
+                span.set_status(Status(StatusCode.OK))
+                
+                # Decision point: Check validity
+                with tracer.start_as_current_span("auth.decision.check_validity") as validity_span:
+                    validity_span.set_attribute("auth.decision", "check_api_key_validity")
+                    validity_span.set_attribute("auth.decision.result", "approved")
+                    validity_span.set_status(Status(StatusCode.OK))
+                
+                validate_span.set_attribute("auth.validation_result", "approved")
+                validate_span.set_status(Status(StatusCode.OK))
+            except AuthorizationError as e:
+                span.set_attribute("auth.validation_result", "rejected")
+                span.set_attribute("error.type", "AuthorizationError")
+                span.set_attribute("error.reason", "permission_denied")
+                span.set_attribute("error.message", str(e))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                
+                validate_span.set_attribute("auth.validation_result", "rejected")
+                validate_span.set_attribute("error.type", "AuthorizationError")
+                validate_span.set_attribute("error.reason", "permission_denied")
+                validate_span.set_status(Status(StatusCode.ERROR, str(e)))
+                raise
 
 
 async def validate_api_key(api_key: str, db: AsyncSession, redis_client) -> Tuple[ApiKeyDB, UserDB]:
@@ -258,24 +361,24 @@ async def validate_api_key(api_key: str, db: AsyncSession, redis_client) -> Tupl
         raise AuthenticationError("Failed to validate API key")
 
 
-async def AuthProvider(
+async def _auth_provider_impl(
     request: Request,
-    authorization: Optional[str] = Header(None, alias="Authorization"),
-    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
-    x_auth_source: str = Header(default="API_KEY", alias="X-Auth-Source"),
-    db: AsyncSession = Depends(get_db_session)
+    authorization: Optional[str],
+    x_api_key: Optional[str],
+    x_auth_source: str,
+    db: AsyncSession
 ) -> Dict[str, Any]:
-    """Authentication provider dependency for FastAPI routes."""
+    """Internal implementation of authentication provider."""
     auth_source = (x_auth_source or "API_KEY").upper()
     
     # Handle Bearer token authentication (user tokens - no permission check needed)
     if auth_source == "AUTH_TOKEN":
-        return await authenticate_bearer_token(request, authorization)
+        return await _authenticate_bearer_token_impl(request, authorization)
     
     # Handle BOTH Bearer token AND API key (already validated by API Gateway)
     if auth_source == "BOTH":
         # Validate Bearer token to get user info
-        bearer_result = await authenticate_bearer_token(request, authorization)
+        bearer_result = await _authenticate_bearer_token_impl(request, authorization)
         
         # Extract API key
         api_key = x_api_key or get_api_key_from_header(authorization)
@@ -284,7 +387,7 @@ async def AuthProvider(
         
         # Validate API key permissions via auth-service (skip database lookup)
         service, action = determine_service_and_action(request)
-        await validate_api_key_permissions(api_key, service, action)
+        await _validate_api_key_permissions_impl(api_key, service, action)
         
         # Populate request state with auth context from Bearer token
         request.state.user_id = bearer_result.get("user_id")
@@ -296,45 +399,180 @@ async def AuthProvider(
         return bearer_result
     
     # Handle API key authentication (requires permission check)
-    try:
-        # Extract API key from X-API-Key header first, then Authorization header
-        api_key = x_api_key or get_api_key_from_header(authorization)
+    # Extract API key from X-API-Key header first, then Authorization header
+    api_key = x_api_key or get_api_key_from_header(authorization)
+    
+    if not api_key:
+        raise AuthenticationError("Missing API key")
+    
+    # Get Redis client from app state
+    redis_client = request.app.state.redis_client
+    
+    # Validate API key exists and is active
+    api_key_db, user_db = await validate_api_key(api_key, db, redis_client)
+    
+    # Determine service and action from request
+    service, action = determine_service_and_action(request)
+    
+    # Validate API key has required permissions
+    await _validate_api_key_permissions_impl(api_key, service, action)
+    
+    # Populate request state with auth context
+    request.state.user_id = user_db.id
+    request.state.api_key_id = api_key_db.id
+    request.state.api_key_name = api_key_db.name
+    request.state.user_email = user_db.email
+    request.state.is_authenticated = True
+    
+    # Return auth context
+    return {
+        "user_id": user_db.id,
+        "api_key_id": api_key_db.id,
+        "user": user_db,
+        "api_key": api_key_db
+    }
+
+
+async def AuthProvider(
+    request: Request,
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    x_auth_source: str = Header(default="API_KEY", alias="X-Auth-Source"),
+    db: AsyncSession = Depends(get_db_session)
+) -> Dict[str, Any]:
+    """Authentication provider dependency for FastAPI routes."""
+    if not tracer:
+        return await _auth_provider_impl(request, authorization, x_api_key, x_auth_source, db)
+    
+    with tracer.start_as_current_span("request.authorize") as auth_span:
+        auth_span.set_attribute("auth.operation", "authorize_request")
+        auth_source = (x_auth_source or "API_KEY").upper()
+        auth_span.set_attribute("auth.source", auth_source)
+        auth_span.set_attribute("auth.authorization_present", bool(authorization))
+        auth_span.set_attribute("auth.api_key_present", bool(x_api_key))
         
-        if not api_key:
-            raise AuthenticationError("Missing API key")
-        
-        # Get Redis client from app state
-        redis_client = request.app.state.redis_client
-        
-        # Validate API key exists and is active
-        api_key_db, user_db = await validate_api_key(api_key, db, redis_client)
-        
-        # Determine service and action from request
-        service, action = determine_service_and_action(request)
-        
-        # Validate API key has required permissions
-        await validate_api_key_permissions(api_key, service, action)
-        
-        # Populate request state with auth context
-        request.state.user_id = user_db.id
-        request.state.api_key_id = api_key_db.id
-        request.state.api_key_name = api_key_db.name
-        request.state.user_email = user_db.email
-        request.state.is_authenticated = True
-        
-        # Return auth context
-        return {
-            "user_id": user_db.id,
-            "api_key_id": api_key_db.id,
-            "user": user_db,
-            "api_key": api_key_db
-        }
-        
-    except (AuthenticationError, InvalidAPIKeyError, ExpiredAPIKeyError, AuthorizationError):
-        raise
-    except Exception as e:
-        logger.error(f"Authentication error: {e}")
-        raise AuthenticationError("Authentication failed")
+        try:
+            # Decision point: Determine auth method
+            with tracer.start_as_current_span("auth.decision.select_auth_method") as method_span:
+                method_span.set_attribute("auth.decision", "select_auth_method")
+                method_span.set_attribute("auth.source", auth_source)
+                
+                if auth_source == "AUTH_TOKEN":
+                    method_span.set_attribute("auth.decision.result", "jwt_token")
+                    method_span.set_attribute("auth.method", "JWT")
+                    method_span.set_status(Status(StatusCode.OK))
+                    auth_span.set_attribute("auth.method", "JWT")
+                    result = await authenticate_bearer_token(request, authorization)
+                    auth_span.set_attribute("auth.authorized", True)
+                    auth_span.set_attribute("auth.user_id", str(result.get("user_id", "")))
+                    auth_span.set_status(Status(StatusCode.OK))
+                    return result
+
+                api_key = x_api_key or get_api_key_from_header(authorization)
+                auth_span.set_attribute("auth.api_key_extracted", bool(api_key))
+
+                if auth_source == "BOTH":
+                    method_span.set_attribute("auth.decision.result", "both")
+                    method_span.set_attribute("auth.method", "JWT+API_KEY")
+                    method_span.set_status(Status(StatusCode.OK))
+                    auth_span.set_attribute("auth.method", "JWT+API_KEY")
+                    
+                    # Decision point: Check API key for BOTH mode
+                    with tracer.start_as_current_span("auth.decision.check_api_key_both") as both_span:
+                        both_span.set_attribute("auth.decision", "check_api_key_for_both_mode")
+                        bearer_result = await authenticate_bearer_token(request, authorization)
+                        if not api_key:
+                            both_span.set_attribute("auth.decision.result", "rejected")
+                            both_span.set_attribute("error", True)
+                            both_span.set_attribute("error.type", "MissingAPIKey")
+                            both_span.set_attribute("error.reason", "api_key_missing_in_both_mode")
+                            both_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
+                            
+                            auth_span.set_attribute("auth.authorized", False)
+                            auth_span.set_attribute("error", True)
+                            auth_span.set_attribute("error.type", "MissingAPIKey")
+                            auth_span.set_attribute("error.reason", "api_key_missing_in_both_mode")
+                            auth_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
+                            raise AuthenticationError("Missing API key")
+                        both_span.set_attribute("auth.decision.result", "passed")
+                        both_span.set_status(Status(StatusCode.OK))
+                    
+                    service, action = determine_service_and_action(request)
+                    await validate_api_key_permissions(api_key, service, action)
+                    auth_span.set_attribute("auth.authorized", True)
+                    auth_span.set_attribute("auth.user_id", str(bearer_result.get("user_id", "")))
+                    auth_span.set_status(Status(StatusCode.OK))
+                    return bearer_result
+
+                # Default: API_KEY
+                method_span.set_attribute("auth.decision.result", "api_key")
+                method_span.set_attribute("auth.method", "API_KEY")
+                method_span.set_status(Status(StatusCode.OK))
+                auth_span.set_attribute("auth.method", "API_KEY")
+                
+                # Decision point: Check API key presence
+                with tracer.start_as_current_span("auth.decision.check_api_key_presence") as key_span:
+                    key_span.set_attribute("auth.decision", "check_api_key_presence")
+                    if not api_key:
+                        key_span.set_attribute("auth.decision.result", "rejected")
+                        key_span.set_attribute("error.type", "MissingAPIKey")
+                        key_span.set_attribute("error.reason", "api_key_missing")
+                        key_span.set_attribute("error.message", "Missing API key")
+                        key_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
+                        
+                        auth_span.set_attribute("auth.authorized", False)
+                        auth_span.set_attribute("error.type", "MissingAPIKey")
+                        auth_span.set_attribute("error.reason", "api_key_missing")
+                        auth_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
+                        raise AuthenticationError("Missing API key")
+                    key_span.set_attribute("auth.decision.result", "passed")
+                    key_span.set_status(Status(StatusCode.OK))
+
+                service, action = determine_service_and_action(request)
+                await validate_api_key_permissions(api_key, service, action)
+                
+                # Validate API key in database
+                redis_client = request.app.state.redis_client
+                api_key_db, user_db = await validate_api_key(api_key, db, redis_client)
+                
+                request.state.user_id = user_db.id
+                request.state.api_key_id = api_key_db.id
+                request.state.api_key_name = api_key_db.name
+                request.state.user_email = user_db.email
+                request.state.is_authenticated = True
+                
+                auth_span.set_attribute("auth.authorized", True)
+                auth_span.set_attribute("auth.user_id", str(user_db.id))
+                auth_span.set_attribute("auth.api_key_id", str(api_key_db.id))
+                auth_span.set_status(Status(StatusCode.OK))
+                return {
+                    "user_id": user_db.id,
+                    "api_key_id": api_key_db.id,
+                    "user": user_db,
+                    "api_key": api_key_db
+                }
+                
+        except AuthenticationError as exc:
+            # Mark auth span as failed (error handler will create request.reject span)
+            auth_span.set_attribute("auth.authorized", False)
+            auth_span.set_attribute("error.type", "AuthenticationError")
+            auth_span.set_attribute("error.reason", "authentication_failed")
+            auth_span.set_status(Status(StatusCode.ERROR, str(exc)))
+            raise
+        except AuthorizationError as exc:
+            # Mark auth span as failed (error handler will create request.reject span)
+            auth_span.set_attribute("auth.authorized", False)
+            auth_span.set_attribute("error.type", "AuthorizationError")
+            auth_span.set_attribute("error.reason", "authorization_failed")
+            auth_span.set_status(Status(StatusCode.ERROR, str(exc)))
+            raise
+        except Exception as e:
+            logger.error(f"Authentication error: {e}")
+            auth_span.set_attribute("auth.authorized", False)
+            auth_span.set_attribute("error.type", "Exception")
+            auth_span.set_attribute("error.reason", "unexpected_error")
+            auth_span.set_status(Status(StatusCode.ERROR, str(e)))
+            raise AuthenticationError("Authentication failed")
 
 
 async def OptionalAuthProvider(

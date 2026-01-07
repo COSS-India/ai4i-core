@@ -97,9 +97,13 @@ def setup_tracing(service_name: str, jaeger_endpoint: Optional[str] = None) -> O
         organization_processor = OrganizationSpanProcessor()
         tracer_provider.add_span_processor(organization_processor)
         
-        # Then add batch processor for exporting
-        span_processor = BatchSpanProcessor(exporter)
-        tracer_provider.add_span_processor(span_processor)
+        # Create batch processor for exporting
+        batch_processor = BatchSpanProcessor(exporter)
+        
+        # Wrap batch processor with filter to exclude low-level HTTP spans
+        # This reduces trace clutter by filtering out http receive/send/disconnect spans
+        filtered_processor = FilterSpanProcessor(batch_processor)
+        tracer_provider.add_span_processor(filtered_processor)
         
         # Get tracer
         tracer = trace.get_tracer(service_name)
@@ -143,6 +147,86 @@ class OrganizationSpanProcessor(SpanProcessor):
     
     def force_flush(self, timeout_millis: int = 30000) -> bool:
         """Force flush any pending spans."""
+        return True
+
+
+class FilterSpanProcessor(SpanProcessor):
+    """
+    Span processor that filters out low-level HTTP spans to reduce trace clutter.
+    
+    Filters out spans with names like:
+    - "http receive"
+    - "http send"
+    - "http disconnect"
+    
+    These are low-level ASGI events that add noise without much value.
+    """
+    
+    def __init__(self, processor: SpanProcessor):
+        """
+        Initialize the filter processor.
+        
+        Args:
+            processor: The underlying span processor to forward filtered spans to
+        """
+        self.processor = processor
+        # Patterns to filter out (case-insensitive matching)
+        self.filter_patterns = [
+            "http receive",
+            "http send",
+            "http disconnect",
+        ]
+    
+    def _should_filter(self, span: Span) -> bool:
+        """
+        Check if a span should be filtered out.
+        
+        Args:
+            span: The span to check
+            
+        Returns:
+            True if the span should be filtered out, False otherwise
+        """
+        try:
+            span_name = span.name.lower()
+            should_filter = any(pattern in span_name for pattern in self.filter_patterns)
+            
+            # Optional: Log filtered spans for debugging (can be removed in production)
+            if should_filter and logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Filtering out span: {span.name}")
+            
+            return should_filter
+        except Exception as e:
+            # If we can't check the span name, don't filter it (fail open)
+            logger.warning(f"Error checking span name for filtering: {e}")
+            return False
+    
+    def on_start(self, span: Span, parent_context=None) -> None:
+        """Called when a span is started."""
+        # Don't filter on start - we need to see the full span to make a decision
+        # Forward all spans to the underlying processor on start
+        if self.processor:
+            self.processor.on_start(span, parent_context)
+    
+    def on_end(self, span: Span) -> None:
+        """Called when a span is ended."""
+        # Filter out unwanted spans before forwarding to the underlying processor
+        # Only forward spans that should NOT be filtered
+        if not self._should_filter(span):
+            if self.processor:
+                self.processor.on_end(span)
+        # If span should be filtered, we simply don't forward it to the processor
+        # This prevents it from being exported to Jaeger
+    
+    def shutdown(self) -> None:
+        """Called when the processor is shut down."""
+        if self.processor:
+            self.processor.shutdown()
+    
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        """Force flush any pending spans."""
+        if self.processor:
+            return self.processor.force_flush(timeout_millis)
         return True
 
 
