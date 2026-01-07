@@ -152,7 +152,13 @@ async def run_inference(
         # Fallback if tracing not available
         return await _run_inference_impl(request, http_request, nmt_service)
     
-    with tracer.start_as_current_span("nmt.inference") as span:
+    # Business-level span: Main NMT request processing
+    with tracer.start_as_current_span("NMT Request Processing") as span:
+        span.set_attribute("purpose", "Processes NMT requests for translating text between languages")
+        span.set_attribute("user_visible", True)
+        span.set_attribute("impact_if_slow", "User waits longer for translated text to appear")
+        span.set_attribute("owner", "Language AI Platform")
+        
         try:
             # Validate request
             validate_service_id(request.config.serviceId)
@@ -172,7 +178,7 @@ async def run_inference(
             if correlation_id:
                 span.set_attribute("correlation.id", correlation_id)
             
-            # Add request metadata to span
+            # Add request metadata to span (keep technical details as attributes)
             span.set_attribute("nmt.input_count", len(request.input))
             span.set_attribute("nmt.service_id", request.config.serviceId)
             span.set_attribute("nmt.source_language", request.config.language.sourceLanguage)
@@ -185,32 +191,34 @@ async def run_inference(
             if session_id:
                 span.set_attribute("session.id", str(session_id))
             
-            # ============================================================
-            # Simulated Future Functionality Logging
-            # These logs simulate features that will be implemented
-            # ============================================================
-            
-            # 1. Identity & Context Attached - Create child span
-            identity_context = {
-                "Identity Details": {
-                    "Tenant": "Ministry of Education",
-                    "Budget": "₹50,000",
-                    "Daily Quota": "10,000",
-                    "Data Tier": "Sensitive"
-                },
-                "Contract Loaded": {
-                    "Channel": "Web Portal",
-                    "Use Case": "Policy Translation",
-                    "Sensitivity": "High",
-                    "Languages": ["Hindi", "English"],
-                    "SLA": "< 5s"
-                },
-                "Runtime Analysis": {
-                    "Language": f"{request.config.language.sourceLanguage} → {request.config.language.targetLanguage}"
+            # Business-level span: Context & Policy Evaluation
+            # Collapsed: Identity context and policy checks are now combined into one business step
+            with tracer.start_as_current_span("Context & Policy Evaluation") as context_span:
+                context_span.set_attribute("purpose", "Evaluates user context, policies, and routing decisions before processing translation")
+                context_span.set_attribute("user_visible", False)
+                context_span.set_attribute("impact_if_slow", "Request is delayed - user may experience slower response times")
+                context_span.set_attribute("owner", "Platform Team")
+                
+                # Simulated Future Functionality Logging
+                identity_context = {
+                    "Identity Details": {
+                        "Tenant": "Ministry of Education",
+                        "Budget": "₹50,000",
+                        "Daily Quota": "10,000",
+                        "Data Tier": "Sensitive"
+                    },
+                    "Contract Loaded": {
+                        "Channel": "Web Portal",
+                        "Use Case": "Policy Translation",
+                        "Sensitivity": "High",
+                        "Languages": ["Hindi", "English"],
+                        "SLA": "< 5s"
+                    },
+                    "Runtime Analysis": {
+                        "Language": f"{request.config.language.sourceLanguage} → {request.config.language.targetLanguage}"
+                    }
                 }
-            }
-            
-            with tracer.start_as_current_span("nmt.identity.context_attached") as identity_span:
+                
                 logger.info(
                     "Identity & Context Attached",
                     extra={
@@ -220,27 +228,25 @@ async def run_inference(
                         }
                     }
                 )
-                identity_span.set_attribute("tenant.name", "Ministry of Education")
-                identity_span.set_attribute("tenant.budget", "₹50,000")
-                identity_span.set_attribute("tenant.daily_quota", "10,000")
-                identity_span.set_attribute("tenant.data_tier", "Sensitive")
-                identity_span.set_attribute("contract.channel", "Web Portal")
-                identity_span.set_attribute("contract.use_case", "Policy Translation")
-                identity_span.set_attribute("contract.sensitivity", "High")
-                identity_span.set_attribute("contract.sla", "< 5s")
-                identity_span.set_attribute("runtime.language", identity_context["Runtime Analysis"]["Language"])
-                identity_span.set_status(Status(StatusCode.OK))
-            
-            # 2. Policy Check - Create child span
-            policy_check = {
-                "Budget Remaining": "₹43,215",
-                "Daily Quota Used": "2,847 / 10,000",
-                "Data Residency": "India Only",
-                "Language": f"{request.config.language.sourceLanguage} → {request.config.language.targetLanguage}",
-                "Status": "OK"
-            }
-            
-            with tracer.start_as_current_span("nmt.policy.check") as policy_span:
+                context_span.set_attribute("tenant.name", "Ministry of Education")
+                context_span.set_attribute("tenant.budget", "₹50,000")
+                context_span.set_attribute("tenant.daily_quota", "10,000")
+                context_span.set_attribute("tenant.data_tier", "Sensitive")
+                context_span.set_attribute("contract.channel", "Web Portal")
+                context_span.set_attribute("contract.use_case", "Policy Translation")
+                context_span.set_attribute("contract.sensitivity", "High")
+                context_span.set_attribute("contract.sla", "< 5s")
+                context_span.set_attribute("runtime.language", identity_context["Runtime Analysis"]["Language"])
+                
+                # Collapsed: Policy check is now just attributes/events
+                policy_check = {
+                    "Budget Remaining": "₹43,215",
+                    "Daily Quota Used": "2,847 / 10,000",
+                    "Data Residency": "India Only",
+                    "Language": f"{request.config.language.sourceLanguage} → {request.config.language.targetLanguage}",
+                    "Status": "OK"
+                }
+                
                 logger.info(
                     "Policy Check",
                     extra={
@@ -250,24 +256,29 @@ async def run_inference(
                         }
                     }
                 )
-                policy_span.set_attribute("policy.budget_remaining", "₹43,215")
-                policy_span.set_attribute("policy.daily_quota_used", "2,847 / 10,000")
-                policy_span.set_attribute("policy.data_residency", "India Only")
-                policy_span.set_attribute("policy.language", policy_check["Language"])
-                policy_span.set_attribute("policy.status", "OK")
-                policy_span.set_status(Status(StatusCode.OK))
+                context_span.set_attribute("policy.budget_remaining", "₹43,215")
+                context_span.set_attribute("policy.daily_quota_used", "2,847 / 10,000")
+                context_span.set_attribute("policy.data_residency", "India Only")
+                context_span.set_attribute("policy.language", policy_check["Language"])
+                context_span.set_attribute("policy.status", "OK")
+                context_span.set_status(Status(StatusCode.OK))
             
-            # 3. Smart Routing Decision - Create child span
-            smart_routing = {
-                "Primary Provider": "BharatNMT",
-                "Fallback Provider": "Indic-Trans",
-                "Auto Switch": "Enabled",
-                "Quality Target": "≥ 94%",
-                "Latency Target": "< 3s",
-                "Estimated Cost": "₹145"
-            }
-            
-            with tracer.start_as_current_span("nmt.smart_routing.decision") as routing_span:
+            # Business-level span: Routing Decision
+            with tracer.start_as_current_span("Routing Decision") as routing_span:
+                routing_span.set_attribute("purpose", "Determines which translation model/provider to use based on quality, latency, and cost requirements")
+                routing_span.set_attribute("user_visible", False)
+                routing_span.set_attribute("impact_if_slow", "Minimal - this step is usually very fast")
+                routing_span.set_attribute("owner", "Platform Team")
+                
+                smart_routing = {
+                    "Primary Provider": "BharatNMT",
+                    "Fallback Provider": "Indic-Trans",
+                    "Auto Switch": "Enabled",
+                    "Quality Target": "≥ 94%",
+                    "Latency Target": "< 3s",
+                    "Estimated Cost": "₹145"
+                }
+                
                 logger.info(
                     "Smart Routing Decision",
                     extra={
@@ -300,8 +311,12 @@ async def run_inference(
                 auth_headers=auth_headers
             )
             
-            # Build response - create span for response formatting
-            with tracer.start_as_current_span("nmt.build_response") as response_span:
+            # Business-level span: Response Construction
+            with tracer.start_as_current_span("Response Construction") as response_span:
+                response_span.set_attribute("purpose", "Formats the translation results into the final response structure")
+                response_span.set_attribute("user_visible", False)
+                response_span.set_attribute("impact_if_slow", "Minimal - this step is usually very fast")
+                response_span.set_attribute("owner", "Language AI Platform")
                 response_span.set_attribute("nmt.successful_outputs", len(response.output))
                 response_span.set_attribute("nmt.output_count", len(response.output))
                 
