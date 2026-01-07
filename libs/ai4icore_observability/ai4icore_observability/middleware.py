@@ -66,10 +66,16 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         body_bytes = None
         body_already_read = False
                 
+                
         if method == "POST" and (path.endswith("/pipeline") or path == "/services/inference/pipeline") and "/pipeline/" not in path:
             # Read body to detect task type
             body_bytes = await request.body()  # FastAPI caches this automatically
+            # Read body to detect task type
+            body_bytes = await request.body()  # FastAPI caches this automatically
             body_already_read = True
+            
+            # NO MORE request._receive = receive HERE!
+            
             
             # NO MORE request._receive = receive HERE!
             
@@ -90,6 +96,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         service_type = self._detect_service_type(path)
         
         # Extract metrics from body
+        # Extract metrics from body
         tts_characters = 0
         translation_characters = 0
         asr_audio_length = 0
@@ -105,7 +112,16 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         
         if method == "POST" and service_type in [...]:
             # Read body if not already read
+        if method == "POST" and service_type in [...]:
+            # Read body if not already read
             if not body_already_read:
+                body_bytes = await request.body()  # FastAPI caches this automatically
+                
+                # NO MORE request._receive = receive HERE!
+            else:
+
+                # Body already read - use cached body, DO NOT overwrite receive callable
+                body_bytes = request._body if hasattr(request, '_body') else body_bytes
                 body_bytes = await request.body()  # FastAPI caches this automatically
                 
                 # NO MORE request._receive = receive HERE!
@@ -152,6 +168,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # Process request
         response = await call_next(request)
         
+        # Calculate duration and track metrics
+        duration = time.time() - start_time        
         # Calculate duration and track metrics
         duration = time.time() - start_time        
         # Track request

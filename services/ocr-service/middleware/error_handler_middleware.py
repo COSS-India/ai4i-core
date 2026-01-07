@@ -2,6 +2,9 @@
 Global error handler middleware for consistent error responses.
 """
 from fastapi import FastAPI, Request, HTTPException
+Global error handler middleware for consistent error responses.
+"""
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from opentelemetry import trace
@@ -11,9 +14,15 @@ from ai4icore_logging import get_correlation_id, get_logger
 from middleware.exceptions import (
     AuthenticationError, 
     AuthorizationError, 
+    AuthenticationError, 
+    AuthorizationError, 
     RateLimitExceededError,
     ErrorDetail
+    ErrorDetail
 )
+import logging
+import time
+import traceback
 import logging
 import time
 import traceback
@@ -25,7 +34,9 @@ tracer = trace.get_tracer("ocr-service")
 def add_error_handlers(app: FastAPI) -> None:
     """Register exception handlers for common exceptions."""
     
+    
     @app.exception_handler(AuthenticationError)
+    async def authentication_error_handler(request: Request, exc: AuthenticationError):
     async def authentication_error_handler(request: Request, exc: AuthenticationError):
         """Handle authentication errors."""
         if tracer:
@@ -46,13 +57,17 @@ def add_error_handlers(app: FastAPI) -> None:
             message=exc.message,
             code="AUTHENTICATION_ERROR",
             timestamp=time.time()
+            timestamp=time.time()
         )
         return JSONResponse(
             status_code=401,
             content={"detail": error_detail.dict()}
+            content={"detail": error_detail.dict()}
         )
     
+    
     @app.exception_handler(AuthorizationError)
+    async def authorization_error_handler(request: Request, exc: AuthorizationError):
     async def authorization_error_handler(request: Request, exc: AuthorizationError):
         """Handle authorization errors."""
         if tracer:
@@ -73,13 +88,17 @@ def add_error_handlers(app: FastAPI) -> None:
             message=exc.message,
             code="AUTHORIZATION_ERROR",
             timestamp=time.time()
+            timestamp=time.time()
         )
         return JSONResponse(
             status_code=403,
             content={"detail": error_detail.dict()}
+            content={"detail": error_detail.dict()}
         )
     
+    
     @app.exception_handler(RateLimitExceededError)
+    async def rate_limit_error_handler(request: Request, exc: RateLimitExceededError):
     async def rate_limit_error_handler(request: Request, exc: RateLimitExceededError):
         """Handle rate limit exceeded errors."""
         if tracer:
@@ -265,23 +284,49 @@ def add_error_handlers(app: FastAPI) -> None:
             status_code=422,
             content={"detail": exc.errors()},
         )
-
+    
     @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException):
     async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle generic HTTP exceptions."""
         error_detail = ErrorDetail(
             message=str(exc.detail),
             code="HTTP_ERROR",
             timestamp=time.time()
+            timestamp=time.time()
         )
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": error_detail.dict()}
+            content={"detail": error_detail.dict()}
         )
+    
     
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
+    async def general_exception_handler(request: Request, exc: Exception):
         """Handle unexpected exceptions."""
+        # Extract exception from ExceptionGroup if present (Python 3.11+)
+        actual_exc = exc
+        try:
+            if hasattr(exc, 'exceptions') and exc.exceptions:
+                actual_exc = exc.exceptions[0]
+        except (AttributeError, IndexError):
+            pass
+        
+        # Check if it's one of our custom exceptions that wasn't caught
+        if isinstance(actual_exc, RateLimitExceededError):
+            return await rate_limit_error_handler(request, actual_exc)
+        elif isinstance(actual_exc, AuthenticationError):
+            return await authentication_error_handler(request, actual_exc)
+        elif isinstance(actual_exc, AuthorizationError):
+            return await authorization_error_handler(request, actual_exc)
+        elif isinstance(actual_exc, HTTPException):
+            return await http_exception_handler(request, actual_exc)
+        
+        logger.error(f"Unexpected error: {exc}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
         # Extract exception from ExceptionGroup if present (Python 3.11+)
         actual_exc = exc
         try:
@@ -307,8 +352,10 @@ def add_error_handlers(app: FastAPI) -> None:
             message="Internal server error",
             code="INTERNAL_ERROR",
             timestamp=time.time()
+            timestamp=time.time()
         )
         return JSONResponse(
             status_code=500,
+            content={"detail": error_detail.dict()}
             content={"detail": error_detail.dict()}
         )

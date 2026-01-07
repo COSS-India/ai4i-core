@@ -37,12 +37,45 @@ def get_ocr_service(request: Request) -> OCRService:
 
     REQUIRES Model Management database resolution - no environment variable fallback.
     Request must include config.serviceId for Model Management to resolve endpoint and model.
+    REQUIRES Model Management database resolution - no environment variable fallback.
+    Request must include config.serviceId for Model Management to resolve endpoint and model.
     """
     # Get middleware-resolved endpoint from Model Management database
     triton_endpoint = getattr(request.state, "triton_endpoint", None)
     triton_api_key = getattr(request.app.state, "triton_api_key", "")
     
+    # Get middleware-resolved endpoint from Model Management database
+    triton_endpoint = getattr(request.state, "triton_endpoint", None)
+    triton_api_key = getattr(request.app.state, "triton_api_key", "")
+    
     if not triton_endpoint:
+        service_id = getattr(request.state, "service_id", None)
+        model_mgmt_error = getattr(request.state, "model_management_error", None)
+        
+        if service_id:
+            error_detail = (
+                f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
+                f"Please ensure the service is registered in Model Management database."
+            )
+            if model_mgmt_error:
+                error_detail += f" Error: {model_mgmt_error}"
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_detail,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Request must include config.serviceId. "
+                "OCR service requires Model Management database resolution."
+            ),
+        )
+    
+    # Get resolved model name from middleware (MUST be resolved by Model Management)
+    model_name = getattr(request.state, "triton_model_name", None)
+    
+    if not model_name or model_name == "unknown":
+        service_id = getattr(request.state, "service_id", None)
         service_id = getattr(request.state, "service_id", None)
         model_mgmt_error = getattr(request.state, "model_management_error", None)
         
@@ -86,6 +119,20 @@ def get_ocr_service(request: Request) -> OCRService:
     # Create OCR-specific TritonClient (has OCR-specific methods like run_ocr_batch)
     ocr_triton_client = TritonClient(triton_endpoint, triton_api_key or None, model_name=model_name)
     return OCRService(triton_client=ocr_triton_client, model_name=model_name)
+            detail=(
+                f"Model Management failed to resolve Triton model name for serviceId: {service_id}. "
+                f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+            ),
+        )
+    
+    logger.info(
+        f"Using endpoint={triton_endpoint} model_name={model_name} from Model Management "
+        f"for serviceId={getattr(request.state, 'service_id', 'unknown')}"
+    )
+    
+    # Create OCR-specific TritonClient (has OCR-specific methods like run_ocr_batch)
+    ocr_triton_client = TritonClient(triton_endpoint, triton_api_key or None, model_name=model_name)
+    return OCRService(triton_client=ocr_triton_client, model_name=model_name)
 
 
 @inference_router.post(
@@ -99,6 +146,13 @@ async def run_inference(
     http_request: Request,
     ocr_service: OCRService = Depends(get_ocr_service),
 ) -> OCRInferenceResponse:
+    """
+    Run OCR inference for a batch of images.
+    
+    The Model Resolution Middleware automatically resolves serviceId from
+    request_body.config.serviceId to triton_endpoint and model_name,
+    which are available in http_request.state.
+    """
     """
     Run OCR inference for a batch of images.
     
