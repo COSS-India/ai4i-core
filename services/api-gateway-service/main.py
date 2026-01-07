@@ -1023,6 +1023,10 @@ class APIKeyUpdateBody(BaseModel):
         None,
         description="New list of permissions for the API key (replaces existing permissions)",
     )
+    is_active: Optional[bool] = Field(
+        None,
+        description="Set to true to activate the key, or false to deactivate (soft revoke) the key",
+    )
 
 class AssignRoleBody(BaseModel):
     user_id: int = Field(..., description="ID of the user to assign role to")
