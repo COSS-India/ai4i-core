@@ -104,9 +104,8 @@ class TritonClient:
             # Prepare payload
             payload = self.get_llm_io_for_triton(inputs, input_language, output_language)
             
-            # Build endpoint URL
-            # endpoint_url = f"{self.triton_url}/services/inference/{model_name}"
-            endpoint_url = f"{self.triton_url}/v2/models/llm/infer"   
+            # Build endpoint URL - use /services/inference/{model_name} format as per curl example
+            endpoint_url = f"{self.triton_url}/services/inference/{model_name}"   
             
             logger.info(f"Sending LLM inference request to {endpoint_url}")
             
