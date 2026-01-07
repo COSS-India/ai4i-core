@@ -1116,6 +1116,9 @@ services:
     restart: unless-stopped
 
   # Telemetry: Fluent Bit (for log collection)
+  # NOTE: Using snap Docker paths for container logs
+  # For standard Docker: use /var/lib/docker/containers
+  # For snap Docker: use /var/snap/docker/common/var-lib-docker/containers
   fluent-bit:
     image: fluent/fluent-bit:latest
     container_name: ai4v-fluent-bit
@@ -1123,7 +1126,8 @@ services:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
       - ./infrastructure/fluent-bit/extract_context.lua:/fluent-bit/scripts/extract_context.lua:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Snap Docker installation path
+      - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - microservices-network
