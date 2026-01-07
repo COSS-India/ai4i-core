@@ -9,6 +9,9 @@ from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+from ai4icore_logging import get_correlation_id
 
 from models.nmt_request import NMTInferenceRequest
 from models.nmt_response import NMTInferenceResponse
@@ -25,6 +28,8 @@ from middleware.auth_provider import AuthProvider
 from middleware.exceptions import AuthenticationError, AuthorizationError
 
 logger = logging.getLogger(__name__)
+# Use service name to get the same tracer instance as main.py
+tracer = trace.get_tracer("nmt-service")
 
 # Create router
 inference_router = APIRouter(
@@ -140,62 +145,226 @@ async def run_inference(
     http_request: Request,
     nmt_service: NMTService = Depends(get_nmt_service)
 ) -> NMTInferenceResponse:
-    """Run NMT inference on the given request"""
-    try:
-        # Validate request
-        validate_service_id(request.config.serviceId)
-        validate_language_pair(
-            request.config.language.sourceLanguage,
-            request.config.language.targetLanguage
-        )
-        validate_batch_size(len(request.input))
-        
-        # Extract auth context from request.state
-        user_id = getattr(http_request.state, 'user_id', None)
-        api_key_id = getattr(http_request.state, 'api_key_id', None)
-        session_id = getattr(http_request.state, 'session_id', None)
-        
-        # Extract auth headers from incoming request to forward to model management service
-        auth_headers = extract_auth_headers(http_request)
-        
-        # Log incoming request
-        logger.info(f"Processing NMT inference request with {len(request.input)} texts")
-        
-        # Run inference
-        response = await nmt_service.run_inference(
-            request=request,
-            user_id=user_id,
-            api_key_id=api_key_id,
-            session_id=session_id,
-            auth_headers=auth_headers
-        )
-        
-        logger.info(f"NMT inference completed successfully")
-        return response
-        
-    except (InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError) as e:
-        logger.warning(f"Validation error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+    """
+    Run NMT inference for a batch of texts.
     
-    except Exception as e:
-        logger.error(f"NMT inference failed: {e}", exc_info=True)
+    The Model Resolution Middleware automatically resolves serviceId from
+    request.config.serviceId to triton_endpoint and model_name,
+    which are available in http_request.state.
+    """
+    # Create a span for the entire inference operation
+    # This will be a child of the FastAPI auto-instrumented span
+    if not tracer:
+        # Fallback if tracing not available
+        return await _run_inference_impl(request, http_request, nmt_service)
+    
+    with tracer.start_as_current_span("nmt.inference") as span:
+        try:
+            # Validate request
+            validate_service_id(request.config.serviceId)
+            validate_language_pair(
+                request.config.language.sourceLanguage,
+                request.config.language.targetLanguage
+            )
+            validate_batch_size(len(request.input))
+            
+            # Extract auth context from request.state
+            user_id = getattr(http_request.state, 'user_id', None)
+            api_key_id = getattr(http_request.state, 'api_key_id', None)
+            session_id = getattr(http_request.state, 'session_id', None)
+            
+            # Get correlation ID for log/trace correlation
+            correlation_id = get_correlation_id(http_request) or getattr(http_request.state, "correlation_id", None)
+            if correlation_id:
+                span.set_attribute("correlation.id", correlation_id)
+            
+            # Add request metadata to span
+            span.set_attribute("nmt.input_count", len(request.input))
+            span.set_attribute("nmt.service_id", request.config.serviceId if request.config else "unknown")
+            span.set_attribute("nmt.source_language", request.config.language.sourceLanguage if request.config and request.config.language else "unknown")
+            span.set_attribute("nmt.target_language", request.config.language.targetLanguage if request.config and request.config.language else "unknown")
+            
+            # Track request size (approximate)
+            try:
+                import json
+                request_size = len(json.dumps(request.dict()).encode('utf-8'))
+                span.set_attribute("http.request.size_bytes", request_size)
+            except Exception:
+                pass
+            
+            if user_id:
+                span.set_attribute("user.id", str(user_id))
+            if api_key_id:
+                span.set_attribute("api_key.id", str(api_key_id))
+            if session_id:
+                span.set_attribute("session.id", str(session_id))
+            
+            # Add span event for request start
+            span.add_event("nmt.inference.started", {
+                "input_count": len(request.input),
+                "service_id": request.config.serviceId if request.config else "unknown",
+                "source_language": request.config.language.sourceLanguage if request.config and request.config.language else "unknown",
+                "target_language": request.config.language.targetLanguage if request.config and request.config.language else "unknown"
+            })
+            
+            # Extract auth headers from incoming request to forward to model management service
+            auth_headers = extract_auth_headers(http_request)
+            
+            # Log incoming request
+            logger.info(
+                "Processing NMT inference request with %d text(s), user_id=%s api_key_id=%s session_id=%s",
+                len(request.input),
+                user_id,
+                api_key_id,
+                session_id,
+            )
+            
+            # Run inference
+            response = await nmt_service.run_inference(
+                request=request,
+                user_id=user_id,
+                api_key_id=api_key_id,
+                session_id=session_id,
+                auth_headers=auth_headers
+            )
+            
+            # Add response metadata
+            span.set_attribute("nmt.output_count", len(response.output) if response.output else 0)
+            span.set_attribute("http.status_code", 200)
+            
+            # Track response size (approximate)
+            try:
+                import json
+                response_size = len(json.dumps(response.dict()).encode('utf-8'))
+                span.set_attribute("http.response.size_bytes", response_size)
+            except Exception:
+                pass
+            
+            # Add span event for successful completion
+            span.add_event("nmt.inference.completed", {
+                "output_count": len(response.output) if response.output else 0,
+                "status": "success"
+            })
+            span.set_status(Status(StatusCode.OK))
+            logger.info("NMT inference completed successfully")
+            return response
+            
+        except (InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError) as exc:
+            span.set_attribute("error", True)
+            span.set_attribute("error.type", type(exc).__name__)
+            span.set_attribute("error.message", str(exc))
+            span.set_attribute("http.status_code", 400)
+            span.add_event("nmt.inference.failed", {
+                "error_type": type(exc).__name__,
+                "error_message": str(exc)
+            })
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
+            logger.warning("Validation error in NMT inference: %s", exc)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         
-        # Extract context from request state for better error messages
-        service_id = getattr(http_request.state, "service_id", None)
-        triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
-        model_name = getattr(http_request.state, "triton_model_name", None)
-        
-        # Return appropriate error based on exception type
-        from services.nmt_service import TritonInferenceError
-        if "Triton" in str(e) or "triton" in str(e).lower() or isinstance(e, TritonInferenceError):
-            error_detail = f"Triton inference failed for serviceId '{service_id}'"
-            if triton_endpoint and model_name:
-                error_detail += f" at endpoint '{triton_endpoint}' with model '{model_name}': {str(e)}. "
-                error_detail += "Please verify the model is registered in Model Management and the Triton server is accessible."
-            elif service_id:
-                error_detail += f": {str(e)}. Please verify the service is registered in Model Management."
+        except Exception as exc:
+            span.set_attribute("error", True)
+            span.set_attribute("error.type", type(exc).__name__)
+            span.set_attribute("error.message", str(exc))
+            
+            # Extract context from request state for better error messages
+            service_id = getattr(http_request.state, "service_id", None)
+            triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+            model_name = getattr(http_request.state, "triton_model_name", None)
+            
+            # Return appropriate error based on exception type
+            from services.nmt_service import TritonInferenceError
+            if "Triton" in str(exc) or "triton" in str(exc).lower() or isinstance(exc, TritonInferenceError):
+                span.set_attribute("http.status_code", 503)
+                span.add_event("nmt.inference.failed", {
+                    "error_type": "TritonInferenceError",
+                    "error_message": str(exc)
+                })
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                span.record_exception(exc)
+                
+                error_detail = f"Triton inference failed for serviceId '{service_id}'"
+                if triton_endpoint and model_name:
+                    error_detail += f" at endpoint '{triton_endpoint}' with model '{model_name}': {str(exc)}. "
+                    error_detail += "Please verify the model is registered in Model Management and the Triton server is accessible."
+                elif service_id:
+                    error_detail += f": {str(exc)}. Please verify the service is registered in Model Management."
+                else:
+                    error_detail += f": {str(exc)}"
+                
+                logger.error(
+                    "NMT Triton inference failed: %s (serviceId=%s, endpoint=%s, model=%s)",
+                    exc, service_id, triton_endpoint, model_name
+                )
+                raise HTTPException(status_code=503, detail=error_detail) from exc
             else:
-                error_detail += f": {str(e)}"
-            raise HTTPException(status_code=503, detail=error_detail)
-        else:
-            raise HTTPException(status_code=500, detail=f"NMT inference failed: {str(e)}")
+                span.set_attribute("http.status_code", 500)
+                span.add_event("nmt.inference.failed", {
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc)
+                })
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                span.record_exception(exc)
+                
+                error_detail = f"NMT inference failed: {str(exc)}"
+                if service_id and triton_endpoint:
+                    error_detail = (
+                        f"NMT inference failed for serviceId '{service_id}' at endpoint '{triton_endpoint}': {error_detail}. "
+                        "Please verify the model is registered in Model Management and the Triton server is accessible."
+                    )
+                elif service_id:
+                    error_detail = (
+                        f"NMT inference failed for serviceId '{service_id}': {error_detail}. "
+                        "Model Management resolved the serviceId but Triton endpoint may be misconfigured."
+                    )
+                
+                logger.error(
+                    "NMT inference failed: %s (serviceId=%s, endpoint=%s)",
+                    exc, service_id, triton_endpoint, exc_info=True
+                )
+                raise HTTPException(status_code=500, detail=error_detail) from exc
+
+
+async def _run_inference_impl(
+    request: NMTInferenceRequest,
+    http_request: Request,
+    nmt_service: NMTService,
+) -> NMTInferenceResponse:
+    """Fallback implementation when tracing is not available."""
+    # Validate request
+    validate_service_id(request.config.serviceId)
+    validate_language_pair(
+        request.config.language.sourceLanguage,
+        request.config.language.targetLanguage
+    )
+    validate_batch_size(len(request.input))
+    
+    # Extract auth context from request.state
+    user_id = getattr(http_request.state, 'user_id', None)
+    api_key_id = getattr(http_request.state, 'api_key_id', None)
+    session_id = getattr(http_request.state, 'session_id', None)
+    
+    # Extract auth headers from incoming request to forward to model management service
+    auth_headers = extract_auth_headers(http_request)
+    
+    # Log incoming request
+    logger.info(
+        "Processing NMT inference request with %d text(s), user_id=%s api_key_id=%s session_id=%s",
+        len(request.input),
+        user_id,
+        api_key_id,
+        session_id,
+    )
+    
+    # Run inference
+    response = await nmt_service.run_inference(
+        request=request,
+        user_id=user_id,
+        api_key_id=api_key_id,
+        session_id=session_id,
+        auth_headers=auth_headers
+    )
+    
+    logger.info("NMT inference completed successfully")
+    return response
