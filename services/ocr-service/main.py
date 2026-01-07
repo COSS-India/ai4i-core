@@ -113,15 +113,8 @@ async def lifespan(app: FastAPI):
     uvicorn_access.disabled = True
     uvicorn_access.setLevel(logging.CRITICAL)  # Extra safety - set to highest level
 
-    # Disable uvicorn access logger AFTER uvicorn has started
-    # This ensures it stays disabled even if uvicorn recreates loggers
-    import logging
-    uvicorn_access = logging.getLogger("uvicorn.access")
-    uvicorn_access.handlers.clear()
-    uvicorn_access.propagate = False
-    uvicorn_access.disabled = True
-    uvicorn_access.setLevel(logging.CRITICAL)  # Extra safety - set to highest level
-/////////////////////////////////////////////////////////////////////////
+
+    ########################################################################
     logger.info("Starting OCR Service...")
 
     # Redis
