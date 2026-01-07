@@ -110,14 +110,13 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         speaker_diarization_length = 0
         language_diarization_length = 0
         
-        if method == "POST" and service_type in [...]:
+        if method == "POST" and service_type in ["tts", "translation", "asr", "ocr", "transliteration", "language_detection", "audio_lang_detection", "speaker_verification", "speaker_diarization", "language_diarization", "ner"]:
             # Read body if not already read
             if not body_already_read:
                 body_bytes = await request.body()  # FastAPI caches this automatically
                 
                 # NO MORE request._receive = receive HERE!
             else:
-
                 # Body already read - use cached body, DO NOT overwrite receive callable
                 body_bytes = request._body if hasattr(request, '_body') else body_bytes
             
