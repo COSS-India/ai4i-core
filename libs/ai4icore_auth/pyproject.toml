@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai4icore_auth"
+version = "0.1.0"
+description = "Shared authentication utilities for AI4ICore services"
+authors = [{name = "AI4ICore"}]
+dependencies = [
+  "fastapi>=0.104.0",
+  "pydantic>=2.4.0",
+  "pydantic-settings>=2.0.0",
+  "httpx>=0.25.0",
+  "python-jose[cryptography]>=3.3.0"
+]
+
+[project.urls]
+homepage = "https://github.com/AI4Bharat/AI4ICore"
+
