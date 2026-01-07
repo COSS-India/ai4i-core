@@ -1594,6 +1594,51 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
         # If body can't be parsed but status was 200, allow
         pass
 
+async def check_permission(
+    permission: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials]
+) -> None:
+    """
+    Check if user has the required permission based on Bearer token (JWT) with role-based permissions.
+    Model management endpoints only support Bearer token authentication, not API keys.
+    
+    Args:
+        permission: The permission to check (e.g., 'model.create', 'service.update')
+        request: FastAPI request object
+        credentials: Bearer token credentials
+    
+    Raises:
+        HTTPException: 403 if permission is missing, 401 if not authenticated
+    """
+    # Model management requires Bearer token authentication only
+    if not credentials or not credentials.credentials:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated: Bearer access token required for model management",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    token = credentials.credentials
+    payload = await auth_middleware.verify_token(token)
+    
+    if payload is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    user_permissions = payload.get("permissions", [])
+    if permission not in user_permissions:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "PERMISSION_DENIED",
+                "message": f"Permission '{permission}' required"
+            }
+        )
+
 def build_auth_headers(request: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> Dict[str, str]:
     headers: Dict[str, str] = {}
     # Copy incoming headers except hop-by-hop, content-length, host, and x-auth-source (we'll set it ourselves)
@@ -2514,7 +2559,7 @@ async def get_permission_list(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """List all available permission names"""
+    """List inference permissions only (for API keys)"""
     return await proxy_to_auth_service(request, "/api/v1/auth/permission/list")
 
 # Admin Endpoints
@@ -3313,12 +3358,11 @@ async def list_models(
     request: Request,
     task_type: Union[ModelTaskTypeEnum,None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
     include_deprecated: bool = Query(True, description="Include deprecated versions. Set to false to show only ACTIVE versions."),
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """List all registered models. Use include_deprecated=false to show only ACTIVE versions."""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
+    """List all registered models. Use include_deprecated=false to show only ACTIVE versions. Requires Bearer token authentication with 'model.read' permission."""
+    await check_permission("model.read", request, credentials)
+    headers = build_auth_headers(request, credentials, None)
     return await proxy_to_service_with_params(
         None, 
         "/services/details/list_models", 
@@ -3338,12 +3382,11 @@ async def get_model_get(
     model_id: str,
     request: Request,
     version: Optional[str] = Query(None, description="Optional version to get specific version"),
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """Fetch metadata for a specific model (GET). If version is provided, returns that specific version. Otherwise returns the first matching model."""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
+    """Fetch metadata for a specific model (GET). If version is provided, returns that specific version. Otherwise returns the first matching model. Requires Bearer token authentication with 'model.read' permission."""
+    await check_permission("model.read", request, credentials)
+    headers = build_auth_headers(request, credentials, None)
     query_params = {}
     if version:
         query_params["version"] = version
@@ -3362,12 +3405,11 @@ async def get_model(
     model_id: str,
     payload: Optional[ModelViewRequestWithVersion] = Body(None, description="Request body with optional version"),
     request: Request = None,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """Fetch metadata for a specific model (POST). If version is provided in the request body, returns that specific version. Otherwise returns the first matching model."""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
+    """Fetch metadata for a specific model (POST). If version is provided in the request body, returns that specific version. Otherwise returns the first matching model. Requires Bearer token authentication with 'model.read' permission."""
+    await check_permission("model.read", request, credentials)
+    headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     # Use modelId from path, version from request body (if provided)
     payload_dict = {"modelId": model_id}
@@ -3388,12 +3430,11 @@ async def get_model(
 async def create_model(
     payload: ModelCreateRequest,
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """Register a new model."""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
+    """Register a new model. Requires Bearer token authentication with 'model.create' permission."""
+    await check_permission("model.create", request, credentials)
+    headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
@@ -3411,12 +3452,11 @@ async def create_model(
 async def update_model(
     payload: ModelUpdateRequest,
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """Update an existing model."""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
+    """Update an existing model. Requires Bearer token authentication with 'model.update' permission."""
+    await check_permission("model.update", request, credentials)
+    headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
@@ -3434,12 +3474,11 @@ async def update_model(
 async def delete_model(
     uuid: str,
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """Delete a model by ID."""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
+    """Delete a model by ID. Requires Bearer token authentication with 'model.delete' permission."""
+    await check_permission("model.delete", request, credentials)
+    headers = build_auth_headers(request, credentials, None)
     return await proxy_to_service_with_params(
         None,
         "/services/admin/delete/model",
@@ -3456,12 +3495,11 @@ async def list_services(
     request: Request,
     task_type: Union[ModelTaskTypeEnum,None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
     is_published: Optional[bool] = Query(None, description="Filter by publish status. True = published only, False = unpublished only, None = all services"),
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """List all deployed services."""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
+    """List all deployed services. Requires Bearer token authentication with 'service.read' permission."""
+    await check_permission("service.read", request, credentials)
+    headers = build_auth_headers(request, credentials, None)
     params = {"task_type": task_type.value if task_type else None}
     if is_published is not None:
         params["is_published"] = str(is_published).lower()
@@ -3479,12 +3517,11 @@ async def list_services(
 async def get_service_details(
     service_id: str,
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """Fetch metadata for a specific runtime service."""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
+    """Fetch metadata for a specific runtime service. Requires Bearer token authentication with 'service.read' permission."""
+    await check_permission("service.read", request, credentials)
+    headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     payload = json.dumps({"serviceId": service_id}).encode("utf-8")
     return await proxy_to_service(
@@ -3501,12 +3538,11 @@ async def get_service_details(
 async def create_service_entry(
     payload: ServiceCreateRequest,
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """Register a new service entry."""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
+    """Register a new service entry. Requires Bearer token authentication with 'service.create' permission."""
+    await check_permission("service.create", request, credentials)
+    headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
@@ -3524,12 +3560,16 @@ async def create_service_entry(
 async def update_service_entry(
     payload: ServiceUpdateRequest,
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """Update a service entry."""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
+    """Update a service entry. Requires Bearer token authentication with appropriate permission."""
+    # Check if this is a publish/unpublish operation
+    if hasattr(payload, 'isPublished') and payload.isPublished is not None:
+        permission = "model.publish" if payload.isPublished else "model.unpublish"
+        await check_permission(permission, request, credentials)
+    else:
+        await check_permission("service.update", request, credentials)
+    headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
@@ -3547,12 +3587,11 @@ async def update_service_entry(
 async def delete_service_entry(
     uuid: str,
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """Delete a service entry."""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
+    """Delete a service entry. Requires Bearer token authentication with 'service.delete' permission."""
+    await check_permission("service.delete", request, credentials)
+    headers = build_auth_headers(request, credentials, None)
     return await proxy_to_service_with_params(
         None,
         "/services/admin/delete/service",

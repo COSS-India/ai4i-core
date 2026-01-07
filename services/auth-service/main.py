@@ -1594,14 +1594,39 @@ async def get_permission_list(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get list of all permission names from the permissions table
+    Get list of inference permissions only (for API keys).
     
-    Returns a list of permission names only
+    Returns only inference permissions that can be assigned to API keys:
+    - asr.inference
+    - tts.inference
+    - nmt.inference
+    - audio-lang.inference
+    - language-detection.inference
+    - language-diarization.inference
+    - ner.inference
+    - ocr.inference
+    - speaker-diarization.inference
+    - transliteration.inference
+    - pipeline.inference
+    - llm.inference
     """
-    result = await db.execute(select(Permission.name).order_by(Permission.name))
-    permission_names = result.scalars().all()
+    # Define allowed inference permissions for API keys
+    allowed_permissions = [
+        "asr.inference",
+        "tts.inference",
+        "nmt.inference",
+        "audio-lang.inference",
+        "language-detection.inference",
+        "language-diarization.inference",
+        "ner.inference",
+        "ocr.inference",
+        "speaker-diarization.inference",
+        "transliteration.inference",
+        "pipeline.inference",
+        "llm.inference"
+    ]
     
-    return list(permission_names)
+    return allowed_permissions
 
 
 @app.get("/api/v1/auth/users", response_model=List[UserListResponse], tags=["Admin"])
