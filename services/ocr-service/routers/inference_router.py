@@ -119,20 +119,6 @@ def get_ocr_service(request: Request) -> OCRService:
     # Create OCR-specific TritonClient (has OCR-specific methods like run_ocr_batch)
     ocr_triton_client = TritonClient(triton_endpoint, triton_api_key or None, model_name=model_name)
     return OCRService(triton_client=ocr_triton_client, model_name=model_name)
-            detail=(
-                f"Model Management failed to resolve Triton model name for serviceId: {service_id}. "
-                f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
-            ),
-        )
-    
-    logger.info(
-        f"Using endpoint={triton_endpoint} model_name={model_name} from Model Management "
-        f"for serviceId={getattr(request.state, 'service_id', 'unknown')}"
-    )
-    
-    # Create OCR-specific TritonClient (has OCR-specific methods like run_ocr_batch)
-    ocr_triton_client = TritonClient(triton_endpoint, triton_api_key or None, model_name=model_name)
-    return OCRService(triton_client=ocr_triton_client, model_name=model_name)
 
 
 @inference_router.post(

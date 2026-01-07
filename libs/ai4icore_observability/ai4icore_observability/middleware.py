@@ -112,16 +112,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         
         if method == "POST" and service_type in [...]:
             # Read body if not already read
-        if method == "POST" and service_type in [...]:
-            # Read body if not already read
             if not body_already_read:
-                body_bytes = await request.body()  # FastAPI caches this automatically
-                
-                # NO MORE request._receive = receive HERE!
-            else:
-
-                # Body already read - use cached body, DO NOT overwrite receive callable
-                body_bytes = request._body if hasattr(request, '_body') else body_bytes
                 body_bytes = await request.body()  # FastAPI caches this automatically
                 
                 # NO MORE request._receive = receive HERE!
