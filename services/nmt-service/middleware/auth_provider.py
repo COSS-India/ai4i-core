@@ -150,43 +150,19 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
     if not tracer:
         return await _authenticate_bearer_token_impl(request, authorization)
     
-    with tracer.start_as_current_span("auth.verify_jwt") as span:
-        # Decision point: Check if token is present
-        with tracer.start_as_current_span("auth.decision.check_token_presence") as decision_span:
-            decision_span.set_attribute("auth.decision", "check_token_presence")
-            if not authorization or not authorization.startswith("Bearer "):
-                decision_span.set_attribute("auth.decision.result", "rejected")
-                decision_span.set_attribute("error", True)
-                decision_span.set_attribute("error.type", "MissingToken")
-                decision_span.set_attribute("error.reason", "token_missing")
-                decision_span.set_attribute("error.message", "Missing bearer token")
-                decision_span.set_status(Status(StatusCode.ERROR, "Missing bearer token"))
-                
-                span.set_attribute("error", True)
-                span.set_attribute("error.type", "MissingToken")
-                span.set_attribute("error.reason", "token_missing")
-                span.set_status(Status(StatusCode.ERROR, "Missing bearer token"))
-                raise AuthenticationError("Missing bearer token")
-            decision_span.set_attribute("auth.decision.result", "passed")
-            decision_span.set_status(Status(StatusCode.OK))
+    # Collapsed: JWT verification is now part of parent "Request Authorization" span
+    # No separate span for JWT verification to reduce noise
+    # Collapsed: Decision logic is now just conditional checks
+    if not authorization or not authorization.startswith("Bearer "):
+        raise AuthenticationError("Missing bearer token")
 
-        token = authorization.split(" ", 1)[1]
-        span.set_attribute("auth.token_present", True)
-        span.set_attribute("auth.token_length", len(token))
+    token = authorization.split(" ", 1)[1]
 
-        try:
-            result = await _authenticate_bearer_token_impl(request, authorization)
-            span.set_attribute("auth.verification_result", "approved")
-            span.set_attribute("auth.user_id", str(result.get("user_id", "")))
-            span.set_status(Status(StatusCode.OK))
-            return result
-        except AuthenticationError as e:
-            span.set_attribute("auth.verification_result", "rejected")
-            span.set_attribute("error.type", "AuthenticationError")
-            span.set_attribute("error.reason", "jwt_verification_failed")
-            span.set_attribute("error.message", str(e))
-            span.set_status(Status(StatusCode.ERROR, str(e)))
-            raise
+    try:
+        result = await _authenticate_bearer_token_impl(request, authorization)
+        return result
+    except AuthenticationError as e:
+        raise
 
 
 async def _validate_api_key_permissions_impl(api_key: str, service: str, action: str) -> None:
@@ -244,58 +220,43 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
     if not tracer:
         return await _validate_api_key_permissions_impl(api_key, service, action)
     
-    with tracer.start_as_current_span("auth.validate") as validate_span:
+    # Business-level span: Authentication validation
+    with tracer.start_as_current_span("Authentication Validation") as validate_span:
+        validate_span.set_attribute("purpose", "Validates user authentication and permissions before processing the request")
+        validate_span.set_attribute("user_visible", False)
+        validate_span.set_attribute("impact_if_slow", "Request is delayed - user may experience slower response times")
+        validate_span.set_attribute("owner", "Security Team")
         validate_span.set_attribute("auth.operation", "validate_api_key")
         validate_span.set_attribute("auth.service", service)
         validate_span.set_attribute("auth.action", action)
         validate_span.set_attribute("auth.api_key_present", bool(api_key))
         validate_span.set_attribute("auth.api_key_length", len(api_key) if api_key else 0)
         
-        # Decision point: Check if API key is present
-        with tracer.start_as_current_span("auth.decision.check_api_key") as decision_span:
-            decision_span.set_attribute("auth.decision", "check_api_key_presence")
-            if not api_key:
-                decision_span.set_attribute("auth.decision.result", "rejected")
-                decision_span.set_attribute("error", True)
-                decision_span.set_attribute("error.type", "MissingAPIKey")
-                decision_span.set_attribute("error.reason", "api_key_missing")
-                decision_span.set_attribute("error.message", "API key is missing")
-                decision_span.set_status(Status(StatusCode.ERROR, "API key missing"))
-                validate_span.set_attribute("error", True)
-                validate_span.set_attribute("error.type", "MissingAPIKey")
-                validate_span.set_attribute("error.reason", "api_key_missing")
-                validate_span.set_status(Status(StatusCode.ERROR, "API key missing"))
-                raise AuthorizationError("API key is missing")
-            decision_span.set_attribute("auth.decision.result", "passed")
-            decision_span.set_status(Status(StatusCode.OK))
+        # Collapsed: Internal decision logic is now just conditional checks
+        # No separate span for decision points to reduce noise
+        if not api_key:
+            validate_span.set_attribute("error", True)
+            validate_span.set_attribute("error.type", "MissingAPIKey")
+            validate_span.set_attribute("error.reason", "api_key_missing")
+            validate_span.set_attribute("error.message", "API key is missing")
+            validate_span.set_status(Status(StatusCode.ERROR, "API key missing"))
+            raise AuthorizationError("API key is missing")
         
-        # Call auth-service
-        with tracer.start_as_current_span("auth.validate_api_key") as span:
-            try:
-                await _validate_api_key_permissions_impl(api_key, service, action)
-                span.set_attribute("auth.validation_result", "approved")
-                span.set_status(Status(StatusCode.OK))
-                
-                # Decision point: Check validity
-                with tracer.start_as_current_span("auth.decision.check_validity") as validity_span:
-                    validity_span.set_attribute("auth.decision", "check_api_key_validity")
-                    validity_span.set_attribute("auth.decision.result", "approved")
-                    validity_span.set_status(Status(StatusCode.OK))
-                
-                validate_span.set_attribute("auth.validation_result", "approved")
-                validate_span.set_status(Status(StatusCode.OK))
-            except AuthorizationError as e:
-                span.set_attribute("auth.validation_result", "rejected")
-                span.set_attribute("error.type", "AuthorizationError")
-                span.set_attribute("error.reason", "permission_denied")
-                span.set_attribute("error.message", str(e))
-                span.set_status(Status(StatusCode.ERROR, str(e)))
-                
-                validate_span.set_attribute("auth.validation_result", "rejected")
-                validate_span.set_attribute("error.type", "AuthorizationError")
-                validate_span.set_attribute("error.reason", "permission_denied")
-                validate_span.set_status(Status(StatusCode.ERROR, str(e)))
-                raise
+        # Collapsed: Auth service call is now part of parent span
+        # No separate span for the HTTP call to reduce noise
+        try:
+            await _validate_api_key_permissions_impl(api_key, service, action)
+            validate_span.set_attribute("auth.validation_result", "approved")
+            validate_span.add_event("Auth Validation Successful")
+            validate_span.set_status(Status(StatusCode.OK))
+        except AuthorizationError as e:
+            validate_span.set_attribute("auth.validation_result", "rejected")
+            validate_span.set_attribute("error.type", "AuthorizationError")
+            validate_span.set_attribute("error.reason", "permission_denied")
+            validate_span.set_attribute("error.message", str(e))
+            validate_span.add_event("Auth Validation Failed", {"error_message": str(e)})
+            validate_span.set_status(Status(StatusCode.ERROR, str(e)))
+            raise
 
 
 async def validate_api_key(api_key: str, db: AsyncSession, redis_client) -> Tuple[ApiKeyDB, UserDB]:
@@ -444,7 +405,12 @@ async def AuthProvider(
     if not tracer:
         return await _auth_provider_impl(request, authorization, x_api_key, x_auth_source, db)
     
-    with tracer.start_as_current_span("request.authorize") as auth_span:
+    # Business-level span: Request authorization
+    with tracer.start_as_current_span("Request Authorization") as auth_span:
+        auth_span.set_attribute("purpose", "Authorizes the incoming request by validating authentication credentials")
+        auth_span.set_attribute("user_visible", False)
+        auth_span.set_attribute("impact_if_slow", "Request is delayed - user may experience slower response times")
+        auth_span.set_attribute("owner", "Security Team")
         auth_span.set_attribute("auth.operation", "authorize_request")
         auth_source = (x_auth_source or "API_KEY").upper()
         auth_span.set_attribute("auth.source", auth_source)
@@ -452,105 +418,72 @@ async def AuthProvider(
         auth_span.set_attribute("auth.api_key_present", bool(x_api_key))
         
         try:
-            # Decision point: Determine auth method
-            with tracer.start_as_current_span("auth.decision.select_auth_method") as method_span:
-                method_span.set_attribute("auth.decision", "select_auth_method")
-                method_span.set_attribute("auth.source", auth_source)
+            # Collapsed: Auth method selection is now just conditional logic
+            # No separate span for decision points to reduce noise
+            if auth_source == "AUTH_TOKEN":
+                auth_span.set_attribute("auth.method", "JWT")
+                result = await authenticate_bearer_token(request, authorization)
+                auth_span.set_attribute("auth.authorized", True)
+                auth_span.set_attribute("auth.user_id", str(result.get("user_id", "")))
+                auth_span.set_status(Status(StatusCode.OK))
+                return result
+
+            api_key = x_api_key or get_api_key_from_header(authorization)
+            auth_span.set_attribute("auth.api_key_extracted", bool(api_key))
+
+            if auth_source == "BOTH":
+                auth_span.set_attribute("auth.method", "JWT+API_KEY")
+                # Collapsed: Decision logic is now just conditional checks
+                bearer_result = await authenticate_bearer_token(request, authorization)
+                if not api_key:
+                    auth_span.set_attribute("auth.authorized", False)
+                    auth_span.set_attribute("error", True)
+                    auth_span.set_attribute("error.type", "MissingAPIKey")
+                    auth_span.set_attribute("error.reason", "api_key_missing_in_both_mode")
+                    auth_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
+                    raise AuthenticationError("Missing API key")
                 
-                if auth_source == "AUTH_TOKEN":
-                    method_span.set_attribute("auth.decision.result", "jwt_token")
-                    method_span.set_attribute("auth.method", "JWT")
-                    method_span.set_status(Status(StatusCode.OK))
-                    auth_span.set_attribute("auth.method", "JWT")
-                    result = await authenticate_bearer_token(request, authorization)
-                    auth_span.set_attribute("auth.authorized", True)
-                    auth_span.set_attribute("auth.user_id", str(result.get("user_id", "")))
-                    auth_span.set_status(Status(StatusCode.OK))
-                    return result
-
-                api_key = x_api_key or get_api_key_from_header(authorization)
-                auth_span.set_attribute("auth.api_key_extracted", bool(api_key))
-
-                if auth_source == "BOTH":
-                    method_span.set_attribute("auth.decision.result", "both")
-                    method_span.set_attribute("auth.method", "JWT+API_KEY")
-                    method_span.set_status(Status(StatusCode.OK))
-                    auth_span.set_attribute("auth.method", "JWT+API_KEY")
-                    
-                    # Decision point: Check API key for BOTH mode
-                    with tracer.start_as_current_span("auth.decision.check_api_key_both") as both_span:
-                        both_span.set_attribute("auth.decision", "check_api_key_for_both_mode")
-                        bearer_result = await authenticate_bearer_token(request, authorization)
-                        if not api_key:
-                            both_span.set_attribute("auth.decision.result", "rejected")
-                            both_span.set_attribute("error", True)
-                            both_span.set_attribute("error.type", "MissingAPIKey")
-                            both_span.set_attribute("error.reason", "api_key_missing_in_both_mode")
-                            both_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
-                            
-                            auth_span.set_attribute("auth.authorized", False)
-                            auth_span.set_attribute("error", True)
-                            auth_span.set_attribute("error.type", "MissingAPIKey")
-                            auth_span.set_attribute("error.reason", "api_key_missing_in_both_mode")
-                            auth_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
-                            raise AuthenticationError("Missing API key")
-                        both_span.set_attribute("auth.decision.result", "passed")
-                        both_span.set_status(Status(StatusCode.OK))
-                    
-                    service, action = determine_service_and_action(request)
-                    await validate_api_key_permissions(api_key, service, action)
-                    auth_span.set_attribute("auth.authorized", True)
-                    auth_span.set_attribute("auth.user_id", str(bearer_result.get("user_id", "")))
-                    auth_span.set_status(Status(StatusCode.OK))
-                    return bearer_result
-
-                # Default: API_KEY
-                method_span.set_attribute("auth.decision.result", "api_key")
-                method_span.set_attribute("auth.method", "API_KEY")
-                method_span.set_status(Status(StatusCode.OK))
-                auth_span.set_attribute("auth.method", "API_KEY")
-                
-                # Decision point: Check API key presence
-                with tracer.start_as_current_span("auth.decision.check_api_key_presence") as key_span:
-                    key_span.set_attribute("auth.decision", "check_api_key_presence")
-                    if not api_key:
-                        key_span.set_attribute("auth.decision.result", "rejected")
-                        key_span.set_attribute("error.type", "MissingAPIKey")
-                        key_span.set_attribute("error.reason", "api_key_missing")
-                        key_span.set_attribute("error.message", "Missing API key")
-                        key_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
-                        
-                        auth_span.set_attribute("auth.authorized", False)
-                        auth_span.set_attribute("error.type", "MissingAPIKey")
-                        auth_span.set_attribute("error.reason", "api_key_missing")
-                        auth_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
-                        raise AuthenticationError("Missing API key")
-                    key_span.set_attribute("auth.decision.result", "passed")
-                    key_span.set_status(Status(StatusCode.OK))
-
                 service, action = determine_service_and_action(request)
                 await validate_api_key_permissions(api_key, service, action)
-                
-                # Validate API key in database
-                redis_client = request.app.state.redis_client
-                api_key_db, user_db = await validate_api_key(api_key, db, redis_client)
-                
-                request.state.user_id = user_db.id
-                request.state.api_key_id = api_key_db.id
-                request.state.api_key_name = api_key_db.name
-                request.state.user_email = user_db.email
-                request.state.is_authenticated = True
-                
                 auth_span.set_attribute("auth.authorized", True)
-                auth_span.set_attribute("auth.user_id", str(user_db.id))
-                auth_span.set_attribute("auth.api_key_id", str(api_key_db.id))
+                auth_span.set_attribute("auth.user_id", str(bearer_result.get("user_id", "")))
                 auth_span.set_status(Status(StatusCode.OK))
-                return {
-                    "user_id": user_db.id,
-                    "api_key_id": api_key_db.id,
-                    "user": user_db,
-                    "api_key": api_key_db
-                }
+                return bearer_result
+
+            # Default: API_KEY
+            auth_span.set_attribute("auth.method", "API_KEY")
+            
+            # Collapsed: Decision logic is now just conditional checks
+            if not api_key:
+                auth_span.set_attribute("auth.authorized", False)
+                auth_span.set_attribute("error.type", "MissingAPIKey")
+                auth_span.set_attribute("error.reason", "api_key_missing")
+                auth_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
+                raise AuthenticationError("Missing API key")
+
+            service, action = determine_service_and_action(request)
+            await validate_api_key_permissions(api_key, service, action)
+            
+            # Get API key and user from database
+            api_key_db, user_db = await validate_api_key(api_key, db, request.app.state.redis_client)
+            
+            # Populate request state
+            request.state.user_id = user_db.id
+            request.state.api_key_id = api_key_db.id
+            request.state.api_key_name = api_key_db.name
+            request.state.user_email = user_db.email
+            request.state.is_authenticated = True
+            
+            auth_span.set_attribute("auth.authorized", True)
+            auth_span.set_attribute("auth.user_id", str(user_db.id))
+            auth_span.set_attribute("auth.api_key_id", str(api_key_db.id))
+            auth_span.set_status(Status(StatusCode.OK))
+            return {
+                "user_id": user_db.id,
+                "api_key_id": api_key_db.id,
+                "user": user_db,
+                "api_key": api_key_db
+            }
                 
         except AuthenticationError as exc:
             # Mark auth span as failed (error handler will create request.reject span)
