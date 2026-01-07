@@ -705,7 +705,7 @@ async def update_current_user(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Update current user information"""
+    """Update current user information and return updated details including roles."""
     update_data = user_update.dict(exclude_unset=True)
     
     for field, value in update_data.items():
@@ -716,7 +716,28 @@ async def update_current_user(
     await db.refresh(current_user)
     
     logger.info(f"User updated: {current_user.email}")
-    return current_user
+
+    # Include roles in the response, similar to GET /api/v1/auth/me
+    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    user_dict = {
+        "id": current_user.id,
+        "email": current_user.email,
+        "username": current_user.username,
+        "full_name": current_user.full_name,
+        "phone_number": current_user.phone_number,
+        "timezone": current_user.timezone,
+        "language": current_user.language,
+        "is_active": current_user.is_active,
+        "is_verified": current_user.is_verified,
+        "is_superuser": current_user.is_superuser,
+        "created_at": current_user.created_at,
+        "updated_at": current_user.updated_at,
+        "last_login": current_user.last_login,
+        "avatar_url": current_user.avatar_url,
+        "roles": user_roles,
+    }
+
+    return user_dict
 
 @app.post("/api/v1/auth/change-password")
 async def change_password(
@@ -972,6 +993,7 @@ async def list_all_api_keys_with_users(
                 last_used=api_key.last_used,
                 user_id=user.id,
                 user_email=user.email,
+                username=user.username,
             )
         )
 
@@ -1029,12 +1051,14 @@ async def update_api_key(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="API key not found",
         )
-
     # Apply updates if provided
     if update_data.key_name is not None:
         api_key.key_name = update_data.key_name
     if update_data.permissions is not None:
         api_key.permissions = update_data.permissions
+    # Allow toggling active status (soft-enable/soft-disable)
+    if update_data.is_active is not None:
+        api_key.is_active = update_data.is_active
 
     await db.commit()
     await db.refresh(api_key)
@@ -1594,14 +1618,39 @@ async def get_permission_list(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get list of all permission names from the permissions table
+    Get list of inference permissions only (for API keys).
     
-    Returns a list of permission names only
+    Returns only inference permissions that can be assigned to API keys:
+    - asr.inference
+    - tts.inference
+    - nmt.inference
+    - audio-lang.inference
+    - language-detection.inference
+    - language-diarization.inference
+    - ner.inference
+    - ocr.inference
+    - speaker-diarization.inference
+    - transliteration.inference
+    - pipeline.inference
+    - llm.inference
     """
-    result = await db.execute(select(Permission.name).order_by(Permission.name))
-    permission_names = result.scalars().all()
+    # Define allowed inference permissions for API keys
+    allowed_permissions = [
+        "asr.inference",
+        "tts.inference",
+        "nmt.inference",
+        "audio-lang.inference",
+        "language-detection.inference",
+        "language-diarization.inference",
+        "ner.inference",
+        "ocr.inference",
+        "speaker-diarization.inference",
+        "transliteration.inference",
+        "pipeline.inference",
+        "llm.inference"
+    ]
     
-    return list(permission_names)
+    return allowed_permissions
 
 
 @app.get("/api/v1/auth/users", response_model=List[UserListResponse], tags=["Admin"])
