@@ -122,22 +122,31 @@ class TritonClient:
             # Fallback if tracing not available
             return self._run_ocr_batch_impl(images_base64)
 
-        with tracer.start_as_current_span("triton.inference") as span:
-            span.set_attribute("triton.model_name", "surya_ocr")
-            span.set_attribute("triton.endpoint", self.triton_url)
-            span.set_attribute("triton.batch_size", len(images_base64))
-            span.set_attribute("triton.has_auth", bool(self.api_key))
-            
-            # Calculate total input size
-            total_size = sum(len(img) for img in images_base64)
-            span.set_attribute("triton.input_size_bytes", total_size)
-            
-            # Add span event for Triton call start
-            span.add_event("triton.inference.start", {
-                "model": "surya_ocr",
-                "batch_size": len(images_base64),
-                "input_size_bytes": total_size
-            })
+        # Collapsed: This span is now part of parent "AI Model Processing" span
+        # Technical details are tracked as attributes/events in parent
+        # No separate span created here to reduce noise
+        span = None
+        if tracer:
+            # Get current span context if available (parent span)
+            current_span = trace.get_current_span()
+            if current_span and current_span.is_recording():
+                span = current_span
+                # Add technical details to parent span
+                span.set_attribute("triton.model_name", "surya_ocr")
+                span.set_attribute("triton.endpoint", self.triton_url)
+                span.set_attribute("triton.batch_size", len(images_base64))
+                span.set_attribute("triton.has_auth", bool(self.api_key))
+                
+                # Calculate total input size
+                total_size = sum(len(img) for img in images_base64)
+                span.set_attribute("triton.input_size_bytes", total_size)
+                
+                # Add span event for Triton call start
+                span.add_event("Triton Inference Started", {
+                    "model": "surya_ocr",
+                    "batch_size": len(images_base64),
+                    "input_size_bytes": total_size
+                })
 
             inputs, outputs = self.get_ocr_io_for_triton(images_base64)
 
@@ -152,20 +161,23 @@ class TritonClient:
                     outputs=outputs,
                     headers=headers or None,
                 )
-                span.set_attribute("triton.status", "success")
-                span.add_event("triton.inference.complete", {"status": "success"})
+                if span:
+                    span.set_attribute("triton.status", "success")
+                    span.add_event("Triton Inference Completed", {"status": "success"})
             except Exception as exc:  # pragma: no cover - external failure path
-                span.set_attribute("error", True)
-                span.set_attribute("error.type", type(exc).__name__)
-                span.set_attribute("error.message", str(exc))
-                span.set_attribute("triton.status", "failed")
-                span.record_exception(exc)
+                if span:
+                    span.set_attribute("error", True)
+                    span.set_attribute("error.type", type(exc).__name__)
+                    span.set_attribute("error.message", str(exc))
+                    span.set_attribute("triton.status", "failed")
+                    span.record_exception(exc)
                 logger.error("Triton OCR inference failed: %s", exc, exc_info=True)
                 raise TritonInferenceError(f"Triton OCR inference failed: {exc}") from exc
 
             result = response.as_numpy("OUTPUT_TEXT")
             if result is None:
-                span.set_attribute("triton.output_status", "empty")
+                if span:
+                    span.set_attribute("triton.output_status", "empty")
                 return [{} for _ in images_base64]
 
             # result is expected to have shape [batch_size, 1]
@@ -196,15 +208,17 @@ class TritonClient:
                     # Check if this result was successful
                     if parsed.get("success", False):
                         text_length = len(parsed.get("full_text", "") or "")
-                        span.set_attribute(f"triton.result.{idx}.text_length", text_length)
+                        if span:
+                            span.set_attribute(f"triton.result.{idx}.text_length", text_length)
                 except json.JSONDecodeError:
                     logger.exception("Failed to parse OCR JSON from Triton for index %d", idx)
                     outputs_json.append({})
                     parse_errors += 1
 
-            span.set_attribute("triton.output_count", len(outputs_json))
-            span.set_attribute("triton.parse_errors", parse_errors)
-            span.set_attribute("triton.output_status", "parsed" if parse_errors == 0 else "partial")
+            if span:
+                span.set_attribute("triton.output_count", len(outputs_json))
+                span.set_attribute("triton.parse_errors", parse_errors)
+                span.set_attribute("triton.output_status", "parsed" if parse_errors == 0 else "partial")
 
             return outputs_json
 

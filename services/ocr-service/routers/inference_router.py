@@ -155,7 +155,14 @@ async def run_inference(
         # Fallback if tracing not available
         return await _run_inference_impl(request_body, http_request, ocr_service)
     
-    with tracer.start_as_current_span("ocr.inference") as span:
+    # Business-level span: Main OCR request processing
+    with tracer.start_as_current_span("OCR Request Processing") as span:
+        # Business-friendly attributes
+        span.set_attribute("purpose", "Processes OCR requests for extracting text from images")
+        span.set_attribute("user_visible", True)
+        span.set_attribute("impact_if_slow", "User waits longer for OCR results to appear")
+        span.set_attribute("owner", "AI Platform")
+        
         try:
             # Extract auth context from request.state (if middleware is configured)
             user_id = getattr(http_request.state, "user_id", None)
@@ -167,7 +174,7 @@ async def run_inference(
             if correlation_id:
                 span.set_attribute("correlation.id", correlation_id)
 
-            # Add request metadata to span
+            # Add request metadata to span (keep technical details as attributes)
             span.set_attribute("ocr.image_count", len(request_body.image))
             span.set_attribute("ocr.service_id", request_body.config.serviceId if request_body.config else "unknown")
             span.set_attribute("ocr.source_language", request_body.config.language.sourceLanguage if request_body.config and request_body.config.language else "unknown")
