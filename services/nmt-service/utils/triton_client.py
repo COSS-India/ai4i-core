@@ -98,15 +98,26 @@ class TritonClient:
         model_name: str,
         inputs: List[InferInput],
         outputs: List[InferRequestedOutput],
-        headers: Optional[Dict[str, str]] = None
+        headers: Optional[Dict[str, str]] = None,
+        timeout: float = 20.0
     ):
-        """Send inference request to Triton server"""
+        """Send inference request to Triton server with configurable timeout"""
         try:
-            # Check server health (non-blocking - log warning but try anyway)
-            if not self.is_server_ready():
+            # Check server health with timeout (non-blocking - log warning but try anyway)
+            # Use a shorter timeout for health check to avoid long delays
+            import signal
+            
+            try:
+                # Quick health check with 2 second timeout
+                if not self.is_server_ready(timeout=2.0):
+                    logger.warning(
+                        f"Triton server health check failed for '{self.triton_url}', "
+                        f"but attempting inference request anyway for model '{model_name}'"
+                    )
+            except Exception as health_check_error:
                 logger.warning(
-                    f"Triton server health check failed for '{self.triton_url}', "
-                    f"but attempting inference request anyway for model '{model_name}'"
+                    f"Triton server health check error for '{self.triton_url}': {health_check_error}. "
+                    f"Proceeding with inference request for model '{model_name}'"
                 )
                 # Don't raise error here - let the actual request fail with better error message
             
@@ -116,7 +127,7 @@ class TritonClient:
             if self.api_key:
                 headers["Authorization"] = f"Bearer {self.api_key}"
             
-            logger.debug(f"Sending inference request to model '{model_name}' at '{self.triton_url}'")
+            logger.debug(f"Sending inference request to model '{model_name}' at '{self.triton_url}' (timeout={timeout}s)")
             
             # Send async inference request
             response = self.client.async_infer(
@@ -127,9 +138,19 @@ class TritonClient:
                 headers=headers
             )
             
-            # Get result with timeout
-            result = response.get_result(block=True, timeout=20)
-            return result
+            # Get result with timeout - enforce timeout strictly
+            try:
+                result = response.get_result(block=True, timeout=timeout)
+                return result
+            except Exception as timeout_error:
+                # Check if it's a timeout error
+                error_str = str(timeout_error).lower()
+                if "timeout" in error_str or "timed out" in error_str:
+                    raise TritonInferenceError(
+                        f"Triton inference request timed out after {timeout} seconds for model '{model_name}' "
+                        f"at '{self.triton_url}'. The server may be unreachable or overloaded."
+                    )
+                raise
             
         except Exception as e:
             error_msg = str(e)

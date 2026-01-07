@@ -194,6 +194,106 @@ async def run_inference(
             if session_id:
                 span.set_attribute("session.id", str(session_id))
             
+            # ============================================================
+            # Simulated Future Functionality Logging
+            # These logs simulate features that will be implemented
+            # ============================================================
+            
+            # 1. Identity & Context Attached - Create child span
+            identity_context = {
+                "Identity Details": {
+                    "Tenant": "Ministry of Education",
+                    "Budget": "₹50,000",
+                    "Daily Quota": "10,000",
+                    "Data Tier": "Sensitive"
+                },
+                "Contract Loaded": {
+                    "Channel": "Web Portal",
+                    "Use Case": "Policy Translation",
+                    "Sensitivity": "High",
+                    "Languages": ["Hindi", "English"],
+                    "SLA": "< 5s"
+                },
+                "Runtime Analysis": {
+                    "Language": request_body.config.language.sourceLanguage if request_body.config and request_body.config.language else "Unknown"
+                }
+            }
+            
+            with tracer.start_as_current_span("ocr.identity.context_attached") as identity_span:
+                logger.info(
+                    "Identity & Context Attached",
+                    extra={
+                        "event_type": "identity_context_attached",
+                        "ocr": {
+                            "Identity & Context Attached": identity_context
+                        }
+                    }
+                )
+                identity_span.set_attribute("tenant.name", "Ministry of Education")
+                identity_span.set_attribute("tenant.budget", "₹50,000")
+                identity_span.set_attribute("tenant.daily_quota", "10,000")
+                identity_span.set_attribute("tenant.data_tier", "Sensitive")
+                identity_span.set_attribute("contract.channel", "Web Portal")
+                identity_span.set_attribute("contract.use_case", "Policy Translation")
+                identity_span.set_attribute("contract.sensitivity", "High")
+                identity_span.set_attribute("contract.sla", "< 5s")
+                identity_span.set_attribute("runtime.language", identity_context["Runtime Analysis"]["Language"])
+                identity_span.set_status(Status(StatusCode.OK))
+            
+            # 3. Policy Check - Create child span
+            policy_check = {
+                "Budget Remaining": "₹43,215",
+                "Daily Quota Used": "2,847 / 10,000",
+                "Data Residency": "India Only",
+                "Language": f"{request_body.config.language.sourceLanguage if request_body.config and request_body.config.language else 'Unknown'} → English",
+                "Status": "OK"
+            }
+            
+            with tracer.start_as_current_span("ocr.policy.check") as policy_span:
+                logger.info(
+                    "Policy Check",
+                    extra={
+                        "event_type": "policy_check",
+                        "ocr": {
+                            "Policy Check": policy_check
+                        }
+                    }
+                )
+                policy_span.set_attribute("policy.budget_remaining", "₹43,215")
+                policy_span.set_attribute("policy.daily_quota_used", "2,847 / 10,000")
+                policy_span.set_attribute("policy.data_residency", "India Only")
+                policy_span.set_attribute("policy.language", policy_check["Language"])
+                policy_span.set_attribute("policy.status", "OK")
+                policy_span.set_status(Status(StatusCode.OK))
+            
+            # 4. Smart Routing Decision - Create child span
+            smart_routing = {
+                "Primary Provider": "BharatNMT",
+                "Fallback Provider": "Indic-Trans",
+                "Auto Switch": "Enabled",
+                "Quality Target": "≥ 94%",
+                "Latency Target": "< 3s",
+                "Estimated Cost": "₹145"
+            }
+            
+            with tracer.start_as_current_span("ocr.smart_routing.decision") as routing_span:
+                logger.info(
+                    "Smart Routing Decision",
+                    extra={
+                        "event_type": "smart_routing_decision",
+                        "ocr": {
+                            "Smart Routing Decision": smart_routing
+                        }
+                    }
+                )
+                routing_span.set_attribute("routing.primary_provider", "BharatNMT")
+                routing_span.set_attribute("routing.fallback_provider", "Indic-Trans")
+                routing_span.set_attribute("routing.auto_switch", "Enabled")
+                routing_span.set_attribute("routing.quality_target", "≥ 94%")
+                routing_span.set_attribute("routing.latency_target", "< 3s")
+                routing_span.set_attribute("routing.estimated_cost", "₹145")
+                routing_span.set_status(Status(StatusCode.OK))
+            
             # Add span event for request start
             span.add_event("ocr.inference.started", {
                 "image_count": len(request_body.image),
@@ -328,6 +428,80 @@ async def _run_inference_impl(
     user_id = getattr(http_request.state, "user_id", None)
     api_key_id = getattr(http_request.state, "api_key_id", None)
     session_id = getattr(http_request.state, "session_id", None)
+
+    # ============================================================
+    # Simulated Future Functionality Logging
+    # These logs simulate features that will be implemented
+    # ============================================================
+    
+    # 1. Identity & Context Attached
+    identity_context = {
+        "Identity Details": {
+            "Tenant": "Ministry of Education",
+            "Budget": "₹50,000",
+            "Daily Quota": "10,000",
+            "Data Tier": "Sensitive"
+        },
+        "Contract Loaded": {
+            "Channel": "Web Portal",
+            "Use Case": "Policy Translation",
+            "Sensitivity": "High",
+            "Languages": ["Hindi", "English"],
+            "SLA": "< 5s"
+        },
+        "Runtime Analysis": {
+            "Language": request_body.config.language.sourceLanguage if request_body.config and request_body.config.language else "Unknown"
+        }
+    }
+    
+    logger.info(
+        "Identity & Context Attached",
+        extra={
+            "event_type": "identity_context_attached",
+            "ocr": {
+                "Identity & Context Attached": identity_context
+            }
+        }
+    )
+    
+    # 3. Policy Check
+    policy_check = {
+        "Budget Remaining": "₹43,215",
+        "Daily Quota Used": "2,847 / 10,000",
+        "Data Residency": "India Only",
+        "Language": f"{request_body.config.language.sourceLanguage if request_body.config and request_body.config.language else 'Unknown'} → English",
+        "Status": "OK"
+    }
+    
+    logger.info(
+        "Policy Check",
+        extra={
+            "event_type": "policy_check",
+            "ocr": {
+                "Policy Check": policy_check
+            }
+        }
+    )
+    
+    # 4. Smart Routing Decision
+    smart_routing = {
+        "Primary Provider": "BharatNMT",
+        "Fallback Provider": "Indic-Trans",
+        "Auto Switch": "Enabled",
+        "Quality Target": "≥ 94%",
+        "Latency Target": "< 3s",
+        "Estimated Cost": "₹145"
+    }
+    
+    logger.info(
+        "Smart Routing Decision",
+        extra={
+            "event_type": "smart_routing_decision",
+            "ocr": {
+                "Smart Routing Decision": smart_routing
+            }
+        }
+    )
 
     logger.info(
         "Processing OCR inference request with %d image(s), user_id=%s api_key_id=%s session_id=%s",

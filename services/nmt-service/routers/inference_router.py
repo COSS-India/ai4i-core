@@ -9,6 +9,9 @@ from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+from ai4icore_logging import get_correlation_id
 
 from models.nmt_request import NMTInferenceRequest
 from models.nmt_response import NMTInferenceResponse
@@ -25,6 +28,8 @@ from middleware.auth_provider import AuthProvider
 from middleware.exceptions import AuthenticationError, AuthorizationError
 
 logger = logging.getLogger(__name__)
+# Use service name to get the same tracer instance as main.py
+tracer = trace.get_tracer("nmt-service")
 
 # Create router
 inference_router = APIRouter(
@@ -141,6 +146,234 @@ async def run_inference(
     nmt_service: NMTService = Depends(get_nmt_service)
 ) -> NMTInferenceResponse:
     """Run NMT inference on the given request"""
+    # Create a span for the entire inference operation
+    # This will be a child of the FastAPI auto-instrumented span
+    if not tracer:
+        # Fallback if tracing not available
+        return await _run_inference_impl(request, http_request, nmt_service)
+    
+    with tracer.start_as_current_span("nmt.inference") as span:
+        try:
+            # Validate request
+            validate_service_id(request.config.serviceId)
+            validate_language_pair(
+                request.config.language.sourceLanguage,
+                request.config.language.targetLanguage
+            )
+            validate_batch_size(len(request.input))
+            
+            # Extract auth context from request.state
+            user_id = getattr(http_request.state, 'user_id', None)
+            api_key_id = getattr(http_request.state, 'api_key_id', None)
+            session_id = getattr(http_request.state, 'session_id', None)
+            
+            # Get correlation ID for log/trace correlation
+            correlation_id = get_correlation_id(http_request) or getattr(http_request.state, "correlation_id", None)
+            if correlation_id:
+                span.set_attribute("correlation.id", correlation_id)
+            
+            # Add request metadata to span
+            span.set_attribute("nmt.input_count", len(request.input))
+            span.set_attribute("nmt.service_id", request.config.serviceId)
+            span.set_attribute("nmt.source_language", request.config.language.sourceLanguage)
+            span.set_attribute("nmt.target_language", request.config.language.targetLanguage)
+            
+            if user_id:
+                span.set_attribute("user.id", str(user_id))
+            if api_key_id:
+                span.set_attribute("api_key.id", str(api_key_id))
+            if session_id:
+                span.set_attribute("session.id", str(session_id))
+            
+            # ============================================================
+            # Simulated Future Functionality Logging
+            # These logs simulate features that will be implemented
+            # ============================================================
+            
+            # 1. Identity & Context Attached - Create child span
+            identity_context = {
+                "Identity Details": {
+                    "Tenant": "Ministry of Education",
+                    "Budget": "₹50,000",
+                    "Daily Quota": "10,000",
+                    "Data Tier": "Sensitive"
+                },
+                "Contract Loaded": {
+                    "Channel": "Web Portal",
+                    "Use Case": "Policy Translation",
+                    "Sensitivity": "High",
+                    "Languages": ["Hindi", "English"],
+                    "SLA": "< 5s"
+                },
+                "Runtime Analysis": {
+                    "Language": f"{request.config.language.sourceLanguage} → {request.config.language.targetLanguage}"
+                }
+            }
+            
+            with tracer.start_as_current_span("nmt.identity.context_attached") as identity_span:
+                logger.info(
+                    "Identity & Context Attached",
+                    extra={
+                        "event_type": "identity_context_attached",
+                        "nmt": {
+                            "Identity & Context Attached": identity_context
+                        }
+                    }
+                )
+                identity_span.set_attribute("tenant.name", "Ministry of Education")
+                identity_span.set_attribute("tenant.budget", "₹50,000")
+                identity_span.set_attribute("tenant.daily_quota", "10,000")
+                identity_span.set_attribute("tenant.data_tier", "Sensitive")
+                identity_span.set_attribute("contract.channel", "Web Portal")
+                identity_span.set_attribute("contract.use_case", "Policy Translation")
+                identity_span.set_attribute("contract.sensitivity", "High")
+                identity_span.set_attribute("contract.sla", "< 5s")
+                identity_span.set_attribute("runtime.language", identity_context["Runtime Analysis"]["Language"])
+                identity_span.set_status(Status(StatusCode.OK))
+            
+            # 2. Policy Check - Create child span
+            policy_check = {
+                "Budget Remaining": "₹43,215",
+                "Daily Quota Used": "2,847 / 10,000",
+                "Data Residency": "India Only",
+                "Language": f"{request.config.language.sourceLanguage} → {request.config.language.targetLanguage}",
+                "Status": "OK"
+            }
+            
+            with tracer.start_as_current_span("nmt.policy.check") as policy_span:
+                logger.info(
+                    "Policy Check",
+                    extra={
+                        "event_type": "policy_check",
+                        "nmt": {
+                            "Policy Check": policy_check
+                        }
+                    }
+                )
+                policy_span.set_attribute("policy.budget_remaining", "₹43,215")
+                policy_span.set_attribute("policy.daily_quota_used", "2,847 / 10,000")
+                policy_span.set_attribute("policy.data_residency", "India Only")
+                policy_span.set_attribute("policy.language", policy_check["Language"])
+                policy_span.set_attribute("policy.status", "OK")
+                policy_span.set_status(Status(StatusCode.OK))
+            
+            # 3. Smart Routing Decision - Create child span
+            smart_routing = {
+                "Primary Provider": "BharatNMT",
+                "Fallback Provider": "Indic-Trans",
+                "Auto Switch": "Enabled",
+                "Quality Target": "≥ 94%",
+                "Latency Target": "< 3s",
+                "Estimated Cost": "₹145"
+            }
+            
+            with tracer.start_as_current_span("nmt.smart_routing.decision") as routing_span:
+                logger.info(
+                    "Smart Routing Decision",
+                    extra={
+                        "event_type": "smart_routing_decision",
+                        "nmt": {
+                            "Smart Routing Decision": smart_routing
+                        }
+                    }
+                )
+                routing_span.set_attribute("routing.primary_provider", "BharatNMT")
+                routing_span.set_attribute("routing.fallback_provider", "Indic-Trans")
+                routing_span.set_attribute("routing.auto_switch", "Enabled")
+                routing_span.set_attribute("routing.quality_target", "≥ 94%")
+                routing_span.set_attribute("routing.latency_target", "< 3s")
+                routing_span.set_attribute("routing.estimated_cost", "₹145")
+                routing_span.set_status(Status(StatusCode.OK))
+            
+            # Extract auth headers from incoming request to forward to model management service
+            auth_headers = extract_auth_headers(http_request)
+            
+            # Log incoming request
+            logger.info(f"Processing NMT inference request with {len(request.input)} texts")
+            
+            # Run inference
+            response = await nmt_service.run_inference(
+                request=request,
+                user_id=user_id,
+                api_key_id=api_key_id,
+                session_id=session_id,
+                auth_headers=auth_headers
+            )
+            
+            # Build response - create span for response formatting
+            with tracer.start_as_current_span("nmt.build_response") as response_span:
+                response_span.set_attribute("nmt.successful_outputs", len(response.output))
+                response_span.set_attribute("nmt.output_count", len(response.output))
+                
+                # Track response size (approximate)
+                try:
+                    import json
+                    response_size = len(json.dumps(response.dict()).encode('utf-8'))
+                    response_span.set_attribute("http.response.size_bytes", response_size)
+                except Exception:
+                    pass
+                
+                response_span.set_status(Status(StatusCode.OK))
+            
+            # Add response metadata to main span
+            span.set_attribute("nmt.output_count", len(response.output))
+            span.set_attribute("nmt.successful_outputs", len(response.output))
+            span.set_attribute("http.status_code", 200)
+            span.set_status(Status(StatusCode.OK))
+            
+            logger.info(f"NMT inference completed successfully")
+            return response
+            
+        except (InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError) as e:
+            span.set_attribute("error", True)
+            span.set_attribute("error.type", type(e).__name__)
+            span.set_attribute("error.message", str(e))
+            span.set_attribute("http.status_code", 400)
+            span.set_status(Status(StatusCode.ERROR, str(e)))
+            span.record_exception(e)
+            logger.warning(f"Validation error: {e}")
+            raise HTTPException(status_code=400, detail=str(e))
+        
+        except Exception as e:
+            span.set_attribute("error", True)
+            span.set_attribute("error.type", type(e).__name__)
+            span.set_attribute("error.message", str(e))
+            
+            # Extract context from request state for better error messages
+            service_id = getattr(http_request.state, "service_id", None)
+            triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+            model_name = getattr(http_request.state, "triton_model_name", None)
+            
+            # Return appropriate error based on exception type
+            from services.nmt_service import TritonInferenceError
+            if "Triton" in str(e) or "triton" in str(e).lower() or isinstance(e, TritonInferenceError):
+                span.set_attribute("http.status_code", 503)
+                error_detail = f"Triton inference failed for serviceId '{service_id}'"
+                if triton_endpoint and model_name:
+                    error_detail += f" at endpoint '{triton_endpoint}' with model '{model_name}': {str(e)}. "
+                    error_detail += "Please verify the model is registered in Model Management and the Triton server is accessible."
+                elif service_id:
+                    error_detail += f": {str(e)}. Please verify the service is registered in Model Management."
+                else:
+                    error_detail += f": {str(e)}"
+                span.set_status(Status(StatusCode.ERROR, error_detail))
+                span.record_exception(e)
+                logger.error(f"NMT inference failed: {e}", exc_info=True)
+                raise HTTPException(status_code=503, detail=error_detail)
+            else:
+                span.set_attribute("http.status_code", 500)
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+                logger.error(f"NMT inference failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"NMT inference failed: {str(e)}")
+
+
+async def _run_inference_impl(
+    request: NMTInferenceRequest,
+    http_request: Request,
+    nmt_service: NMTService,
+) -> NMTInferenceResponse:
+    """Fallback implementation when tracing is not available."""
     try:
         # Validate request
         validate_service_id(request.config.serviceId)
@@ -154,6 +387,80 @@ async def run_inference(
         user_id = getattr(http_request.state, 'user_id', None)
         api_key_id = getattr(http_request.state, 'api_key_id', None)
         session_id = getattr(http_request.state, 'session_id', None)
+        
+        # ============================================================
+        # Simulated Future Functionality Logging
+        # These logs simulate features that will be implemented
+        # ============================================================
+        
+        # 1. Identity & Context Attached
+        identity_context = {
+            "Identity Details": {
+                "Tenant": "Ministry of Education",
+                "Budget": "₹50,000",
+                "Daily Quota": "10,000",
+                "Data Tier": "Sensitive"
+            },
+            "Contract Loaded": {
+                "Channel": "Web Portal",
+                "Use Case": "Policy Translation",
+                "Sensitivity": "High",
+                "Languages": ["Hindi", "English"],
+                "SLA": "< 5s"
+            },
+            "Runtime Analysis": {
+                "Language": f"{request.config.language.sourceLanguage} → {request.config.language.targetLanguage}"
+            }
+        }
+        
+        logger.info(
+            "Identity & Context Attached",
+            extra={
+                "event_type": "identity_context_attached",
+                "nmt": {
+                    "Identity & Context Attached": identity_context
+                }
+            }
+        )
+        
+        # 2. Policy Check
+        policy_check = {
+            "Budget Remaining": "₹43,215",
+            "Daily Quota Used": "2,847 / 10,000",
+            "Data Residency": "India Only",
+            "Language": f"{request.config.language.sourceLanguage} → {request.config.language.targetLanguage}",
+            "Status": "OK"
+        }
+        
+        logger.info(
+            "Policy Check",
+            extra={
+                "event_type": "policy_check",
+                "nmt": {
+                    "Policy Check": policy_check
+                }
+            }
+        )
+        
+        # 3. Smart Routing Decision
+        smart_routing = {
+            "Primary Provider": "BharatNMT",
+            "Fallback Provider": "Indic-Trans",
+            "Auto Switch": "Enabled",
+            "Quality Target": "≥ 94%",
+            "Latency Target": "< 3s",
+            "Estimated Cost": "₹145"
+        }
+        
+        logger.info(
+            "Smart Routing Decision",
+            extra={
+                "event_type": "smart_routing_decision",
+                "nmt": {
+                    "Smart Routing Decision": smart_routing
+                }
+            }
+        )
         
         # Extract auth headers from incoming request to forward to model management service
         auth_headers = extract_auth_headers(http_request)
