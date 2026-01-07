@@ -117,7 +117,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 
                 # NO MORE request._receive = receive HERE!
             else:
-                # Body already read - use cached body, DO NOT overwrite receive callable
+                 # Body already read - use cached body, DO NOT overwrite receive callable
                 body_bytes = request._body if hasattr(request, '_body') else body_bytes
             
             if self.config.debug:

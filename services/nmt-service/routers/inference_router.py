@@ -300,8 +300,24 @@ async def run_inference(
                 auth_headers=auth_headers
             )
             
-            # Add response metadata
+            # Build response - create span for response formatting
+            with tracer.start_as_current_span("nmt.build_response") as response_span:
+                response_span.set_attribute("nmt.successful_outputs", len(response.output))
+                response_span.set_attribute("nmt.output_count", len(response.output))
+                
+                # Track response size (approximate)
+                try:
+                    import json
+                    response_size = len(json.dumps(response.dict()).encode('utf-8'))
+                    response_span.set_attribute("http.response.size_bytes", response_size)
+                except Exception:
+                    pass
+                
+                response_span.set_status(Status(StatusCode.OK))
+            
+            # Add response metadata to main span
             span.set_attribute("nmt.output_count", len(response.output))
+            span.set_attribute("nmt.successful_outputs", len(response.output))
             span.set_attribute("http.status_code", 200)
             span.set_status(Status(StatusCode.OK))
             
