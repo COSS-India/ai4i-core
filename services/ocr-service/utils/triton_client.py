@@ -12,8 +12,11 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import tritonclient.http as http_client
 from tritonclient.utils import np_to_triton_dtype
+from opentelemetry import trace
 
 logger = logging.getLogger(__name__)
+# Use service name to get the same tracer instance as main.py
+tracer = trace.get_tracer("ocr-service")
 
 
 class TritonInferenceError(Exception):
@@ -115,6 +118,98 @@ class TritonClient:
         if not images_base64:
             return []
 
+        if not tracer:
+            # Fallback if tracing not available
+            return self._run_ocr_batch_impl(images_base64)
+
+        with tracer.start_as_current_span("triton.inference") as span:
+            span.set_attribute("triton.model_name", "surya_ocr")
+            span.set_attribute("triton.endpoint", self.triton_url)
+            span.set_attribute("triton.batch_size", len(images_base64))
+            span.set_attribute("triton.has_auth", bool(self.api_key))
+            
+            # Calculate total input size
+            total_size = sum(len(img) for img in images_base64)
+            span.set_attribute("triton.input_size_bytes", total_size)
+            
+            # Add span event for Triton call start
+            span.add_event("triton.inference.start", {
+                "model": "surya_ocr",
+                "batch_size": len(images_base64),
+                "input_size_bytes": total_size
+            })
+
+            inputs, outputs = self.get_ocr_io_for_triton(images_base64)
+
+            headers: Dict[str, str] = {}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+
+            try:
+                response = self.client.infer(
+                    model_name="surya_ocr",
+                    inputs=inputs,
+                    outputs=outputs,
+                    headers=headers or None,
+                )
+                span.set_attribute("triton.status", "success")
+                span.add_event("triton.inference.complete", {"status": "success"})
+            except Exception as exc:  # pragma: no cover - external failure path
+                span.set_attribute("error", True)
+                span.set_attribute("error.type", type(exc).__name__)
+                span.set_attribute("error.message", str(exc))
+                span.set_attribute("triton.status", "failed")
+                span.record_exception(exc)
+                logger.error("Triton OCR inference failed: %s", exc, exc_info=True)
+                raise TritonInferenceError(f"Triton OCR inference failed: {exc}") from exc
+
+            result = response.as_numpy("OUTPUT_TEXT")
+            if result is None:
+                span.set_attribute("triton.output_status", "empty")
+                return [{} for _ in images_base64]
+
+            # result is expected to have shape [batch_size, 1]
+            outputs_json: List[Dict] = []
+            parse_errors = 0
+            for idx in range(len(images_base64)):
+                try:
+                    result_bytes = result[idx][0]
+                except Exception:
+                    outputs_json.append({})
+                    parse_errors += 1
+                    continue
+
+                if isinstance(result_bytes, bytes):
+                    result_str = result_bytes.decode("utf-8")
+                else:
+                    result_str = str(result_bytes)
+
+                logger.debug(
+                    "OCR Triton response[%d] preview=%s",
+                    idx,
+                    result_str[:200],
+                )
+
+                try:
+                    parsed = json.loads(result_str)
+                    outputs_json.append(parsed)
+                    # Check if this result was successful
+                    if parsed.get("success", False):
+                        text_length = len(parsed.get("full_text", "") or "")
+                        span.set_attribute(f"triton.result.{idx}.text_length", text_length)
+                except json.JSONDecodeError:
+                    logger.exception("Failed to parse OCR JSON from Triton for index %d", idx)
+                    outputs_json.append({})
+                    parse_errors += 1
+
+            span.set_attribute("triton.output_count", len(outputs_json))
+            span.set_attribute("triton.parse_errors", parse_errors)
+            span.set_attribute("triton.output_status", "parsed" if parse_errors == 0 else "partial")
+
+            return outputs_json
+
+    def _run_ocr_batch_impl(self, images_base64: List[str]) -> List[Dict]:
+        """Fallback implementation when tracing is not available."""
         inputs, outputs = self.get_ocr_io_for_triton(images_base64)
 
         headers: Dict[str, str] = {}
@@ -128,7 +223,7 @@ class TritonClient:
                 outputs=outputs,
                 headers=headers or None,
             )
-        except Exception as exc:  # pragma: no cover - external failure path
+        except Exception as exc:
             logger.error("Triton OCR inference failed: %s", exc, exc_info=True)
             raise TritonInferenceError(f"Triton OCR inference failed: {exc}") from exc
 
