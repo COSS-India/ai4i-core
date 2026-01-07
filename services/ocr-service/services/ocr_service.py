@@ -51,50 +51,30 @@ class OCRService:
 
         - If imageContent is provided, use it directly
         - Else, download from imageUri and base64-encode it
-        """
-        if not tracer:
-            # Fallback if tracing not available
-            return self._resolve_image_base64_impl(image)
         
-        with tracer.start_as_current_span("ocr.resolve_image") as span:
-            if image.imageContent:
-                span.set_attribute("ocr.image_source", "content")
-                span.set_attribute("ocr.image_size_bytes", len(image.imageContent) if image.imageContent else 0)
-                span.add_event("ocr.image.resolved", {"source": "content"})
-                return image.imageContent
+        NOTE: This method no longer creates spans to reduce noise.
+        Image resolution is tracked as events in the parent "OCR Processing" span.
+        """
+        # Removed span creation - this is now collapsed into parent span
+        # Technical details are tracked via events/attributes in parent
+        # Safely check imageContent - handle both None and empty string cases
+        if image.imageContent is not None and image.imageContent:
+            return image.imageContent
 
-            if image.imageUri:
-                span.set_attribute("ocr.image_source", "uri")
-                span.set_attribute("ocr.image_uri", str(image.imageUri))
-                try:
-                    span.add_event("ocr.image.download.start", {"uri": str(image.imageUri)})
-                    resp = requests.get(str(image.imageUri), timeout=30)
-                    resp.raise_for_status()
-                    image_bytes = base64.b64encode(resp.content).decode("utf-8")
-                    span.set_attribute("ocr.image_size_bytes", len(image_bytes))
-                    span.set_attribute("ocr.download_status", "success")
-                    span.add_event("ocr.image.download.complete", {
-                        "size_bytes": len(image_bytes),
-                        "status": "success"
-                    })
-                    return image_bytes
-                except Exception as exc:
-                    # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
-                    span.set_attribute("error.type", type(exc).__name__)
-                    span.set_attribute("error.message", str(exc))
-                    span.set_attribute("ocr.download_status", "failed")
-                    span.set_status(Status(StatusCode.ERROR, str(exc)))
-                    span.record_exception(exc)
-                    logger.error(
-                        "Failed to download image from %s: %s", image.imageUri, exc
-                    )
-                    return None
+        if image.imageUri:
+            try:
+                resp = requests.get(str(image.imageUri), timeout=30)
+                resp.raise_for_status()
+                image_bytes = base64.b64encode(resp.content).decode("utf-8")
+                return image_bytes
+            except Exception as exc:
+                logger.error(
+                    "Failed to download image from %s: %s", image.imageUri, exc
+                )
+                return None
 
-            # No content and no URI
-            span.set_attribute("ocr.image_source", "none")
-            span.set_attribute("error", True)
-            span.set_attribute("error.message", "No image content or URI provided")
-            return None
+        # No content and no URI
+        return None
 
     def _resolve_image_base64_impl(self, image: ImageInput) -> Optional[str]:
         """Fallback implementation when tracing is not available."""
@@ -125,22 +105,40 @@ class OCRService:
             # Fallback if tracing not available
             return self._run_inference_impl(request)
         
-        with tracer.start_as_current_span("ocr.process_batch") as span:
+        # Business-level span: Main OCR processing workflow
+        with tracer.start_as_current_span("OCR Processing") as span:
+            span.set_attribute("purpose", "Runs the complete OCR workflow: image preparation, AI processing, and response construction")
+            span.set_attribute("user_visible", True)
+            span.set_attribute("impact_if_slow", "User waits longer for OCR results")
+            span.set_attribute("owner", "AI Platform")
             span.set_attribute("ocr.total_images", len(request.image))
             
-            # Resolve all images to base64 first
-            with tracer.start_as_current_span("ocr.resolve_images") as resolve_span:
-                images_b64: List[str] = []
-                resolved_count = 0
-                for idx, img in enumerate(request.image):
-                    resolved = self._resolve_image_base64(img)
-                    if not resolved:
-                        images_b64.append("")
-                    else:
-                        images_b64.append(resolved)
-                        resolved_count += 1
-                resolve_span.set_attribute("ocr.resolved_count", resolved_count)
-                resolve_span.set_attribute("ocr.failed_count", len(request.image) - resolved_count)
+            # Collapse image resolution into parent span (no separate span for the loop)
+            # Individual image resolution is now just an attribute/event
+            images_b64: List[str] = []
+            resolved_count = 0
+            for idx, img in enumerate(request.image):
+                resolved = self._resolve_image_base64(img)
+                if not resolved:
+                    images_b64.append("")
+                else:
+                    images_b64.append(resolved)
+                    resolved_count += 1
+                    # Add event for successful resolution (instead of separate span)
+                    # Safely extract image size - resolved is guaranteed to be truthy here
+                    try:
+                        size_bytes = len(resolved) if resolved else 0
+                    except (TypeError, AttributeError):
+                        size_bytes = 0
+                    
+                    span.add_event("Image Prepared", {
+                        "image_index": idx,
+                        "source": "content" if (img.imageContent is not None and img.imageContent) else "uri",
+                        "size_bytes": size_bytes
+                    })
+            
+            span.set_attribute("ocr.resolved_count", resolved_count)
+            span.set_attribute("ocr.failed_count", len(request.image) - resolved_count)
 
             # Call Triton in a single batch for all non-empty images
             outputs: List[TextOutput] = []
@@ -151,16 +149,21 @@ class OCRService:
 
                 ocr_results: List[dict] = []
                 if non_empty_images:
-                    with tracer.start_as_current_span("ocr.triton_batch") as triton_span:
+                    # Business-level span: AI model processing
+                    with tracer.start_as_current_span("AI Model Processing") as triton_span:
+                        triton_span.set_attribute("purpose", "Runs the OCR AI model on prepared images to extract text")
+                        triton_span.set_attribute("user_visible", True)
+                        triton_span.set_attribute("impact_if_slow", "User waits longer for OCR results - this is typically the slowest step")
+                        triton_span.set_attribute("owner", "AI Platform")
                         triton_span.set_attribute("ocr.batch_size", len(non_empty_images))
-                        triton_span.add_event("ocr.triton.batch.start", {"batch_size": len(non_empty_images)})
+                        triton_span.add_event("AI Processing Started", {"batch_size": len(non_empty_images)})
                         batch_results = self.triton_client.run_ocr_batch(non_empty_images)
                         ocr_results = batch_results
                         triton_span.set_attribute("ocr.results_count", len(ocr_results))
                         # Count successful results
                         success_count = sum(1 for r in ocr_results if r.get("success", False))
                         triton_span.set_attribute("ocr.success_count", success_count)
-                        triton_span.add_event("ocr.triton.batch.complete", {
+                        triton_span.add_event("AI Processing Completed", {
                             "results_count": len(ocr_results),
                             "success_count": success_count
                         })
@@ -181,8 +184,12 @@ class OCRService:
                     outputs.append(TextOutput(source="", target=""))
                 return OCRInferenceResponse(output=outputs, config=request.config.dict())
 
-            # Build TextOutput list
-            with tracer.start_as_current_span("ocr.build_response") as build_span:
+            # Business-level span: Response construction
+            with tracer.start_as_current_span("Response Construction") as build_span:
+                build_span.set_attribute("purpose", "Formats the OCR results into the final response structure")
+                build_span.set_attribute("user_visible", False)
+                build_span.set_attribute("impact_if_slow", "Minimal - this step is usually very fast")
+                build_span.set_attribute("owner", "AI Platform")
                 successful_outputs = 0
                 for idx in range(len(request.image)):
                     ocr_result = result_map.get(idx, {})  # type: ignore[name-defined]

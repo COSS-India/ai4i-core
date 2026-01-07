@@ -824,16 +824,26 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             # Check direct OCR format: {"image": [...]}
             if 'image' in request_data:
                 for image_item in request_data['image']:
-                    if 'imageContent' in image_item:
+                    if 'imageContent' in image_item and image_item['imageContent'] is not None:
                         # Calculate size from base64 string
-                        total_size_kb += len(image_item['imageContent']) / 1024
+                        # Safely handle None values
+                        try:
+                            total_size_kb += len(image_item['imageContent']) / 1024
+                        except (TypeError, AttributeError):
+                            # Skip if imageContent is None or not a valid string
+                            pass
             
             # Check pipeline format: {"inputData": {"image": [...]}}
             if 'inputData' in request_data and 'image' in request_data['inputData']:
                 for image_item in request_data['inputData']['image']:
-                    if 'imageContent' in image_item:
+                    if 'imageContent' in image_item and image_item['imageContent'] is not None:
                         # Calculate size from base64 string
-                        total_size_kb += len(image_item['imageContent']) / 1024
+                        # Safely handle None values
+                        try:
+                            total_size_kb += len(image_item['imageContent']) / 1024
+                        except (TypeError, AttributeError):
+                            # Skip if imageContent is None or not a valid string
+                            pass
             
             return total_size_kb
             
