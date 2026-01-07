@@ -1,4 +1,4 @@
-"""
+cle"""
 Pipeline Request Models
 
 Pydantic models for pipeline inference requests, supporting chaining of AI tasks.
@@ -128,6 +128,16 @@ class PipelineInferenceRequest(BaseModel):
                 raise ValueError('Input data must contain "audio" for ASR-first pipeline')
             if not isinstance(self.inputData['audio'], list):
                 raise ValueError('Input audio must be a list')
+            if not self.inputData['audio']:
+                raise ValueError('Input audio list cannot be empty')
+            # Validate each audio input has either audioContent or audioUri
+            for i, audio_item in enumerate(self.inputData['audio']):
+                if not isinstance(audio_item, dict):
+                    raise ValueError(f'Audio item at index {i} must be a dictionary')
+                audio_content = audio_item.get('audioContent', '').strip() if audio_item.get('audioContent') else ''
+                audio_uri = audio_item.get('audioUri', '').strip() if audio_item.get('audioUri') else ''
+                if not audio_content and not audio_uri:
+                    raise ValueError(f'Audio item at index {i}: At least one of "audioContent" or "audioUri" must be provided')
         elif first_task == TaskType.TRANSLATION:
             if 'input' not in self.inputData:
                 raise ValueError('Input data must contain "input" for Translation-first pipeline')
