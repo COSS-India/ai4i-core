@@ -192,7 +192,7 @@ export const useLLM = (): UseLLMReturn => {
             sourceLanguage: inputLanguage,
             targetLanguage: outputLanguage,
           },
-          serviceId: 'nmt',
+          serviceId: 'ai4bharat/indictrans--gpu-t4',
         }),
       ]);
 
