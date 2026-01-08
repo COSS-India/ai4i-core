@@ -42,18 +42,41 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # exceptions and return responses, which will still come back through this middleware
         # We don't catch exceptions here - let FastAPI's exception handlers handle them
         # The response from exception handlers will still come back through this middleware
+        # IMPORTANT: In FastAPI/Starlette, when an exception is raised in a dependency,
+        # the exception handler catches it and returns a response. That response comes
+        # back through call_next, NOT as an exception. So we should NOT catch exceptions
+        # here - call_next will return the response from exception handlers.
+        # However, we keep the try-except to match OCR's pattern and handle edge cases.
         try:
             response = await call_next(request)
-        except Exception:
-            # If an exception occurs, FastAPI's exception handlers will catch it
-            # and return a response. That response will come back through this middleware
-            # So we re-raise to let the exception handler work
+        except Exception as exc:
+            # If an exception occurs that wasn't caught by FastAPI's exception handlers,
+            # we log it and re-raise. This should rarely happen.
+            processing_time = time.time() - start_time
+            logger.error(
+                f"Unhandled exception in {method} {path}: {type(exc).__name__}: {exc}",
+                exc_info=True,
+                extra={
+                    "context": {
+                        "method": method,
+                        "path": path,
+                        "status_code": 500,
+                        "duration_ms": round(processing_time * 1000, 2),
+                        "client_ip": client_ip,
+                        "user_agent": user_agent,
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                    }
+                }
+            )
             raise
 
         # Calculate processing time
         processing_time = time.time() - start_time
 
         # Determine log level based on status code
+        # This will work for both successful responses and error responses
+        # returned by exception handlers
         status_code = response.status_code
         
         # Get organization from request.state first (set by ObservabilityMiddleware)
@@ -87,23 +110,42 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_context["organization"] = organization
 
         # Log with appropriate level using structured logging
-        if 200 <= status_code < 300:
-            logger.info(
-                f"{method} {path} - {status_code} - {processing_time:.3f}s",
-                extra={"context": log_context}
-            )
-        elif 400 <= status_code < 500:
-            logger.warning(
-                f"{method} {path} - {status_code} - {processing_time:.3f}s",
-                extra={"context": log_context}
-            )
-        else:
-            logger.error(
-                f"{method} {path} - {status_code} - {processing_time:.3f}s",
-                extra={"context": log_context}
-            )
+        # This ensures ALL responses (success and error) are logged
+        # Wrap in try-except to ensure we always return the response even if logging fails
+        try:
+            if 200 <= status_code < 300:
+                logger.info(
+                    f"{method} {path} - {status_code} - {processing_time:.3f}s",
+                    extra={"context": log_context}
+                )
+            elif 400 <= status_code < 500:
+                logger.warning(
+                    f"{method} {path} - {status_code} - {processing_time:.3f}s",
+                    extra={"context": log_context}
+                )
+            else:
+                logger.error(
+                    f"{method} {path} - {status_code} - {processing_time:.3f}s",
+                    extra={"context": log_context}
+                )
+        except Exception as log_error:
+            # If logging fails, log a basic message to ensure we don't lose the request
+            # This should never happen, but ensures robustness
+            try:
+                logger.error(
+                    f"Failed to log request {method} {path} - {status_code}: {log_error}",
+                    exc_info=True
+                )
+            except Exception:
+                # Last resort: print to stderr if all logging fails
+                import sys
+                print(f"CRITICAL: Failed to log request {method} {path} - {status_code}", file=sys.stderr)
 
         # Add processing time header
-        response.headers["X-Process-Time"] = f"{processing_time:.3f}"
+        try:
+            response.headers["X-Process-Time"] = f"{processing_time:.3f}"
+        except Exception:
+            # If we can't add header, continue anyway
+            pass
 
         return response
