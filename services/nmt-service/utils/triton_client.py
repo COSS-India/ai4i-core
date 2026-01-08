@@ -108,8 +108,8 @@ class TritonClient:
             import signal
             
             try:
-                # Quick health check with 2 second timeout
-                if not self.is_server_ready(timeout=2.0):
+                # Quick health check (non-blocking - log warning but try anyway)
+                if not self.is_server_ready():
                     logger.warning(
                         f"Triton server health check failed for '{self.triton_url}', "
                         f"but attempting inference request anyway for model '{model_name}'"
