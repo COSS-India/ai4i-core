@@ -68,8 +68,19 @@ def add_error_handlers(app: FastAPI) -> None:
                                         main_span.set_attribute("nmt.source_language", source_lang)
                                         main_span.set_attribute("nmt.target_language", target_lang)
                             if "input" in body:
-                                input_count = len(body["input"]) if isinstance(body["input"], list) else 0
+                                input_list = body["input"] if isinstance(body["input"], list) else []
+                                input_count = len(input_list)
                                 main_span.set_attribute("nmt.input_count", input_count)
+                                # Store first input text for UI display
+                                if input_list and len(input_list) > 0:
+                                    first_input_item = input_list[0]
+                                    if isinstance(first_input_item, dict) and "source" in first_input_item:
+                                        first_input = str(first_input_item["source"]).strip()
+                                        if first_input:
+                                            if len(first_input) > 500:
+                                                main_span.set_attribute("nmt.input_text", first_input[:500] + "...")
+                                            else:
+                                                main_span.set_attribute("nmt.input_text", first_input)
                 except Exception:
                     pass  # Ignore if we can't extract body
                 
@@ -271,8 +282,19 @@ def add_error_handlers(app: FastAPI) -> None:
                                         main_span.set_attribute("nmt.source_language", source_lang)
                                         main_span.set_attribute("nmt.target_language", target_lang)
                             if "input" in body:
-                                input_count = len(body["input"]) if isinstance(body["input"], list) else 0
+                                input_list = body["input"] if isinstance(body["input"], list) else []
+                                input_count = len(input_list)
                                 main_span.set_attribute("nmt.input_count", input_count)
+                                # Store first input text for UI display
+                                if input_list and len(input_list) > 0:
+                                    first_input_item = input_list[0]
+                                    if isinstance(first_input_item, dict) and "source" in first_input_item:
+                                        first_input = str(first_input_item["source"]).strip()
+                                        if first_input:
+                                            if len(first_input) > 500:
+                                                main_span.set_attribute("nmt.input_text", first_input[:500] + "...")
+                                            else:
+                                                main_span.set_attribute("nmt.input_text", first_input)
                 except Exception:
                     pass
                 
@@ -477,8 +499,19 @@ def add_error_handlers(app: FastAPI) -> None:
                                         main_span.set_attribute("nmt.source_language", source_lang)
                                         main_span.set_attribute("nmt.target_language", target_lang)
                             if "input" in body:
-                                input_count = len(body["input"]) if isinstance(body["input"], list) else 0
+                                input_list = body["input"] if isinstance(body["input"], list) else []
+                                input_count = len(input_list)
                                 main_span.set_attribute("nmt.input_count", input_count)
+                                # Store first input text for UI display
+                                if input_list and len(input_list) > 0:
+                                    first_input_item = input_list[0]
+                                    if isinstance(first_input_item, dict) and "source" in first_input_item:
+                                        first_input = str(first_input_item["source"]).strip()
+                                        if first_input:
+                                            if len(first_input) > 500:
+                                                main_span.set_attribute("nmt.input_text", first_input[:500] + "...")
+                                            else:
+                                                main_span.set_attribute("nmt.input_text", first_input)
                 except Exception:
                     pass
                 

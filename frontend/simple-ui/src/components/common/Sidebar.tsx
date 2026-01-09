@@ -32,6 +32,7 @@ import {
   IoPricetagOutline,
   IoAppsOutline,
   IoChevronDownOutline,
+  IoPulseOutline,
 } from "react-icons/io5";
 import { useAuth } from "../../hooks/useAuth";
 import { useFeatureFlag } from "../../hooks/useFeatureFlag";
@@ -122,6 +123,12 @@ const safeColorMap = {
     400: "#4DD0E1",
     600: "#00ACC1",
   },
+  "tracing": { // Orange → Pastel Orange
+    50:  "#FFF4E6",
+    300: "#FFD699",
+    400: "#FFC266",
+    600: "#FFA500",
+  },
 };
 
 const getColor = (serviceId: string, shade: 50 | 300 | 400 | 600) => {
@@ -177,6 +184,15 @@ const topNavItems: NavItem[] = [
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
     featureFlag: "services-management-enabled",
+  },
+  {
+    id: "tracing",
+    label: "Request Tracing",
+    path: "/tracing",
+    icon: IoPulseOutline,
+    iconSize: 10,
+    iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
   },
 ];
 
