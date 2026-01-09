@@ -50,9 +50,9 @@ async def provision_tenant_schema(schema_name: str):
     
     # 2. Create tables IN THE TENANT SCHEMA
     await db.run_sync(
-        lambda sync_conn: ServiceSchemaBase.metadata.create_all(
-            sync_conn, 
-            schema=schema_name  # ← THIS IS THE KEY!
+        lambda sync_session, t=table: t.tometadata(tenant_metadata).create(
+            bind=sync_session.get_bind(),
+            checkfirst=True,
         )
     )
 ```
