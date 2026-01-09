@@ -90,9 +90,12 @@ logger = get_logger(__name__)
 # Environment variables - Support both REDIS_PORT and REDIS_PORT_NUMBER for backward compatibility
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
 REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
-DATABASE_URL = os.getenv( "DATABASE_URL")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db"
+)
 # NOTE: Triton endpoint/model MUST come from Model Management for inference.
 # No environment variable fallback - all resolution via Model Management database.
 MODEL_MANAGEMENT_SERVICE_URL = os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091")
@@ -100,8 +103,10 @@ MODEL_MANAGEMENT_SERVICE_API_KEY = os.getenv(
     "MODEL_MANAGEMENT_SERVICE_API_KEY",
     os.getenv("MODEL_MANAGEMENT_API_KEY", None)  # Backward-compatible alias
 )
-MODEL_MANAGEMENT_CACHE_TTL = int(os.getenv("MODEL_MANAGEMENT_CACHE_TTL", "300"))  # 5 minutes default
+MODEL_MANAGEMENT_CACHE_TTL = int(os.getenv("MODEL_MANAGEMENT_CACHE_TTL", "300"))
 TRITON_ENDPOINT_CACHE_TTL = int(os.getenv("TRITON_ENDPOINT_CACHE_TTL", "300"))
+TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "13.200.133.97:8000")
+TRITON_API_KEY = os.getenv("TRITON_API_KEY", "1b69e9a1a24466c85e4bbca3c5295f50")
 
 # Global variables
 redis_client: Optional[redis.Redis] = None
@@ -109,7 +114,6 @@ db_engine: Optional[AsyncEngine] = None
 db_session_factory: Optional[async_sessionmaker] = None
 registry_client: Optional[ServiceRegistryHttpClient] = None
 registered_instance_id: Optional[str] = None
-model_management_client: Optional[ModelManagementClient] = None
 
 logger.info(f"Configuration loaded: REDIS_HOST={REDIS_HOST}, REDIS_PORT={REDIS_PORT}")
 logger.info(f"DATABASE_URL configured: {DATABASE_URL.split('@')[0]}@***")  # Mask password in logs
@@ -118,7 +122,7 @@ logger.info(f"DATABASE_URL configured: {DATABASE_URL.split('@')[0]}@***")  # Mas
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager for startup and shutdown"""
-    global redis_client, db_engine, db_session_factory, registry_client, registered_instance_id, model_management_client
+    global redis_client, db_engine, db_session_factory, registry_client, registered_instance_id
 
     # Disable uvicorn access logger AFTER uvicorn has started
     # This ensures it stays disabled even if uvicorn recreates loggers
@@ -234,7 +238,7 @@ async def lifespan(app: FastAPI):
     )
     app.state.model_management_client = model_management_client
     
-    # NOTE: Model Management Plugin is registered BEFORE app starts (see line ~320)
+    # NOTE: Model Management Plugin is registered BEFORE app starts (see line ~400)
     # to avoid "Cannot add middleware after application has started" error
 
     # Register service into the central registry via config-service
@@ -288,10 +292,6 @@ async def lifespan(app: FastAPI):
         if db_engine:
             await db_engine.dispose()
             logger.info("PostgreSQL connection closed")
-        
-        if model_management_client:
-            await model_management_client.close()
-            logger.info("Model Management Service client closed")
 
     except Exception as e:
         logger.error(f"Error during shutdown: {e}")

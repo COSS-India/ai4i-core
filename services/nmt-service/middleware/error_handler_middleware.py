@@ -12,14 +12,27 @@ from middleware.exceptions import (
     AuthenticationError, 
     AuthorizationError, 
     RateLimitExceededError,
-    ErrorDetail
+    ErrorDetail,
+    ServiceError,
+    TritonInferenceError,
+    ModelNotFoundError,
+    ServiceUnavailableError,
+    TextProcessingError
 )
 import logging
 import time
 import traceback
 
-logger = get_logger(__name__)
-tracer = trace.get_tracer("nmt-service")
+# Import OpenTelemetry for tracing
+try:
+    from opentelemetry import trace
+    TRACING_AVAILABLE = True
+    tracer = trace.get_tracer("nmt-service")
+except ImportError:
+    TRACING_AVAILABLE = False
+    tracer = None
+
+logger = logging.getLogger(__name__)
 
 
 def add_error_handlers(app: FastAPI) -> None:
@@ -36,7 +49,7 @@ def add_error_handlers(app: FastAPI) -> None:
         user_agent = request.headers.get("user-agent", "unknown")
         correlation_id = get_correlation_id(request)
         
-        if tracer:
+        if TRACING_AVAILABLE and tracer:
             # Create detailed trace structure similar to successful requests
             # This ensures failed requests also show detailed spans in Jaeger
             with tracer.start_as_current_span("nmt.inference") as main_span:
@@ -240,7 +253,7 @@ def add_error_handlers(app: FastAPI) -> None:
         user_agent = request.headers.get("user-agent", "unknown")
         correlation_id = get_correlation_id(request)
         
-        if tracer:
+        if TRACING_AVAILABLE and tracer:
             # Create detailed trace structure similar to successful requests
             with tracer.start_as_current_span("nmt.inference") as main_span:
                 main_span.set_attribute("http.method", method)
@@ -445,7 +458,7 @@ def add_error_handlers(app: FastAPI) -> None:
         user_agent = request.headers.get("user-agent", "unknown")
         correlation_id = get_correlation_id(request)
         
-        if tracer:
+        if TRACING_AVAILABLE and tracer:
             # Create detailed trace structure for rate limit errors
             with tracer.start_as_current_span("nmt.inference") as main_span:
                 main_span.set_attribute("http.method", method)
@@ -669,7 +682,7 @@ def add_error_handlers(app: FastAPI) -> None:
         full_message = f"Validation error: {'; '.join(error_messages)}"
         
         # Create detailed trace structure for validation errors
-        if tracer:
+        if TRACING_AVAILABLE and tracer:
             with tracer.start_as_current_span("nmt.inference") as main_span:
                 main_span.set_attribute("http.method", method)
                 main_span.set_attribute("http.route", path)
@@ -704,6 +717,24 @@ def add_error_handlers(app: FastAPI) -> None:
                     policy_span.set_attribute("policy.rejection_reason", "validation_failed")
                     policy_span.set_status(Status(StatusCode.ERROR, "Request validation failed"))
                 
+                # Categorize errors before creating spans (so they're accessible in both spans)
+                missing_fields = []
+                invalid_types = []
+                invalid_values = []
+                
+                for error in exc.errors():
+                    loc = ".".join(map(str, error["loc"]))
+                    error_type = error.get("type", "")
+                    error_msg = error.get("msg", "")
+                    
+                    # Categorize
+                    if "missing" in error_type.lower() or "required" in error_msg.lower():
+                        missing_fields.append(loc)
+                    elif "type" in error_type.lower() or "value_error" in error_type.lower():
+                        invalid_types.append(loc)
+                    else:
+                        invalid_values.append(loc)
+                
                 # Create smart routing decision span
                 with tracer.start_as_current_span("nmt.smart_routing.decision") as routing_span:
                     routing_span.set_attribute("routing.status", "BLOCKED")
@@ -715,37 +746,21 @@ def add_error_handlers(app: FastAPI) -> None:
                     analyze_span.set_attribute("validation.decision", "analyze_validation_errors")
                     analyze_span.set_attribute("validation.error_count", len(exc.errors()))
                     
-                    # Categorize errors
-                    missing_fields = []
-                    invalid_types = []
-                    invalid_values = []
-                    
                     for idx, error in enumerate(exc.errors()):
                         loc = ".".join(map(str, error["loc"]))
                         error_type = error.get("type", "")
                         error_msg = error.get("msg", "")
                         
-                        reject_span.set_attribute(f"validation.error.{idx}.location", loc)
-                        reject_span.set_attribute(f"validation.error.{idx}.message", error_msg)
-                        reject_span.set_attribute(f"validation.error.{idx}.type", error_type)
-                        
-                        # Categorize
-                        if "missing" in error_type.lower() or "required" in error_msg.lower():
-                            missing_fields.append(loc)
-                        elif "type" in error_type.lower() or "value_error" in error_type.lower():
-                            invalid_types.append(loc)
-                        else:
-                            invalid_values.append(loc)
+                        analyze_span.set_attribute(f"validation.error.{idx}.location", loc)
+                        analyze_span.set_attribute(f"validation.error.{idx}.message", error_msg)
+                        analyze_span.set_attribute(f"validation.error.{idx}.type", error_type)
                     
                     if missing_fields:
                         analyze_span.set_attribute("validation.missing_fields", ",".join(missing_fields))
-                        reject_span.set_attribute("validation.missing_fields", ",".join(missing_fields))
                     if invalid_types:
                         analyze_span.set_attribute("validation.invalid_types", ",".join(invalid_types))
-                        reject_span.set_attribute("validation.invalid_types", ",".join(invalid_types))
                     if invalid_values:
                         analyze_span.set_attribute("validation.invalid_values", ",".join(invalid_values))
-                        reject_span.set_attribute("validation.invalid_values", ",".join(invalid_values))
                     
                     analyze_span.set_attribute("validation.decision.result", "rejected")
                     analyze_span.set_status(Status(StatusCode.ERROR, full_message))
@@ -760,6 +775,15 @@ def add_error_handlers(app: FastAPI) -> None:
                     reject_span.set_attribute("error.code", "VALIDATION_ERROR")
                     reject_span.set_attribute("http.status_code", 422)
                     reject_span.set_attribute("validation.error_count", len(exc.errors()))
+                    
+                    # Add categorized errors
+                    if missing_fields:
+                        reject_span.set_attribute("validation.missing_fields", ",".join(missing_fields))
+                    if invalid_types:
+                        reject_span.set_attribute("validation.invalid_types", ",".join(invalid_types))
+                    if invalid_values:
+                        reject_span.set_attribute("validation.invalid_values", ",".join(invalid_values))
+                    
                     reject_span.add_event("validation.failed", {
                         "error_count": len(exc.errors()),
                         "message": full_message
@@ -841,66 +865,51 @@ def add_error_handlers(app: FastAPI) -> None:
             content={"detail": exc.errors()},
         )
     
+    @app.exception_handler(ServiceError)
+    async def service_error_handler(request: Request, exc: ServiceError):
+        """Handle service-specific errors with Jaeger tracing."""
+        # Record error in Jaeger span
+        if TRACING_AVAILABLE:
+            try:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.code", exc.error_code)
+                    current_span.set_attribute("error.message", exc.message)
+                    current_span.set_attribute("error.type", type(exc).__name__)
+                    current_span.set_attribute("http.status_code", exc.status_code)
+                    
+                    if exc.model_name:
+                        current_span.set_attribute("error.model", exc.model_name)
+                    if exc.service_error:
+                        for key, value in exc.service_error.items():
+                            current_span.set_attribute(f"error.{key}", str(value))
+                    
+                    current_span.record_exception(exc)
+                    current_span.set_status(Status(StatusCode.ERROR, exc.message))
+            except Exception:
+                pass  # Don't fail if tracing fails
+        
+        error_detail = ErrorDetail(
+            message=exc.message,
+            code=exc.error_code,
+            timestamp=time.time()
+        )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": error_detail.dict()}
+        )
+    
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle generic HTTP exceptions."""
-        # Extract request info for logging
-        method = request.method
-        path = request.url.path
-        client_ip = request.client.host if request.client else "unknown"
-        user_agent = request.headers.get("user-agent", "unknown")
-        correlation_id = get_correlation_id(request)
-        status_code = exc.status_code
-        
-        # Explicit logging to ensure HTTP errors appear in OpenSearch
-        user_id = getattr(request.state, "user_id", None)
-        api_key_id = getattr(request.state, "api_key_id", None)
-        processing_time = 0.001  # Minimal time for HTTP errors
-        
-        log_context = {
-            "method": method,
-            "path": path,
-            "status_code": status_code,
-            "duration_ms": round(processing_time * 1000, 2),
-            "client_ip": client_ip,
-            "user_agent": user_agent,
-            "error_type": "HTTPException",
-            "error_code": "HTTP_ERROR",
-            "error_message": str(exc.detail),
-        }
-        
-        if user_id:
-            log_context["user_id"] = user_id
-        if api_key_id:
-            log_context["api_key_id"] = api_key_id
-        if correlation_id:
-            log_context["correlation_id"] = correlation_id
-        
-        # Log based on status code
-        try:
-            if 400 <= status_code < 500:
-                logger.warning(
-                    f"{method} {path} - {status_code} - {processing_time:.3f}s",
-                    extra={"context": log_context}
-                )
-            else:
-                logger.error(
-                    f"{method} {path} - {status_code} - {processing_time:.3f}s",
-                    extra={"context": log_context}
-                )
-        except Exception as log_exc:
-            logging.warning(
-                f"HTTP Error {status_code}: {method} {path} - {exc.detail}",
-                exc_info=log_exc
-            )
-        
         error_detail = ErrorDetail(
             message=str(exc.detail),
             code="HTTP_ERROR",
             timestamp=time.time()
         )
         return JSONResponse(
-            status_code=status_code,
+            status_code=exc.status_code,
             content={"detail": error_detail.dict()}
         )
     
@@ -969,6 +978,21 @@ def add_error_handlers(app: FastAPI) -> None:
                 f"500 Internal Error: {method} {path} - {exc}",
                 exc_info=True
             )
+        
+        # Record error in Jaeger span
+        if TRACING_AVAILABLE:
+            try:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.code", "INTERNAL_ERROR")
+                    current_span.set_attribute("error.message", str(exc))
+                    current_span.set_attribute("error.type", type(exc).__name__)
+                    current_span.set_attribute("http.status_code", 500)
+                    current_span.record_exception(exc)
+                    current_span.set_status(Status(StatusCode.ERROR, str(exc)))
+            except Exception:
+                pass
         
         error_detail = ErrorDetail(
             message="Internal server error",

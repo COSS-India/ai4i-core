@@ -22,8 +22,20 @@ from utils.validation_utils import (
     validate_postprocessors,
     InvalidLanguageCodeError
 )
-from middleware.exceptions import AuthenticationError, AuthorizationError
+from middleware.exceptions import (
+    AuthenticationError, 
+    AuthorizationError,
+    ServiceUnavailableError,
+    AudioProcessingError
+)
 from middleware.auth_provider import AuthProvider
+
+# Import OpenTelemetry for manual span creation
+try:
+    from opentelemetry import trace
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +151,22 @@ async def run_inference(
             ),
         )
     
+    # Create a descriptive span for ASR inference
+    if TRACING_AVAILABLE:
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("ASR Inference") as span:
+            span.set_attribute("service.name", "asr")
+            span.set_attribute("service.type", "asr")
+            span.set_attribute("asr.audio_count", len(request.audio))
+            span.set_attribute("asr.service_id", request.config.serviceId)
+            span.set_attribute("asr.language", request.config.language.sourceLanguage)
+            return await _run_asr_inference_internal(request, http_request, asr_service, start_time)
+    else:
+        return await _run_asr_inference_internal(request, http_request, asr_service, start_time)
+
+
+async def _run_asr_inference_internal(request: ASRInferenceRequest, http_request: Request, asr_service: ASRService, start_time: float) -> ASRInferenceResponse:
+    """Internal ASR inference logic."""
     try:
         # Extract auth context from request.state
         user_id = getattr(http_request.state, 'user_id', None)
@@ -184,7 +212,7 @@ async def run_inference(
             detail=str(e)
         )
     except Exception as e:
-        logger.error(f"ASR inference failed: {e}", exc_info=True)
+        logger.error(f"ASR inference failed: {e}", exc_info=True, exc_info=True)
         
         # Extract context from request state for better error messages
         service_id = getattr(http_request.state, "service_id", None)
@@ -192,28 +220,31 @@ async def run_inference(
         model_name = getattr(http_request.state, "triton_model_name", None)
         
         # Return appropriate error based on exception type
-        if "Triton" in str(e) or "triton" in str(e).lower():
-            error_detail = f"Triton inference failed for serviceId '{service_id}'"
-            if triton_endpoint and model_name:
-                error_detail += f" at endpoint '{triton_endpoint}' with model '{model_name}': {str(e)}. "
-                error_detail += "Please verify the model is registered in Model Management and the Triton server is accessible."
-            elif service_id:
-                error_detail += f": {str(e)}. Please verify the service is registered in Model Management."
+        error_msg = str(e)
+        if "Triton" in error_msg or "triton" in error_msg.lower():
+            if "404" in error_msg or "Not Found" in error_msg or "unknown model" in error_msg.lower():
+                from middleware.exceptions import ModelNotFoundError
+                raise ModelNotFoundError(
+                    message=f"Triton model not found. Please verify the model name and ensure it is loaded.",
+                    model_name=model_name or "unknown"
+                )
+            elif "connection" in error_msg.lower() or "connect" in error_msg.lower() or "timeout" in error_msg.lower():
+                raise ServiceUnavailableError(
+                    message=f"ASR service unavailable: {error_msg}. Please check Triton server connectivity.",
+                    service_name="triton"
+                )
             else:
-                error_detail += f": {str(e)}"
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=error_detail
-            )
-        elif "audio" in str(e).lower():
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Audio processing failed: {str(e)}"
-            )
+                from middleware.exceptions import TritonInferenceError
+                raise TritonInferenceError(
+                    message=f"Triton inference failed: {error_msg}",
+                    model_name=model_name
+                )
+        elif "audio" in error_msg.lower():
+            raise AudioProcessingError(f"Audio processing failed: {error_msg}")
         else:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Internal server error: {str(e)}"
+                detail=f"Internal server error: {error_msg}"
             )
 
 

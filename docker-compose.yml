@@ -645,7 +645,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - ner-service
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
       interval: 30s
@@ -686,8 +688,8 @@ services:
 
   pipeline-service:
     build:
-      context: ./services/pipeline-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/pipeline-service/Dockerfile
     container_name: ai4v-pipeline-service
     ports:
       - "8092:8090"
