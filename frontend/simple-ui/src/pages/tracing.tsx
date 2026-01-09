@@ -187,11 +187,13 @@ const TracingPage: React.FC = () => {
                     💡 <strong>Tip:</strong> Since Jaeger uses in-memory storage, traces are lost on restart. 
                     Make a request to any service first to generate new traces.
                   </Text>
-                  <HStack spacing={2} mt={2}>
-                    <Link href="http://localhost:16686" isExternal fontSize="xs" color="blue.500">
-                      Open Jaeger UI →
-                    </Link>
-                  </HStack>
+                  {process.env.NEXT_PUBLIC_JAEGER_URL && (
+                    <HStack spacing={2} mt={2}>
+                      <Link href={process.env.NEXT_PUBLIC_JAEGER_URL} isExternal fontSize="xs" color="blue.500">
+                        Open Jaeger UI →
+                      </Link>
+                    </HStack>
+                  )}
                 </VStack>
               </Alert>
             </VStack>
