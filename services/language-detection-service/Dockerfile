@@ -14,8 +14,8 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements (context-relative)
-COPY requirements.txt .
+# Copy requirements from build context
+COPY services/language-detection-service/requirements.txt .
 
 RUN pip install --no-cache-dir --user -r requirements.txt
 
@@ -53,8 +53,8 @@ ENV PATH=/home/app/.local/bin:$PATH
 # Copy observability plugin
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 
-# Copy application source (ENTIRE CONTEXT)
-COPY . .
+# Copy application source
+COPY services/language-detection-service .
 
 RUN chown -R app:app /app /home/app/.local \
     && chmod +x /home/app/.local/bin/*

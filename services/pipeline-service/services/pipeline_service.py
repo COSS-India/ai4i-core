@@ -78,11 +78,19 @@ class PipelineService:
         
         # Create a parent span for the entire pipeline if tracing is available
         if TRACING_AVAILABLE and tracer:
+            # Create readable task names for the span
+            task_names = []
+            for t in request.pipelineTasks:
+                task_name = str(t.taskType).upper()
+                if task_name == "TRANSLATION":
+                    task_name = "NMT"
+                task_names.append(task_name)
+            
             with tracer.start_as_current_span(
-                "pipeline.run_inference",
+                f"Pipeline: {' → '.join(task_names)}",
                 attributes={
                     "pipeline.task_count": len(request.pipelineTasks),
-                    "pipeline.tasks": ",".join([str(t.taskType) for t in request.pipelineTasks])
+                    "pipeline.tasks": ",".join(task_names)
                 }
             ):
                 return await self._execute_pipeline_tasks(
@@ -107,7 +115,11 @@ class PipelineService:
             logger.info(f"📋 Executing task {task_idx}/{len(request.pipelineTasks)}: {pipeline_task.taskType}")
             
             # Create a span for each task if tracing is available
-            span_name = f"pipeline.task.{pipeline_task.taskType}"
+            # Use clear names like "ASR Task", "NMT Task", "TTS Task"
+            task_type_name = str(pipeline_task.taskType).upper()
+            if task_type_name == "TRANSLATION":
+                task_type_name = "NMT"
+            span_name = f"{task_type_name} Task"
             
             try:
                 if TRACING_AVAILABLE and tracer:

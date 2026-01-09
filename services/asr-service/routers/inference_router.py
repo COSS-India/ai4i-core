@@ -24,6 +24,13 @@ from utils.validation_utils import (
 from middleware.exceptions import AuthenticationError, AuthorizationError
 from middleware.auth_provider import AuthProvider
 
+# Import OpenTelemetry for manual span creation
+try:
+    from opentelemetry import trace
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # Create router with authentication dependency
@@ -80,6 +87,22 @@ async def run_inference(
     start_time = time.time()
     request_id = None
     
+    # Create a descriptive span for ASR inference
+    if TRACING_AVAILABLE:
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("ASR Inference") as span:
+            span.set_attribute("service.name", "asr")
+            span.set_attribute("service.type", "asr")
+            span.set_attribute("asr.audio_count", len(request.audio))
+            span.set_attribute("asr.service_id", request.config.serviceId)
+            span.set_attribute("asr.language", request.config.language.sourceLanguage)
+            return await _run_asr_inference_internal(request, http_request, asr_service, start_time)
+    else:
+        return await _run_asr_inference_internal(request, http_request, asr_service, start_time)
+
+
+async def _run_asr_inference_internal(request: ASRInferenceRequest, http_request: Request, asr_service: ASRService, start_time: float) -> ASRInferenceResponse:
+    """Internal ASR inference logic."""
     try:
         # Extract auth context from request.state
         user_id = getattr(http_request.state, 'user_id', None)
@@ -113,23 +136,42 @@ async def run_inference(
             detail=str(e)
         )
     except Exception as e:
-        logger.error(f"ASR inference failed: {e}")
+        logger.error(f"ASR inference failed: {e}", exc_info=True)
         
-        # Return appropriate error based on exception type
-        if "Triton" in str(e):
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="ASR service temporarily unavailable"
+        # Import service-specific exceptions
+        from middleware.exceptions import (
+            TritonInferenceError,
+            ModelNotFoundError,
+            ServiceUnavailableError,
+            AudioProcessingError
+        )
+        
+        # Check if it's already a service-specific error
+        if isinstance(e, (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, AudioProcessingError)):
+            raise
+        
+        # Check error type and raise appropriate exception
+        error_msg = str(e)
+        if "unknown model" in error_msg.lower() or ("model" in error_msg.lower() and "not found" in error_msg.lower()):
+            import re
+            model_match = re.search(r"model: '([^']+)'", error_msg)
+            model_name = model_match.group(1) if model_match else request.config.serviceId if hasattr(request, 'config') else "asr"
+            raise ModelNotFoundError(
+                message=f"Model '{model_name}' not found in Triton inference server. Please verify the model name and ensure it is loaded.",
+                model_name=model_name
             )
-        elif "audio" in str(e).lower():
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Audio processing failed"
+        elif "triton" in error_msg.lower() or "connection" in error_msg.lower() or "timeout" in error_msg.lower():
+            raise ServiceUnavailableError(
+                message=f"ASR service unavailable: {error_msg}. Please check Triton server connectivity."
             )
+        elif "audio" in error_msg.lower():
+            raise AudioProcessingError(f"Audio processing failed: {error_msg}")
         else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Internal server error"
+            # Generic Triton error
+            model_name = request.config.serviceId if hasattr(request, 'config') and hasattr(request.config, 'serviceId') else "asr"
+            raise TritonInferenceError(
+                message=f"ASR inference failed: {error_msg}",
+                model_name=model_name
             )
 
 

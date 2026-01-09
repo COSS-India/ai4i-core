@@ -233,25 +233,10 @@ if TRACING_AVAILABLE:
         tracer = setup_tracing("pipeline-service")
         if tracer:
             logger.info("✅ Distributed tracing initialized for Pipeline service")
-            # Instrument FastAPI to automatically create spans for all requests
-            # Exclude health and metrics endpoints to reduce noise
-            FastAPIInstrumentor.instrument_app(
-                app,
-                excluded_urls="/health,/metrics,/enterprise/metrics,/docs,/openapi.json,/redoc"
-            )
-            logger.info("✅ FastAPI instrumentation enabled for tracing")
-            # NOTE: HTTPX auto-instrumentation is DISABLED to prevent duplicate spans
-            # HTTPX instrumentation was creating duplicate "http receive/send" spans for the same endpoint
-            # Instead, we use manual trace context propagation in http_client.py which properly
-            # propagates trace context to downstream services without creating duplicate spans
-            # The expected trace structure is:
-            # - 1x "POST /api/v1/pipeline/inference http receive" (FastAPI - incoming request)
-            # - 1x "pipeline.authentication" (manual span)
-            # - 1x "pipeline.run_inference" (manual span)
-            # - Nx "pipeline.task.{taskType}" (manual spans, one per task)
-            # Downstream services (ASR/NMT/TTS) will create their own spans via FastAPI instrumentation
-            # HTTPXClientInstrumentor().instrument()  # DISABLED to prevent duplicate spans
-            logger.info("✅ HTTPX auto-instrumentation disabled (using manual trace context propagation)")
+            
+            # Instrument FastAPI with OpenTelemetry
+            FastAPIInstrumentor.instrument_app(app)
+            logger.info("✅ FastAPI instrumented for distributed tracing")
         else:
             logger.warning("⚠️ Tracing setup returned None")
     except Exception as e:

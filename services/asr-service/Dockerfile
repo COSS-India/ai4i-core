@@ -52,9 +52,12 @@
             libgomp1 \
         && rm -rf /var/lib/apt/lists/*
     
+    # Create non-root user
+    RUN useradd --create-home --shell /bin/bash app
+    
     # Copy Python libraries
-    COPY --from=builder /root/.local /root/.local
-    ENV PATH=/root/.local/bin:$PATH
+    COPY --from=builder /root/.local /home/app/.local
+    ENV PATH=/home/app/.local/bin:$PATH
     
     # Copy AI4ICore Observability Plugin
     COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
@@ -67,6 +70,11 @@
     
     ENV PYTHONUNBUFFERED=1
     ENV PYTHONPATH="/app"
+    
+    # Fix ownership
+    RUN chown -R app:app /app /home/app/.local
+    
+    USER app
     
     EXPOSE 8087
     

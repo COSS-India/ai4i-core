@@ -66,10 +66,20 @@ async def run_pipeline_inference(
     """
     tracer = trace.get_tracer(__name__) if TRACING_AVAILABLE else None
     
+    return await _execute_pipeline_request(request, http_request, tracer, None)
+
+
+async def _execute_pipeline_request(
+    request: PipelineInferenceRequest,
+    http_request: Request,
+    tracer,
+    root_span
+) -> PipelineInferenceResponse:
+    """Internal pipeline request execution logic."""
     try:
         # Create span for authentication/authorization
         if tracer:
-            with tracer.start_as_current_span("pipeline.authentication") as auth_span:
+            with tracer.start_as_current_span("Pipeline Authentication") as auth_span:
                 # Extract JWT token and API key from request headers
                 jwt_token = None
                 api_key = None
@@ -93,6 +103,19 @@ async def run_pipeline_inference(
                 auth_span.set_attribute("pipeline.task_types", ",".join([t.taskType.value for t in request.pipelineTasks]))
                 
                 logger.info(f"🔐 Authentication extracted: JWT={'present' if jwt_token else 'absent'}, API_KEY={'present' if api_key else 'absent'}")
+            
+            # Get pipeline service
+            pipeline_service = get_pipeline_service()
+            
+            # Execute pipeline (this will create its own spans)
+            response = await pipeline_service.run_pipeline_inference(
+                request=request,
+                jwt_token=jwt_token,
+                api_key=api_key
+            )
+            
+            logger.info("✅ Pipeline inference completed successfully")
+            return response
         else:
             # No tracing, extract auth normally
             jwt_token = None
@@ -105,19 +128,19 @@ async def run_pipeline_inference(
             api_key_header = http_request.headers.get('X-API-Key')
             if api_key_header:
                 api_key = api_key_header
-        
-        # Get pipeline service
-        pipeline_service = get_pipeline_service()
-        
-        # Execute pipeline (this will create its own spans)
-        response = await pipeline_service.run_pipeline_inference(
-            request=request,
-            jwt_token=jwt_token,
-            api_key=api_key
-        )
-        
-        logger.info("✅ Pipeline inference completed successfully")
-        return response
+            
+            # Get pipeline service
+            pipeline_service = get_pipeline_service()
+            
+            # Execute pipeline (this will create its own spans)
+            response = await pipeline_service.run_pipeline_inference(
+                request=request,
+                jwt_token=jwt_token,
+                api_key=api_key
+            )
+            
+            logger.info("✅ Pipeline inference completed successfully")
+            return response
         
     except (PipelineTaskError, ModelNotFoundError, ServiceUnavailableError) as e:
         # Handle pipeline-specific errors with structured response

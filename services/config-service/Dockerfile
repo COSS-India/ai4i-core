@@ -11,11 +11,11 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ✅ FIX: copy requirements using full path from repo root
-COPY services/config-service/requirements.txt .
+# Copy requirements from service directory
+COPY requirements.txt .
 
-# Install Python dependencies (NO --user)
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies
+RUN pip install --no-cache-dir --user -r requirements.txt
 
 # ---------------- Final stage ----------------
 FROM python:3.11-slim
@@ -31,14 +31,16 @@ RUN apt-get update && apt-get install -y \
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash app
 
-# Copy installed Python packages
-COPY --from=builder /usr/local /usr/local
+# Copy Python packages from builder
+COPY --from=builder /root/.local /home/app/.local
+
+ENV PATH=/home/app/.local/bin:$PATH
 
 # Copy application code
-COPY services/config-service/ .
+COPY . .
 
-# Fix ownership ONLY for app files
-RUN chown -R app:app /app
+# Fix ownership for app files and Python packages
+RUN chown -R app:app /app /home/app/.local
 USER app
 
 EXPOSE 8082

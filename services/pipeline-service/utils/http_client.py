@@ -207,7 +207,7 @@ class ServiceClient:
         if TRACING_AVAILABLE:
             # Get tracer - use the same service name as the main app to ensure proper nesting
             tracer = trace.get_tracer("pipeline-service")
-            span_name = "ASR Service Call"
+            span_name = "ASR Service"
         else:
             tracer = None
             span_name = None
@@ -215,58 +215,30 @@ class ServiceClient:
         try:
             if tracer:
                 # Create span as child of current active span (task span)
-                # Use explicit context to ensure proper nesting
-                current_span = trace.get_current_span()
-                if current_span and current_span.get_span_context().is_valid:
-                    # Create span as child of current span
-                    with tracer.start_as_current_span(span_name, context=current_span.get_span_context()) as span:
-                        span.set_attribute("http.method", "POST")
-                        span.set_attribute("http.url", service_url)
-                        span.set_attribute("http.service", "asr-service")
-                        span.set_attribute("service.name", "asr")
-                        span.set_attribute("service.type", "asr")
-                        span.set_attribute("span.kind", "client")  # Mark as outgoing client call
-                        
-                        start_time = time.time()
-                        response = await self.client.post(
-                            service_url,
-                            json=request_data,
-                            headers=headers
-                        )
-                        elapsed_time = time.time() - start_time
-                        
-                        span.set_attribute("http.status_code", response.status_code)
-                        span.set_attribute("http.duration_ms", elapsed_time * 1000)
-                        
-                        response.raise_for_status()
-                        result = response.json()
-                        logger.info(f"✅ ASR service completed successfully in {elapsed_time:.2f}s")
-                        return result
-                else:
-                    # No active span, create root span
-                    with tracer.start_as_current_span(span_name) as span:
-                        span.set_attribute("http.method", "POST")
-                        span.set_attribute("http.url", service_url)
-                        span.set_attribute("http.service", "asr-service")
-                        span.set_attribute("service.name", "asr")
-                        span.set_attribute("service.type", "asr")
-                        span.set_attribute("span.kind", "client")
-                        
-                        start_time = time.time()
-                        response = await self.client.post(
-                            service_url,
-                            json=request_data,
-                            headers=headers
-                        )
-                        elapsed_time = time.time() - start_time
-                        
-                        span.set_attribute("http.status_code", response.status_code)
-                        span.set_attribute("http.duration_ms", elapsed_time * 1000)
-                        
-                        response.raise_for_status()
-                        result = response.json()
-                        logger.info(f"✅ ASR service completed successfully in {elapsed_time:.2f}s")
-                        return result
+                # start_as_current_span automatically creates a child of the current span
+                with tracer.start_as_current_span(span_name) as span:
+                    span.set_attribute("http.method", "POST")
+                    span.set_attribute("http.url", service_url)
+                    span.set_attribute("http.service", "asr-service")
+                    span.set_attribute("service.name", "asr")
+                    span.set_attribute("service.type", "asr")
+                    span.set_attribute("span.kind", "client")  # Mark as outgoing client call
+                    
+                    start_time = time.time()
+                    response = await self.client.post(
+                        service_url,
+                        json=request_data,
+                        headers=headers
+                    )
+                    elapsed_time = time.time() - start_time
+                    
+                    span.set_attribute("http.status_code", response.status_code)
+                    span.set_attribute("http.duration_ms", elapsed_time * 1000)
+                    
+                    response.raise_for_status()
+                    result = response.json()
+                    logger.info(f"✅ ASR service completed successfully in {elapsed_time:.2f}s")
+                    return result
             else:
                 start_time = time.time()
                 response = await self.client.post(
@@ -356,7 +328,7 @@ class ServiceClient:
         if TRACING_AVAILABLE:
             # Get tracer - use the same service name as the main app to ensure proper nesting
             tracer = trace.get_tracer("pipeline-service")
-            span_name = "NMT Service Call"
+            span_name = "NMT Service"
         else:
             tracer = None
             span_name = None
@@ -364,58 +336,30 @@ class ServiceClient:
         try:
             if tracer:
                 # Create span as child of current active span (task span)
-                # Use explicit context to ensure proper nesting
-                current_span = trace.get_current_span()
-                if current_span and current_span.get_span_context().is_valid:
-                    # Create span as child of current span
-                    with tracer.start_as_current_span(span_name, context=current_span.get_span_context()) as span:
-                        span.set_attribute("http.method", "POST")
-                        span.set_attribute("http.url", service_url)
-                        span.set_attribute("http.service", "nmt-service")
-                        span.set_attribute("service.name", "nmt")
-                        span.set_attribute("service.type", "nmt")
-                        span.set_attribute("span.kind", "client")  # Mark as outgoing client call
-                        
-                        start_time = time.time()
-                        response = await self.client.post(
-                            service_url,
-                            json=request_data,
-                            headers=headers
-                        )
-                        elapsed_time = time.time() - start_time
-                        
-                        span.set_attribute("http.status_code", response.status_code)
-                        span.set_attribute("http.duration_ms", elapsed_time * 1000)
-                        
-                        response.raise_for_status()
-                        result = response.json()
-                        logger.info(f"✅ NMT service completed successfully in {elapsed_time:.2f}s")
-                        return result
-                else:
-                    # No active span, create root span
-                    with tracer.start_as_current_span(span_name) as span:
-                        span.set_attribute("http.method", "POST")
-                        span.set_attribute("http.url", service_url)
-                        span.set_attribute("http.service", "nmt-service")
-                        span.set_attribute("service.name", "nmt")
-                        span.set_attribute("service.type", "nmt")
-                        span.set_attribute("span.kind", "client")
-                        
-                        start_time = time.time()
-                        response = await self.client.post(
-                            service_url,
-                            json=request_data,
-                            headers=headers
-                        )
-                        elapsed_time = time.time() - start_time
-                        
-                        span.set_attribute("http.status_code", response.status_code)
-                        span.set_attribute("http.duration_ms", elapsed_time * 1000)
-                        
-                        response.raise_for_status()
-                        result = response.json()
-                        logger.info(f"✅ NMT service completed successfully in {elapsed_time:.2f}s")
-                        return result
+                # start_as_current_span automatically creates a child of the current span
+                with tracer.start_as_current_span(span_name) as span:
+                    span.set_attribute("http.method", "POST")
+                    span.set_attribute("http.url", service_url)
+                    span.set_attribute("http.service", "nmt-service")
+                    span.set_attribute("service.name", "nmt")
+                    span.set_attribute("service.type", "nmt")
+                    span.set_attribute("span.kind", "client")  # Mark as outgoing client call
+                    
+                    start_time = time.time()
+                    response = await self.client.post(
+                        service_url,
+                        json=request_data,
+                        headers=headers
+                    )
+                    elapsed_time = time.time() - start_time
+                    
+                    span.set_attribute("http.status_code", response.status_code)
+                    span.set_attribute("http.duration_ms", elapsed_time * 1000)
+                    
+                    response.raise_for_status()
+                    result = response.json()
+                    logger.info(f"✅ NMT service completed successfully in {elapsed_time:.2f}s")
+                    return result
             else:
                 start_time = time.time()
                 response = await self.client.post(
@@ -505,7 +449,7 @@ class ServiceClient:
         if TRACING_AVAILABLE:
             # Get tracer - use the same service name as the main app to ensure proper nesting
             tracer = trace.get_tracer("pipeline-service")
-            span_name = "TTS Service Call"
+            span_name = "TTS Service"
         else:
             tracer = None
             span_name = None
@@ -513,58 +457,30 @@ class ServiceClient:
         try:
             if tracer:
                 # Create span as child of current active span (task span)
-                # Use explicit context to ensure proper nesting
-                current_span = trace.get_current_span()
-                if current_span and current_span.get_span_context().is_valid:
-                    # Create span as child of current span
-                    with tracer.start_as_current_span(span_name, context=current_span.get_span_context()) as span:
-                        span.set_attribute("http.method", "POST")
-                        span.set_attribute("http.url", service_url)
-                        span.set_attribute("http.service", "tts-service")
-                        span.set_attribute("service.name", "tts")
-                        span.set_attribute("service.type", "tts")
-                        span.set_attribute("span.kind", "client")  # Mark as outgoing client call
-                        
-                        start_time = time.time()
-                        response = await self.client.post(
-                            service_url,
-                            json=request_data,
-                            headers=headers
-                        )
-                        elapsed_time = time.time() - start_time
-                        
-                        span.set_attribute("http.status_code", response.status_code)
-                        span.set_attribute("http.duration_ms", elapsed_time * 1000)
-                        
-                        response.raise_for_status()
-                        result = response.json()
-                        logger.info(f"✅ TTS service completed successfully in {elapsed_time:.2f}s")
-                        return result
-                else:
-                    # No active span, create root span
-                    with tracer.start_as_current_span(span_name) as span:
-                        span.set_attribute("http.method", "POST")
-                        span.set_attribute("http.url", service_url)
-                        span.set_attribute("http.service", "tts-service")
-                        span.set_attribute("service.name", "tts")
-                        span.set_attribute("service.type", "tts")
-                        span.set_attribute("span.kind", "client")
-                        
-                        start_time = time.time()
-                        response = await self.client.post(
-                            service_url,
-                            json=request_data,
-                            headers=headers
-                        )
-                        elapsed_time = time.time() - start_time
-                        
-                        span.set_attribute("http.status_code", response.status_code)
-                        span.set_attribute("http.duration_ms", elapsed_time * 1000)
-                        
-                        response.raise_for_status()
-                        result = response.json()
-                        logger.info(f"✅ TTS service completed successfully in {elapsed_time:.2f}s")
-                        return result
+                # start_as_current_span automatically creates a child of the current span
+                with tracer.start_as_current_span(span_name) as span:
+                    span.set_attribute("http.method", "POST")
+                    span.set_attribute("http.url", service_url)
+                    span.set_attribute("http.service", "tts-service")
+                    span.set_attribute("service.name", "tts")
+                    span.set_attribute("service.type", "tts")
+                    span.set_attribute("span.kind", "client")  # Mark as outgoing client call
+                    
+                    start_time = time.time()
+                    response = await self.client.post(
+                        service_url,
+                        json=request_data,
+                        headers=headers
+                    )
+                    elapsed_time = time.time() - start_time
+                    
+                    span.set_attribute("http.status_code", response.status_code)
+                    span.set_attribute("http.duration_ms", elapsed_time * 1000)
+                    
+                    response.raise_for_status()
+                    result = response.json()
+                    logger.info(f"✅ TTS service completed successfully in {elapsed_time:.2f}s")
+                    return result
             else:
                 start_time = time.time()
                 response = await self.client.post(

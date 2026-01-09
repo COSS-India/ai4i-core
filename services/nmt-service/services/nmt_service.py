@@ -17,18 +17,14 @@ from repositories.nmt_repository import NMTRepository
 from services.text_service import TextService
 from utils.triton_client import TritonClient
 from utils.model_management_client import ModelManagementClient, ServiceInfo
+from middleware.exceptions import (
+    TritonInferenceError,
+    TextProcessingError,
+    ModelNotFoundError,
+    ServiceUnavailableError
+)
 
 logger = logging.getLogger(__name__)
-
-
-class TritonInferenceError(Exception):
-    """Triton inference error"""
-    pass
-
-
-class TextProcessingError(Exception):
-    """Text processing error"""
-    pass
 
 
 class NMTService:
@@ -111,6 +107,10 @@ class NMTService:
         if cached:
             endpoint, model_name, expires_at = cached
             if expires_at > time.time():
+                # Apply mapping: "indictrans" -> "nmt" for Triton server
+                if model_name == "indictrans":
+                    logger.info(f"Mapped local cached model name 'indictrans' to 'nmt' for Triton (service_id: {service_id})")
+                    model_name = "nmt"
                 return endpoint, model_name
             self._service_registry_cache.pop(service_id, None)
 
@@ -118,6 +118,10 @@ class NMTService:
         redis_entry = await self._get_registry_from_redis(service_id)
         if redis_entry:
             endpoint, model_name = redis_entry
+            # Apply mapping: "indictrans" -> "nmt" for Triton server
+            if model_name == "indictrans":
+                logger.info(f"Mapped Redis cached model name 'indictrans' to 'nmt' for Triton (service_id: {service_id})")
+                model_name = "nmt"
             expires_at = time.time() + self.cache_ttl_seconds
             self._service_registry_cache[service_id] = (endpoint, model_name, expires_at)
             return endpoint, model_name
@@ -178,14 +182,26 @@ class NMTService:
     
     async def get_model_name(self, service_id: str, auth_headers: Optional[Dict[str, str]] = None) -> str:
         """Get Triton model name based on service ID with fallback"""
+        model_name = None
+        
         try:
             service_entry = await self._get_service_registry_entry(service_id, auth_headers)
             if service_entry:
                 model_name = service_entry[1]  # Return model name
                 if model_name and model_name != "unknown":
+                    # Apply mapping: "indictrans" -> "nmt" for Triton server
+                    if model_name == "indictrans":
+                        logger.info(f"Mapped cached model name 'indictrans' to 'nmt' for Triton (service_id: {service_id})")
+                        return "nmt"
                     return model_name
         except Exception as e:
             logger.debug(f"Error getting model name for {service_id}: {e}")
+        
+        # Special case: if service_id is "indictrans", use "nmt" as the model name
+        # This is because the Triton server has the model named "nmt", not "indictrans"
+        if service_id == "indictrans":
+            logger.info(f"Service ID '{service_id}' maps to Triton model 'nmt'")
+            return "nmt"
         
         # Try to extract from service_id as last resort
         # e.g., "ai4bharat/indictrans--gpu-t4" -> "indictrans"
@@ -196,7 +212,16 @@ class NMTService:
             model_part = service_id
         
         if "--" in model_part:
-            return model_part.split("--")[0]
+            extracted = model_part.split("--")[0]
+            # If extracted name is "indictrans", use "nmt" instead
+            if extracted == "indictrans":
+                logger.info(f"Extracted model name '{extracted}' from service_id '{service_id}', using 'nmt' for Triton")
+                return "nmt"
+            return extracted
+        
+        # Final fallback: if service_id is "indictrans", use "nmt"
+        if service_id == "indictrans":
+            return "nmt"
         
         # Final fallback: return the service_id itself (better than "nmt" task type)
         logger.warning(f"Could not determine model name for {service_id}, using service_id as fallback")
@@ -232,6 +257,12 @@ class NMTService:
                 model_name = model_part.split("--")[0]
             else:
                 model_name = model_part
+        
+        # Special case: map "indictrans" to "nmt" for Triton server
+        # The Triton server has the model named "nmt", not "indictrans"
+        if model_name == "indictrans":
+            logger.info(f"Mapped model name 'indictrans' to 'nmt' for Triton server (service_id: {service_id})")
+            model_name = "nmt"
         
         # Final fallback: use a placeholder that indicates unknown (not task type)
         if not model_name:
@@ -378,6 +409,11 @@ class NMTService:
                     triton_client = await self.get_triton_client(service_id, auth_headers)
                     
                     # Log the model name and endpoint for debugging
+                    # Apply mapping: "indictrans" -> "nmt" for Triton server (in case model_name wasn't mapped earlier)
+                    logger.info(f"DEBUG: model_name before mapping: '{model_name}' (type: {type(model_name)}, service_id: {service_id})")
+                    if model_name == "indictrans" or (isinstance(model_name, str) and "indictrans" in model_name.lower()):
+                        logger.info(f"Applying final mapping: '{model_name}' -> 'nmt' for Triton (service_id: {service_id})")
+                        model_name = "nmt"
                     service_entry = await self._get_service_registry_entry(service_id, auth_headers)
                     endpoint = service_entry[0] if service_entry else "default"
                     logger.info(f"Using Triton endpoint: {endpoint}, model: {model_name} for service: {service_id}")
@@ -386,6 +422,12 @@ class NMTService:
                     inputs, outputs = triton_client.get_translation_io_for_triton(
                         batch, source_lang, target_lang
                     )
+                    
+                    # CRITICAL FIX: Map "indictrans" to "nmt" for Triton server
+                    # The Triton server has the model named "nmt", not "indictrans"
+                    if model_name == "indictrans" or (isinstance(model_name, str) and "indictrans" in model_name.lower()):
+                        logger.info(f"🔧 MAPPING: '{model_name}' -> 'nmt' for Triton (service_id: {service_id})")
+                        model_name = "nmt"
                     
                     # Send Triton request
                     response = triton_client.send_triton_request(
