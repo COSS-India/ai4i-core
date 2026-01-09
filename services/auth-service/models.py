@@ -233,6 +233,13 @@ class APIKeyCreate(BaseModel):
     class Config:
         populate_by_name = True  # Allow both user_id and userId
 
+
+class APIKeyUpdate(BaseModel):
+    """Partial update for an existing API key (admin/moderator)."""
+    key_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    permissions: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+
 class APIKeyResponse(BaseModel):
     id: int
     key_name: str
@@ -245,6 +252,13 @@ class APIKeyResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class AdminAPIKeyWithUserResponse(APIKeyResponse):
+    """API key details including owning user information (for admin/moderator views)."""
+    user_id: int
+    user_email: str
+    username: str
 
 class OAuth2Provider(BaseModel):
     provider: str

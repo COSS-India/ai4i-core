@@ -134,6 +134,7 @@ class TritonClient:
         try:
             response = self.client.infer(
                 model_name="lang_diarization",
+                model_version="1",
                 inputs=inputs,
                 outputs=outputs,
                 headers=headers or None,

@@ -1,0 +1,45 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="256"
+  height="128"
+  viewBox="0 0 256 128"
+  fill="none"
+>
+  <defs>
+    <linearGradient id="purpleGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#E6C7F2"/>
+      <stop offset="100%" stop-color="#D6A4EC"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Left Microphone - Made larger -->
+  <g fill="url(#purpleGrad)">
+    <rect x="12" y="16" width="36" height="68" rx="18"/>
+    <path d="M6 46c0 18 12 30 24 30s24-12 24-30h-10c0 12-6 20-14 20s-14-8-14-20h-10z"/>
+    <rect x="26" y="88" width="8" height="18"/>
+    <rect x="16" y="106" width="24" height="8"/>
+  </g>
+
+  <!-- Right Microphone - Made larger -->
+  <g fill="url(#purpleGrad)">
+    <rect x="208" y="16" width="36" height="68" rx="18"/>
+    <path d="M202 46c0 18 12 30 24 30s24-12 24-30h-10c0 12-6 20-14 20s-14-8-14-20h-10z"/>
+    <rect x="222" y="88" width="8" height="18"/>
+    <rect x="212" y="106" width="24" height="8"/>
+  </g>
+
+  <!-- Waveform - Made larger and more prominent -->
+  <path
+    d="M52 64
+       C68 64, 68 24, 84 24
+       C100 24, 100 104, 116 104
+       C132 104, 132 32, 148 32
+       C164 32, 164 64, 180 64
+       C196 64, 196 40, 212 40"
+    stroke="url(#purpleGrad)"
+    stroke-width="10"
+    fill="none"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

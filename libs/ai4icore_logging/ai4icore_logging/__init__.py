@@ -8,7 +8,16 @@ __version__ = "1.0.0"
 __author__ = "AI4I Team"
 
 from .logger import get_logger, configure_logging
-from .context import set_trace_id, get_trace_id, clear_trace_id, TraceContext, generate_trace_id
+from .context import (
+    set_trace_id,
+    get_trace_id,
+    clear_trace_id,
+    TraceContext,
+    generate_trace_id,
+    set_organization,
+    get_organization,
+    clear_organization,
+)
 from .formatters import JSONFormatter
 from .handlers import KafkaHandler
 from .middleware import (
@@ -25,6 +34,9 @@ __all__ = [
     "clear_trace_id",
     "TraceContext",
     "generate_trace_id",
+    "set_organization",
+    "get_organization",
+    "clear_organization",
     "JSONFormatter",
     "KafkaHandler",
     "CorrelationMiddleware",

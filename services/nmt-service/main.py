@@ -23,6 +23,8 @@ load_dotenv()
 from routers import health_router, inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
 from utils.triton_client import TritonClient
+from utils.model_management_client import ModelManagementClient
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
@@ -47,12 +49,16 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
 REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db"
+DATABASE_URL = os.getenv( "DATABASE_URL")
+# NOTE: Triton endpoint/model MUST come from Model Management for inference.
+# No environment variable fallback - all resolution via Model Management database.
+MODEL_MANAGEMENT_SERVICE_URL = os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091")
+MODEL_MANAGEMENT_SERVICE_API_KEY = os.getenv(
+    "MODEL_MANAGEMENT_SERVICE_API_KEY",
+    os.getenv("MODEL_MANAGEMENT_API_KEY", None)  # Backward-compatible alias
 )
-TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "13.200.133.97:8000")
-TRITON_API_KEY = os.getenv("TRITON_API_KEY", "1b69e9a1a24466c85e4bbca3c5295f50")
+MODEL_MANAGEMENT_CACHE_TTL = int(os.getenv("MODEL_MANAGEMENT_CACHE_TTL", "300"))  # 5 minutes default
+TRITON_ENDPOINT_CACHE_TTL = int(os.getenv("TRITON_ENDPOINT_CACHE_TTL", "300"))
 
 # Global variables
 redis_client: Optional[redis.Redis] = None
@@ -164,8 +170,19 @@ async def lifespan(app: FastAPI):
     app.state.redis_client = redis_client
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
-    app.state.triton_endpoint = TRITON_ENDPOINT
-    app.state.triton_api_key = TRITON_API_KEY
+    
+    # Create Model Management client and store in app state
+    # NOTE: Triton endpoint/model MUST come from Model Management for inference.
+    # No environment variable fallback - all resolution via Model Management database.
+    model_management_client = ModelManagementClient(
+        base_url=MODEL_MANAGEMENT_SERVICE_URL,
+        api_key=MODEL_MANAGEMENT_SERVICE_API_KEY,
+        cache_ttl_seconds=MODEL_MANAGEMENT_CACHE_TTL
+    )
+    app.state.model_management_client = model_management_client
+    
+    # NOTE: Model Management Plugin is registered BEFORE app starts (see line ~320)
+    # to avoid "Cannot add middleware after application has started" error
 
     # Register service into the central registry via config-service
     try:
@@ -274,6 +291,42 @@ if not config.apps:
 plugin = ObservabilityPlugin(config)
 plugin.register_plugin(app)
 logger.info("✅ AI4ICore Observability Plugin initialized for NMT service")
+
+# Initialize Redis client early for middleware (synchronous for Model Management Plugin)
+import redis as redis_sync
+redis_client_sync = None
+try:
+    redis_client_sync = redis_sync.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        password=REDIS_PASSWORD,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        retry_on_timeout=True
+    )
+    # Test Redis connection (synchronous ping)
+    redis_client_sync.ping()
+    logger.info("Redis client created for middleware (connection tested)")
+except Exception as e:
+    logger.warning(f"Redis connection failed for middleware: {e}")
+    redis_client_sync = None
+
+# Model Management Plugin - single source of truth for Triton endpoint/model (no env fallback)
+# MUST be registered BEFORE app starts (before other middleware) to avoid "Cannot add middleware after application has started" error
+model_mgmt_config = ModelManagementConfig(
+    model_management_service_url=MODEL_MANAGEMENT_SERVICE_URL,
+    model_management_api_key=MODEL_MANAGEMENT_SERVICE_API_KEY,
+    cache_ttl_seconds=MODEL_MANAGEMENT_CACHE_TTL,
+    triton_endpoint_cache_ttl=TRITON_ENDPOINT_CACHE_TTL,
+    default_triton_endpoint="",  # No fallback - must come from Model Management
+    default_triton_api_key="",  # No fallback - must come from Model Management
+    middleware_enabled=True,
+    middleware_paths=["/api/v1"]
+)
+model_mgmt_plugin = ModelManagementPlugin(model_mgmt_config)
+model_mgmt_plugin.register_plugin(app, redis_client=redis_client_sync)
+logger.info("✅ Model Management Plugin initialized for NMT service")
 
 # Add CORS middleware
 app.add_middleware(

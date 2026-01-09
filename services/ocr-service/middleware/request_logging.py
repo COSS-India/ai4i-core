@@ -8,7 +8,7 @@ import time
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
-from ai4icore_logging import get_logger, get_correlation_id
+from ai4icore_logging import get_logger, get_correlation_id, get_organization
 
 logger = get_logger(__name__)
 
@@ -36,8 +36,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         
         # Get correlation ID (set by CorrelationMiddleware)
         correlation_id = get_correlation_id(request)
-
-        # Process request
+        
+        # Process request first (this will trigger ObservabilityMiddleware which sets organization)
         # Note: FastAPI exception handlers (like RequestValidationError) will catch
         # exceptions and return responses, which will still come back through this middleware
         # We don't catch exceptions here - let FastAPI's exception handlers handle them
@@ -56,6 +56,17 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Determine log level based on status code
         status_code = response.status_code
         
+        # Get organization from request.state first (set by ObservabilityMiddleware)
+        # This is more reliable than contextvars in async middleware
+        organization = getattr(request.state, "organization", None)
+        
+        # Fallback: try to get from context if request.state doesn't have it
+        if not organization:
+            try:
+                organization = get_organization()
+            except Exception:
+                pass
+        
         # Build context for structured logging
         log_context = {
             "method": method,
@@ -72,6 +83,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_context["api_key_id"] = api_key_id
         if correlation_id:
             log_context["correlation_id"] = correlation_id
+        if organization:
+            log_context["organization"] = organization
 
         # Log with appropriate level using structured logging
         if 200 <= status_code < 300:

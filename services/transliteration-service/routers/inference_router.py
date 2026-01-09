@@ -7,7 +7,7 @@ import logging
 import time
 from typing import Dict, Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.transliteration_request import TransliterationInferenceRequest
@@ -46,30 +46,58 @@ def create_triton_client(triton_url: str, api_key: str) -> TritonClient:
     return TritonClient(triton_url=triton_url, api_key=api_key)
 
 
-async def get_transliteration_service(request: Request, db: AsyncSession = Depends(get_db_session)) -> TransliterationService:
-    """Dependency to get configured transliteration service"""
+async def get_transliteration_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> TransliterationService:
+    """
+    Dependency to get configured transliteration service.
+
+    REQUIRES Model Management database resolution - no environment variable fallback.
+    Request must include config.serviceId for Model Management to resolve endpoint and model.
+    """
     repository = TransliterationRepository(db)
     text_service = TextService()
-    
-    # Default Triton client
-    default_triton_client = TritonClient(
-        triton_url=request.app.state.triton_endpoint,
-        api_key=request.app.state.triton_api_key
+
+    triton_endpoint = getattr(request.state, "triton_endpoint", None)
+    triton_api_key = getattr(request.app.state, "triton_api_key", "")
+
+    if not triton_endpoint:
+        service_id = getattr(request.state, "service_id", None)
+        if service_id:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
+                    f"Please ensure the service is registered in Model Management database."
+                ),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Request must include config.serviceId. "
+                "Transliteration service requires Model Management database resolution."
+            ),
+        )
+
+    logger.info(
+        "Using endpoint=%s from Model Management for serviceId=%s",
+        triton_endpoint,
+        getattr(request.state, "service_id", "unknown"),
     )
-    
-    # Factory function to create Triton clients for different endpoints
+
+    default_triton_client = TritonClient(triton_endpoint, triton_api_key or None)
+
+    # Factory function to create Triton clients for different endpoints (kept for flexibility)
     def get_triton_client_for_endpoint(endpoint: str) -> TritonClient:
         """Create Triton client for specific endpoint"""
-        return TritonClient(
-            triton_url=endpoint,
-            api_key=request.app.state.triton_api_key
-        )
-    
+        return TritonClient(triton_url=endpoint, api_key=triton_api_key or None)
+
     return TransliterationService(
-        repository, 
-        text_service, 
+        repository,
+        text_service,
         default_triton_client,
-        get_triton_client_for_endpoint
+        get_triton_client_for_endpoint,
     )
 
 

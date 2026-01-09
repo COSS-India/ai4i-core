@@ -1,79 +1,80 @@
-# Multi-stage Dockerfile for OCR Service
-
+# -----------------------------
+# STAGE 1 — BUILDER
+# -----------------------------
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     curl \
     libpq-dev \
-    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy AI4ICore Observability Plugin
+# Copy AI4ICore plugins from monorepo
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY libs/ai4icore_auth /app/libs/ai4icore_auth
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
+COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
-# Copy requirements and install Python dependencies
+# Copy service requirements
 COPY services/ocr-service/requirements.txt .
+
+RUN pip install --upgrade pip setuptools wheel
+
+# Install Python deps
 RUN pip install --no-cache-dir --user -r requirements.txt
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
 
-# Final runtime image
+# -----------------------------
+# STAGE 2 — RUNTIME
+# -----------------------------
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libpq5 \
-    libssl3 \
-    libnss3 \
-    libstdc++6 \
     ca-certificates \
-    iputils-ping \
-    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
 RUN useradd --create-home --shell /bin/bash app
 
-# Copy Python packages from builder
+# Copy Python site-packages
 COPY --from=builder /root/.local /home/app/.local
-ENV PATH=/home/app/.local/bin:$PATH
 
-# Copy AI4ICore Observability Plugin
+ENV PATH="/home/app/.local/bin:$PATH"
+ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
+
+# Copy AI4ICore plugins
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY --from=builder /app/libs/ai4icore_auth /app/libs/ai4icore_auth
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
+COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
 # Copy application code
 COPY services/ocr-service .
 
 # Adjust ownership and permissions
 RUN chown -R app:app /app /home/app/.local \
-    && chmod +x /home/app/.local/bin/*
+    && chmod +x /home/app/.local/bin/* || true
 
 USER app
 
-# Expose port
 EXPOSE 8099
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8099/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD curl -f http://localhost:8099/health || exit 1
 
 # Run the application
 # Disable uvicorn access logs since we use RequestLoggingMiddleware with trace_id
 ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8099", "--no-access-log"]
-
-
