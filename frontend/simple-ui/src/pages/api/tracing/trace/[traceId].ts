@@ -3,8 +3,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import axios from 'axios';
 
-// Use localhost for local dev, jaeger hostname for Docker
-const JAEGER_URL = process.env.JAEGER_URL || process.env.NEXT_PUBLIC_JAEGER_URL || 'http://localhost:16686';
+// Use jaeger hostname for Docker, localhost for local dev
+// In Docker: http://jaeger:16686
+// Local dev: http://localhost:16686
+const JAEGER_URL = process.env.JAEGER_URL || process.env.NEXT_PUBLIC_JAEGER_URL || 'http://jaeger:16686';
 
 export default async function handler(
   req: NextApiRequest,
