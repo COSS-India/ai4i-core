@@ -44,6 +44,7 @@ const TraceViewPage: React.FC = () => {
   // Interactive step-by-step state (like demo)
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(-1);
   const [visibleLogEntries, setVisibleLogEntries] = useState<number>(0);
+  const [isAutoPlaying, setIsAutoPlaying] = useState<boolean>(false);
   const activityLogRef = useRef<HTMLDivElement>(null);
 
   const bgColor = useColorModeValue('white', 'gray.800');
@@ -804,22 +805,47 @@ const TraceViewPage: React.FC = () => {
     let targetLang: any = null;
     
     // Search through all spans to find input text (it might be in a child span)
+    // Start from the beginning to get input text (input happens before output)
+    // Prioritize "NMT Request Processing" span which stores input text
     for (const span of traceData.spans) {
       if (!span) continue;
       
       const process = traceData.processes?.[span.processID];
+      const isRequestSpan = span.operationName && 
+        (span.operationName.includes('Request Processing') || 
+         span.operationName.includes('NMT Request'));
       
       // Check span tags for input text - prioritize nmt.input_text
+      // IMPORTANT: Exclude translated/output text tags to avoid confusion
+      // Also prioritize request processing spans
       const inputTag = span.tags?.find((t: any) => 
-        t.key === 'nmt.input_text' || // NMT service stores input text here
+        t.key === 'nmt.input_text' || // NMT service stores input text here (highest priority)
         t.key === 'ocr.input_text' || // OCR service
         t.key === 'asr.input_text' || // ASR service
-        (t.key.includes('input') && !t.key.includes('count') && !t.key.includes('length') && !t.key.includes('_count') && !t.key.includes('input_count')) ||
-        (t.key.includes('text') && !t.key.includes('preprocess') && !t.key.includes('total') && !t.key.includes('total_characters')) ||
-        t.key.includes('source_text') ||
-        t.key.includes('sourceText') ||
+        (t.key.includes('input') && 
+         !t.key.includes('count') && 
+         !t.key.includes('length') && 
+         !t.key.includes('_count') && 
+         !t.key.includes('input_count') &&
+         !t.key.includes('translated') && // Exclude translated text
+         !t.key.includes('output')) || // Exclude output text
+        (t.key.includes('source_text') && !t.key.includes('translated') && !t.key.includes('output')) ||
+        (t.key.includes('sourceText') && !t.key.includes('translated') && !t.key.includes('output')) ||
         t.key === 'request.input'
       );
+      
+      // If we found nmt.input_text in a request processing span, use it immediately (most reliable)
+      if (isRequestSpan && inputTag && inputTag.key === 'nmt.input_text' && inputTag.value) {
+        const value = String(inputTag.value);
+        if (value.length > 0 && 
+            value !== 'undefined' && 
+            value !== 'null' &&
+            !value.match(/^(Auth|Validation|Processing|Error|Success|Failed|POST|GET|PUT|DELETE)/i) &&
+            value.length > 5) {
+          requestText = value;
+          break; // Found reliable input text, stop searching
+        }
+      }
       
       // Also check process tags
       const processInputTag = process?.tags?.find((t: any) => 
@@ -841,14 +867,15 @@ const TraceViewPage: React.FC = () => {
               const fieldValue = String(field.value);
               
               // Only check for specific input text field keys (not generic "text" or "message")
+              // IMPORTANT: Exclude translated/output text to avoid confusion
               if (
-                fieldKey === 'input_text' ||
+                (fieldKey === 'input_text' && !fieldKey.includes('translated') && !fieldKey.includes('output')) ||
                 fieldKey === 'nmt.input_text' ||
                 fieldKey === 'ocr.input_text' ||
                 fieldKey === 'asr.input_text' ||
-                fieldKey === 'source_text' ||
-                fieldKey === 'source' ||
-                (fieldKey === 'input' && fieldValue.length > 10) // Only if it's actually an input field, not a count
+                (fieldKey === 'source_text' && !fieldKey.includes('translated') && !fieldKey.includes('output')) ||
+                (fieldKey === 'source' && !fieldKey.includes('translated') && !fieldKey.includes('output')) ||
+                (fieldKey === 'input' && fieldValue.length > 10 && !fieldKey.includes('translated') && !fieldKey.includes('output')) // Only if it's actually an input field, not a count
               ) {
                 // Make sure it's actual text content, not a log message
                 if (fieldValue.length > 5 && 
@@ -981,6 +1008,165 @@ const TraceViewPage: React.FC = () => {
       serviceLabel: serviceType.label,
       serviceAction: serviceType.action,
     };
+  }, [traceData]);
+
+  // Extract translated/output text from trace
+  const translatedText = useMemo(() => {
+    if (!traceData || !traceData.spans) return null;
+    
+    // Search through all spans to find translated/output text
+    // Start from the end to get the most recent result
+    for (let i = traceData.spans.length - 1; i >= 0; i--) {
+      const span = traceData.spans[i];
+      if (!span) continue;
+      
+      // First, check for nmt.translated_text specifically (highest priority)
+      const translatedTextTag = span.tags?.find((t: any) => t.key === 'nmt.translated_text');
+      if (translatedTextTag && translatedTextTag.value) {
+        const value = String(translatedTextTag.value);
+        if (value.length > 0 && 
+            value !== 'undefined' && 
+            value !== 'null' &&
+            !value.match(/^(Auth|Validation|Processing|Error|Success|Failed|POST|GET|PUT|DELETE)/i)) {
+          return value;
+        }
+      }
+      
+      // Check span tags for output text - prioritize nmt.translated_text
+      // IMPORTANT: Exclude input text tags to avoid confusion
+      const outputTag = span.tags?.find((t: any) => 
+        t.key === 'nmt.output_text' ||
+        t.key === 'nmt.target_text' ||
+        t.key === 'ocr.output_text' ||
+        t.key === 'asr.output_text' ||
+        t.key === 'tts.output_text' ||
+        (t.key.includes('translated') && t.key.includes('text') && !t.key.includes('input')) ||
+        (t.key.includes('output') && t.key.includes('text') && !t.key.includes('input')) ||
+        (t.key.includes('target') && t.key.includes('text') && !t.key.includes('language') && !t.key.includes('input'))
+      );
+      
+      if (outputTag && outputTag.value && String(outputTag.value).length > 0) {
+        const value = String(outputTag.value);
+        // Validate it's actual output text, not a log message
+        if (value.length > 0 && 
+            value !== 'undefined' && 
+            value !== 'null' &&
+            !value.match(/^(Auth|Validation|Processing|Error|Success|Failed|POST|GET|PUT|DELETE)/i)) {
+          return value;
+        }
+      }
+      
+      // Check span logs/events for output text
+      if (span.logs && span.logs.length > 0) {
+        // Check logs in reverse order to get the most recent
+        for (let j = span.logs.length - 1; j >= 0; j--) {
+          const logEntry = span.logs[j];
+          if (logEntry.fields && Array.isArray(logEntry.fields)) {
+            // Look for output-related fields
+            for (const field of logEntry.fields) {
+              if (!field || !field.value) continue;
+              
+              const fieldKey = String(field.key || '').toLowerCase();
+              const fieldValue = String(field.value);
+              
+              if (
+                (fieldKey === 'output_text' || 
+                 fieldKey === 'translated_text' || 
+                 fieldKey === 'target_text' ||
+                 fieldKey === 'nmt.output_text' ||
+                 fieldKey === 'nmt.translated_text' ||
+                 (fieldKey.includes('output') && fieldKey.includes('text')) ||
+                 (fieldKey.includes('translated') && fieldKey.includes('text'))) &&
+                fieldValue.length > 5 &&
+                !fieldValue.match(/^\d+$/) &&
+                !fieldValue.match(/^\[.*\]$/) &&
+                !fieldValue.match(/^(Auth|Validation|Processing|Error|Success|Failed|POST|GET|PUT|DELETE)/i)
+              ) {
+                return fieldValue.trim();
+              }
+              
+              // Also check for JSON response that might contain output
+              const fieldKeyStr = String(fieldKey);
+              const isResponseField = fieldKeyStr === 'response' || fieldKeyStr === 'output' || fieldKeyStr === 'result' || fieldKeyStr === 'target' || fieldKeyStr === 'translated_text' || fieldKeyStr === 'output_text';
+              
+              if (isResponseField) {
+                try {
+                  const parsed = JSON.parse(fieldValue);
+                  if (parsed.output && Array.isArray(parsed.output) && parsed.output.length > 0) {
+                    // For NMT, output is array of {source, target}
+                    const firstOutput = parsed.output[0];
+                    if (firstOutput && firstOutput.target) {
+                      return firstOutput.target;
+                    }
+                    // Fallback: use the first output if it's a string
+                    if (typeof firstOutput === 'string') {
+                      return firstOutput;
+                    }
+                  } else if (parsed.target) {
+                    // Direct target field
+                    return parsed.target;
+                  } else if (typeof parsed === 'string' && parsed.length > 5) {
+                    return parsed;
+                  }
+                } catch (e) {
+                  // Not JSON, check if it's a direct string value for target/translated/output fields
+                  if (fieldValue.length > 5 && 
+                      !fieldValue.match(/^(Auth|Validation|Processing|Error|Success|Failed|POST|GET|PUT|DELETE)/i) &&
+                      (fieldKeyStr === 'target' || fieldKeyStr === 'translated_text' || fieldKeyStr === 'output_text')) {
+                    return fieldValue.trim();
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      // Check operation name for "Translation Processing" or "Response Construction" spans specifically
+      if (span.operationName && 
+          (span.operationName.includes('Translation Processing') || 
+           span.operationName.includes('Response Construction') ||
+           span.operationName.includes('Response') || 
+           span.operationName.includes('Construction'))) {
+        // Check for nmt.translated_text first in these spans
+        const translatedTag = span.tags?.find((t: any) => t.key === 'nmt.translated_text');
+        if (translatedTag && translatedTag.value) {
+          const value = String(translatedTag.value);
+          if (value.length > 0 && 
+              value !== 'undefined' && 
+              value !== 'null' &&
+              !value.match(/^(Auth|Validation|Processing|Error|Success|Failed|POST|GET|PUT|DELETE)/i)) {
+            return value;
+          }
+        }
+        
+        // This is likely the response span, check its tags more carefully
+        const responseTags = span.tags?.filter((t: any) => 
+          t.key.includes('output') || 
+          t.key.includes('response') ||
+          t.key.includes('result') ||
+          t.key.includes('translated')
+        );
+        
+        for (const tag of responseTags || []) {
+          if (tag.value && String(tag.value).length > 5) {
+            try {
+              const parsed = JSON.parse(String(tag.value));
+              if (parsed.output && Array.isArray(parsed.output) && parsed.output.length > 0) {
+                const firstOutput = parsed.output[0];
+                if (firstOutput && firstOutput.target) {
+                  return firstOutput.target;
+                }
+              }
+            } catch (e) {
+              // Not JSON, continue
+            }
+          }
+        }
+      }
+    }
+    
+    return null;
   }, [traceData]);
 
   // Generate activity log from actual trace data (logs, events, tags)
@@ -1151,6 +1337,29 @@ const TraceViewPage: React.FC = () => {
       return () => clearTimeout(timeoutId);
     }
   }, [visibleLogEntries, activityLog.length]);
+
+  // Auto-advance steps when auto-play is enabled
+  useEffect(() => {
+    if (!isAutoPlaying || currentStepIndex < 0) return;
+    
+    // Stop auto-play if we've reached the end
+    if (currentStepIndex >= flatSteps.length - 1) {
+      setIsAutoPlaying(false);
+      return;
+    }
+
+    // Auto-advance to next step after a delay (2 seconds per step)
+    const timeoutId = setTimeout(() => {
+      if (currentStepIndex < flatSteps.length - 1) {
+        setCurrentStepIndex(currentStepIndex + 1);
+        setVisibleLogEntries(Math.min(visibleLogEntries + 1, activityLog.length));
+      } else {
+        setIsAutoPlaying(false);
+      }
+    }, 2000); // 2 seconds delay between steps
+
+    return () => clearTimeout(timeoutId);
+  }, [isAutoPlaying, currentStepIndex, flatSteps.length, visibleLogEntries, activityLog.length]);
 
   // Organize tags into categories dynamically based on key prefixes (business-relevant only)
   // NOTE: This hook MUST be called before any conditional returns
@@ -1500,6 +1709,7 @@ const TraceViewPage: React.FC = () => {
   const handleStartDemo = () => {
     setCurrentStepIndex(0);
     setVisibleLogEntries(1);
+    setIsAutoPlaying(true); // Enable auto-play
     // Auto-scroll activity log to bottom after state update
     setTimeout(() => {
       if (activityLogRef.current) {
@@ -1510,6 +1720,7 @@ const TraceViewPage: React.FC = () => {
 
   const handleNextStep = () => {
     if (currentStepIndex < flatSteps.length - 1) {
+      setIsAutoPlaying(false); // Stop auto-play when manually clicking next
       setCurrentStepIndex(currentStepIndex + 1);
       setVisibleLogEntries(Math.min(visibleLogEntries + 1, activityLog.length));
     }
@@ -1517,6 +1728,7 @@ const TraceViewPage: React.FC = () => {
 
   const handlePreviousStep = () => {
     if (currentStepIndex > 0) {
+      setIsAutoPlaying(false); // Stop auto-play when manually clicking previous
       setCurrentStepIndex(currentStepIndex - 1);
       setVisibleLogEntries(Math.max(visibleLogEntries - 1, 0));
       // Auto-scroll activity log to bottom after state update
@@ -1529,6 +1741,7 @@ const TraceViewPage: React.FC = () => {
   };
 
   const handleResetDemo = () => {
+    setIsAutoPlaying(false); // Stop auto-play on reset
     setCurrentStepIndex(-1);
     setVisibleLogEntries(0);
   };
@@ -1596,7 +1809,7 @@ const TraceViewPage: React.FC = () => {
                 boxShadow="0 2px 4px rgba(0,0,0,0.1)"
                 _hover={{ transform: 'translateY(-2px)', boxShadow: '0 4px 8px rgba(0,0,0,0.15)' }}
               >
-                ▶️ Start Demo
+                ▶️ Start
               </Button>
               
               <Box
@@ -1790,7 +2003,7 @@ const TraceViewPage: React.FC = () => {
                         p={4}
                       >
                         <Text fontSize="13px" color="gray.500" fontStyle="italic">
-                          Click &quot;Start Demo&quot; to begin...
+                          Click &quot;Start&quot; to begin...
                         </Text>
                       </Box>
                     ) : currentStatus === 'success' ? (
@@ -1819,7 +2032,20 @@ const TraceViewPage: React.FC = () => {
                           fontFamily="mono"
                           fontSize="13px"
                         >
-                          Result: Request completed successfully
+                          {translatedText ? (
+                            <VStack align="start" spacing={2} w="full">
+                              <Text fontWeight="600" color="gray.700" fontSize="12px">
+                                Result:
+                              </Text>
+                              <Text color="gray.800" fontSize="14px" wordBreak="break-word">
+                                {translatedText.length > 200 
+                                  ? translatedText.substring(0, 200) + '...' 
+                                  : translatedText}
+                              </Text>
+                            </VStack>
+                          ) : (
+                            <Text>Result: Request completed successfully</Text>
+                          )}
                         </Box>
                       </Box>
                     ) : currentStatus === 'error' ? (

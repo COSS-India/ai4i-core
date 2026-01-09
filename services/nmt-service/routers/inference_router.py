@@ -338,6 +338,15 @@ async def run_inference(
                 response_span.set_attribute("nmt.successful_outputs", len(response.output))
                 response_span.set_attribute("nmt.output_count", len(response.output))
                 
+                # Store first translated text for UI display (truncate if too long)
+                if response.output and len(response.output) > 0 and response.output[0].target:
+                    first_output = response.output[0].target.strip()
+                    # Store up to 500 characters to avoid huge span attributes
+                    if len(first_output) > 500:
+                        response_span.set_attribute("nmt.translated_text", first_output[:500] + "...")
+                    else:
+                        response_span.set_attribute("nmt.translated_text", first_output)
+                
                 # Track response size (approximate)
                 try:
                     import json

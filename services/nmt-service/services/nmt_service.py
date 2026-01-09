@@ -479,6 +479,15 @@ class NMTService:
                 span.set_attribute("nmt.successful_outputs", successful_outputs)
                 span.add_event("Results Formatted", {"successful_outputs": successful_outputs, "total_outputs": len(results)})
                 
+                # Store first translated text for UI display (truncate if too long)
+                if results and len(results) > 0 and results[0].target:
+                    first_output = results[0].target.strip()
+                    # Store up to 500 characters to avoid huge span attributes
+                    if len(first_output) > 500:
+                        span.set_attribute("nmt.translated_text", first_output[:500] + "...")
+                    else:
+                        span.set_attribute("nmt.translated_text", first_output)
+                
                 # Create response
                 response = NMTInferenceResponse(output=results)
                 
