@@ -39,6 +39,8 @@ from ai4icore_logging import (
 )
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.trace import SpanProcessor
+from opentelemetry.trace import Span
 
 # Import models to ensure they are registered with SQLAlchemy
 from models import database_models, auth_models
@@ -406,6 +408,111 @@ logger.info("✅ Model Management Plugin initialized for NMT service")
 # Distributed Tracing (Jaeger)
 # IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
 tracer = setup_tracing("nmt-service")
+
+# Add span processor AND exporter wrapper to filter out unwanted attributes (organization, span.kind)
+if tracer:
+    from opentelemetry import trace as trace_api
+    from opentelemetry.sdk.trace import SpanProcessor
+    from opentelemetry.sdk.trace import ReadableSpan
+    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+    
+    class AttributeFilterSpanProcessor(SpanProcessor):
+        """Span processor that removes organization and span.kind attributes from spans."""
+        
+        def on_start(self, span, parent_context=None):
+            """Called when a span is started."""
+            pass
+        
+        def on_end(self, span: ReadableSpan):
+            """Called when a span is ended - filter out unwanted attributes."""
+            try:
+                # Access the span's internal attributes and remove unwanted ones
+                if hasattr(span, '_attributes') and span._attributes:
+                    # Remove unwanted attributes directly
+                    span._attributes.pop('organization', None)
+                    span._attributes.pop('span.kind', None)
+            except Exception as e:
+                # Log the error for debugging
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Could not filter span attributes in processor: {e}")
+        
+        def shutdown(self):
+            """Called when the processor is shut down."""
+            pass
+        
+        def force_flush(self, timeout_millis: int = 30000):
+            """Force flush any pending spans."""
+            return True
+    
+    class AttributeFilterSpanExporter(SpanExporter):
+        """Span exporter wrapper that filters out organization and span.kind attributes during export."""
+        
+        def __init__(self, base_exporter: SpanExporter):
+            """Initialize with the base exporter to wrap."""
+            self.base_exporter = base_exporter
+        
+        def export(self, spans):
+            """Export spans with filtered attributes."""
+            filtered_spans = []
+            for span in spans:
+                try:
+                    # Filter attributes from the span before export
+                    if hasattr(span, '_attributes') and span._attributes:
+                        # Create a copy and filter
+                        original_attrs = span._attributes.copy()
+                        filtered_attrs = {k: v for k, v in original_attrs.items() 
+                                        if k not in ['organization', 'span.kind']}
+                        # Temporarily replace attributes
+                        original_attrs_backup = span._attributes.copy()
+                        span._attributes.clear()
+                        span._attributes.update(filtered_attrs)
+                        filtered_spans.append(span)
+                        # Restore original (though it won't matter since we're exporting)
+                        # Actually, don't restore - we want the filtered version
+                    else:
+                        filtered_spans.append(span)
+                except Exception as e:
+                    # If filtering fails, just export the span as-is
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Could not filter span in exporter: {e}")
+                    filtered_spans.append(span)
+            
+            # Export filtered spans
+            return self.base_exporter.export(filtered_spans)
+        
+        def shutdown(self):
+            """Shutdown the base exporter."""
+            return self.base_exporter.shutdown()
+        
+        def force_flush(self, timeout_millis: int = 30000):
+            """Force flush the base exporter."""
+            return self.base_exporter.force_flush(timeout_millis)
+    
+    # Add both processor and exporter wrapper
+    try:
+        tracer_provider = trace_api.get_tracer_provider()
+        
+        # Add the filter processor
+        if hasattr(tracer_provider, 'add_span_processor'):
+            filter_processor = AttributeFilterSpanProcessor()
+            tracer_provider.add_span_processor(filter_processor)
+            logger.info("✅ Span attribute filter processor added (removing organization, span.kind)")
+        
+        # Wrap the exporter to filter attributes during export
+        if hasattr(tracer_provider, '_span_processors'):
+            processors = tracer_provider._span_processors
+            for processor in processors:
+                # Find BatchSpanProcessor and wrap its exporter
+                if hasattr(processor, '_exporter'):
+                    original_exporter = processor._exporter
+                    if not isinstance(original_exporter, AttributeFilterSpanExporter):
+                        filtered_exporter = AttributeFilterSpanExporter(original_exporter)
+                        processor._exporter = filtered_exporter
+                        logger.info("✅ Span attribute filter exporter wrapper added (removing organization, span.kind)")
+                        break
+    except Exception as e:
+        logger.warning(f"Could not add attribute filter: {e}")
+
 if tracer:
     logger.info("✅ Distributed tracing initialized for NMT service")
     # Instrument FastAPI to automatically create spans for all requests

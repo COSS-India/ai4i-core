@@ -328,12 +328,10 @@ class NMTService:
             # Fallback if tracing not available
             return await self._run_inference_impl(request, user_id, api_key_id, session_id, auth_headers)
         
-        # Business-level span: Translation Processing
-        with tracer.start_as_current_span("Translation Processing") as span:
+        # Business-level span: Request Translation Processing
+        with tracer.start_as_current_span("Request (Translation) Processing") as span:
             span.set_attribute("purpose", "Runs the complete translation workflow: text preparation, AI model execution, and result formatting")
-            span.set_attribute("user_visible", True)
             span.set_attribute("impact_if_slow", "User waits longer for translated text - this is typically the slowest step")
-            span.set_attribute("owner", "Language AI Platform")
             
             start_time = time.time()
             request_id = None
