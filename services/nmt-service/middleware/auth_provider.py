@@ -223,9 +223,7 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
     # Business-level span: Authentication validation
     with tracer.start_as_current_span("Authentication Validation") as validate_span:
         validate_span.set_attribute("purpose", "Validates user authentication and permissions before processing the request")
-        validate_span.set_attribute("user_visible", False)
         validate_span.set_attribute("impact_if_slow", "Request is delayed - user may experience slower response times")
-        validate_span.set_attribute("owner", "Security Team")
         validate_span.set_attribute("auth.operation", "validate_api_key")
         validate_span.set_attribute("auth.service", service)
         validate_span.set_attribute("auth.action", action)
@@ -408,9 +406,7 @@ async def AuthProvider(
     # Business-level span: Request authorization
     with tracer.start_as_current_span("Request Authorization") as auth_span:
         auth_span.set_attribute("purpose", "Authorizes the incoming request by validating authentication credentials")
-        auth_span.set_attribute("user_visible", False)
         auth_span.set_attribute("impact_if_slow", "Request is delayed - user may experience slower response times")
-        auth_span.set_attribute("owner", "Security Team")
         auth_span.set_attribute("auth.operation", "authorize_request")
         auth_source = (x_auth_source or "API_KEY").upper()
         auth_span.set_attribute("auth.source", auth_source)

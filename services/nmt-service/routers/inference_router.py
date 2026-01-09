@@ -31,6 +31,19 @@ logger = logging.getLogger(__name__)
 # Use service name to get the same tracer instance as main.py
 tracer = trace.get_tracer("nmt-service")
 
+def _remove_unwanted_span_attributes(span):
+    """Remove organization and span.kind attributes from span."""
+    try:
+        # Remove organization attribute if it exists
+        if hasattr(span, 'set_attribute'):
+            # We can't directly remove attributes, but we can set them to None or empty
+            # However, OpenTelemetry doesn't support removing attributes once set
+            # The best approach is to prevent them from being set in the first place
+            # For now, we'll just ensure they're not set by our code
+            pass
+    except Exception:
+        pass
+
 # Create router
 inference_router = APIRouter(
     prefix="/api/v1/nmt",
@@ -155,9 +168,7 @@ async def run_inference(
     # Business-level span: Main NMT request processing
     with tracer.start_as_current_span("NMT Request Processing") as span:
         span.set_attribute("purpose", "Processes NMT requests for translating text between languages")
-        span.set_attribute("user_visible", True)
         span.set_attribute("impact_if_slow", "User waits longer for translated text to appear")
-        span.set_attribute("owner", "Language AI Platform")
         
         try:
             # Validate request
@@ -200,25 +211,22 @@ async def run_inference(
             if session_id:
                 span.set_attribute("session.id", str(session_id))
             
-            # Business-level span: Context & Policy Evaluation
-            # Collapsed: Identity context and policy checks are now combined into one business step
-            with tracer.start_as_current_span("Context & Policy Evaluation") as context_span:
-                context_span.set_attribute("purpose", "Evaluates user context, policies, and routing decisions before processing translation")
-                context_span.set_attribute("user_visible", False)
+            # Business-level span: Context Definition
+            with tracer.start_as_current_span("Context Definition") as context_span:
+                context_span.set_attribute("purpose", "Defines user identity, customer context, and contract details for the translation request")
                 context_span.set_attribute("impact_if_slow", "Request is delayed - user may experience slower response times")
-                context_span.set_attribute("owner", "Platform Team")
                 
                 # Simulated Future Functionality Logging
                 identity_context = {
                     "Identity Details": {
-                        "Tenant": "Ministry of Education",
+                        "Customer": "EduServe",
                         "Budget": "₹50,000",
                         "Daily Quota": "10,000",
                         "Data Tier": "Sensitive"
                     },
                     "Contract Loaded": {
-                        "Channel": "Web Portal",
-                        "Use Case": "Policy Translation",
+                        "Channel": "API",
+                        "Use Case": "Translation",
                         "Sensitivity": "High",
                         "Languages": ["Hindi", "English"],
                         "SLA": "< 5s"
@@ -237,23 +245,28 @@ async def run_inference(
                         }
                     }
                 )
-                context_span.set_attribute("tenant.name", "Ministry of Education")
-                context_span.set_attribute("tenant.budget", "₹50,000")
-                context_span.set_attribute("tenant.daily_quota", "10,000")
-                context_span.set_attribute("tenant.data_tier", "Sensitive")
-                context_span.set_attribute("contract.channel", "Web Portal")
-                context_span.set_attribute("contract.use_case", "Policy Translation")
+                context_span.set_attribute("customer.name", "EduServe")
+                context_span.set_attribute("customer.budget", "₹50,000")
+                context_span.set_attribute("customer.daily_quota(Tokens)", "10,000")
+                context_span.set_attribute("customer.data_tier", "Sensitive")
+                context_span.set_attribute("contract.channel", "API")
+                context_span.set_attribute("contract.use_case", "Translation")
                 context_span.set_attribute("contract.sensitivity", "High")
                 context_span.set_attribute("contract.sla", "< 5s")
                 context_span.set_attribute("runtime.language", identity_context["Runtime Analysis"]["Language"])
+                context_span.set_status(Status(StatusCode.OK))
+            
+            # Business-level span: Policy Evaluation
+            with tracer.start_as_current_span("Policy Evaluation") as policy_span:
+                policy_span.set_attribute("purpose", "Evaluates policies including budget, quota, data residency, and language restrictions")
+                policy_span.set_attribute("impact_if_slow", "Request is delayed - user may experience slower response times")
                 
-                # Collapsed: Policy check is now just attributes/events
                 policy_check = {
                     "Budget Remaining": "₹43,215",
                     "Daily Quota Used": "2,847 / 10,000",
                     "Data Residency": "India Only",
                     "Language": f"{request.config.language.sourceLanguage} → {request.config.language.targetLanguage}",
-                    "Status": "OK"
+                    "Status": "Compiled"
                 }
                 
                 logger.info(
@@ -265,26 +278,24 @@ async def run_inference(
                         }
                     }
                 )
-                context_span.set_attribute("policy.budget_remaining", "₹43,215")
-                context_span.set_attribute("policy.daily_quota_used", "2,847 / 10,000")
-                context_span.set_attribute("policy.data_residency", "India Only")
-                context_span.set_attribute("policy.language", policy_check["Language"])
-                context_span.set_attribute("policy.status", "OK")
-                context_span.set_status(Status(StatusCode.OK))
+                policy_span.set_attribute("policy.budget_remaining", "₹43,215")
+                policy_span.set_attribute("policy.daily_quota_used(Tokens)", "2,847 / 10,000")
+                policy_span.set_attribute("policy.data_residency", "India Only")
+                policy_span.set_attribute("policy.language", policy_check["Language"])
+                policy_span.set_attribute("policy.status", "Compiled")
+                policy_span.set_status(Status(StatusCode.OK))
             
             # Business-level span: Routing Decision
             with tracer.start_as_current_span("Routing Decision") as routing_span:
-                routing_span.set_attribute("purpose", "Determines which translation model/provider to use based on quality, latency, and cost requirements")
-                routing_span.set_attribute("user_visible", False)
+                routing_span.set_attribute("purpose", "Determines which translation model/provider to use based on accuracy, latency, and cost requirements")
                 routing_span.set_attribute("impact_if_slow", "Minimal - this step is usually very fast")
-                routing_span.set_attribute("owner", "Platform Team")
                 
                 smart_routing = {
-                    "Primary Provider": "BharatNMT",
-                    "Fallback Provider": "Indic-Trans",
+                    "Primary Provider": "AI4Bharat",
+                    "Fallback Provider": "IIIT-H",
                     "Auto Switch": "Enabled",
                     "Quality Target": "≥ 94%",
-                    "Latency Target": "< 3s",
+                    "Latency Target": "< 1s",
                     "Estimated Cost": "₹145"
                 }
                 
@@ -297,11 +308,11 @@ async def run_inference(
                         }
                     }
                 )
-                routing_span.set_attribute("routing.primary_provider", "BharatNMT")
-                routing_span.set_attribute("routing.fallback_provider", "Indic-Trans")
+                routing_span.set_attribute("routing.primary_provider", "AI4Bharat")
+                routing_span.set_attribute("routing.fallback_provider", "IIIT-H")
                 routing_span.set_attribute("routing.auto_switch", "Enabled")
-                routing_span.set_attribute("routing.quality_target", "≥ 94%")
-                routing_span.set_attribute("routing.latency_target", "< 3s")
+                routing_span.set_attribute("routing.accuracy_target", "≥ 94%")
+                routing_span.set_attribute("routing.latency_target", "< 1s")
                 routing_span.set_attribute("routing.estimated_cost", "₹145")
                 routing_span.set_status(Status(StatusCode.OK))
             
@@ -323,9 +334,7 @@ async def run_inference(
             # Business-level span: Response Construction
             with tracer.start_as_current_span("Response Construction") as response_span:
                 response_span.set_attribute("purpose", "Formats the translation results into the final response structure")
-                response_span.set_attribute("user_visible", False)
                 response_span.set_attribute("impact_if_slow", "Minimal - this step is usually very fast")
-                response_span.set_attribute("owner", "Language AI Platform")
                 response_span.set_attribute("nmt.successful_outputs", len(response.output))
                 response_span.set_attribute("nmt.output_count", len(response.output))
                 
@@ -420,14 +429,14 @@ async def _run_inference_impl(
         # 1. Identity & Context Attached
         identity_context = {
             "Identity Details": {
-                "Tenant": "Ministry of Education",
+                "Customer": "EduServe",
                 "Budget": "₹50,000",
                 "Daily Quota": "10,000",
                 "Data Tier": "Sensitive"
             },
             "Contract Loaded": {
                 "Channel": "Web Portal",
-                "Use Case": "Policy Translation",
+                "Use Case": "Translation",
                 "Sensitivity": "High",
                 "Languages": ["Hindi", "English"],
                 "SLA": "< 5s"
@@ -453,7 +462,7 @@ async def _run_inference_impl(
             "Daily Quota Used": "2,847 / 10,000",
             "Data Residency": "India Only",
             "Language": f"{request.config.language.sourceLanguage} → {request.config.language.targetLanguage}",
-            "Status": "OK"
+            "Status": "Compiled"
         }
         
         logger.info(
