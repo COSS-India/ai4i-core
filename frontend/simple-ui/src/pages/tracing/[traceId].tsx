@@ -1376,7 +1376,8 @@ const TraceViewPage: React.FC = () => {
     // Extract error details from axios error response
     const errorDetails = (traceError as any)?.response?.data || {};
     const errorMessage = errorDetails.message || (traceError instanceof Error ? traceError.message : 'Unknown error');
-    const jaegerUrl = errorDetails.jaegerUrl || 'http://localhost:16686';
+    // Use the URL from error response, or show a generic message if not available
+    const jaegerUrl = errorDetails.jaegerUrl || 'Not configured';
     const errorCode = (traceError as any)?.code || errorDetails.details;
     
     return (
@@ -1444,13 +1445,15 @@ const TraceViewPage: React.FC = () => {
                   <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
                     Retry
                   </Button>
-                  <Button 
-                    size="sm" 
-                    variant="outline" 
-                    onClick={() => window.open(jaegerUrl, '_blank')}
-                  >
-                    Open Jaeger UI
-                  </Button>
+                  {jaegerUrl !== 'Not configured' && (
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      onClick={() => window.open(jaegerUrl, '_blank')}
+                    >
+                      Open Jaeger UI
+                    </Button>
+                  )}
                 </HStack>
               </VStack>
             </Alert>
