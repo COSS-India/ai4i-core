@@ -1,6 +1,7 @@
 from fastapi import BackgroundTasks, HTTPException
 from datetime import datetime, timezone , timedelta , date
 
+from typing import Optional
 from sqlalchemy import insert , select , update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError , NoResultFound
@@ -38,7 +39,7 @@ from models.tenant_subscription import TenantSubscriptionResponse
 from models.tenant_status import TenantStatusUpdateRequest , TenantStatusUpdateResponse
 from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
 
-from email_service import send_welcome_email, send_verification_email , send_user_welcome_email
+from services.email_service import send_welcome_email, send_verification_email , send_user_welcome_email
 
 from logger import logger
 from uuid import UUID
@@ -48,35 +49,454 @@ from dotenv import load_dotenv
 load_dotenv()
 
 EMAIL_VERIFICATION_LINK = str(os.getenv("EMAIL_VERIFICATION_LINK",""))
+DB_NAME                 = str(os.getenv("APP_DB_NAME", "multi_tenant_db"))
 
 
-# async def send_welcome_email(contact_email: str,  # testing backend function
-#     subdomain: str,
-#     temp_admin_username: str,
-#     temp_admin_password: str,
-# ):
-#     # How to integrate with real email service?
-#     message = (
-#         f"Welcome to AI4I!\n\n"
-#         f"Tenant Subdomain: {subdomain}\n"
-#         f"Admin Username: {temp_admin_username}\n"
-#         f"Admin Password: {temp_admin_password}\n\n"
-#         f"Login URL: '' "
-#     )
-
-#     logger.info(f"Sending welcome email to {contact_email}\n{message}")
-
-# async def send_verification_email(contact_email: str, verification_link: str): -- backend testing function
-#     logger.info(
-#         f"Sending verification email to {contact_email} with link {verification_link}"
-#     )
+# Service to table mapping - maps service names to their corresponding table names (__tablename__)
+# These are the actual table names as defined in the models, not the class names
+SERVICE_TABLE_MAPPING = {
+    "nmt": ["nmt_requests", "nmt_results"],
+    "tts": ["tts_requests", "tts_results"],
+    "asr": ["asr_requests", "asr_results"],
+    "ocr": ["ocr_requests", "ocr_results"],
+    "ner": ["ner_requests", "ner_results"],
+    "llm": ["llm_requests", "llm_results"],
+    "transliteration": ["transliteration_requests", "transliteration_results"],
+    "language_detection": ["language_detection_requests", "language_detection_results"],
+    "speaker_diarization": ["speaker_diarization_requests", "speaker_diarization_results"],
+    "audio_language_detection": ["audio_lang_detection_requests", "audio_lang_detection_results"],
+    "language_diarization": ["language_diarization_requests", "language_diarization_results"],
+}
 
 
+async def create_service_tables_for_subscriptions(schema_name: str, subscriptions: list[str], db: Optional[AsyncSession] = None):
+    """
+    Create tables for specific services in a tenant schema.
+    
+    Args:
+        schema_name: The schema name for the tenant
+        subscriptions: List of service names to create tables for
+        db: Optional AsyncSession to use. If provided, uses existing transaction.
+            If None, creates its own session.
+    """
+    from sqlalchemy import text, MetaData
+    from db_connection import TenantDBSessionLocal, ServiceSchemaBase
+    from models.service_schema_models import (
+        NMTRequestDB, NMTResultDB,
+        TTSRequestDB, TTSResultDB,
+        ASRRequestDB, ASRResultDB,
+        OCRRequestDB, OCRResultDB,
+        NERRequestDB, NERResultDB,
+        LLMRequestDB, LLMResultDB,
+        TransliterationRequestDB, TransliterationResultDB,
+        LanguageDetectionRequestDB, LanguageDetectionResultDB,
+        SpeakerDiarizationRequestDB, SpeakerDiarizationResultDB,
+        AudioLangDetectionRequestDB, AudioLangDetectionResultDB,
+        LanguageDiarizationRequestDB, LanguageDiarizationResultDB,
+    )
+    
+    if not subscriptions:
+        return
+    
+    # Get table models for services to create
+    tables_to_create = []
+    for service in subscriptions:
+        service_lower = service.lower()
+        if service_lower in SERVICE_TABLE_MAPPING:
+            table_names = SERVICE_TABLE_MAPPING[service_lower]
+            for table_name in table_names:
+                table = ServiceSchemaBase.metadata.tables.get(table_name)
+                if table is not None:
+                    tables_to_create.append(table)
+        else:
+            logger.warning(f"Unknown service '{service}' - skipping table creation")
+    
+    if not tables_to_create:
+        return
+    
+    if db is not None:
+        try:
+            # Set search_path to tenant schema and fallback to public if needed
+            await db.execute(text(f'SET search_path TO "{schema_name}", public'))
+            
+            # Use a separate MetaData bound to the tenant schema so that tables are
+            # physically created under that schema rather than the default 'public'.
+            tenant_metadata = MetaData(schema=schema_name)
+            
+            # Create tables
+            # NOTE:
+            # - AsyncSession.run_sync passes a synchronous Session, not a raw Connection.
+            # - Table.create() needs an Engine/Connection (has _run_ddl_visitor), so we must
+            #   call .get_bind() on the sync Session and pass that as the bind.
+            # - We clone each table into tenant_metadata with the desired schema name
+            #   so that the DDL targets the correct schema.
+            for table in tables_to_create:
+                await db.run_sync(
+                    lambda sync_session, t=table: t.tometadata(tenant_metadata).create(
+                        bind=sync_session.get_bind(),
+                        checkfirst=True,
+                    )
+                )
+                logger.info(f"Created table '{table.name}' in schema '{schema_name}'")
+        finally:
+            # Reset search_path
+            await db.execute(text('SET search_path TO public'))
+    else:
+        async with TenantDBSessionLocal() as db:
+            try:
+                await db.execute(text(f'SET search_path TO "{schema_name}", public'))
+            
+                tenant_metadata = MetaData(schema=schema_name)
+            
+                for table in tables_to_create:
+                    await db.run_sync(
+                        lambda sync_session, t=table: t.tometadata(tenant_metadata).create(
+                            bind=sync_session.get_bind(),
+                            checkfirst=True,
+                        )
+                    )
+                    logger.info(f"Created table '{table.name}' in schema '{schema_name}'")
+                
+                await db.commit()
+            except Exception as e:
+                await db.rollback()
+                logger.error(f"Error creating tables for subscriptions {subscriptions} in schema '{schema_name}': {e}")
+                raise
+            finally:
+                await db.execute(text('SET search_path TO public'))
 
-async def provision_tenant_schema(schema_name: str):
-    # create new Postgres schema and run baseline tables/migrations
-    # e.g. run alembic migration or raw SQL
-    logger.info(f"Provisioning schema: {schema_name}")
+
+async def drop_service_tables_for_subscriptions(schema_name: str, subscriptions: list[str], db: Optional[AsyncSession] = None):
+    """
+    Drop tables for specific services in a tenant schema.
+    
+    Args:
+        schema_name: The schema name for the tenant
+        subscriptions: List of service names to drop tables for
+        db: Optional AsyncSession to use. If provided, uses existing transaction.
+            If None, creates its own session.
+    """
+    from sqlalchemy import text
+    from db_connection import TenantDBSessionLocal, ServiceSchemaBase
+    from models.service_schema_models import (
+        NMTRequestDB, NMTResultDB,
+        TTSRequestDB, TTSResultDB,
+        ASRRequestDB, ASRResultDB,
+        OCRRequestDB, OCRResultDB,
+        NERRequestDB, NERResultDB,
+        LLMRequestDB, LLMResultDB,
+        TransliterationRequestDB, TransliterationResultDB,
+        LanguageDetectionRequestDB, LanguageDetectionResultDB,
+        SpeakerDiarizationRequestDB, SpeakerDiarizationResultDB,
+        AudioLangDetectionRequestDB, AudioLangDetectionResultDB,
+        LanguageDiarizationRequestDB, LanguageDiarizationResultDB,
+    )
+    
+    if not subscriptions:
+        return
+    
+    # Get table models for services to remove
+    tables_to_drop = []
+    for service in subscriptions:
+        service_lower = service.lower()
+        if service_lower in SERVICE_TABLE_MAPPING:
+            table_names = SERVICE_TABLE_MAPPING[service_lower]
+            for table_name in table_names:
+                table = ServiceSchemaBase.metadata.tables.get(table_name)
+                if table is not None:
+                    tables_to_drop.append(table)
+        else:
+            logger.warning(f"Unknown service '{service}' - skipping table drop")
+    
+    if not tables_to_drop:
+        return
+    
+    if db is not None:
+        try:
+            # Set search_path to tenant schema and fallback to public if needed
+            await db.execute(text(f'SET search_path TO "{schema_name}", public'))
+            
+            # Drop table with CASCADE to handle foreign key constraints
+            for table in tables_to_drop:
+                drop_query = text(f'DROP TABLE IF EXISTS "{schema_name}"."{table.name}" CASCADE')
+                await db.execute(drop_query)
+                logger.info(f"Dropped table '{table.name}' from schema '{schema_name}'")
+        finally:
+            # Reset search_path
+            await db.execute(text('SET search_path TO public'))
+    else:
+        # Create own session
+        async with TenantDBSessionLocal() as db:
+            try:
+                await db.execute(text(f'SET search_path TO "{schema_name}", public'))
+                
+                for table in tables_to_drop:
+                    drop_query = text(f'DROP TABLE IF EXISTS "{schema_name}"."{table.name}" CASCADE')
+                    await db.execute(drop_query)
+                    logger.info(f"Dropped table '{table.name}' from schema '{schema_name}'")
+                
+                await db.commit()
+            except Exception as e:
+                await db.rollback()
+                logger.error(f"Error dropping tables for subscriptions {subscriptions} in schema '{schema_name}': {e}")
+                raise
+            finally:
+                await db.execute(text('SET search_path TO public'))
+
+
+async def provision_tenant_schema(schema_name: str, subscriptions: list[str]):
+    """
+    Create tenant-specific PostgreSQL schema and provision service tables based on subscriptions.
+    This function is called as a background task after tenant email verification when tenant becomes ACTIVE.
+    
+    IMPORTANT: This function creates tables ONLY for subscribed services in the tenant schema
+    (e.g., 'tenant_acme_corp_5d448a') within the multi_tenant_db database, NOT in the public schema.
+    
+    Args:
+        schema_name: The schema name for the tenant (e.g., 'tenant_acme_corp_5d448a')
+        subscriptions: List of service names to create tables for (e.g., ['asr', 'tts'])
+    """
+    from sqlalchemy import text , MetaData
+    from db_connection import TenantDBSessionLocal, ServiceSchemaBase
+    # Import all models to ensure they're registered with metadata
+    from models.service_schema_models import (
+        NMTRequestDB, NMTResultDB,
+        TTSRequestDB, TTSResultDB,
+        ASRRequestDB, ASRResultDB,
+        OCRRequestDB, OCRResultDB,
+        NERRequestDB, NERResultDB,
+        LLMRequestDB, LLMResultDB,
+        TransliterationRequestDB, TransliterationResultDB,
+        LanguageDetectionRequestDB, LanguageDetectionResultDB,
+        SpeakerDiarizationRequestDB, SpeakerDiarizationResultDB,
+        AudioLangDetectionRequestDB, AudioLangDetectionResultDB,
+        LanguageDiarizationRequestDB, LanguageDiarizationResultDB,
+    )
+    
+    if not subscriptions:
+        logger.warning(f"No subscriptions provided for schema '{schema_name}', skipping table creation")
+        return
+    
+    # Create a new database session for this background task
+    async with TenantDBSessionLocal() as db:
+        try:
+            # Verify we're connected to the correct database
+            db_name_query = text("SELECT current_database()")
+            result = await db.execute(db_name_query)
+            current_db = result.scalar()
+            logger.info(f"Connected to database: {current_db}")
+            if current_db != DB_NAME:
+                logger.warning(f"WARNING: Expected '{DB_NAME}' but connected to '{current_db}'")
+            
+            # 2. Create schema if not exists
+            await db.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema_name}"'))
+            await db.commit()
+            logger.info(f"Schema '{schema_name}' created or already exists in database '{current_db}'")
+            
+            # Create table list for subscribed services
+            tables_to_create = []
+            for service in subscriptions:
+                service_lower = service.lower()
+                if service_lower in SERVICE_TABLE_MAPPING:
+                    table_names = SERVICE_TABLE_MAPPING[service_lower]
+                    for table_name in table_names:
+                        table = ServiceSchemaBase.metadata.tables.get(table_name)
+                        if table is not None:
+                            tables_to_create.append(table)
+                        else:
+                            logger.warning(f"Table '{table_name}' not found in metadata for service '{service}'")
+                else:
+                    logger.warning(f"Unknown service '{service}' - no tables to create")
+            
+            if not tables_to_create:
+                logger.warning(f"No valid tables to create for subscriptions: {subscriptions}")
+                return
+            
+            # Set search_path to tenant schema for table creation and fallback to public if needed
+            await db.execute(text(f'SET search_path TO "{schema_name}", public'))
+
+            # Use a separate MetaData bound to the tenant schema so that tables are
+            # physically created under that schema rather than the default 'public'.
+            tenant_metadata = MetaData(schema=schema_name)
+
+            # 5. Create tables for subscribed services only
+            # NOTE:
+            # - AsyncSession.run_sync passes a synchronous Session, not a raw Connection.
+            # - Table.create() needs an Engine/Connection (has _run_ddl_visitor), so we must
+            #   call .get_bind() on the sync Session and pass that as the bind.
+            # - We clone each table into tenant_metadata with the desired schema name
+            #   so that the DDL targets the correct schema.
+            for table in tables_to_create:
+                await db.run_sync(
+                    lambda sync_session, t=table: t.tometadata(tenant_metadata).create(
+                        bind=sync_session.get_bind(),
+                        checkfirst=True,
+                    )
+                )
+                logger.info(f"Created table '{table.name}' in schema '{schema_name}'")
+            
+            await db.commit()
+            logger.info(f"Successfully provisioned schema '{schema_name}' with {len(tables_to_create)} tables for services: {subscriptions}")
+            
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Failed to provision schema '{schema_name}': {e}")
+            logger.exception(f"Error details for schema provisioning: {e}")
+            raise
+        finally:
+            # Ensure search_path is reset
+            await db.execute(text('SET search_path TO public'))
+
+
+async def list_tenant_schemas(db: AsyncSession) -> list[dict]:
+    """
+    List all tenant schemas in multi_tenant_db.
+    
+    Returns:
+        List of dictionaries with schema information:
+        [
+            {
+                "schema_name": "tenant_acme_corp_5d448a",
+                "table_count": 24,
+                "tables": ["nmt_requests", "nmt_results", ...]
+            },
+            ...
+        ]
+    """
+    from sqlalchemy import text
+    
+    try:
+        # 1. Verify we're in the correct database
+        db_name_query = text("SELECT current_database()")
+        result = await db.execute(db_name_query)
+        current_db = result.scalar()
+        
+        if current_db != "multi_tenant_db":
+            logger.warning(f"⚠ WARNING: Expected 'multi_tenant_db' but connected to '{current_db}'")
+        
+        # 2. Get all schemas that start with 'tenant_' (tenant schemas)
+        schemas_query = text("""
+            SELECT schema_name
+            FROM information_schema.schemata
+            WHERE schema_name LIKE 'tenant_%'
+            AND catalog_name = current_database()
+            ORDER BY schema_name
+        """)
+        result = await db.execute(schemas_query)
+        schema_names = [row[0] for row in result.fetchall()]
+        
+        # 3. For each schema, get table count and list
+        schemas_info = []
+        for schema_name in schema_names:
+            tables_query = text("""
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = :schema_name
+                AND table_type = 'BASE TABLE'
+                ORDER BY table_name
+            """)
+            result = await db.execute(tables_query, {"schema_name": schema_name})
+            tables = [row[0] for row in result.fetchall()]
+            
+            schemas_info.append({
+                "schema_name": schema_name,
+                "database": current_db,
+                "table_count": len(tables),
+                "tables": tables
+            })
+        
+        logger.info(f"Found {len(schemas_info)} tenant schemas in database '{current_db}'")
+        return schemas_info
+        
+    except Exception as e:
+        logger.error(f"Error listing tenant schemas: {e}")
+        logger.exception(f"Error details: {e}")
+        raise
+
+
+async def verify_tenant_schema(schema_name: str, db: AsyncSession) -> dict:
+    """
+    Verify a specific tenant schema exists in multi_tenant_db and has all required tables.
+    
+    Args:
+        schema_name: The schema name to verify (e.g., 'tenant_acme_corp_5d448a')
+        db: Database session
+        
+    Returns:
+        Dictionary with verification results:
+        {
+            "schema_name": "tenant_acme_corp_5d448a",
+            "database": "multi_tenant_db",
+            "exists": True,
+            "table_count": 24,
+            "expected_tables": [...],
+            "missing_tables": [...],
+            "tables": [...]
+        }
+    """
+    from sqlalchemy import text
+    from db_connection import ServiceSchemaBase
+    from models.service_schema_models import (
+        NMTRequestDB, NMTResultDB,  # Import to register with metadata
+    )
+    
+    try:
+        # 1. Get current database
+        db_name_query = text("SELECT current_database()")
+        result = await db.execute(db_name_query)
+        current_db = result.scalar()
+        
+        # 2. Check if schema exists
+        schema_check = text("""
+            SELECT schema_name
+            FROM information_schema.schemata
+            WHERE schema_name = :schema_name
+            AND catalog_name = current_database()
+        """)
+        result = await db.execute(schema_check, {"schema_name": schema_name})
+        schema_exists = result.scalar() is not None
+        
+        if not schema_exists:
+            return {
+                "schema_name": schema_name,
+                "database": current_db,
+                "exists": False,
+                "error": f"Schema '{schema_name}' not found in database '{current_db}'"
+            }
+        
+        # 3. Get expected tables from metadata
+        expected_tables = list(ServiceSchemaBase.metadata.tables.keys())
+        
+        # 4. Get actual tables in schema
+        tables_query = text("""
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = :schema_name
+            AND table_type = 'BASE TABLE'
+            ORDER BY table_name
+        """)
+        result = await db.execute(tables_query, {"schema_name": schema_name})
+        actual_tables = [row[0] for row in result.fetchall()]
+        
+        # 5. Compare
+        missing_tables = set(expected_tables) - set(actual_tables)
+        
+        return {
+            "schema_name": schema_name,
+            "database": current_db,
+            "exists": True,
+            "table_count": len(actual_tables),
+            "expected_table_count": len(expected_tables),
+            "expected_tables": expected_tables,
+            "actual_tables": actual_tables,
+            "missing_tables": list(missing_tables),
+            "is_complete": len(missing_tables) == 0
+        }
+        
+    except Exception as e:
+        logger.error(f"Error verifying tenant schema '{schema_name}': {e}")
+        logger.exception(f"Error details: {e}")
+        raise
 
 
 async def send_verification_link(
@@ -86,6 +506,16 @@ async def send_verification_link(
         subdomain: str, 
         background_tasks: BackgroundTasks
         ):
+    """
+    Generate and send email verification link to the tenant's contact email.
+    
+    Args:
+        created: The created Tenant object
+        payload: The TenantRegisterRequest payload
+        db: Database session
+        subdomain: The tenant's subdomain (if applicable)
+        background_tasks: BackgroundTasks to send email asynchronously
+    """
 
     token = generate_email_verification_token()
     expiry = now_utc() + timedelta(minutes=15)
@@ -125,6 +555,17 @@ async def create_new_tenant(
         db: AsyncSession,
         background_tasks: BackgroundTasks
         ) -> TenantRegisterResponse:
+    """
+    Create a new tenant with PENDING status and send verification email.
+    
+    Args:
+        payload: Tenant registration request payload
+        db: Database session
+        background_tasks: BackgroundTasks to send email asynchronously
+    
+    Returns:
+        TenantRegisterResponse with tenant details and verification token
+    """
 
     if payload.contact_email:
         stmt = select(Tenant).where(
@@ -133,7 +574,7 @@ async def create_new_tenant(
         )
         result = await db.execute(stmt)
         existing = result.scalar_one_or_none()
-
+        
         if existing:
             # Check status
             if existing.status == TenantStatus.PENDING:
@@ -169,7 +610,7 @@ async def create_new_tenant(
     tenant_id = generate_tenant_id(payload.organization_name)
     # subdomain = generate_subdomain(tenant_id) # TODO : add subdomain if required
     schema_name = schema_name_from_tenant_id(tenant_id)
-
+    
     tenant_data = {
         "tenant_id": tenant_id,
         "organization_name": payload.organization_name,
@@ -207,20 +648,20 @@ async def create_new_tenant(
     #             "invalid_services": list(invalid_or_inactive_services),
     #         },
     #     )
-
+    
     stmt = insert(Tenant).values(**tenant_data).returning(Tenant)
     result = await db.execute(stmt)
     created: Tenant = result.scalar_one()
 
     # Email verification
     token = await send_verification_link(
-        created=created,
-        payload=payload,
-        db=db,
+        created=created, 
+        payload=payload, 
+        db=db, 
         subdomain=None,
         background_tasks=background_tasks,
     )
-
+    
     billing = BillingRecord(
         tenant_id=created.id,
         # billing_plan=payload.billing_plan, # TODO : add billing plan if required
@@ -269,6 +710,15 @@ async def create_new_tenant(
 
 
 async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: AsyncSession, background_tasks: BackgroundTasks):
+    """
+    Verify email token, activate tenant, create admin user, and trigger schema provisioning.
+
+    Args:
+        token: The email verification token
+        tenant_db: Database session for tenant operations
+        auth_db: Database session for authentication operations
+        background_tasks: BackgroundTasks to send email and provision schema asynchronously
+    """
 
     stmt = select(TenantEmailVerification).where(
         TenantEmailVerification.token == token,
@@ -373,6 +823,7 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     background_tasks.add_task(
         provision_tenant_schema,
         tenant.schema_name,
+        tenant.subscriptions or [],  # Pass subscriptions to create only relevant tables
     )
 
 
@@ -381,7 +832,15 @@ async def resend_verification_email(
         db: AsyncSession, 
         background_tasks: BackgroundTasks
         ) -> TenantResendEmailVerificationResponse:
+    """
+    Resend email verification link to a tenant with PENDING or IN_PROGRESS status.
     
+    Args:
+        tenant_id: The UUID of the tenant
+        db: Database session
+        background_tasks: BackgroundTasks to send email asynchronously
+    """
+
     tenant = await db.get(Tenant, tenant_id)
 
     if not tenant:
@@ -444,6 +903,15 @@ async def resend_verification_email(
 
 
 async def create_service(payload: ServiceCreateRequest,db: AsyncSession,) -> ServiceResponse:
+    """
+    Create a new service configuration with pricing and unit type.
+
+    Args:
+        payload: Service creation request payload
+        db: Database session
+    Returns:
+        ServiceResponse: The created service configuration details
+    """
 
     existing = await db.execute(
         select(ServiceConfig)
@@ -508,6 +976,16 @@ async def create_service(payload: ServiceCreateRequest,db: AsyncSession,) -> Ser
 
 
 async def update_service(payload: ServiceUpdateRequest,db: AsyncSession,) -> ServiceUpdateResponse:
+    """
+    Update service configuration (pricing, unit type, currency) and return changes made.
+    
+    Args:
+        payload: Service update request payload
+        db: Database session
+
+    Returns:
+        ServiceUpdateResponse: The updated service configuration details and changes made
+    """
 
     service = await db.get(ServiceConfig, payload.service_id)
 
@@ -567,6 +1045,15 @@ async def update_service(payload: ServiceUpdateRequest,db: AsyncSession,) -> Ser
 
 
 async def list_service(db: AsyncSession) -> ListServicesResponse:
+    """
+    List all active services with their configuration details.
+    
+    Args:
+        db: Database session
+    Returns:
+        ListServicesResponse: List of active services and their details 
+    """
+
     result = await db.execute(
         select(ServiceConfig).where(ServiceConfig.is_active.is_(True))
     )
@@ -596,6 +1083,11 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
     """
     Add subscriptions to a tenant.
     Fails if subscription already exists.
+
+    Args:
+        tenant_id: The tenant identifier
+        subscriptions: List of service names to add as subscriptions
+        db: Database session
     """
 
     tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
@@ -612,8 +1104,6 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
         .where(ServiceConfig.is_active.is_(True))
     )
     valid_services = set(valid_services.all())
-
-    print(valid_services)
 
     invalid = set(subscriptions) - valid_services
     if invalid:
@@ -643,6 +1133,19 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
         )
     )
 
+    # Create tables for newly added services in tenant schema
+    if tenant.status == TenantStatus.ACTIVE and tenant.schema_name:
+        try:
+            await create_service_tables_for_subscriptions(
+                schema_name=tenant.schema_name,
+                subscriptions=subscriptions,
+                db=db,  # Pass existing session to use same transaction
+            )
+            logger.info(f"Created tables for new subscriptions {subscriptions} in schema '{tenant.schema_name}'")
+        except Exception as e:
+            logger.error(f"Failed to create tables for new subscriptions {subscriptions}: {e}")
+            logger.exception(f"Error details: {e}")
+            raise
     try:
         await db.commit()
         await db.refresh(tenant)
@@ -665,6 +1168,14 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
 
 
 async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSession,) -> TenantSubscriptionResponse:
+    """
+    Remove subscriptions from a tenant and drop corresponding tables from tenant schema.
+    
+    Args:
+        tenant_id: The tenant identifier
+        subscriptions: List of service names to remove as subscriptions
+        db: Database session
+    """
 
     tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
 
@@ -692,6 +1203,20 @@ async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: Async
             details={"removed": subscriptions},
         )
     )
+
+    # Drop tables for removed services in tenant schema
+    if tenant.status == TenantStatus.ACTIVE and tenant.schema_name:
+        try:
+            await drop_service_tables_for_subscriptions(
+                schema_name=tenant.schema_name,
+                subscriptions=subscriptions,
+                db=db,  # Pass existing session to use same transaction
+            )
+            logger.info(f"Dropped tables for removed subscriptions {subscriptions} in schema '{tenant.schema_name}'")
+        except Exception as e:
+            logger.error(f"Failed to drop tables for removed subscriptions {subscriptions}: {e}")
+            logger.exception(f"Error details: {e}")
+            raise
 
     try:
         await db.commit()
@@ -721,7 +1246,15 @@ async def register_user(
     background_tasks: BackgroundTasks,
 ) -> UserRegisterResponse:
     """
-    Register a user under a tenant and create billing records
+    Register a user under a tenant, create auth account, billing records, and send welcome email.
+    
+    Args:
+        payload: User registration request payload
+        tenant_db: Database session for tenant operations
+        auth_db: Database session for authentication operations
+        background_tasks: BackgroundTasks to send email asynchronously
+    Returns:
+        UserRegisterResponse: Details of the registered user
     """
 
     tenant = await tenant_db.scalar(select(Tenant).where(Tenant.tenant_id == payload.tenant_id))
@@ -890,8 +1423,15 @@ async def register_user(
 
 async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSession) -> TenantStatusUpdateResponse:
     """
-    Update tenant status and cascade to tenant users and billing records.
+    Update tenant status and cascade status changes to tenant users and billing records.
+    
+    Args:
+        payload: Tenant status update request payload
+        db: Database session
+    Returns: 
+        TenantStatusUpdateResponse: Details of the updated tenant status
     """
+
     tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == payload.tenant_id))
 
     if not tenant:
@@ -991,10 +1531,17 @@ async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
 
 
 
-async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: AsyncSession):
+async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: AsyncSession) -> TenantUserStatusUpdateResponse:
     """
-    Update a tenant user's status and cascade to their billing records.
+    Update a tenant user's status and cascade status changes to their billing records.
+    
+    Args:
+        payload: Tenant user status update request payload
+        db: Database session
+    Returns:
+        TenantUserStatusUpdateResponse: Details of the updated tenant user status
     """
+
     tenant_id = payload.tenant_id
     user_id = payload.user_id
 
@@ -1068,6 +1615,15 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
 
 
 async def update_billing_plan(db: AsyncSession,payload: BillingUpdateRequest) -> BillingUpdateResponse:
+    """
+    Update tenant billing plan and set billing status to PENDING.
+    
+    Args:
+        db: Database session
+        payload: Billing update request payload
+    Returns:
+        BillingUpdateResponse: Details of the updated billing plan
+    """
 
     stmt = select(BillingRecord).where(BillingRecord.tenant_id == payload.tenant_id)
     result = await db.execute(stmt)
