@@ -1,14 +1,7 @@
 """
-Global error handler middleware for consistent OCR error responses.
-
-Copied from NMT service to keep behavior and structure consistent.
+Global error handler middleware for consistent error responses.
 """
-
-import logging
-import time
-import traceback
-
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from opentelemetry import trace
@@ -16,11 +9,14 @@ from opentelemetry.trace import Status, StatusCode
 from ai4icore_logging import get_correlation_id, get_logger
 
 from middleware.exceptions import (
-    AuthenticationError,
-    AuthorizationError,
-    ErrorDetail,
+    AuthenticationError, 
+    AuthorizationError, 
     RateLimitExceededError,
+    ErrorDetail
 )
+import logging
+import time
+import traceback
 
 logger = get_logger(__name__)
 tracer = trace.get_tracer("ocr-service")
@@ -28,11 +24,10 @@ tracer = trace.get_tracer("ocr-service")
 
 def add_error_handlers(app: FastAPI) -> None:
     """Register exception handlers for common exceptions."""
-
+    
+    
     @app.exception_handler(AuthenticationError)
-    async def authentication_error_handler(
-        request: Request, exc: AuthenticationError
-    ):  # type: ignore[unused-argument]
+    async def authentication_error_handler(request: Request, exc: AuthenticationError):
         """Handle authentication errors."""
         if tracer:
             with tracer.start_as_current_span("request.reject") as reject_span:
@@ -51,17 +46,16 @@ def add_error_handlers(app: FastAPI) -> None:
         error_detail = ErrorDetail(
             message=exc.message,
             code="AUTHENTICATION_ERROR",
-            timestamp=time.time(),
+            timestamp=time.time()
         )
         return JSONResponse(
             status_code=401,
-            content={"detail": error_detail.dict()},
+            content={"detail": error_detail.dict()}
         )
-
+    
+    
     @app.exception_handler(AuthorizationError)
-    async def authorization_error_handler(
-        request: Request, exc: AuthorizationError
-    ):  # type: ignore[unused-argument]
+    async def authorization_error_handler(request: Request, exc: AuthorizationError):
         """Handle authorization errors."""
         if tracer:
             with tracer.start_as_current_span("request.reject") as reject_span:
@@ -80,17 +74,16 @@ def add_error_handlers(app: FastAPI) -> None:
         error_detail = ErrorDetail(
             message=exc.message,
             code="AUTHORIZATION_ERROR",
-            timestamp=time.time(),
+            timestamp=time.time()
         )
         return JSONResponse(
             status_code=403,
-            content={"detail": error_detail.dict()},
+            content={"detail": error_detail.dict()}
         )
-
+    
+    
     @app.exception_handler(RateLimitExceededError)
-    async def rate_limit_error_handler(
-        request: Request, exc: RateLimitExceededError
-    ):  # type: ignore[unused-argument]
+    async def rate_limit_error_handler(request: Request, exc: RateLimitExceededError):
         """Handle rate limit exceeded errors."""
         if tracer:
             with tracer.start_as_current_span("request.reject") as reject_span:
@@ -110,12 +103,12 @@ def add_error_handlers(app: FastAPI) -> None:
         error_detail = ErrorDetail(
             message=exc.message,
             code="RATE_LIMIT_EXCEEDED",
-            timestamp=time.time(),
+            timestamp=time.time()
         )
         return JSONResponse(
             status_code=429,
             content={"detail": error_detail.dict()},
-            headers={"Retry-After": str(exc.retry_after)},
+            headers={"Retry-After": str(exc.retry_after)}
         )
 
     @app.exception_handler(RequestValidationError)
@@ -275,38 +268,51 @@ def add_error_handlers(app: FastAPI) -> None:
             status_code=422,
             content={"detail": exc.errors()},
         )
-
+    
     @app.exception_handler(HTTPException)
-    async def http_exception_handler(
-        request: Request, exc: HTTPException
-    ):  # type: ignore[unused-argument]
+    async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle generic HTTP exceptions."""
         error_detail = ErrorDetail(
             message=str(exc.detail),
             code="HTTP_ERROR",
-            timestamp=time.time(),
+            timestamp=time.time()
         )
         return JSONResponse(
             status_code=exc.status_code,
-            content={"detail": error_detail.dict()},
+            content={"detail": error_detail.dict()}
         )
-
+    
+    
     @app.exception_handler(Exception)
-    async def general_exception_handler(
-        request: Request, exc: Exception
-    ):  # type: ignore[unused-argument]
+    async def general_exception_handler(request: Request, exc: Exception):
         """Handle unexpected exceptions."""
-        logger.error("Unexpected error: %s", exc)
-        logger.error("Traceback: %s", traceback.format_exc())
-
+        # Extract exception from ExceptionGroup if present (Python 3.11+)
+        actual_exc = exc
+        try:
+            if hasattr(exc, 'exceptions') and exc.exceptions:
+                actual_exc = exc.exceptions[0]
+        except (AttributeError, IndexError):
+            pass
+        
+        # Check if it's one of our custom exceptions that wasn't caught
+        if isinstance(actual_exc, RateLimitExceededError):
+            return await rate_limit_error_handler(request, actual_exc)
+        elif isinstance(actual_exc, AuthenticationError):
+            return await authentication_error_handler(request, actual_exc)
+        elif isinstance(actual_exc, AuthorizationError):
+            return await authorization_error_handler(request, actual_exc)
+        elif isinstance(actual_exc, HTTPException):
+            return await http_exception_handler(request, actual_exc)
+        
+        logger.error(f"Unexpected error: {exc}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
         error_detail = ErrorDetail(
             message="Internal server error",
             code="INTERNAL_ERROR",
-            timestamp=time.time(),
+            timestamp=time.time()
         )
         return JSONResponse(
             status_code=500,
-            content={"detail": error_detail.dict()},
+            content={"detail": error_detail.dict()}
         )
-
-

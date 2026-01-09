@@ -19,7 +19,8 @@ from utils.validation_utils import (
     validate_service_id,
     validate_audio_input,
     validate_preprocessors,
-    validate_postprocessors
+    validate_postprocessors,
+    InvalidLanguageCodeError
 )
 from middleware.exceptions import AuthenticationError, AuthorizationError
 from middleware.auth_provider import AuthProvider
@@ -41,35 +42,79 @@ inference_router = APIRouter(
 )
 
 
-async def get_asr_service(db: AsyncSession = Depends(get_db_session)) -> ASRService:
-    """Dependency to get configured ASR service."""
-    try:
-        # Create repository
-        repository = ASRRepository(db)
+async def get_asr_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db_session)
+) -> ASRService:
+    """
+    Dependency to get configured ASR service.
+    
+    REQUIRES Model Management database resolution - no environment variable fallback.
+    Request must include config.serviceId for Model Management to resolve endpoint and model.
+    """
+    repository = ASRRepository(db)
+    audio_service = AudioService()
+    
+    triton_endpoint = getattr(request.state, "triton_endpoint", None)
+    triton_api_key = getattr(request.app.state, "triton_api_key", "")
+    triton_timeout = getattr(request.app.state, "triton_timeout", 300.0)
+    
+    if not triton_endpoint:
+        service_id = getattr(request.state, "service_id", None)
+        model_mgmt_error = getattr(request.state, "model_management_error", None)
         
-        # Create audio service
-        audio_service = AudioService()
-        
-        # Create Triton client
-        import os
-        triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-        # Strip http:// or https:// scheme from URL
-        if triton_url.startswith(('http://', 'https://')):
-            triton_url = triton_url.split('://', 1)[1]
-        triton_api_key = os.getenv("TRITON_API_KEY")
-        triton_client = TritonClient(triton_url, triton_api_key)
-        
-        # Create ASR service
-        asr_service = ASRService(repository, audio_service, triton_client)
-        
-        return asr_service
-        
-    except Exception as e:
-        logger.error(f"Failed to create ASR service: {e}")
+        if service_id:
+            error_detail = (
+                f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
+                f"Please ensure the service is registered in Model Management database."
+            )
+            if model_mgmt_error:
+                error_detail += f" Error: {model_mgmt_error}"
+            raise HTTPException(
+                status_code=500,
+                detail=error_detail,
+            )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to initialize ASR service"
+            status_code=400,
+            detail=(
+                "Request must include config.serviceId. "
+                "ASR service requires Model Management database resolution."
+            ),
         )
+    
+    model_name = getattr(request.state, "triton_model_name", None)
+    
+    if not model_name or model_name == "unknown":
+        service_id = getattr(request.state, "service_id", None)
+        model_mgmt_error = getattr(request.state, "model_management_error", None)
+        error_detail = (
+            f"Model Management failed to resolve Triton model name for serviceId: {service_id}. "
+            f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+        )
+        if model_mgmt_error:
+            error_detail += f" Error: {model_mgmt_error}"
+        logger.error(error_detail)
+        raise HTTPException(
+            status_code=500,
+            detail=error_detail,
+        )
+    
+    logger.info(
+        "Using Triton endpoint=%s model_name=%s for serviceId=%s from Model Management",
+        triton_endpoint,
+        model_name,
+        getattr(request.state, "service_id", "unknown"),
+    )
+    
+    # Strip http:// or https:// scheme from URL if present (TritonClient expects host:port)
+    triton_url = triton_endpoint
+    if triton_url.startswith(('http://', 'https://')):
+        triton_url = triton_url.split('://', 1)[1]
+    
+    triton_client = TritonClient(triton_url, triton_api_key)
+    
+    # Pass resolved model_name to ASR service
+    return ASRService(repository, audio_service, triton_client, resolved_model_name=model_name)
 
 
 @inference_router.post(
@@ -86,93 +131,155 @@ async def run_inference(
     """Run ASR inference on audio inputs."""
     start_time = time.time()
     request_id = None
-    
-    # Create a descriptive span for ASR inference
+
+    # Create a descriptive span for ASR inference when tracing is enabled
     if TRACING_AVAILABLE:
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("ASR Inference") as span:
             span.set_attribute("service.name", "asr")
             span.set_attribute("service.type", "asr")
             span.set_attribute("asr.audio_count", len(request.audio))
-            span.set_attribute("asr.service_id", request.config.serviceId)
-            span.set_attribute("asr.language", request.config.language.sourceLanguage)
+            try:
+                span.set_attribute("asr.service_id", request.config.serviceId)
+                span.set_attribute("asr.language", request.config.language.sourceLanguage)
+            except Exception:
+                # Config may be missing or malformed; don't fail tracing because of this
+                pass
             return await _run_asr_inference_internal(request, http_request, asr_service, start_time)
     else:
         return await _run_asr_inference_internal(request, http_request, asr_service, start_time)
 
 
-async def _run_asr_inference_internal(request: ASRInferenceRequest, http_request: Request, asr_service: ASRService, start_time: float) -> ASRInferenceResponse:
-    """Internal ASR inference logic."""
+async def _run_asr_inference_internal(
+    request: ASRInferenceRequest,
+    http_request: Request,
+    asr_service: ASRService,
+    start_time: float,
+) -> ASRInferenceResponse:
+    """Internal ASR inference logic with validation and rich error mapping."""
     try:
         # Extract auth context from request.state
-        user_id = getattr(http_request.state, 'user_id', None)
-        api_key_id = getattr(http_request.state, 'api_key_id', None)
-        session_id = getattr(http_request.state, 'session_id', None)
-        
+        user_id = getattr(http_request.state, "user_id", None)
+        api_key_id = getattr(http_request.state, "api_key_id", None)
+        session_id = getattr(http_request.state, "session_id", None)
+
         # Validate request
         await validate_request(request)
-        
+
         # Log request
-        logger.info(f"Processing ASR inference request with {len(request.audio)} audio inputs - user_id={user_id} api_key_id={api_key_id}")
-        
+        logger.info(
+            "Processing ASR inference request with %d audio inputs - user_id=%s api_key_id=%s",
+            len(request.audio),
+            user_id,
+            api_key_id,
+        )
+
         # Run inference with auth context
         response = await asr_service.run_inference(
             request=request,
             user_id=user_id,
             api_key_id=api_key_id,
-            session_id=session_id
+            session_id=session_id,
         )
-        
+
         # Log completion
         processing_time = time.time() - start_time
-        logger.info(f"ASR inference completed in {processing_time:.2f}s")
-        
+        logger.info("ASR inference completed in %.2fs", processing_time)
+
+        # Debug: Log response structure
+        logger.info("Response contains %d transcript(s)", len(response.output))
+        for idx, transcript in enumerate(response.output):
+            logger.info(
+                "  Transcript %d: source length=%d, nBestTokens=%s",
+                idx + 1,
+                len(transcript.source),
+                transcript.nBestTokens is not None,
+            )
+            if transcript.source:
+                preview = transcript.source[:100]
+                logger.debug(
+                    "  Transcript %d text: %s%s",
+                    idx + 1,
+                    preview,
+                    "..." if len(transcript.source) > 100 else "",
+                )
+
         return response
-        
-    except ValueError as e:
-        logger.warning(f"Validation error in ASR inference: {e}")
+
+    except InvalidLanguageCodeError as e:
+        logger.warning("Language validation error in ASR inference: %s", e)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+            detail=str(e),
+        )
+    except ValueError as e:
+        logger.warning("Validation error in ASR inference: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
         )
     except Exception as e:
-        logger.error(f"ASR inference failed: {e}", exc_info=True)
-        
-        # Import service-specific exceptions
+        # Log full traceback for debugging and observability
+        logger.error("ASR inference failed: %s", e, exc_info=True)
+
+        # Import service-specific exceptions lazily to avoid circular imports
         from middleware.exceptions import (
             TritonInferenceError,
             ModelNotFoundError,
             ServiceUnavailableError,
-            AudioProcessingError
+            AudioProcessingError,
         )
-        
-        # Check if it's already a service-specific error
-        if isinstance(e, (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, AudioProcessingError)):
+
+        # If it's already a service-specific error, just re-raise
+        if isinstance(
+            e,
+            (
+                TritonInferenceError,
+                ModelNotFoundError,
+                ServiceUnavailableError,
+                AudioProcessingError,
+            ),
+        ):
             raise
-        
-        # Check error type and raise appropriate exception
+
         error_msg = str(e)
-        if "unknown model" in error_msg.lower() or ("model" in error_msg.lower() and "not found" in error_msg.lower()):
+        lower_msg = error_msg.lower()
+
+        # Model not found in Triton
+        if "unknown model" in lower_msg or ("model" in lower_msg and "not found" in lower_msg):
             import re
+
             model_match = re.search(r"model: '([^']+)'", error_msg)
-            model_name = model_match.group(1) if model_match else request.config.serviceId if hasattr(request, 'config') else "asr"
+            model_name = (
+                model_match.group(1)
+                if model_match
+                else getattr(getattr(request, "config", None), "serviceId", "asr")
+            )
             raise ModelNotFoundError(
-                message=f"Model '{model_name}' not found in Triton inference server. Please verify the model name and ensure it is loaded.",
-                model_name=model_name
+                message=(
+                    f"Model '{model_name}' not found in Triton inference server. "
+                    f"Please verify the model name and ensure it is loaded."
+                ),
+                model_name=model_name,
             )
-        elif "triton" in error_msg.lower() or "connection" in error_msg.lower() or "timeout" in error_msg.lower():
+
+        # Triton / connectivity / timeout errors
+        if "triton" in lower_msg or "connection" in lower_msg or "timeout" in lower_msg:
             raise ServiceUnavailableError(
-                message=f"ASR service unavailable: {error_msg}. Please check Triton server connectivity."
+                message=f"ASR service unavailable: {error_msg}. Please check Triton server connectivity.",
+                service_name="asr",
             )
-        elif "audio" in error_msg.lower():
+
+        # Audio processing errors
+        if "audio" in lower_msg:
             raise AudioProcessingError(f"Audio processing failed: {error_msg}")
-        else:
-            # Generic Triton error
-            model_name = request.config.serviceId if hasattr(request, 'config') and hasattr(request.config, 'serviceId') else "asr"
-            raise TritonInferenceError(
-                message=f"ASR inference failed: {error_msg}",
-                model_name=model_name
-            )
+
+        # Generic Triton / inference error
+        model_name = getattr(getattr(request, "config", None), "serviceId", "asr")
+        raise TritonInferenceError(
+            message=f"ASR inference failed: {error_msg}",
+            model_name=model_name,
+        )
 
 
 @inference_router.get(

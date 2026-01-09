@@ -10,7 +10,7 @@ from typing import Callable, Optional
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from .exceptions import RateLimitExceeded
+from .exceptions import RateLimitExceededError
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -57,8 +57,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if minute_count > self.requests_per_minute or hour_count > self.requests_per_hour:
-            raise RateLimitExceeded(
-                f"Rate limit exceeded: {minute_count} req/min, {hour_count} req/hour"
+            raise RateLimitExceededError(
+                message=f"Rate limit exceeded: {minute_count} req/min, {hour_count} req/hour",
+                retry_after=60,
             )
 
         return await call_next(request)

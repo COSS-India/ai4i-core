@@ -38,7 +38,7 @@ import {
   TTS_SUPPORTED_LANGUAGES,
 } from "../config/constants";
 import { usePipeline } from "../hooks/usePipeline";
-import { listASRModels } from "../services/asrService";
+import { listASRServices, ASRServiceDetails } from "../services/asrService";
 import { listNMTServices } from "../services/nmtService";
 import { listVoices } from "../services/ttsService";
 
@@ -47,7 +47,7 @@ const PipelinePage: React.FC = () => {
   const router = useRouter();
   const [sourceLanguage, setSourceLanguage] = useState("hi");
   const [targetLanguage, setTargetLanguage] = useState("mr");
-  const [asrServiceId, setAsrServiceId] = useState("asr_am_ensemble");
+  const [asrServiceId, setAsrServiceId] = useState<string>("");
   const [nmtServiceId, setNmtServiceId] = useState<string>("");
   const [ttsServiceId, setTtsServiceId] = useState(
     "indic-tts-coqui-indo_aryan"
@@ -65,10 +65,10 @@ const PipelinePage: React.FC = () => {
     setProcessRecordedAudioCallback,
   } = usePipeline();
 
-  // Fetch available models
-  const { data: asrModels } = useQuery({
-    queryKey: ["asr-models"],
-    queryFn: listASRModels,
+  // Fetch available services
+  const { data: asrServices } = useQuery<ASRServiceDetails[]>({
+    queryKey: ["asr-services"],
+    queryFn: listASRServices,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -77,6 +77,14 @@ const PipelinePage: React.FC = () => {
     queryFn: listNMTServices,
     staleTime: 5 * 60 * 1000,
   });
+
+  // Auto-select first available ASR service when list loads
+  React.useEffect(() => {
+    if (!asrServices || asrServices.length === 0) return;
+    if (!asrServiceId) {
+      setAsrServiceId(asrServices[0].service_id);
+    }
+  }, [asrServices, asrServiceId]);
 
   // Auto-select first available NMT service when list loads
   React.useEffect(() => {
@@ -139,7 +147,7 @@ const PipelinePage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>Pipeline - Speech-to-Speech | AI4Inclusion Console</title>
+        <title>Speech to Speech | AI4Inclusion Console</title>
         <meta
           name="description"
           content="Speech-to-Speech translation pipeline combining ASR, NMT, and TTS"
@@ -159,7 +167,7 @@ const PipelinePage: React.FC = () => {
             >
               <Box flex={1} textAlign="center">
                 <Heading size="lg" color="gray.800" mb={1}>
-                  Pipeline (Speech-to-Speech)
+                  Speech to Speech
                 </Heading>
                 <Text color="gray.600" fontSize="sm">
                   Chain Speech, Translation, and Voice models for end-to-end speech
@@ -240,16 +248,13 @@ const PipelinePage: React.FC = () => {
                   <Select
                     value={asrServiceId}
                     onChange={(e) => setAsrServiceId(e.target.value)}
+                    placeholder="Select an ASR service"
                   >
-                    {asrModels?.models
-                      ?.filter((model) =>
-                        model.model_id.toLowerCase().includes("conformer")
-                      )
-                      .map((model) => (
-                        <option key={model.model_id} value={model.model_id}>
-                          {model.model_id}
-                        </option>
-                      ))}
+                    {asrServices?.map((service) => (
+                      <option key={service.service_id} value={service.service_id}>
+                        {service.service_id}
+                      </option>
+                    ))}
                   </Select>
                 </FormControl>
 

@@ -68,11 +68,27 @@ export const useLLM = (): UseLLMReturn => {
     onError: (error: any) => {
       console.error('LLM inference error:', error);
       
-      // Check for 401 authentication errors
+      // Prioritize API error message from response
       let errorMessage = 'Failed to process text. Please try again.';
       let errorTitle = 'Processing Error';
       
-      if (error?.response?.status === 401 || error?.status === 401 || error?.message?.includes('401')) {
+      // Check for API error message first (from detail.message or detail.error)
+      if (error?.response?.data?.detail?.message) {
+        errorMessage = error.response.data.detail.message;
+        // Use error code for title if available
+        if (error.response.data.detail.error) {
+          errorTitle = error.response.data.detail.error;
+        } else if (error.response.data.detail.code) {
+          errorTitle = error.response.data.detail.code;
+        }
+      } else if (error?.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error?.response?.data?.detail) {
+        // Handle case where detail is a string
+        if (typeof error.response.data.detail === 'string') {
+          errorMessage = error.response.data.detail;
+        }
+      } else if (error?.response?.status === 401 || error?.status === 401 || error?.message?.includes('401')) {
         errorTitle = 'Authentication Failed';
         // Check if it's an API key issue
         if (error?.message?.includes('API key') || error?.message?.includes('api key')) {
@@ -176,7 +192,7 @@ export const useLLM = (): UseLLMReturn => {
             sourceLanguage: inputLanguage,
             targetLanguage: outputLanguage,
           },
-          serviceId: 'nmt',
+          serviceId: 'ai4bharat/indictrans--gpu-t4',
         }),
       ]);
 

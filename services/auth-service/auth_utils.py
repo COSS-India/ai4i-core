@@ -173,17 +173,24 @@ class AuthUtils:
         db: AsyncSession,
         api_key: str,
         service: str,
-        action: str
+        action: str,
     ) -> Tuple[bool, Optional[APIKey], Optional[str]]:
         """
-        Validate API key and check permissions for service and action
-        
+        Validate API key and check permissions for a given service.
+
+        Current policy (per product requirements):
+        - We only enforce **inference** permissions.
+        - If a request comes in with action='read', we still require the
+          corresponding '<service>.inference' permission.
+        - 'read' permissions may still exist for backwards compatibility,
+          but they are not used for allow/deny decisions here.
+
         Args:
             db: Database session
             api_key: The API key to validate
-            service: Service name (asr, tts, nmt, pipeline, model-management)
-            action: Action type (read, inference)
-        
+            service: Service name (asr, tts, nmt, pipeline, model-management, etc.)
+            action: Logical action type from caller ('read' or 'inference')
+
         Returns:
             Tuple of (is_valid, api_key_obj, error_message)
         """
@@ -216,11 +223,14 @@ class AuthUtils:
         api_key_obj.last_used = now_utc
         await db.commit()
         
-        # Get permissions
+        # Get permissions stored on the key
         permissions = api_key_obj.permissions or []
 
-        # Build required permission string (e.g., "asr.inference", "tts.read")
-        required_permission = f"{service}.{action}"
+        # We always enforce '<service>.inference' regardless of whether the caller
+        # asked for 'read' or 'inference'. This means a key that can run inference
+        # is also sufficient for read-only operations on that service.
+        enforced_action = "inference"
+        required_permission = f"{service}.{enforced_action}"
 
         # Use Casbin to evaluate permissions in a tenant-ready way.
         # Domain/tenant is "default" for now; this can be made dynamic later
@@ -229,32 +239,28 @@ class AuthUtils:
             api_key_id=api_key_obj.id,
             permissions=permissions,
             obj=service,
-            act=action,
+            act=enforced_action,
             tenant="default",
         )
 
         if not allowed:
             # Preserve existing detailed error semantics for callers
+            # Filter permissions for this service
             service_permissions = [p for p in permissions if p.startswith(f"{service}.")]
 
             if not service_permissions:
                 # No permissions for this service at all
-                return False, None, f"Invalid API key: This key does not have access to {service.upper()} service"
-
-            # Check if it's a read-only key trying to access inference
-            if action == "inference" and f"{service}.read" in permissions:
                 return False, None, (
-                    f"API key is restricted for read-only access. Inference operations "
-                    f"require '{required_permission}' permission"
+                    f"Invalid API key: This key does not have access to {service.upper()} service"
                 )
 
-            # Has some permissions for service but not the required one
+            # Has some permissions for this service but not the required inference one
             return False, None, (
                 f"Invalid API key: This key does not have '{required_permission}' permission. "
                 f"Available permissions: {', '.join(service_permissions)}"
             )
 
-        # Valid API key with required permission
+        # Valid API key with required (inference) permission
         return True, api_key_obj, None
     
     @staticmethod
@@ -430,14 +436,62 @@ class AuthUtils:
     
     @staticmethod
     async def get_user_roles(db: AsyncSession, user_id: int) -> list:
-        """Get user roles"""
-        result = await db.execute(
-            select(Role.name)
-            .join(UserRole, Role.id == UserRole.role_id)
+        """Get user roles - returns only the current role (one role per user)
+        Also cleans up any duplicate roles, keeping only the most recently assigned one
+        """
+        # Get all user roles ordered by most recent first
+        user_roles_result = await db.execute(
+            select(UserRole)
             .where(UserRole.user_id == user_id)
+            .order_by(UserRole.assigned_at.desc())
         )
-        roles = result.scalars().all()
-        return list(roles)
+        all_user_roles = list(user_roles_result.scalars().all())
+        
+        logger.debug(f"Found {len(all_user_roles)} role(s) for user {user_id}")
+        
+        if not all_user_roles:
+            return []
+        
+        # If multiple roles exist, keep only the most recent one and delete others
+        if len(all_user_roles) > 1:
+            logger.warning(f"User {user_id} has {len(all_user_roles)} roles. Cleaning up duplicates...")
+            # Get the most recent role (first one) to get its name
+            most_recent_user_role = all_user_roles[0]
+            role_result = await db.execute(
+                select(Role.name).where(Role.id == most_recent_user_role.role_id)
+            )
+            most_recent_role_name = role_result.scalar_one()
+            
+            # Get role names of roles to be deleted for logging
+            old_role_ids = [ur.role_id for ur in all_user_roles[1:]]
+            if old_role_ids:
+                old_roles_result = await db.execute(
+                    select(Role.name).where(Role.id.in_(old_role_ids))
+                )
+                old_role_names = list(old_roles_result.scalars().all())
+            else:
+                old_role_names = []
+            
+            # Delete all roles except the most recent one
+            for user_role in all_user_roles[1:]:  # Skip the first (most recent) one
+                await db.delete(user_role)
+            
+            await db.flush()  # Flush before commit to ensure deletes are executed
+            await db.commit()
+            
+            logger.warning(
+                f"Cleaned up {len(all_user_roles) - 1} duplicate role(s) [{', '.join(old_role_names)}] "
+                f"for user {user_id}. Kept only role: {most_recent_role_name}"
+            )
+            
+            return [most_recent_role_name]
+        else:
+            # Only one role exists, get its name and return it
+            role_result = await db.execute(
+                select(Role.name).where(Role.id == all_user_roles[0].role_id)
+            )
+            role_name = role_result.scalar_one()
+            return [role_name]
     
     @staticmethod
     def validate_password_strength(password: str) -> tuple[bool, list[str]]:
@@ -531,15 +585,21 @@ class AuthUtils:
         db.add(new_user)
         await db.flush()  # Get user ID
         
-        # Assign default USER role
-        result = await db.execute(select(Role).where(Role.name == 'USER'))
-        user_role_obj = result.scalar_one_or_none()
-        if user_role_obj:
-            user_role = UserRole(
-                user_id=new_user.id,
-                role_id=user_role_obj.id
-            )
-            db.add(user_role)
+        # Check if user already has any role (shouldn't happen for new users, but safety check)
+        existing_roles = await db.execute(
+            select(UserRole).where(UserRole.user_id == new_user.id)
+        )
+        existing_role = existing_roles.scalar_one_or_none()
+        if not existing_role:
+            # Assign default USER role (only if no role exists - one role per user)
+            result = await db.execute(select(Role).where(Role.name == 'USER'))
+            user_role_obj = result.scalar_one_or_none()
+            if user_role_obj:
+                user_role = UserRole(
+                    user_id=new_user.id,
+                    role_id=user_role_obj.id
+                )
+                db.add(user_role)
         
         # Create OAuth provider record
         oauth_provider = OAuthProvider(
