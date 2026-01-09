@@ -184,6 +184,15 @@ async def run_inference(
             span.set_attribute("nmt.source_language", request.config.language.sourceLanguage)
             span.set_attribute("nmt.target_language", request.config.language.targetLanguage)
             
+            # Store first input text for UI display (truncate if too long)
+            if request.input and len(request.input) > 0 and request.input[0].source:
+                first_input = request.input[0].source.strip()
+                # Store up to 500 characters to avoid huge span attributes
+                if len(first_input) > 500:
+                    span.set_attribute("nmt.input_text", first_input[:500] + "...")
+                else:
+                    span.set_attribute("nmt.input_text", first_input)
+            
             if user_id:
                 span.set_attribute("user.id", str(user_id))
             if api_key_id:

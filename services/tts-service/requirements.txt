@@ -1,9 +1,11 @@
 # =========================================================
 # PyTorch — CPU ONLY (CRITICAL FOR BUILD SIZE & SPEED)
 # =========================================================
+# Note: CPU-specific builds (+cpu) are only available from 2.6.0+
+# For 2.2.2, use regular version (works on CPU, just larger wheel)
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.2.2+cpu
-torchaudio==2.2.2+cpu
+torch==2.2.2
+torchaudio==2.2.2
 
 # =========================================================
 # FastAPI & ASGI Server
