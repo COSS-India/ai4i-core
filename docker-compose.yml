@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Infrastructure Services
   postgres:
@@ -306,13 +304,35 @@ services:
       - ENV_FILE=.env
       # Swagger/OpenAPI server URL used in the generated docs
       # Prod: point Swagger to public API Gateway URL
-      - SWAGGER_SERVER_URL=http://core-v1.ai4inclusion.org:8080  
+      - SWAGGER_SERVER_URL=http://core-v1.ai4inclusion.org:8080
+      # Service URLs - use Docker service names and container ports
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - CONFIG_SERVICE_URL=${CONFIG_SERVICE_URL:-http://config-service:8082}
+      - METRICS_SERVICE_URL=${METRICS_SERVICE_URL:-http://metrics-service:8083}
+      - TELEMETRY_SERVICE_URL=${TELEMETRY_SERVICE_URL:-http://telemetry-service:8084}
+      - ALERTING_SERVICE_URL=${ALERTING_SERVICE_URL:-http://alerting-service:8085}
+      - DASHBOARD_SERVICE_URL=${DASHBOARD_SERVICE_URL:-http://dashboard-service:8086}
+      - ASR_SERVICE_URL=${ASR_SERVICE_URL:-http://asr-service:8087}
+      - TTS_SERVICE_URL=${TTS_SERVICE_URL:-http://tts-service:8088}
+      - NMT_SERVICE_URL=${NMT_SERVICE_URL:-http://nmt-service:8089}
+      - OCR_SERVICE_URL=${OCR_SERVICE_URL:-http://ocr-service:8099}
+      - NER_SERVICE_URL=${NER_SERVICE_URL:-http://ner-service:9001}
+      - TRANSLITERATION_SERVICE_URL=${TRANSLITERATION_SERVICE_URL:-http://transliteration-service:8090}
+      - LANGUAGE_DETECTION_SERVICE_URL=${LANGUAGE_DETECTION_SERVICE_URL:-http://language-detection-service:8090}
+      - SPEAKER_DIARIZATION_SERVICE_URL=${SPEAKER_DIARIZATION_SERVICE_URL:-http://speaker-diarization-service:8095}
+      - LANGUAGE_DIARIZATION_SERVICE_URL=${LANGUAGE_DIARIZATION_SERVICE_URL:-http://language-diarization-service:8090}
+      - AUDIO_LANG_DETECTION_SERVICE_URL=${AUDIO_LANG_DETECTION_SERVICE_URL:-http://audio-lang-detection-service:8096}
+      - MODEL_MANAGEMENT_SERVICE_URL=${MODEL_MANAGEMENT_SERVICE_URL:-http://model-management-service:8091}
+      - LLM_SERVICE_URL=${LLM_SERVICE_URL:-http://llm-service:8090}
+      - PIPELINE_SERVICE_URL=${PIPELINE_SERVICE_URL:-http://pipeline-service:8090}
     env_file:
       - ./services/api-gateway-service/.env
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      auth-service:
         condition: service_healthy
     networks:
       - microservices-network
@@ -333,6 +353,12 @@ services:
       - "8081:8081"
     environment:
       - ENV_FILE=.env
+      # Database connection - use Docker service name and container port
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
+      # Redis connection - use Docker service name and container port
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     env_file:
       - ./services/auth-service/.env
     depends_on:
@@ -344,12 +370,12 @@ services:
       microservices-network:
         aliases:
           - auth-service
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   config-service:
@@ -361,6 +387,12 @@ services:
       - "8082:8082"
     environment:
       - ENV_FILE=.env
+      # Database connection - use Docker service name and container port
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/config_db
+      # Redis connection - use Docker service name and container port
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     env_file:
       - ./services/config-service/.env
     depends_on:
@@ -395,6 +427,10 @@ services:
       - "8083:8083"
     environment:
       - ENV_FILE=.env
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/metrics_db
     env_file:
       - ./services/metrics-service/.env
     depends_on:
@@ -423,6 +459,10 @@ services:
       - "8084:8084"
     environment:
       - ENV_FILE=.env
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/telemetry_db
     env_file:
       - ./services/telemetry-service/.env
     depends_on:
@@ -453,6 +493,10 @@ services:
       - "8085:8085"
     environment:
       - ENV_FILE=.env
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/alerting_db
     env_file:
       - ./services/alerting-service/.env
     depends_on:
@@ -482,6 +526,10 @@ services:
       - "8501:8501"  # Streamlit port
     environment:
       - ENV_FILE=.env
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/dashboard_db
     env_file:
       - ./services/dashboard-service/.env
     depends_on:
@@ -515,6 +563,11 @@ services:
       - ALLOW_ANONYMOUS_ACCESS=true
       - TRITON_ENDPOINT=http://13.200.133.97:9000
       - TRITON_TIMEOUT=120
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT_NUMBER=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
+      - MODEL_MANAGEMENT_SERVICE_URL=${MODEL_MANAGEMENT_SERVICE_URL:-http://model-management-service:8091}
     depends_on:
       config-service:
         condition: service_healthy
@@ -544,6 +597,11 @@ services:
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=http://13.200.133.97:9000
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT_NUMBER=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
     env_file:
       - ./services/tts-service/.env
     depends_on:
@@ -552,6 +610,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      auth-service:
         condition: service_healthy
     networks:
       microservices-network:
@@ -574,6 +634,12 @@ services:
       - "8091:8089"
     environment:
       - ENV_FILE=.env
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - MODEL_MANAGEMENT_SERVICE_URL=${MODEL_MANAGEMENT_SERVICE_URL:-http://model-management-service:8091}
     env_file:
       - ./services/nmt-service/.env
     depends_on:
@@ -582,6 +648,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      auth-service:
         condition: service_healthy
     networks:
       microservices-network:
@@ -604,6 +672,12 @@ services:
       - "8099:8099"
     environment:
       - ENV_FILE=.env
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - MODEL_MANAGEMENT_SERVICE_URL=${MODEL_MANAGEMENT_SERVICE_URL:-http://model-management-service:8091}
     depends_on:
       config-service:
         condition: service_healthy
@@ -611,10 +685,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
+      auth-service:
+        condition: service_healthy
     networks:
       - microservices-network
     healthcheck:
@@ -635,6 +707,12 @@ services:
       - "9001:9001"        # host:container (NER listens on 9001 in the container)
     environment:
       - ENV_FILE=.env
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - MODEL_MANAGEMENT_SERVICE_URL=${MODEL_MANAGEMENT_SERVICE_URL:-http://model-management-service:8091}
     env_file:
       - ./services/ner-service/.env
     depends_on:
@@ -643,6 +721,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      auth-service:
         condition: service_healthy
     networks:
       microservices-network:
@@ -667,12 +747,19 @@ services:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=http://3.235.56.233:8001
       - TRITON_TIMEOUT=300
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
     env_file:
       - ./services/llm-service/.env
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      auth-service:
         condition: service_healthy
     networks:
       microservices-network:
@@ -699,6 +786,11 @@ services:
       - ASR_SERVICE_URL=http://asr-service:8087
       - NMT_SERVICE_URL=http://nmt-service:8089
       - TTS_SERVICE_URL=http://tts-service:8088
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT_NUMBER=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
     env_file:
       - ./services/pipeline-service/.env
     depends_on:
@@ -707,6 +799,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      auth-service:
         condition: service_healthy
       asr-service:
         condition: service_started
@@ -744,9 +838,9 @@ services:
       - AUTH_DB_HOST=postgres
       - AUTH_DB_PORT=5432
       - AUTH_DB_NAME=auth_db
-      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
       - REDIS_DB=0
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - RATE_LIMIT_PER_MINUTE=${MODEL_MANAGEMENT_RATE_LIMIT_PER_MINUTE:-60}
@@ -760,10 +854,18 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      auth-service:
+        condition: service_healthy
     networks:
       microservices-network:
         aliases:
           - model-management-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8091/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   
@@ -798,6 +900,12 @@ services:
       - "8097:8090"
     environment:
       - ENV_FILE=.env
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - MODEL_MANAGEMENT_SERVICE_URL=${MODEL_MANAGEMENT_SERVICE_URL:-http://model-management-service:8091}
     env_file:
       - ./services/transliteration-service/.env
     depends_on:
@@ -806,6 +914,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      auth-service:
         condition: service_healthy
     networks:
       - microservices-network
@@ -826,6 +936,12 @@ services:
       - "8098:8090"
     environment:
       - ENV_FILE=.env
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - MODEL_MANAGEMENT_SERVICE_URL=${MODEL_MANAGEMENT_SERVICE_URL:-http://model-management-service:8091}
     env_file:
       - ./services/language-detection-service/.env
     depends_on:
@@ -834,6 +950,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      auth-service:
         condition: service_healthy
     networks:
       - microservices-network
@@ -855,12 +973,20 @@ services:
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=http://65.1.35.3:8700
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - MODEL_MANAGEMENT_SERVICE_URL=${MODEL_MANAGEMENT_SERVICE_URL:-http://model-management-service:8091}
     depends_on:
       config-service:
         condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      auth-service:
         condition: service_healthy
     networks:
       - microservices-network
@@ -882,6 +1008,12 @@ services:
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=65.1.35.3:8600
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - MODEL_MANAGEMENT_SERVICE_URL=${MODEL_MANAGEMENT_SERVICE_URL:-http://model-management-service:8091}
     env_file:
       - ./services/language-diarization-service/.env
     depends_on:
@@ -890,6 +1022,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      auth-service:
         condition: service_healthy
     networks:
       - microservices-network
@@ -911,6 +1045,12 @@ services:
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=65.1.35.3:8100
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - MODEL_MANAGEMENT_SERVICE_URL=${MODEL_MANAGEMENT_SERVICE_URL:-http://model-management-service:8091}
     env_file:
       - ./services/audio-lang-detection-service/.env
     depends_on:
@@ -919,6 +1059,10 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      model-management-service:
         condition: service_healthy
     networks:
       - microservices-network
@@ -937,7 +1081,8 @@ services:
       dockerfile: Dockerfile
       args:
         # Browser talks directly to the API Gateway on host port 8080
-        NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
+        # For local development, use localhost. For production, set NEXT_PUBLIC_API_URL env var to https://core-v1.ai4inclusion.org
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
         # Service-specific API keys from .env file (no hardcoding)
         NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
         NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
@@ -952,7 +1097,8 @@ services:
       # HOSTNAME=0.0.0.0 tells Next.js standalone server to listen on all interfaces
       - HOSTNAME=0.0.0.0
       # Route all frontend API calls through the API Gateway on host
-      - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
+      # For local development, use localhost. For production, use https://core-v1.ai4inclusion.org
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}
       - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
       # Service-specific API keys for API Gateway authentication / RBAC
       - NEXT_PUBLIC_ASR_API_KEY=${ASR_API_KEY}
@@ -990,8 +1136,8 @@ services:
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--storage.tsdb.retention.time=30d'
-      - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
-      # - '--web.external-url=http://localhost:9090'
+      - '--web.external-url=http://localhost:9090'
+      # - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'  # Production URL
 
       - '--web.route-prefix=/'
     networks:
@@ -1019,9 +1165,9 @@ services:
 
       # Combined from both HEAD and remote commits
       - GF_INSTALL_PLUGINS=
-      - GF_SERVER_DOMAIN=core-v1.ai4inclusion.org
-      - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
-      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_SERVER_DOMAIN=localhost
+      - GF_SERVER_ROOT_URL=http://localhost:3001/
+      # - GF_SERVER_SERVE_FROM_SUB_PATH=true  # Not needed for local development
 
     volumes:
       - grafana-data:/var/lib/grafana
@@ -1139,10 +1285,11 @@ services:
 volumes:
   postgres-data:
     driver: local
-    driver_opts:
-          type: "none"
-          o: "bind"
-          device: "/home/ubuntu/ai4i-v/volumes/pg_data"
+    # Removed Linux-specific bind mount path for macOS compatibility
+    # driver_opts:
+    #   type: "none"
+    #   o: "bind"
+    #   device: "/home/ubuntu/ai4i-v/volumes/pg_data"
   postgres-konga-data:
     driver: local
   redis-data:

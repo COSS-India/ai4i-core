@@ -30,6 +30,7 @@ const layoutRoutes = [
   '/language-diarization',
   '/audio-language-detection',
   '/ner',
+  '/tracing',
 ];
 
 export default function App({ Component, pageProps }: AppProps) {
@@ -51,7 +52,9 @@ export default function App({ Component, pageProps }: AppProps) {
   );
 
   // Check if current route needs layout (exclude auth page)
-  const needsLayout = layoutRoutes.includes(router.pathname) && router.pathname !== '/auth';
+  // Handle dynamic routes like /tracing/[traceId]
+  const isTracingRoute = router.pathname.startsWith('/tracing');
+  const needsLayout = (layoutRoutes.includes(router.pathname) || isTracingRoute) && router.pathname !== '/auth';
 
   return (
     <ChakraProvider theme={customTheme}>

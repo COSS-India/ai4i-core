@@ -390,7 +390,15 @@ class NMTService:
                     input_texts.append(normalized_text)
                     total_chars += len(normalized_text)
                 span.set_attribute("nmt.total_characters", total_chars)
-                span.add_event("Texts Preprocessed", {"text_count": len(input_texts), "total_characters": total_chars})
+                # Store first input text in event for UI display
+                event_data = {"text_count": len(input_texts), "total_characters": total_chars}
+                if input_texts and len(input_texts) > 0:
+                    first_text = input_texts[0]
+                    if len(first_text) > 500:
+                        event_data["input_text"] = first_text[:500] + "..."
+                    else:
+                        event_data["input_text"] = first_text
+                span.add_event("Texts Preprocessed", event_data)
                 
                 # Collapsed: Database request record creation is now just an attribute/event
                 total_text_length = sum(len(text) for text in input_texts)
