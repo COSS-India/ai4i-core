@@ -1106,6 +1106,10 @@ services:
       - NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${MODEL_MANAGEMENT_API_KEY}
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
       - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
+      # Jaeger Tracing Configuration
+      # For local Docker: http://jaeger:16686 (uses Docker service name)
+      # For deployed: https://demo-orchestrate.ai4inclusion.org/jaeger
+      - JAEGER_URL=${JAEGER_URL:-http://jaeger:16686}
     depends_on:
       api-gateway-service:
         condition: service_healthy

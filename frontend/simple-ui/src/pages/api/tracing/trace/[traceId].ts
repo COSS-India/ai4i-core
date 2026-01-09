@@ -3,10 +3,17 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import axios from 'axios';
 
-// Use jaeger hostname for Docker, localhost for local dev
-// In Docker: http://jaeger:16686
-// Local dev: http://localhost:16686
-const JAEGER_URL = process.env.JAEGER_URL || process.env.NEXT_PUBLIC_JAEGER_URL || 'http://jaeger:16686';
+// JAEGER_URL must be set in environment variables
+// Local: http://localhost:16686
+// Deployed: https://demo-orchestrate.ai4inclusion.org/jaeger
+const JAEGER_URL = process.env.JAEGER_URL;
+
+if (!JAEGER_URL) {
+  console.error('ERROR: JAEGER_URL environment variable is not set!');
+  console.error('Please set JAEGER_URL in your .env file:');
+  console.error('  Local: JAEGER_URL=http://localhost:16686');
+  console.error('  Deployed: JAEGER_URL=https://demo-orchestrate.ai4inclusion.org/jaeger');
+}
 
 export default async function handler(
   req: NextApiRequest,
@@ -22,8 +29,16 @@ export default async function handler(
     return res.status(400).json({ error: 'Trace ID is required' });
   }
 
-  try {
+  if (!JAEGER_URL) {
+    return res.status(500).json({ 
+      error: 'Configuration error',
+      message: 'JAEGER_URL environment variable is not set. Please configure it in your environment.',
+      jaegerUrl: 'NOT_CONFIGURED',
+      traceId: traceId,
+    });
+  }
 
+  try {
     const url = `${JAEGER_URL}/api/traces/${traceId}`;
     console.log(`[API] Fetching trace from: ${url}`);
     
