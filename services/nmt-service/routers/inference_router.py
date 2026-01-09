@@ -23,7 +23,22 @@ from utils.validation_utils import (
     InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError
 )
 from middleware.auth_provider import AuthProvider
-from middleware.exceptions import AuthenticationError, AuthorizationError
+from middleware.exceptions import (
+    AuthenticationError, 
+    AuthorizationError,
+    TritonInferenceError,
+    ModelNotFoundError,
+    ServiceUnavailableError,
+    TextProcessingError,
+    ErrorDetail
+)
+
+# Import OpenTelemetry for manual span creation
+try:
+    from opentelemetry import trace
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +110,23 @@ async def run_inference(
     nmt_service: NMTService = Depends(get_nmt_service)
 ) -> NMTInferenceResponse:
     """Run NMT inference on the given request"""
+    # Create a descriptive span for NMT inference
+    if TRACING_AVAILABLE:
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("NMT Inference") as span:
+            span.set_attribute("service.name", "nmt")
+            span.set_attribute("service.type", "translation")
+            span.set_attribute("nmt.input_count", len(request.input))
+            span.set_attribute("nmt.service_id", request.config.serviceId)
+            span.set_attribute("nmt.source_language", request.config.language.sourceLanguage)
+            span.set_attribute("nmt.target_language", request.config.language.targetLanguage)
+            return await _run_nmt_inference_internal(request, http_request, nmt_service)
+    else:
+        return await _run_nmt_inference_internal(request, http_request, nmt_service)
+
+
+async def _run_nmt_inference_internal(request: NMTInferenceRequest, http_request: Request, nmt_service: NMTService) -> NMTInferenceResponse:
+    """Internal NMT inference logic."""
     try:
         # Validate request
         validate_service_id(request.config.serviceId)
@@ -131,13 +163,26 @@ async def run_inference(
         logger.warning(f"Validation error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     
+    except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as e:
+        # Re-raise service-specific errors (they will be handled by error handler middleware)
+        raise
+    
     except Exception as e:
         logger.error(f"NMT inference failed: {e}", exc_info=True)
-        # Return more detailed error in development, generic in production
-        import traceback
-        error_detail = {
-            "message": str(e),
-            "type": type(e).__name__,
-            "traceback": traceback.format_exc() if logger.level <= logging.DEBUG else None
-        }
-        raise HTTPException(status_code=500, detail=error_detail)
+        # Check if it's a Triton-related error
+        error_msg = str(e)
+        if "unknown model" in error_msg.lower() or "model" in error_msg.lower() and "not found" in error_msg.lower():
+            import re
+            model_match = re.search(r"model: '([^']+)'", error_msg)
+            model_name = model_match.group(1) if model_match else "unknown"
+            raise ModelNotFoundError(
+                message=f"Model '{model_name}' not found in Triton inference server. Please verify the model name and ensure it is loaded.",
+                model_name=model_name
+            )
+        elif "triton" in error_msg.lower() or "connection" in error_msg.lower():
+            raise ServiceUnavailableError(
+                message=f"NMT service unavailable: {error_msg}. Please check Triton server connectivity."
+            )
+        else:
+            # Generic error - wrap in TextProcessingError
+            raise TextProcessingError(f"NMT inference failed: {error_msg}")

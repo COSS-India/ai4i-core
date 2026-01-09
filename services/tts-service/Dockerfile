@@ -56,7 +56,7 @@ ENV PYTHONUNBUFFERED=1
 # Copy app code
 COPY services/tts-service /app
 
-RUN chown -R app:app /app
+RUN chown -R app:app /app /home/app/.local
 USER app
 
 EXPOSE 8088

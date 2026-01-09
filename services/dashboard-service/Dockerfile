@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for Dashboard Service
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 # Set working directory
 WORKDIR /app
@@ -39,7 +39,7 @@ COPY . .
 
 # Create non-root user
 RUN useradd --create-home --shell /bin/bash app
-# Create non-root user first
+
 # Change ownership to app user
 RUN chown -R app:app /app /home/app/.local
 USER app

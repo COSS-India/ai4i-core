@@ -87,13 +87,17 @@ end
 
 -- Function to add Jaeger trace URL to logs
 function add_jaeger_url(tag, timestamp, record)
-    -- Check if trace_id exists
-    if record["trace_id"] ~= nil and type(record["trace_id"]) == "string" and record["trace_id"] ~= "" then
+    -- Check if jaeger_trace_url already exists (full URL from logging middleware)
+    if record["jaeger_trace_url"] ~= nil and type(record["jaeger_trace_url"]) == "string" and record["jaeger_trace_url"] ~= "" then
+        -- Full URL already present, keep it as is
+        -- This is the preferred method as it includes the full URL
+    -- Otherwise, check if trace_id exists and construct URL
+    elseif record["trace_id"] ~= nil and type(record["trace_id"]) == "string" and record["trace_id"] ~= "" then
         local trace_id = record["trace_id"]
-        -- Store only the trace_id in jaeger_trace_url field
-        -- OpenSearch Dashboards will use URL template to construct: http://localhost:16686/trace/{trace_id}
-        -- This ensures the URL is treated as external absolute URL, not relative path
-        record["jaeger_trace_url"] = trace_id
+        -- Get Jaeger UI URL from environment or use default
+        local jaeger_ui_url = os.getenv("JAEGER_UI_URL") or "http://localhost:16686"
+        -- Construct full Jaeger URL
+        record["jaeger_trace_url"] = jaeger_ui_url .. "/trace/" .. trace_id
     end
     
     return 1, timestamp, record

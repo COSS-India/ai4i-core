@@ -19,18 +19,14 @@ from models.asr_response import ASRInferenceResponse, TranscriptOutput, NBestTok
 from repositories.asr_repository import ASRRepository
 from services.audio_service import AudioService
 from utils.triton_client import TritonClient
+from middleware.exceptions import (
+    TritonInferenceError,
+    ModelNotFoundError,
+    ServiceUnavailableError,
+    AudioProcessingError
+)
 
 logger = logging.getLogger(__name__)
-
-
-class TritonInferenceError(Exception):
-    """Custom exception for Triton inference errors."""
-    pass
-
-
-class AudioProcessingError(Exception):
-    """Custom exception for audio processing errors."""
-    pass
 
 
 class ASRService:
