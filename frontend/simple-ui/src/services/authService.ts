@@ -16,6 +16,8 @@ import {
   LogoutResponse,
   APIKeyCreate,
   APIKeyResponse,
+  AdminAPIKeyWithUserResponse,
+  APIKeyUpdate,
   OAuth2Provider,
   Permission,
 } from '../types/auth';
@@ -492,9 +494,30 @@ class AuthService {
     return this.request<APIKeyResponse[]>('/api-keys');
   }
 
+  async listAllApiKeys(): Promise<AdminAPIKeyWithUserResponse[]> {
+    return this.request<AdminAPIKeyWithUserResponse[]>('/api-keys/all', {
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
+    });
+  }
+
   async revokeApiKey(keyId: number): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/api-keys/${keyId}`, {
       method: 'DELETE',
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
+    });
+  }
+
+  async updateApiKey(keyId: number, updateData: APIKeyUpdate): Promise<APIKeyResponse> {
+    return this.request<APIKeyResponse>(`/api-keys/${keyId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updateData),
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
     });
   }
 
