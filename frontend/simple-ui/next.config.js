@@ -5,14 +5,9 @@ const nextConfig = {
   images: {
     domains: ["localhost", "api-gateway-service"],
   },
-  env: {
-    // For production builds, set NEXT_PUBLIC_API_URL at build time
-    // (for example, to "https://dev.ai4inclusion.org").
-    // For local development, defaults to http://localhost:8080
-    // Note: NEXT_PUBLIC_* variables are automatically exposed by Next.js,
-    // but we explicitly set it here to ensure it's available.
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'development' ? 'http://localhost:8080' : ''),
-  },
+  // Note: NEXT_PUBLIC_* variables from .env files are automatically exposed by Next.js
+  // No need to manually set them in the env object - that can cause conflicts
+  // If NEXT_PUBLIC_API_URL is not set in .env, the code will use the fallback in api.ts
   output: "standalone",
   compress: true,
 };
