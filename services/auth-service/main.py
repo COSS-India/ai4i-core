@@ -1005,12 +1005,14 @@ async def revoke_api_key(
     current_user: User = Depends(require_permission("apiKey", "delete")),
     db: AsyncSession = Depends(get_db)
 ):
-    """Revoke an API key"""
+    """
+    Revoke an API key.
+    
+    - Requires `apiKey.delete` permission (e.g. ADMIN, MODERATOR).
+    - Users with this permission can delete any API key.
+    """
     result = await db.execute(
-        select(APIKey).where(
-            APIKey.id == key_id,
-            APIKey.user_id == current_user.id
-        )
+        select(APIKey).where(APIKey.id == key_id)
     )
     api_key = result.scalar_one_or_none()
     
@@ -1023,7 +1025,7 @@ async def revoke_api_key(
     api_key.is_active = False
     await db.commit()
     
-    logger.info(f"API key revoked: {key_id} for user: {current_user.email}")
+    logger.info(f"API key revoked: {key_id} by user: {current_user.email}")
     return {"message": "API key revoked successfully"}
 
 
