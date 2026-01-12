@@ -621,8 +621,9 @@ async def create_new_tenant(
         "subscriptions": payload.requested_subscriptions,
         "quotas": payload.requested_quotas or DEFAULT_QUOTAS,
         "status": TenantStatus.PENDING,
-        "temp_admin_username": "",
-        "temp_admin_password_hash": "",
+        "temp_admin_username": "",                 # Will be set upon email verification
+        "temp_admin_password_hash": "",            # Will be set upon email verification
+        "user_id": None,                           # Will be set upon email verification
     }
 
     # Validate services are active TODO: Implement if service deactivation is supported
@@ -789,6 +790,9 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
         logger.exception(f"Error committing admin user to auth_db: {e}")
         await auth_db.rollback()
         raise HTTPException(status_code=500, detail="Failed to create admin user in authentication database")
+    
+    # Insert user_id into tenant
+    tenant.user_id = admin_user.id
 
     try:
         await tenant_db.commit()
