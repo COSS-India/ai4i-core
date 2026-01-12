@@ -173,17 +173,24 @@ class AuthUtils:
         db: AsyncSession,
         api_key: str,
         service: str,
-        action: str
+        action: str,
     ) -> Tuple[bool, Optional[APIKey], Optional[str]]:
         """
-        Validate API key and check permissions for service and action
-        
+        Validate API key and check permissions for a given service.
+
+        Current policy (per product requirements):
+        - We only enforce **inference** permissions.
+        - If a request comes in with action='read', we still require the
+          corresponding '<service>.inference' permission.
+        - 'read' permissions may still exist for backwards compatibility,
+          but they are not used for allow/deny decisions here.
+
         Args:
             db: Database session
             api_key: The API key to validate
-            service: Service name (asr, tts, nmt, pipeline, model-management)
-            action: Action type (read, inference)
-        
+            service: Service name (asr, tts, nmt, pipeline, model-management, etc.)
+            action: Logical action type from caller ('read' or 'inference')
+
         Returns:
             Tuple of (is_valid, api_key_obj, error_message)
         """
@@ -216,11 +223,14 @@ class AuthUtils:
         api_key_obj.last_used = now_utc
         await db.commit()
         
-        # Get permissions
+        # Get permissions stored on the key
         permissions = api_key_obj.permissions or []
 
-        # Build required permission string (e.g., "asr.inference", "tts.read")
-        required_permission = f"{service}.{action}"
+        # We always enforce '<service>.inference' regardless of whether the caller
+        # asked for 'read' or 'inference'. This means a key that can run inference
+        # is also sufficient for read-only operations on that service.
+        enforced_action = "inference"
+        required_permission = f"{service}.{enforced_action}"
 
         # Use Casbin to evaluate permissions in a tenant-ready way.
         # Domain/tenant is "default" for now; this can be made dynamic later
@@ -229,32 +239,28 @@ class AuthUtils:
             api_key_id=api_key_obj.id,
             permissions=permissions,
             obj=service,
-            act=action,
+            act=enforced_action,
             tenant="default",
         )
 
         if not allowed:
             # Preserve existing detailed error semantics for callers
+            # Filter permissions for this service
             service_permissions = [p for p in permissions if p.startswith(f"{service}.")]
 
             if not service_permissions:
                 # No permissions for this service at all
-                return False, None, f"Invalid API key: This key does not have access to {service.upper()} service"
-
-            # Check if it's a read-only key trying to access inference
-            if action == "inference" and f"{service}.read" in permissions:
                 return False, None, (
-                    f"API key is restricted for read-only access. Inference operations "
-                    f"require '{required_permission}' permission"
+                    f"Invalid API key: This key does not have access to {service.upper()} service"
                 )
 
-            # Has some permissions for service but not the required one
+            # Has some permissions for this service but not the required inference one
             return False, None, (
                 f"Invalid API key: This key does not have '{required_permission}' permission. "
                 f"Available permissions: {', '.join(service_permissions)}"
             )
 
-        # Valid API key with required permission
+        # Valid API key with required (inference) permission
         return True, api_key_obj, None
     
     @staticmethod
