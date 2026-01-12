@@ -757,40 +757,63 @@ FROM roles r, permissions p
 WHERE r.name = 'ADMIN'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- Assign permissions to USER role
+-- Assign permissions to USER role + model/service read permissions
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'USER' 
-AND p.name IN ('users.read', 'users.update', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read')
+AND p.name IN ('users.read', 'users.update', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read', 'model.read', 'service.read')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- Assign permissions to GUEST role
+-- Assign permissions to GUEST role + model/service read permissions
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'GUEST' 
-AND p.name IN ('users.read', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.read')
+AND p.name IN ('users.read', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.read', 'model.read', 'service.read')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- Assign permissions to MODERATOR role
+-- Assign permissions to MODERATOR role + all model/service permissions
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'MODERATOR' 
-AND p.name IN ('users.read', 'users.update', 'configs.read', 'configs.update', 'metrics.read', 'alerts.read', 'alerts.update', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read')
+AND p.name IN ('users.read', 'users.update', 'configs.read', 'configs.update', 'metrics.read', 'alerts.read', 'alerts.update', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read', 'model.create', 'model.read', 'model.update', 'model.delete', 'model.publish', 'model.unpublish', 'service.create', 'service.read', 'service.update', 'service.delete')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- Create default admin user (password: admin123)
-INSERT INTO users (email, username, hashed_password, is_active, is_verified) VALUES
-('admin@ai4i.com', 'admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj4J/9QZQK2O', true, true)
-ON CONFLICT (email) DO NOTHING;
+-- ============================================================================
+-- Create Default Admin User
+-- ============================================================================
+-- Standard default admin user created during installation/initialization
+-- This user has ADMIN role with all permissions
+-- 
+-- Credentials:
+--   Username: admin
+--   Email:    admin@ai4i.org
+--   Password: Admin@123
+--   Role:     ADMIN (all permissions)
+--   Status:   ACTIVE
+-- ============================================================================
 
--- Assign ADMIN role to default admin user
+-- Create the default admin user
+-- Password hash for "Admin@123" (bcrypt)
+INSERT INTO users (email, username, hashed_password, is_active, is_verified, full_name, is_superuser) VALUES
+('admin@ai4i.org', 'admin', '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW', true, true, 'System Administrator', true)
+ON CONFLICT (email) DO UPDATE
+SET 
+    username = EXCLUDED.username,
+    hashed_password = EXCLUDED.hashed_password,
+    is_active = EXCLUDED.is_active,
+    is_verified = EXCLUDED.is_verified,
+    full_name = EXCLUDED.full_name,
+    is_superuser = EXCLUDED.is_superuser;
+
+-- Assign ADMIN role to the default admin user
+-- This ensures the admin user has all permissions through the ADMIN role
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'admin@ai4i.com' AND r.name = 'ADMIN'
+WHERE u.email = 'admin@ai4i.org' AND u.username = 'admin' AND r.name = 'ADMIN'
 ON CONFLICT (user_id, role_id) DO NOTHING;
 
 \c config_db;
