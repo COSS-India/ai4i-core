@@ -50,6 +50,7 @@ import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
 import { useApiKey } from "../hooks/useApiKey";
+import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { User, UserUpdateRequest, Permission, APIKeyResponse } from "../types/auth";
 import roleService, { Role, UserRole } from "../services/roleService";
 import authService from "../services/authService";
@@ -58,6 +59,7 @@ const ProfilePage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading, updateUser } = useAuth();
   const { apiKey, getApiKey, setApiKey } = useApiKey();
+  const { checkSessionExpiry } = useSessionExpiry();
   const [showApiKey, setShowApiKey] = useState(false);
   const [isEditingUser, setIsEditingUser] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -208,10 +210,14 @@ const ProfilePage: React.FC = () => {
     }
   }, [user]);
 
-  // Redirect to home if not authenticated
+  // Redirect to auth page if not authenticated
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
-      router.push("/");
+      // Store current path to redirect back after login
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('redirectAfterAuth', '/profile');
+      }
+      router.push("/auth");
     }
   }, [isAuthenticated, authLoading, router]);
 
@@ -252,6 +258,9 @@ const ProfilePage: React.FC = () => {
   }, [isAuthenticated, authLoading, toast, user]);
 
   const handleCopyApiKey = () => {
+    // Check session expiry before performing action
+    if (!checkSessionExpiry()) return;
+    
     const key = getApiKey();
     if (key) {
       navigator.clipboard.writeText(key);
@@ -266,6 +275,9 @@ const ProfilePage: React.FC = () => {
   };
 
   const handleEditUser = () => {
+    // Check session expiry before performing action
+    if (!checkSessionExpiry()) return;
+    
     setIsEditingUser(true);
     setErrors({});
   };
@@ -301,6 +313,9 @@ const ProfilePage: React.FC = () => {
   };
 
   const handleSaveUser = async () => {
+    // Check session expiry before performing action
+    if (!checkSessionExpiry()) return;
+    
     if (!validateForm()) {
       return;
     }
@@ -359,6 +374,9 @@ const ProfilePage: React.FC = () => {
 
   // Function to fetch API keys from the API
   const handleFetchApiKeys = async () => {
+    // Check session expiry before performing action
+    if (!checkSessionExpiry()) return;
+    
     console.log('Profile: Fetching API keys from /api/v1/auth/api-keys');
     setIsFetchingApiKey(true);
     setIsLoadingApiKeys(true);
@@ -447,10 +465,12 @@ const ProfilePage: React.FC = () => {
   if (!isAuthenticated || !user) {
     return (
       <ContentLayout>
-        <Alert status="warning">
-          <AlertIcon />
-          <AlertDescription>Please log in to view your profile.</AlertDescription>
-        </Alert>
+        <Center h="400px">
+          <VStack spacing={4}>
+            <Spinner size="xl" color="orange.500" />
+            <Text color="gray.600">Redirecting to sign in...</Text>
+          </VStack>
+        </Center>
       </ContentLayout>
     );
   }
