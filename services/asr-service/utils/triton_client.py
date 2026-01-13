@@ -12,12 +12,13 @@ import tritonclient.http as http_client
 from tritonclient.utils import np_to_triton_dtype
 import gevent.ssl
 
+from middleware.exceptions import (
+    TritonInferenceError,
+    ModelNotFoundError,
+    ServiceUnavailableError
+)
+
 logger = logging.getLogger(__name__)
-
-
-class TritonInferenceError(Exception):
-    """Custom exception for Triton inference errors."""
-    pass
 
 
 class TritonClient:
@@ -254,8 +255,24 @@ class TritonClient:
             return result
             
         except Exception as e:
-            logger.error(f"Triton inference failed for model {model_name}: {e}")
-            raise TritonInferenceError(f"Triton inference failed: {e}")
+            error_msg = str(e)
+            logger.error(f"Triton inference failed for model {model_name}: {e}", exc_info=True)
+            
+            # Provide more helpful error messages with proper error codes
+            if "404" in error_msg or "Not Found" in error_msg or "unknown model" in error_msg.lower():
+                raise ModelNotFoundError(
+                    message=f"Triton model '{model_name}' not found. Please verify the model name and ensure it is loaded.",
+                    model_name=model_name
+                )
+            elif "Connection" in error_msg or "connect" in error_msg.lower() or "timeout" in error_msg.lower():
+                raise ServiceUnavailableError(
+                    message=f"Cannot connect to Triton server. Please verify the endpoint is correct and the server is running.",
+                    service_name="triton"
+                )
+            raise TritonInferenceError(
+                message=f"Triton inference failed: {error_msg}",
+                model_name=model_name
+            )
     
     def _pad_batch(self, batch_data: List[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
         """Pad batch data to same length."""

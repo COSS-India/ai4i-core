@@ -66,7 +66,6 @@ db_engine: Optional[AsyncEngine] = None
 db_session_factory: Optional[async_sessionmaker] = None
 registry_client: Optional[ServiceRegistryHttpClient] = None
 registered_instance_id: Optional[str] = None
-model_management_client: Optional[ModelManagementClient] = None
 
 logger.info(f"Configuration loaded: REDIS_HOST={REDIS_HOST}, REDIS_PORT={REDIS_PORT}")
 logger.info(f"DATABASE_URL configured: {DATABASE_URL.split('@')[0]}@***")  # Mask password in logs
@@ -75,7 +74,7 @@ logger.info(f"DATABASE_URL configured: {DATABASE_URL.split('@')[0]}@***")  # Mas
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager for startup and shutdown"""
-    global redis_client, db_engine, db_session_factory, registry_client, registered_instance_id, model_management_client
+    global redis_client, db_engine, db_session_factory, registry_client, registered_instance_id
 
     # Startup
     logger.info("Starting NMT Service...")
@@ -236,10 +235,6 @@ async def lifespan(app: FastAPI):
         if db_engine:
             await db_engine.dispose()
             logger.info("PostgreSQL connection closed")
-        
-        if model_management_client:
-            await model_management_client.close()
-            logger.info("Model Management Service client closed")
 
     except Exception as e:
         logger.error(f"Error during shutdown: {e}")

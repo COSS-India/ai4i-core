@@ -26,6 +26,13 @@ from utils.validation_utils import (
 )
 from middleware.exceptions import AuthenticationError, AuthorizationError
 
+# Import OpenTelemetry for manual span creation
+try:
+    from opentelemetry import trace
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # Create router
@@ -83,6 +90,24 @@ async def run_inference(
     start_time = time.time()
     request_id = None
     
+    # Create a descriptive span for TTS inference
+    if TRACING_AVAILABLE:
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("TTS Inference") as span:
+            span.set_attribute("service.name", "tts")
+            span.set_attribute("service.type", "tts")
+            span.set_attribute("tts.input_count", len(request.input))
+            span.set_attribute("tts.service_id", request.config.serviceId)
+            span.set_attribute("tts.language", request.config.language.sourceLanguage)
+            span.set_attribute("tts.gender", request.config.gender.value)
+            span.set_attribute("tts.audio_format", request.config.audioFormat.value)
+            return await _run_tts_inference_internal(request, http_request, tts_service, start_time)
+    else:
+        return await _run_tts_inference_internal(request, http_request, tts_service, start_time)
+
+
+async def _run_tts_inference_internal(request: TTSInferenceRequest, http_request: Request, tts_service: TTSService, start_time: float) -> TTSInferenceResponse:
+    """Internal TTS inference logic."""
     try:
         # Extract auth context from request.state
         user_id = getattr(http_request.state, 'user_id', None)
@@ -115,23 +140,41 @@ async def run_inference(
             detail=str(e)
         )
     except Exception as e:
-        logger.error(f"TTS inference failed: {e}")
+        logger.error(f"TTS inference failed: {e}", exc_info=True)
         
-        # Return appropriate error based on exception type
-        if "Triton" in str(e):
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="TTS service temporarily unavailable"
+        # Import service-specific exceptions
+        from middleware.exceptions import (
+            TritonInferenceError,
+            ModelNotFoundError,
+            ServiceUnavailableError,
+            AudioProcessingError
+        )
+        
+        # Check if it's already a service-specific error
+        if isinstance(e, (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, AudioProcessingError)):
+            raise
+        
+        # Check error type and raise appropriate exception
+        error_msg = str(e)
+        if "unknown model" in error_msg.lower() or ("model" in error_msg.lower() and "not found" in error_msg.lower()):
+            import re
+            model_match = re.search(r"model: '([^']+)'", error_msg)
+            model_name = model_match.group(1) if model_match else "tts"
+            raise ModelNotFoundError(
+                message=f"Model '{model_name}' not found in Triton inference server. Please verify the model name and ensure it is loaded.",
+                model_name=model_name
             )
-        elif "text" in str(e).lower():
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Text processing failed"
+        elif "triton" in error_msg.lower() or "connection" in error_msg.lower() or "timeout" in error_msg.lower():
+            raise ServiceUnavailableError(
+                message=f"TTS service unavailable: {error_msg}. Please check Triton server connectivity."
             )
+        elif "audio" in error_msg.lower():
+            raise AudioProcessingError(f"Audio processing failed: {error_msg}")
         else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Internal server error"
+            # Generic Triton error
+            raise TritonInferenceError(
+                message=f"TTS inference failed: {error_msg}",
+                model_name="tts"
             )
 
 
