@@ -864,8 +864,8 @@ class ServiceStatus(BaseModel):
     status: str = Field(..., description="Status (e.g., healthy, unhealthy)")
     lastUpdated: str = Field(..., description="Last update timestamp")
 
-class ServiceCreateRequest(BaseModel):
-    """Request model for creating a new service."""
+class ModelManagementServiceCreateRequest(BaseModel):
+    """Request model for creating a new service in model management."""
     serviceId: str = Field(..., description="Unique service identifier")
     name: str = Field(..., description="Service name")
     serviceDescription: str = Field(..., description="Service description")
@@ -886,8 +886,8 @@ class LanguagePair(BaseModel):
     targetLanguage: str = Field(..., description="Target language code")
     targetScriptCode: Optional[str] = Field("", description="Target script code")
 
-class ServiceUpdateRequest(BaseModel):
-    """Request model for updating an existing service. Only serviceId is required, all other fields are optional for partial updates."""
+class ModelManagementServiceUpdateRequest(BaseModel):
+    """Request model for updating an existing service in model management. Only serviceId is required, all other fields are optional for partial updates."""
     serviceId: str = Field(..., description="Unique service identifier")
     name: Optional[str] = Field(None, description="Service name")
     serviceDescription: Optional[str] = Field(None, description="Service description")
@@ -3540,7 +3540,7 @@ async def get_service_details(
 
 @app.post("/api/v1/model-management/services", response_model=str, tags=["Model Management"])
 async def create_service_entry(
-    payload: ServiceCreateRequest,
+    payload: ModelManagementServiceCreateRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
@@ -3562,7 +3562,7 @@ async def create_service_entry(
 
 @app.patch("/api/v1/model-management/services", response_model=str, tags=["Model Management"])
 async def update_service_entry(
-    payload: ServiceUpdateRequest,
+    payload: ModelManagementServiceUpdateRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
