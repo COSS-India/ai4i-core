@@ -23,7 +23,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \    curl \
+RUN apt-get update && apt-get install -y \    
+    curl \
     libpq5 \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
