@@ -22,7 +22,22 @@ from utils.validation_utils import (
     InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError
 )
 from middleware.auth_provider import AuthProvider
-from middleware.exceptions import AuthenticationError, AuthorizationError
+from middleware.exceptions import (
+    AuthenticationError, 
+    AuthorizationError,
+    TritonInferenceError,
+    ModelNotFoundError,
+    ServiceUnavailableError,
+    TextProcessingError,
+    ErrorDetail
+)
+
+# Import OpenTelemetry for manual span creation
+try:
+    from opentelemetry import trace
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +156,23 @@ async def run_inference(
     nmt_service: NMTService = Depends(get_nmt_service)
 ) -> NMTInferenceResponse:
     """Run NMT inference on the given request"""
+    # Create a descriptive span for NMT inference
+    if TRACING_AVAILABLE:
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("NMT Inference") as span:
+            span.set_attribute("service.name", "nmt")
+            span.set_attribute("service.type", "translation")
+            span.set_attribute("nmt.input_count", len(request.input))
+            span.set_attribute("nmt.service_id", request.config.serviceId)
+            span.set_attribute("nmt.source_language", request.config.language.sourceLanguage)
+            span.set_attribute("nmt.target_language", request.config.language.targetLanguage)
+            return await _run_nmt_inference_internal(request, http_request, nmt_service)
+    else:
+        return await _run_nmt_inference_internal(request, http_request, nmt_service)
+
+
+async def _run_nmt_inference_internal(request: NMTInferenceRequest, http_request: Request, nmt_service: NMTService) -> NMTInferenceResponse:
+    """Internal NMT inference logic."""
     try:
         # Validate request
         validate_service_id(request.config.serviceId)
@@ -176,6 +208,10 @@ async def run_inference(
     except (InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError) as e:
         logger.warning(f"Validation error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+    
+    except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as e:
+        # Re-raise service-specific errors (they will be handled by error handler middleware)
+        raise
     
     except Exception as e:
         logger.error(f"NMT inference failed: {e}", exc_info=True)
