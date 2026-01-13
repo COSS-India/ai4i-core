@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for Telemetry Service
-FROM python:3.11-slim AS builder
+FROM python:3.11-slim as builder
 
 # Set working directory
 WORKDIR /app
