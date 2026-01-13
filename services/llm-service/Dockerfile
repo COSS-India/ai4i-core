@@ -5,7 +5,7 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     curl \
@@ -13,11 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements from build context
-COPY services/llm-service/requirements.txt .
-
+COPY requirements.txt .
 # Install Python dependencies
-RUN pip install --no-cache-dir --user -r requirements.txt
-
+RUN pip install --no-cache-dir -r requirements.txt
 # -----------------------------
 # STAGE 2 — RUNTIME
 # -----------------------------
@@ -25,8 +23,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
+RUN apt-get update && apt-get install -y \    curl \
     libpq5 \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -34,21 +31,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd --create-home --shell /bin/bash app
 
 # Copy Python site-packages
-COPY --from=builder /root/.local /home/app/.local
+COPY --from=builder /usr/local /usr/local
 
-ENV PATH="/home/app/.local/bin:$PATH"
-ENV PYTHONPATH="/app"
-ENV PYTHONUNBUFFERED=1
+COPY . .
 
-# Copy app code
-COPY services/llm-service /app
-
-RUN chown -R app:app /app /home/app/.local
+RUN chown -R app:app /app
 USER app
 
 EXPOSE 8090
 
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:8090/api/v1/llm/health || exit 1
 
 ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8090"]

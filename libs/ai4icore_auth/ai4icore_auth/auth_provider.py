@@ -18,7 +18,8 @@ def _anonymous_context():
     }
 
 
-async def AuthProvider(
+async def 
+(
     request: Request,
     authorization: Optional[str] = Header(None, alias="Authorization"),
     x_auth_source: str = Header(default="API_KEY", alias="X-Auth-Source"),

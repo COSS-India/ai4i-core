@@ -63,7 +63,7 @@ COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model
 # Copy app code
 COPY services/tts-service /app
 
-RUN chown -R app:app /app /home/app/.local
+RUN chown -R app:app /app
 USER app
 
 EXPOSE 8088
