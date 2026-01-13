@@ -188,7 +188,7 @@ const ServicesManagementPage: React.FC = () => {
     }));
   };
 
-  // Handle model selection and derive task_type
+  // Handle model selection and derive task_type and modelVersion
   const handleModelChange = async (modelId: string) => {
     setFormData((prev) => ({
       ...prev,
@@ -204,13 +204,15 @@ const ServicesManagementPage: React.FC = () => {
         // The task_type might be in model.task.type or model.task_type
         const taskType = modelDetails?.task?.type || modelDetails?.task_type || modelDetails?.taskType || "";
         
-        if (taskType) {
-          setFormData((prev) => ({
-            ...prev,
-            modelId: modelId,
-            task_type: taskType,
-          }));
-        }
+        // Extract model version (required field after migration)
+        const modelVersion = modelDetails?.version || modelDetails?.modelVersion || "1.0";
+        
+        setFormData((prev) => ({
+          ...prev,
+          modelId: modelId,
+          task_type: taskType,
+          modelVersion: modelVersion,
+        }));
       } catch (error: any) {
         console.error("Failed to fetch model details:", error);
         toast({
@@ -224,10 +226,11 @@ const ServicesManagementPage: React.FC = () => {
         setIsLoadingModels(false);
       }
     } else {
-      // Clear task_type if no model selected
+      // Clear task_type and modelVersion if no model selected
       setFormData((prev) => ({
         ...prev,
         task_type: "",
+        modelVersion: "",
       }));
     }
   };
@@ -983,17 +986,17 @@ const ServicesManagementPage: React.FC = () => {
                                           model_id: modelId, // Keep for backward compatibility
                                         }));
 
-                                        // Fetch model details and derive task_type
+                                        // Fetch model details and derive task_type and modelVersion
                                         if (modelId) {
                                           try {
                                             const modelDetails = await getModelById(modelId);
                                             const taskType = modelDetails?.task?.type || modelDetails?.task_type || modelDetails?.taskType || "";
-                                            if (taskType) {
-                                              setUpdateFormData((prev) => ({
-                                                ...prev,
-                                                task_type: taskType,
-                                              }));
-                                            }
+                                            const modelVersion = modelDetails?.version || modelDetails?.modelVersion || "1.0";
+                                            setUpdateFormData((prev) => ({
+                                              ...prev,
+                                              task_type: taskType,
+                                              modelVersion: modelVersion,
+                                            }));
                                           } catch (error: any) {
                                             console.error("Failed to fetch model details:", error);
                                           }

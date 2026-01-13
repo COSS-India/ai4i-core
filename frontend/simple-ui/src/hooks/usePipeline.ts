@@ -9,6 +9,7 @@ import {
   PipelineResult 
 } from '../types/pipeline';
 import { MAX_RECORDING_DURATION } from '../config/constants';
+import { extractErrorInfo } from '../utils/errorHandler';
 
 export const usePipeline = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -527,25 +528,11 @@ export const usePipeline = () => {
     } catch (error: any) {
       console.error('Pipeline error:', error);
       
-      // Extract error message safely - handle both string and object formats
-      let errorMessage = 'Failed to execute pipeline';
-      if (error?.response?.data?.detail) {
-        const detail = error.response.data.detail;
-        if (typeof detail === 'string') {
-          errorMessage = detail;
-        } else if (detail?.message) {
-          errorMessage = detail.message;
-        } else if (detail?.error) {
-          errorMessage = typeof detail.error === 'string' ? detail.error : detail.error?.message || 'Pipeline execution failed';
-        } else {
-          errorMessage = JSON.stringify(detail);
-        }
-      } else if (error?.message) {
-        errorMessage = error.message;
-      }
+      // Use centralized error handler
+      const { title: errorTitle, message: errorMessage } = extractErrorInfo(error);
       
       toast({
-        title: 'Pipeline Failed',
+        title: errorTitle,
         description: errorMessage,
         status: 'error',
         duration: 5000,

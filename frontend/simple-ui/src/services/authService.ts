@@ -16,6 +16,8 @@ import {
   LogoutResponse,
   APIKeyCreate,
   APIKeyResponse,
+  AdminAPIKeyWithUserResponse,
+  APIKeyUpdate,
   OAuth2Provider,
   Permission,
 } from '../types/auth';
@@ -87,6 +89,19 @@ class AuthService {
           errorMessage = errorData;
         } else if (Array.isArray(errorData) && errorData.length > 0) {
           errorMessage = errorData.map((err: any) => err.detail || err.message || String(err)).join(', ');
+        }
+        
+        // Check if error is "Invalid authentication credentials" (session expiry)
+        const errorMessageLower = errorMessage.toLowerCase();
+        const isInvalidAuth = errorMessageLower.includes('invalid authentication credentials') ||
+                            (response.status === 401 && errorMessageLower.includes('invalid'));
+        
+        if (isInvalidAuth && typeof window !== 'undefined') {
+          // Clear tokens and redirect to login
+          this.clearAuthTokens();
+          this.clearStoredUser();
+          window.location.href = '/';
+          throw new Error('Session expired. Please sign in again.');
         }
         
         // Add status code to error message for debugging
@@ -492,9 +507,30 @@ class AuthService {
     return this.request<APIKeyResponse[]>('/api-keys');
   }
 
+  async listAllApiKeys(): Promise<AdminAPIKeyWithUserResponse[]> {
+    return this.request<AdminAPIKeyWithUserResponse[]>('/api-keys/all', {
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
+    });
+  }
+
   async revokeApiKey(keyId: number): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/api-keys/${keyId}`, {
       method: 'DELETE',
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
+    });
+  }
+
+  async updateApiKey(keyId: number, updateData: APIKeyUpdate): Promise<APIKeyResponse> {
+    return this.request<APIKeyResponse>(`/api-keys/${keyId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updateData),
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
     });
   }
 
