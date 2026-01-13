@@ -1067,22 +1067,30 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
             )
 
         # Convert model SQLAlchemy → request format
-        model_payload = ModelCreateRequest(
-            modelId=model.model_id,
-            version=model.version,
-            submittedOn=model.submitted_on,
-            updatedOn=model.updated_on,
-            name=model.name,
-            description=model.description,
-            refUrl=model.ref_url,
-            task=model.task,
-            languages=model.languages,
-            license=model.license,
-            domain=model.domain,
-            inferenceEndPoint=model.inference_endpoint,
-            benchmarks=model.benchmarks,
-            submitter=model.submitter,
-        )
+        # Preserve all fields from inference_endpoint JSONB, including model_name and endpoint
+        # Use model_dump_json and then parse back to preserve all fields including extras
+        inference_endpoint_dict = dict(model.inference_endpoint) if model.inference_endpoint else {}
+        
+        # Create the model payload, but we'll override inferenceEndPoint after to preserve all fields
+        model_payload_dict = {
+            "modelId": model.model_id,
+            "version": model.version,
+            "submittedOn": model.submitted_on,
+            "updatedOn": model.updated_on,
+            "name": model.name,
+            "description": model.description,
+            "refUrl": model.ref_url,
+            "task": model.task,
+            "languages": model.languages,
+            "license": model.license,
+            "domain": model.domain,
+            "inferenceEndPoint": inference_endpoint_dict,  # Use raw dict to preserve all fields
+            "benchmarks": model.benchmarks,
+            "submitter": model.submitter,
+        }
+        
+        # Create ModelCreateRequest using model_validate to allow extra fields
+        model_payload = ModelCreateRequest.model_validate(model_payload_dict)
         # 3. API Key + Usage — COMMENTED OUT FOR NOW
         # api_keys = []
         # total_usage = 0
@@ -1127,8 +1135,23 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
             key_usage=api_keys,
             total_usage=total_usage
         )
-
-        return response
+        
+        # Manually preserve inferenceEndPoint extra fields (model_name, endpoint) that Pydantic might drop
+        # Convert response to dict, update inferenceEndPoint, then return dict
+        response_dict = response.model_dump(mode='json', exclude_unset=False)
+        if 'model' in response_dict and 'inferenceEndPoint' in response_dict['model']:
+            # Merge original inference_endpoint dict to preserve all fields
+            original_iep = dict(model.inference_endpoint) if model.inference_endpoint else {}
+            current_iep = response_dict['model']['inferenceEndPoint']
+            logger.info(f"Original IEP from DB: {original_iep}")
+            logger.info(f"Current IEP from Pydantic: {current_iep}")
+            # Preserve all fields from original (model_name, endpoint, etc.)
+            # Overwrite current_iep with original to ensure all fields are preserved
+            merged_iep = {**current_iep, **original_iep}  # Original takes precedence for extra fields
+            response_dict['model']['inferenceEndPoint'] = merged_iep
+            logger.info(f"Merged IEP: {merged_iep}, model_name: {merged_iep.get('model_name')}")
+        
+        return response_dict
 
     except Exception as e:
         logger.exception(f"Error fetching service {service_id} details from DB.")

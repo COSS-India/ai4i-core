@@ -3,16 +3,48 @@ Pipeline Service - Main orchestration logic
 
 Handles the execution of multi-task AI pipelines (e.g., Speech-to-Speech translation).
 Adapted from Dhruva-Platform-2 inference_service.py run_pipeline_inference method.
+Includes distributed tracing for end-to-end observability.
 """
 
 import logging
+import json
+import re
 from copy import deepcopy
 from typing import Dict, Any, List, Optional
 from models.pipeline_request import PipelineInferenceRequest, TaskType, PipelineTask
 from models.pipeline_response import PipelineInferenceResponse, PipelineTaskOutput
 from utils.http_client import ServiceClient
+from middleware.exceptions import (
+    PipelineTaskError, 
+    ServiceUnavailableError, 
+    ModelNotFoundError,
+    PipelineError
+)
+
+# Import OpenTelemetry for manual span creation
+try:
+    from opentelemetry import trace
+    from opentelemetry.trace import Status, StatusCode
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
+    logging.warning("OpenTelemetry not available, manual tracing disabled")
+    # Create dummy classes for when tracing is not available
+    class Status:
+        def __init__(self, code, description=None):
+            self.code = code
+            self.description = description
+    class StatusCode:
+        ERROR = "ERROR"
+        OK = "OK"
 
 logger = logging.getLogger(__name__)
+
+# Get tracer for manual span creation
+if TRACING_AVAILABLE:
+    tracer = trace.get_tracer(__name__)
+else:
+    tracer = None
 
 
 class PipelineService:
@@ -42,21 +74,85 @@ class PipelineService:
         results = []
         previous_output = request.inputData.copy()
         
-        logger.info(f"Starting pipeline with {len(request.pipelineTasks)} tasks")
+        logger.info(f"🚀 Starting pipeline with {len(request.pipelineTasks)} tasks")
         
+        # Create a parent span for the entire pipeline if tracing is available
+        if TRACING_AVAILABLE and tracer:
+            # Create readable task names for the span
+            task_names = []
+            for t in request.pipelineTasks:
+                task_name = str(t.taskType).upper()
+                if task_name == "TRANSLATION":
+                    task_name = "NMT"
+                task_names.append(task_name)
+            
+            with tracer.start_as_current_span(
+                f"Pipeline: {' → '.join(task_names)}",
+                attributes={
+                    "pipeline.task_count": len(request.pipelineTasks),
+                    "pipeline.tasks": ",".join(task_names)
+                }
+            ):
+                return await self._execute_pipeline_tasks(
+                    request, results, previous_output, jwt_token, api_key
+                )
+        else:
+            return await self._execute_pipeline_tasks(
+                request, results, previous_output, jwt_token, api_key
+            )
+    
+    async def _execute_pipeline_tasks(
+        self,
+        request: PipelineInferenceRequest,
+        results: List[PipelineTaskOutput],
+        previous_output: Dict[str, Any],
+        jwt_token: Optional[str],
+        api_key: Optional[str]
+    ) -> PipelineInferenceResponse:
+        """Execute all pipeline tasks in sequence."""
         # Execute each task in sequence
         for task_idx, pipeline_task in enumerate(request.pipelineTasks, start=1):
-            logger.info(f"Executing task {task_idx}/{len(request.pipelineTasks)}: {pipeline_task.taskType}")
+            logger.info(f"📋 Executing task {task_idx}/{len(request.pipelineTasks)}: {pipeline_task.taskType}")
+            
+            # Create a span for each task if tracing is available
+            # Use clear names like "ASR Task", "NMT Task", "TTS Task"
+            task_type_name = str(pipeline_task.taskType).upper()
+            if task_type_name == "TRANSLATION":
+                task_type_name = "NMT"
+            span_name = f"{task_type_name} Task"
             
             try:
-                # Call the appropriate service based on task type
-                task_output = await self._execute_task(
-                    task=pipeline_task,
-                    input_data=previous_output,
-                    jwt_token=jwt_token,
-                    api_key=api_key,
-                    control_config=request.controlConfig
-                )
+                if TRACING_AVAILABLE and tracer:
+                    with tracer.start_as_current_span(
+                        span_name,
+                        attributes={
+                            "task.index": task_idx,
+                            "task.type": str(pipeline_task.taskType),
+                            "task.service_id": pipeline_task.config.serviceId,
+                            "task.language": str(pipeline_task.config.language.dict()) if pipeline_task.config.language else "unknown"
+                        }
+                    ) as span:
+                        # Call the appropriate service based on task type
+                        task_output = await self._execute_task(
+                            task=pipeline_task,
+                            input_data=previous_output,
+                            jwt_token=jwt_token,
+                            api_key=api_key,
+                            control_config=request.controlConfig
+                        )
+                        
+                        # Add success attributes to span
+                        span.set_attribute("task.status", "success")
+                        span.set_attribute("task.output_count", len(task_output.output) if task_output.output else 0)
+                else:
+                    # No tracing available, execute directly
+                    task_output = await self._execute_task(
+                        task=pipeline_task,
+                        input_data=previous_output,
+                        jwt_token=jwt_token,
+                        api_key=api_key,
+                        control_config=request.controlConfig
+                    )
                 
                 # Store result
                 results.append(task_output)
@@ -67,15 +163,175 @@ class PipelineService:
                     output=task_output
                 )
                 
-                logger.info(f"Task {task_idx} completed successfully")
+                logger.info(f"✅ Task {task_idx} completed successfully")
                 
             except Exception as e:
-                logger.error(f"Task {task_idx} ({pipeline_task.taskType}) failed: {e}")
-                raise RuntimeError(f"Pipeline failed at task {task_idx} ({pipeline_task.taskType}): {str(e)}") from e
+                # Parse structured error if available
+                error_info = self._parse_error(e, task_idx, pipeline_task.taskType)
+                
+                error_msg = error_info["message"]
+                error_code = error_info["code"]
+                service_error = error_info.get("service_error")
+                
+                logger.error(f"❌ Task {task_idx} ({pipeline_task.taskType}) failed: {error_msg}")
+                
+                # Record detailed error in span if tracing is available
+                if TRACING_AVAILABLE and tracer:
+                    current_span = trace.get_current_span()
+                    if current_span:
+                        current_span.set_attribute("task.status", "error")
+                        current_span.set_attribute("error", True)
+                        current_span.set_attribute("error.message", error_msg)
+                        current_span.set_attribute("error.code", error_code)
+                        current_span.set_attribute("error.type", type(e).__name__)
+                        current_span.set_attribute("task.index", task_idx)
+                        current_span.set_attribute("task.type", str(pipeline_task.taskType))
+                        current_span.set_attribute("task.service_id", pipeline_task.config.serviceId)
+                        
+                        # Add service error details if available
+                        if service_error:
+                            if "model" in service_error:
+                                current_span.set_attribute("error.model", service_error["model"])
+                            if "service" in service_error:
+                                current_span.set_attribute("error.service", service_error["service"])
+                            if "status_code" in service_error:
+                                current_span.set_attribute("error.service_status_code", service_error["status_code"])
+                        
+                        # Add error event for better visibility in Jaeger
+                        current_span.add_event("pipeline.task.failed", {
+                            "task_index": task_idx,
+                            "task_type": str(pipeline_task.taskType),
+                            "error_code": error_code,
+                            "error_message": error_msg
+                        })
+                        
+                        current_span.record_exception(e)
+                        current_span.set_status(Status(StatusCode.ERROR, error_msg))
+                
+                # Raise appropriate error type
+                if error_code == "MODEL_NOT_FOUND":
+                    raise ModelNotFoundError(
+                        message=error_msg,
+                        model_name=service_error.get("model", "unknown") if service_error else "unknown",
+                        service_name=service_error.get("service", "unknown") if service_error else "unknown"
+                    )
+                elif error_code == "SERVICE_UNAVAILABLE":
+                    raise ServiceUnavailableError(
+                        message=error_msg,
+                        service_name=service_error.get("service", "unknown") if service_error else "unknown"
+                    )
+                else:
+                    raise PipelineTaskError(
+                        message=error_msg,
+                        task_index=task_idx,
+                        task_type=str(pipeline_task.taskType),
+                        service_error=service_error,
+                        error_code=error_code
+                    )
         
-        logger.info(f"Pipeline completed successfully with {len(results)} tasks")
+        logger.info(f"✅ Pipeline completed successfully with {len(results)} tasks")
         
         return PipelineInferenceResponse(pipelineResponse=results)
+    
+    def _parse_error(self, error: Exception, task_index: int, task_type: TaskType) -> Dict[str, Any]:
+        """
+        Parse error to extract meaningful information and determine error code.
+        
+        Returns:
+            Dict with message, code, and service_error details
+        """
+        error_str = str(error)
+        error_code = "PIPELINE_TASK_ERROR"
+        service_error = {}
+        
+        # Try to parse structured error from HTTP client
+        try:
+            # Check if error message is a JSON string (from HTTP client)
+            if error_str.startswith("{") or error_str.startswith("["):
+                error_dict = json.loads(error_str)
+                if isinstance(error_dict, dict):
+                    service_name = error_dict.get("service", "unknown")
+                    status_code = error_dict.get("status_code", 500)
+                    message = error_dict.get("message", error_str)
+                    details = error_dict.get("details", {})
+                    
+                    service_error = {
+                        "service": service_name,
+                        "status_code": status_code,
+                        **details
+                    }
+                    
+                    # Extract model name from error message if present
+                    model_match = re.search(r"model[:\s]+['\"]?([^'\"]+)['\"]?", message, re.IGNORECASE)
+                    if model_match:
+                        service_error["model"] = model_match.group(1)
+                    
+                    # Determine error code based on message content
+                    message_lower = message.lower()
+                    if "not found" in message_lower or "404" in message_lower:
+                        if "model" in message_lower:
+                            error_code = "MODEL_NOT_FOUND"
+                        else:
+                            error_code = "SERVICE_NOT_FOUND"
+                    elif "timeout" in message_lower or "timed out" in message_lower:
+                        error_code = "SERVICE_TIMEOUT"
+                    elif "connection" in message_lower or "unreachable" in message_lower:
+                        error_code = "SERVICE_UNAVAILABLE"
+                    elif status_code == 503:
+                        error_code = "SERVICE_UNAVAILABLE"
+                    elif status_code == 404:
+                        error_code = "MODEL_NOT_FOUND"
+                    
+                    # Build user-friendly message
+                    if error_code == "MODEL_NOT_FOUND":
+                        model_name = service_error.get("model", "unknown")
+                        user_message = f"Model '{model_name}' not found in {service_name} service. Please verify the model name and ensure it is loaded in the Triton inference server."
+                    elif error_code == "SERVICE_UNAVAILABLE":
+                        user_message = f"{service_name} service is unavailable. The service may be down or unreachable."
+                    elif error_code == "SERVICE_TIMEOUT":
+                        user_message = f"{service_name} service request timed out. The service may be overloaded."
+                    else:
+                        user_message = f"{service_name} service error: {message}"
+                    
+                    return {
+                        "message": user_message,
+                        "code": error_code,
+                        "service_error": service_error
+                    }
+        except (json.JSONDecodeError, ValueError, KeyError):
+            # Not a structured error, parse from string
+            pass
+        
+        # Parse error message for common patterns
+        error_lower = error_str.lower()
+        
+        # Check for model not found errors
+        model_match = re.search(r"model[:\s]+['\"]?([^'\"]+)['\"]?\s+is\s+not\s+found", error_str, re.IGNORECASE)
+        if model_match:
+            model_name = model_match.group(1)
+            service_error["model"] = model_name
+            error_code = "MODEL_NOT_FOUND"
+            return {
+                "message": f"Model '{model_name}' not found. Please verify the model name and ensure it is loaded in the Triton inference server.",
+                "code": error_code,
+                "service_error": service_error
+            }
+        
+        # Check for service unavailable
+        if "connection" in error_lower or "unreachable" in error_lower or "timeout" in error_lower:
+            error_code = "SERVICE_UNAVAILABLE"
+            return {
+                "message": f"Service unavailable: {error_str}",
+                "code": error_code,
+                "service_error": service_error
+            }
+        
+        # Default: return original error message
+        return {
+            "message": f"Pipeline task failed: {error_str}",
+            "code": error_code,
+            "service_error": service_error
+        }
     
     async def _execute_task(
         self,
@@ -85,7 +341,7 @@ class PipelineService:
         api_key: Optional[str] = None,
         control_config: Optional[Dict[str, Any]] = None
     ) -> PipelineTaskOutput:
-        """Execute a single pipeline task."""
+        """Execute a single pipeline task with distributed tracing."""
         
         if task.taskType == TaskType.ASR:
             # Construct ASR request
@@ -113,17 +369,39 @@ class PipelineService:
             if control_config:
                 asr_request["controlConfig"] = control_config
             
-            logger.info(f"ASR request: {asr_request}")
+            logger.info(f"📝 ASR request constructed with {len(input_data.get('audio', []))} audio inputs")
             
-            # Call ASR service
-            response = await self.service_client.call_asr_service(asr_request, jwt_token=jwt_token, api_key=api_key)
+            # Add span attributes for ASR request
+            if TRACING_AVAILABLE:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("asr.service_id", task.config.serviceId)
+                    current_span.set_attribute("asr.audio_count", len(input_data.get("audio", [])))
             
-            return PipelineTaskOutput(
-                taskType="asr",
-                serviceId=task.config.serviceId,
-                output=response.get("output", []),
-                config=response.get("config")
-            )
+            try:
+                # Call ASR service
+                response = await self.service_client.call_asr_service(asr_request, jwt_token=jwt_token, api_key=api_key)
+                
+                # Add response attributes to span
+                if TRACING_AVAILABLE:
+                    current_span = trace.get_current_span()
+                    if current_span:
+                        current_span.set_attribute("asr.output_count", len(response.get("output", [])))
+                
+                return PipelineTaskOutput(
+                    taskType="asr",
+                    serviceId=task.config.serviceId,
+                    output=response.get("output", []),
+                    config=response.get("config")
+                )
+            except Exception as e:
+                logger.error(f"❌ ASR service call failed: {e}")
+                if TRACING_AVAILABLE:
+                    current_span = trace.get_current_span()
+                    if current_span:
+                        current_span.set_attribute("error", True)
+                        current_span.record_exception(e)
+                raise
         
         elif task.taskType == TaskType.TRANSLATION:
             # Construct NMT request
@@ -135,15 +413,39 @@ class PipelineService:
                 }
             }
             
-            # Call NMT service
-            response = await self.service_client.call_nmt_service(nmt_request, jwt_token=jwt_token, api_key=api_key)
+            logger.info(f"📝 Translation request constructed with {len(input_data.get('input', []))} text inputs")
             
-            return PipelineTaskOutput(
-                taskType="translation",
-                serviceId=task.config.serviceId,
-                output=response.get("output", []),
-                config=None
-            )
+            # Add span attributes for NMT request
+            if TRACING_AVAILABLE:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("nmt.service_id", task.config.serviceId)
+                    current_span.set_attribute("nmt.input_count", len(input_data.get("input", [])))
+            
+            try:
+                # Call NMT service
+                response = await self.service_client.call_nmt_service(nmt_request, jwt_token=jwt_token, api_key=api_key)
+                
+                # Add response attributes to span
+                if TRACING_AVAILABLE:
+                    current_span = trace.get_current_span()
+                    if current_span:
+                        current_span.set_attribute("nmt.output_count", len(response.get("output", [])))
+                
+                return PipelineTaskOutput(
+                    taskType="translation",
+                    serviceId=task.config.serviceId,
+                    output=response.get("output", []),
+                    config=None
+                )
+            except Exception as e:
+                logger.error(f"❌ NMT service call failed: {e}")
+                if TRACING_AVAILABLE:
+                    current_span = trace.get_current_span()
+                    if current_span:
+                        current_span.set_attribute("error", True)
+                        current_span.record_exception(e)
+                raise
         
         elif task.taskType == TaskType.TTS:
             # Construct TTS request
@@ -159,24 +461,55 @@ class PipelineService:
                 }
             }
             
-            logger.info(f"TTS request: {tts_request}")
+            logger.info(f"📝 TTS request constructed with {len(input_data.get('input', []))} text inputs")
             
-            # Call TTS service
-            response = await self.service_client.call_tts_service(tts_request, jwt_token=jwt_token, api_key=api_key)
+            # Add span attributes for TTS request
+            if TRACING_AVAILABLE:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("tts.service_id", task.config.serviceId)
+                    current_span.set_attribute("tts.input_count", len(input_data.get("input", [])))
+                    current_span.set_attribute("tts.gender", task.config.gender or "male")
+                    current_span.set_attribute("tts.audio_format", task.config.audioFormat or "wav")
             
-            logger.info(f"TTS response: {response}")
-            
-            # TTS service returns audio in "audio" field, map to output
-            return PipelineTaskOutput(
-                taskType="tts",
-                serviceId=task.config.serviceId,
-                output=response.get("audio", []),
-                audio=response.get("audio", []),
-                config=response.get("config")
-            )
+            try:
+                # Call TTS service
+                response = await self.service_client.call_tts_service(tts_request, jwt_token=jwt_token, api_key=api_key)
+                
+                # Add response attributes to span
+                if TRACING_AVAILABLE:
+                    current_span = trace.get_current_span()
+                    if current_span:
+                        current_span.set_attribute("tts.audio_count", len(response.get("audio", [])))
+                
+                logger.info(f"✅ TTS service returned {len(response.get('audio', []))} audio outputs")
+                
+                # TTS service returns audio in "audio" field, map to output
+                return PipelineTaskOutput(
+                    taskType="tts",
+                    serviceId=task.config.serviceId,
+                    output=response.get("audio", []),
+                    audio=response.get("audio", []),
+                    config=response.get("config")
+                )
+            except Exception as e:
+                logger.error(f"❌ TTS service call failed: {e}")
+                if TRACING_AVAILABLE:
+                    current_span = trace.get_current_span()
+                    if current_span:
+                        current_span.set_attribute("error", True)
+                        current_span.record_exception(e)
+                raise
         
         else:
-            raise ValueError(f"Unsupported task type: {task.taskType}")
+            error_msg = f"Unsupported task type: {task.taskType}"
+            logger.error(f"❌ {error_msg}")
+            if TRACING_AVAILABLE:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.message", error_msg)
+            raise ValueError(error_msg)
     
     def _transform_output_for_next_task(
         self,
@@ -197,43 +530,57 @@ class PipelineService:
         if task_type == TaskType.ASR:
             # ASR output goes to Translation input
             # Transform: output -> input, source -> source
-            logger.info(f"Transforming ASR output for next task. Output: {output_dict}")
+            logger.info(f"🔄 Transforming ASR output for next task")
             transformed = {
                 "input": []
             }
             for item in output_dict.get("output", []):
                 source_text = item.get("source", "")
                 if not source_text or not source_text.strip():
-                    logger.warning(f"Empty or missing source in ASR output: {item}")
-                    raise ValueError("ASR task produced empty transcription. Cannot proceed to translation.")
+                    error_msg = "ASR task produced empty transcription. Cannot proceed to translation."
+                    logger.error(f"❌ {error_msg}: {item}")
+                    if TRACING_AVAILABLE:
+                        current_span = trace.get_current_span()
+                        if current_span:
+                            current_span.set_attribute("error", True)
+                            current_span.set_attribute("error.message", error_msg)
+                    raise ValueError(error_msg)
                 transformed["input"].append({
                     "source": source_text
                 })
-            logger.info(f"Transformed input for translation: {transformed}")
+            logger.info(f"✅ Transformed {len(transformed['input'])} ASR outputs for translation")
             return transformed
         
         elif task_type == TaskType.TRANSLATION:
             # Translation output goes to TTS input
             # Transform: output -> input, target -> source (use translated as source for TTS)
-            logger.info(f"Transforming Translation output for next task. Output: {output_dict}")
+            logger.info(f"🔄 Transforming Translation output for next task")
             transformed = {
                 "input": []
             }
             for item in output_dict.get("output", []):
                 translated_text = item.get("target", "")
                 if not translated_text or not translated_text.strip():
-                    logger.warning(f"Empty or missing target in Translation output: {item}")
-                    raise ValueError("Translation task produced empty result. Cannot proceed to TTS.")
+                    error_msg = "Translation task produced empty result. Cannot proceed to TTS."
+                    logger.error(f"❌ {error_msg}: {item}")
+                    if TRACING_AVAILABLE:
+                        current_span = trace.get_current_span()
+                        if current_span:
+                            current_span.set_attribute("error", True)
+                            current_span.set_attribute("error.message", error_msg)
+                    raise ValueError(error_msg)
                 transformed["input"].append({
                     "source": translated_text
                 })
-            logger.info(f"Transformed input for TTS: {transformed}")
+            logger.info(f"✅ Transformed {len(transformed['input'])} translation outputs for TTS")
             return transformed
         
         elif task_type == TaskType.TTS:
             # TTS is typically the final task
             # Return as-is (or process if needed)
+            logger.info(f"🔄 TTS output passed through (final task)")
             return output_dict
         
         else:
+            logger.warning(f"⚠️ Unknown task type for transformation: {task_type}")
             return output_dict

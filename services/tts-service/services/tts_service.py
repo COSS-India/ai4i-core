@@ -20,13 +20,14 @@ from repositories.tts_repository import TTSRepository
 from services.audio_service import AudioService
 from services.text_service import TextService
 from utils.triton_client import TritonClient
+from middleware.exceptions import (
+    TritonInferenceError,
+    ModelNotFoundError,
+    ServiceUnavailableError,
+    AudioProcessingError
+)
 
 logger = logging.getLogger(__name__)
-
-
-class TritonInferenceError(Exception):
-    """Custom exception for Triton inference errors."""
-    pass
 
 
 class TTSService:

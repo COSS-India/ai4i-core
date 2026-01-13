@@ -1,9 +1,10 @@
-# Multi-stage Dockerfile for LLM Service
+# -----------------------------
+# STAGE 1 — BUILDER
+# -----------------------------
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -13,31 +14,28 @@ RUN apt-get update && apt-get install -y \
 
 # Copy requirements from build context
 COPY requirements.txt .
-
-# Install Python dependencies (NO --user)
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
-
-# ---------------- Final stage ----------------
+# -----------------------------
+# STAGE 2 — RUNTIME
+# -----------------------------
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y \    
     curl \
     libpq5 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
 RUN useradd --create-home --shell /bin/bash app
 
-# Copy installed Python packages
+# Copy Python site-packages
 COPY --from=builder /usr/local /usr/local
 
-# Copy application code
 COPY . .
 
-# Fix ownership ONLY for app files
 RUN chown -R app:app /app
 USER app
 
