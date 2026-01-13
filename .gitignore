@@ -115,4 +115,4 @@ celerybeat.pid
 dmypy.json
 
 # Pyre type checker
-.pyre/services/ocr-service/TEST_LOGGING_GUIDE.md
+.pyre/
