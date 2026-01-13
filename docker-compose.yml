@@ -297,8 +297,8 @@ services:
   # Microservices
   api-gateway-service:
     build:
-      context: ./services/api-gateway-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/api-gateway-service/Dockerfile
     container_name: ai4v-api-gateway
     ports:
       - "8080:8080"
@@ -326,8 +326,8 @@ services:
 
   auth-service:
     build:
-      context: ./services/auth-service/
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/auth-service/Dockerfile
     container_name: ai4v-auth-service
     ports:
       - "8081:8081"

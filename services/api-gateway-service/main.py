@@ -2,7 +2,12 @@
 API Gateway Service - Central entry point for all microservice requests
 """
 import os
+import sys
 from dotenv import load_dotenv
+
+# Add /app to Python path to ensure services module can be imported
+if '/app' not in sys.path:
+    sys.path.insert(0, '/app')
 
 # Load environment variables from .env file
 load_dotenv()
@@ -28,6 +33,41 @@ import redis.asyncio as redis
 import httpx
 from auth_middleware import auth_middleware
 from decimal import Decimal
+
+# Import error messages using importlib (same approach as auth_middleware)
+import importlib.util
+import os
+try:
+    from services.constants.error_messages import (
+        AUTH_FAILED,
+        AUTH_FAILED_MESSAGE
+    )
+except ImportError:
+    # Fallback: direct file import using importlib
+    error_messages_path = "/app/services/constants/error_messages.py"
+    possible_paths = [
+        error_messages_path,
+        os.path.join(os.path.dirname(__file__), "..", "services", "constants", "error_messages.py"),
+        os.path.join("/app", "services", "constants", "error_messages.py")
+    ]
+    
+    error_messages = None
+    for path in possible_paths:
+        abs_path = os.path.abspath(path)
+        if os.path.exists(abs_path):
+            spec = importlib.util.spec_from_file_location("error_messages", abs_path)
+            if spec and spec.loader:
+                error_messages = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(error_messages)
+                break
+    
+    if error_messages:
+        AUTH_FAILED = error_messages.AUTH_FAILED
+        AUTH_FAILED_MESSAGE = error_messages.AUTH_FAILED_MESSAGE
+    else:
+        # Last resort: define constants directly
+        AUTH_FAILED = "AUTH_FAILED"
+        AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -1554,7 +1594,11 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
                 json=request_body,
             )
     except httpx.RequestError:
-        raise HTTPException(status_code=503, detail="Authentication service unavailable")
+        error_detail = {
+            "code": "SERVICE_UNAVAILABLE",
+            "message": "Authentication service is temporarily unavailable. Please try again in a few minutes."
+        }
+        raise HTTPException(status_code=503, detail=error_detail)
 
     # If auth-service returns non-200, try to extract error message
     if resp.status_code != 200:
@@ -1629,7 +1673,10 @@ async def check_permission(
     if payload is None:
         raise HTTPException(
             status_code=401,
-            detail="Invalid or expired token",
+            detail={
+                "code": AUTH_FAILED,
+                "message": AUTH_FAILED_MESSAGE
+            },
             headers={"WWW-Authenticate": "Bearer"}
         )
     
@@ -1689,8 +1736,8 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
             raise HTTPException(
                 status_code=401,
                 detail={
-                    "error": "AUTHENTICATION_REQUIRED",
-                    "message": "Authorization token is required."
+                    "code": AUTH_FAILED,
+                    "message": AUTH_FAILED_MESSAGE
                 },
                 headers={"WWW-Authenticate": "Bearer"}
             )
@@ -1701,8 +1748,8 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
             raise HTTPException(
                 status_code=401,
                 detail={
-                    "error": "AUTHENTICATION_REQUIRED",
-                    "message": "Invalid or expired token"
+                    "code": AUTH_FAILED,
+                    "message": AUTH_FAILED_MESSAGE
                 },
                 headers={"WWW-Authenticate": "Bearer"}
             )
@@ -1752,7 +1799,10 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
         if payload is None:
             raise HTTPException(
                 status_code=401,
-                detail="Invalid or expired token",
+                detail={
+                    "code": AUTH_FAILED,
+                    "message": AUTH_FAILED_MESSAGE
+                },
                 headers={"WWW-Authenticate": "Bearer"}
             )
 
@@ -4087,7 +4137,11 @@ async def proxy_to_auth_service(request: Request, path: str):
         
     except Exception as e:
         logger.error(f"Error proxying to auth service: {e}")
-        raise HTTPException(status_code=500, detail="Auth service temporarily unavailable")
+        error_detail = {
+            "code": "SERVICE_UNAVAILABLE",
+            "message": "Auth service is temporarily unavailable. Please try again in a few minutes."
+        }
+        raise HTTPException(status_code=503, detail=error_detail)
 
 # Helper function to proxy requests to any service
 async def proxy_to_service(request: Optional[Request], path: str, service_name: str, method: str = "GET", body: Optional[bytes] = None, headers: Optional[Dict[str, str]] = None):
@@ -4154,7 +4208,12 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             )
         except Exception as e:
             logger.error(f"Error proxying to {service_name}: {e}")
-            raise HTTPException(status_code=500, detail=f"{service_name} temporarily unavailable")
+            # Return error in the format expected by clients
+            error_detail = {
+                "code": "SERVICE_UNAVAILABLE",
+                "message": f"{service_name.replace('-', ' ').title()} is temporarily unavailable. Please try again in a few minutes."
+            }
+            raise HTTPException(status_code=503, detail=error_detail)
         
         # Return response
         return Response(
@@ -4166,7 +4225,12 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         
     except Exception as e:
         logger.error(f"Error proxying to {service_name}: {e}")
-        raise HTTPException(status_code=500, detail=f"{service_name} temporarily unavailable")
+        # Return error in the format expected by clients
+        error_detail = {
+            "code": "SERVICE_UNAVAILABLE",
+            "message": f"{service_name.replace('-', ' ').title()} is temporarily unavailable. Please try again in a few minutes."
+        }
+        raise HTTPException(status_code=503, detail=error_detail)
 
 
 # Helper function to proxy requests with explicit query parameters
@@ -4240,7 +4304,11 @@ async def proxy_to_service_with_params(
         
     except Exception as e:
         logger.error(f"Error proxying to {service_name}: {e}")
-        raise HTTPException(status_code=500, detail=f"{service_name} temporarily unavailable")
+        error_detail = {
+            "code": "SERVICE_UNAVAILABLE",
+            "message": f"{service_name.replace('-', ' ').title()} is temporarily unavailable. Please try again in a few minutes."
+        }
+        raise HTTPException(status_code=503, detail=error_detail)
 
 @app.api_route("/{path:path}", methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'])
 async def proxy_request(request: Request, path: str):
@@ -4332,7 +4400,11 @@ async def proxy_request(request: Request, path: str):
         if 'instance_id' in locals() and 'service_name' in locals():
             await service_registry.update_health(service_name, instance_id, False, response_time)
         
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+        error_detail = {
+            "code": "SERVICE_UNAVAILABLE",
+            "message": "Service is temporarily unavailable. Please try again in a few minutes."
+        }
+        raise HTTPException(status_code=503, detail=error_detail)
         
     except Exception as e:
         response_time = time.time() - start_time
