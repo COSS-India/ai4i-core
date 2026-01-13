@@ -378,13 +378,13 @@ services:
       microservices-network:
         aliases:
           - config-service
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    restart: unless-stopped
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 30s
+    # restart: unless-stopped
 
   metrics-service:
     build:
@@ -658,8 +658,8 @@ services:
 
   llm-service:
     build:
-      context: .
-      dockerfile: ./services/llm-service/Dockerfile
+      context: ./services/llm-service
+      dockerfile: Dockerfile
     container_name: ai4v-llm-service
     ports:
       - "8093:8090"
@@ -688,8 +688,8 @@ services:
 
   pipeline-service:
     build:
-      context: .
-      dockerfile: ./services/pipeline-service/Dockerfile
+      context: ./services/pipeline-service
+      dockerfile: Dockerfile
     container_name: ai4v-pipeline-service
     ports:
       - "8092:8090"

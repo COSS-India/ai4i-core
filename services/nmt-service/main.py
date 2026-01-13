@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 # Environment variables - Support both REDIS_PORT and REDIS_PORT_NUMBER for backward compatibility
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
 DATABASE_URL = os.getenv( "DATABASE_URL")
 # NOTE: Triton endpoint/model MUST come from Model Management for inference.
