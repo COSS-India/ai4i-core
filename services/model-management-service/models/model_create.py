@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel , field_validator
+from pydantic import BaseModel , field_validator, ConfigDict
 from models.type_enum import TaskTypeEnum
 from models.db_models import VersionStatus
 
@@ -17,6 +17,12 @@ class Schema(BaseModel):
 
 class InferenceEndPoint(BaseModel):
     schema: Schema
+    endpoint: Optional[str] = None
+    model_name: Optional[str] = None
+    modelName: Optional[str] = None  # Alternative field name
+    model: Optional[str] = None  # Alternative field name
+    
+    model_config = ConfigDict(extra="allow")  # Allow extra fields that aren't defined
 
 
 class Score(BaseModel):
