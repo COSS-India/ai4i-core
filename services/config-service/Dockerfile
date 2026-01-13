@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements from service directory
-COPY requirements.txt .
+COPY services/config-service/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --user -r requirements.txt
@@ -37,7 +37,7 @@ COPY --from=builder /root/.local /home/app/.local
 ENV PATH=/home/app/.local/bin:$PATH
 
 # Copy application code
-COPY . .
+COPY services/config-service .
 
 # Fix ownership for app files and Python packages
 RUN chown -R app:app /app /home/app/.local
