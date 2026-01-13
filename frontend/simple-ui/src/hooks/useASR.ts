@@ -7,6 +7,7 @@ import { performASRInference, transcribeAudio } from '../services/asrService';
 import { getWordCount, convertWebmToWav } from '../utils/helpers';
 import { UseASRReturn, ASRInferenceRequest } from '../types/asr';
 import { DEFAULT_ASR_CONFIG, MAX_RECORDING_DURATION } from '../config/constants';
+import { extractErrorInfo } from '../utils/errorHandler';
 
 // MediaRecorder is a standard Web API, no need to extend Window
 
@@ -186,39 +187,8 @@ export const useASR = (): UseASRReturn => {
       if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current === languageRef.current) {
         console.log('✓ Error accepted - languages match, showing error');
         
-        // Prioritize API error message from response
-        let errorMessage = 'Failed to process audio. Please try again.';
-        let errorTitle = 'ASR Error';
-        
-        // Check for API error message first (from detail.message or detail.error)
-        if (error?.response?.data?.detail?.message) {
-          errorMessage = error.response.data.detail.message;
-          // Use error code for title if available
-          if (error.response.data.detail.error) {
-            errorTitle = error.response.data.detail.error;
-          } else if (error.response.data.detail.code) {
-            errorTitle = error.response.data.detail.code;
-          }
-        } else if (error?.response?.data?.message) {
-          errorMessage = error.response.data.message;
-        } else if (error?.response?.data?.detail) {
-          // Handle case where detail is a string
-          if (typeof error.response.data.detail === 'string') {
-            errorMessage = error.response.data.detail;
-          }
-        } else if (error?.response?.status === 401 || error?.status === 401 || error?.message?.includes('401')) {
-          errorTitle = 'Authentication Failed';
-          // Check if it's an API key issue
-          if (error?.message?.includes('API key') || error?.message?.includes('api key')) {
-            errorMessage = 'API key is missing or invalid. Please set a valid API key in your profile.';
-          } else if (error?.message?.includes('token') || error?.message?.includes('Token')) {
-            errorMessage = 'Your session has expired. Please sign in again.';
-          } else {
-            errorMessage = 'Authentication failed. Please check your API key and login status, then try again.';
-          }
-        } else if (error?.message) {
-          errorMessage = error.message;
-        }
+        // Use centralized error handler
+        const { title: errorTitle, message: errorMessage } = extractErrorInfo(error);
         
         setError(errorMessage);
         setFetching(false);
