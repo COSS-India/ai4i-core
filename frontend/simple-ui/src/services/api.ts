@@ -448,14 +448,16 @@ apiClient.interceptors.response.use(
                 // Ignore parsing errors
               }
               
-              // Check if error indicates token expiration
+              // Check if error indicates token expiration or invalid credentials
               const errorMessageLower = errorMessage.toLowerCase();
+              const isInvalidAuthCredentials = errorMessageLower.includes('invalid authentication credentials');
               const isTokenExpired = errorMessageLower.includes('expired') ||
                                    errorMessageLower.includes('token expired') ||
                                    errorMessageLower.includes('invalid token') ||
                                    errorMessageLower.includes('token invalid') ||
                                    errorMessageLower.includes('jwt expired') ||
-                                   errorMessageLower.includes('access token expired');
+                                   errorMessageLower.includes('access token expired') ||
+                                   isInvalidAuthCredentials;
               
               // Log detailed error information
               const jwtToken = getJwtToken();
@@ -465,12 +467,26 @@ apiClient.interceptors.response.use(
                 url,
                 errorMessage,
                 isTokenExpired,
+                isInvalidAuthCredentials,
                 hasJWT: !!jwtToken,
                 hasAPIKey: !!apiKey,
                 jwtLength: jwtToken?.length || 0,
                 apiKeyLength: apiKey?.length || 0,
                 responseData: data,
               });
+              
+              // If invalid authentication credentials, redirect immediately without trying to refresh
+              if (isInvalidAuthCredentials) {
+                console.warn(`Invalid authentication credentials for ${endpointType} endpoint - redirecting to sign-in`);
+                const { default: authService } = await import('./authService');
+                authService.clearAuthTokens();
+                authService.clearStoredUser();
+                
+                if (typeof window !== 'undefined') {
+                  window.location.href = '/';
+                }
+                return Promise.reject(new Error('Session expired. Please sign in again.'));
+              }
               
               // Try to refresh token if it exists and we haven't retried yet
               if (jwtToken && !originalRequest._retry) {
@@ -500,8 +516,8 @@ apiClient.interceptors.response.use(
                                                       refreshErrorMsg.includes('unauthorized');
                   
                   if (refreshFailedDueToExpiration || isTokenExpired) {
-                    // Token expired - redirect to sign-in page
-                    console.warn(`Token expired for ${endpointType} endpoint - redirecting to sign-in`);
+                    // Token expired or invalid credentials - redirect to sign-in page
+                    console.warn(`Authentication failed for ${endpointType} endpoint - redirecting to sign-in`);
                     const { default: authService } = await import('./authService');
                     authService.clearAuthTokens();
                     authService.clearStoredUser();
@@ -515,9 +531,9 @@ apiClient.interceptors.response.use(
                     console.warn(`Token refresh failed for ${endpointType} endpoint:`, refreshError);
                   }
                 }
-              } else if (isTokenExpired && !jwtToken) {
-                // Token expired and no token available - redirect to sign-in
-                console.warn(`Token expired and no token available for ${endpointType} endpoint - redirecting to sign-in`);
+              } else if (isTokenExpired) {
+                // Token expired or invalid credentials - redirect to sign-in
+                console.warn(`Authentication failed for ${endpointType} endpoint - redirecting to sign-in`);
                 const { default: authService } = await import('./authService');
                 authService.clearAuthTokens();
                 authService.clearStoredUser();
@@ -566,7 +582,8 @@ apiClient.interceptors.response.use(
                                    errorMessageLower.includes('invalid token') ||
                                    errorMessageLower.includes('token invalid') ||
                                    errorMessageLower.includes('jwt expired') ||
-                                   errorMessageLower.includes('access token expired');
+                                   errorMessageLower.includes('access token expired') ||
+                                   errorMessageLower.includes('invalid authentication credentials');
               
               if (!originalRequest._retry) {
                 originalRequest._retry = true;
