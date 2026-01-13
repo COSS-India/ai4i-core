@@ -13,6 +13,8 @@ COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+# Copy constants folder
+COPY services/constants /app/services/constants
 
 # Copy service requirements
 COPY services/nmt-service/requirements.txt .
@@ -49,6 +51,8 @@ COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observab
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
+# Copy constants folder
+COPY services/constants /app/services/constants
 
 # App code (repo-root path)
 COPY services/nmt-service .

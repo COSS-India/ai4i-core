@@ -21,8 +21,11 @@ from services.text_service import TextService
 from utils.triton_client import TritonClient
 from utils.auth_utils import extract_auth_headers
 from utils.validation_utils import (
-    validate_language_pair, validate_service_id, validate_batch_size,
-    InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError
+    validate_language_pair, validate_service_id, validate_batch_size, validate_text_input,
+    InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError,
+    InvalidLanguageCodeError,
+    NoTextInputError, TextTooShortError, TextTooLongError, InvalidCharactersError,
+    EmptyInputError, SameLanguageError, LanguagePairNotSupportedError
 )
 from middleware.auth_provider import AuthProvider
 from middleware.exceptions import (
@@ -33,6 +36,33 @@ from middleware.exceptions import (
     ServiceUnavailableError,
     TextProcessingError,
     ErrorDetail
+)
+
+from services.constants.error_messages import (
+    NO_TEXT_INPUT,
+    NO_TEXT_INPUT_NMT_MESSAGE,
+    TEXT_TOO_SHORT,
+    TEXT_TOO_SHORT_NMT_MESSAGE,
+    TEXT_TOO_LONG,
+    TEXT_TOO_LONG_NMT_MESSAGE,
+    INVALID_CHARACTERS,
+    INVALID_CHARACTERS_NMT_MESSAGE,
+    EMPTY_INPUT,
+    EMPTY_INPUT_NMT_MESSAGE,
+    SAME_LANGUAGE_ERROR,
+    SAME_LANGUAGE_ERROR_MESSAGE,
+    LANGUAGE_PAIR_NOT_SUPPORTED,
+    LANGUAGE_PAIR_NOT_SUPPORTED_MESSAGE,
+    SERVICE_UNAVAILABLE,
+    SERVICE_UNAVAILABLE_NMT_MESSAGE,
+    TRANSLATION_FAILED,
+    TRANSLATION_FAILED_MESSAGE,
+    MODEL_UNAVAILABLE,
+    MODEL_UNAVAILABLE_NMT_MESSAGE,
+    INVALID_REQUEST,
+    INVALID_REQUEST_NMT_MESSAGE,
+    INTERNAL_SERVER_ERROR,
+    INTERNAL_SERVER_ERROR_MESSAGE
 )
 
 logger = logging.getLogger(__name__)
@@ -160,10 +190,6 @@ async def run_inference(
     """
     # Create a span for the entire inference operation
     # This will be a child of the FastAPI auto-instrumented span
-    if not tracer:
-        # Fallback if tracing not available
-        return await _run_nmt_inference_impl(request, http_request, nmt_service)
-    
     with tracer.start_as_current_span("nmt.inference") as span:
         try:
             # Extract auth context from request.state (if middleware is configured)
@@ -217,14 +243,8 @@ async def run_inference(
                 session_id,
             )
 
-            # Run inference
-            response = await nmt_service.run_inference(
-                request=request,
-                user_id=user_id,
-                api_key_id=api_key_id,
-                session_id=session_id,
-                auth_headers=extract_auth_headers(http_request)
-            )
+            # Delegate to internal implementation that includes validation and standardized error mapping
+            response = await _run_nmt_inference_internal(request, http_request, nmt_service)
             
             # Add response metadata
             span.set_attribute("nmt.output_count", len(response.output))
@@ -247,39 +267,12 @@ async def run_inference(
             logger.info("NMT inference completed successfully")
             return response
 
-        except (InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError) as exc:
-            span.set_attribute("error", True)
-            span.set_attribute("error.type", type(exc).__name__)
-            span.set_attribute("error.message", str(exc))
-            span.set_attribute("http.status_code", 400)
-            span.add_event("nmt.inference.failed", {
-                "error_type": type(exc).__name__,
-                "error_message": str(exc)
-            })
-            span.set_status(Status(StatusCode.ERROR, str(exc)))
-            span.record_exception(exc)
-            logger.warning("Validation error in NMT inference: %s", exc)
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as exc:
-            span.set_attribute("error", True)
-            span.set_attribute("error.type", type(exc).__name__)
-            span.set_attribute("error.message", str(exc))
-            span.set_attribute("http.status_code", getattr(exc, 'status_code', 503))
-            span.add_event("nmt.inference.failed", {
-                "error_type": type(exc).__name__,
-                "error_message": str(exc)
-            })
-            span.set_status(Status(StatusCode.ERROR, str(exc)))
-            span.record_exception(exc)
-            # Re-raise service-specific errors (they will be handled by error handler middleware)
-            raise
-
         except Exception as exc:
+            # Record error details in span and re-raise for middleware to handle
             span.set_attribute("error", True)
             span.set_attribute("error.type", type(exc).__name__)
             span.set_attribute("error.message", str(exc))
-            span.set_attribute("http.status_code", 500)
+            span.set_attribute("http.status_code", getattr(exc, "status_code", 500))
             span.add_event("nmt.inference.failed", {
                 "error_type": type(exc).__name__,
                 "error_message": str(exc)
@@ -287,59 +280,137 @@ async def run_inference(
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
             logger.error("NMT inference failed: %s", exc, exc_info=True)
-            
-            # Extract context from request state for better error messages
-            service_id = getattr(http_request.state, "service_id", None)
-            triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
-            model_name = getattr(http_request.state, "triton_model_name", None)
-            
-            # Return appropriate error based on exception type
-            if "Triton" in str(exc) or "triton" in str(exc).lower():
-                error_detail = f"Triton inference failed for serviceId '{service_id}'"
-                if triton_endpoint and model_name:
-                    error_detail += f" at endpoint '{triton_endpoint}' with model '{model_name}': {str(exc)}. "
-                    error_detail += "Please verify the model is registered in Model Management and the Triton server is accessible."
-                elif service_id:
-                    error_detail += f": {str(exc)}. Please verify the service is registered in Model Management."
-                else:
-                    error_detail += f": {str(exc)}"
-                raise HTTPException(status_code=503, detail=error_detail) from exc
-            else:
-                raise HTTPException(status_code=500, detail=f"NMT inference failed: {str(exc)}") from exc
+            raise
 
 
-async def _run_nmt_inference_impl(
-    request: NMTInferenceRequest,
-    http_request: Request,
-    nmt_service: NMTService,
-) -> NMTInferenceResponse:
-    """Fallback implementation when tracing is not available."""
-    # Validate request
-    validate_service_id(request.config.serviceId)
-    validate_language_pair(
-        request.config.language.sourceLanguage,
-        request.config.language.targetLanguage
-    )
-    validate_batch_size(len(request.input))
+async def _run_nmt_inference_internal(request: NMTInferenceRequest, http_request: Request, nmt_service: NMTService) -> NMTInferenceResponse:
+    """Internal NMT inference logic."""
+    try:
+        # Validate request
+        validate_service_id(request.config.serviceId)
+        validate_language_pair(
+            request.config.language.sourceLanguage,
+            request.config.language.targetLanguage
+        )
+        validate_batch_size(len(request.input))
+        
+        # Validate each text input
+        for text_input in request.input:
+            validate_text_input(text_input.source)
+        
+        # Extract auth context from request.state
+        user_id = getattr(http_request.state, 'user_id', None)
+        api_key_id = getattr(http_request.state, 'api_key_id', None)
+        session_id = getattr(http_request.state, 'session_id', None)
+        
+        # Extract auth headers from incoming request to forward to model management service
+        auth_headers = extract_auth_headers(http_request)
+        
+        # Log incoming request
+        logger.info(f"Processing NMT inference request with {len(request.input)} texts")
+        
+        # Run inference
+        response = await nmt_service.run_inference(
+            request=request,
+            user_id=user_id,
+            api_key_id=api_key_id,
+            session_id=session_id,
+            auth_headers=auth_headers
+        )
+        
+        logger.info(f"NMT inference completed successfully")
+        return response
+        
+    except (NoTextInputError, EmptyInputError) as e:
+        logger.warning(f"Text input error in NMT inference: {e}")
+        error_code = NO_TEXT_INPUT if isinstance(e, NoTextInputError) else EMPTY_INPUT
+        error_message = NO_TEXT_INPUT_NMT_MESSAGE if isinstance(e, NoTextInputError) else EMPTY_INPUT_NMT_MESSAGE
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorDetail(code=error_code, message=error_message).dict()
+        )
+    except TextTooShortError:
+        logger.warning("Text too short in NMT inference")
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorDetail(code=TEXT_TOO_SHORT, message=TEXT_TOO_SHORT_NMT_MESSAGE).dict()
+        )
+    except TextTooLongError:
+        logger.warning("Text too long in NMT inference")
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorDetail(code=TEXT_TOO_LONG, message=TEXT_TOO_LONG_NMT_MESSAGE).dict()
+        )
+    except InvalidCharactersError:
+        logger.warning("Invalid characters in NMT inference")
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorDetail(code=INVALID_CHARACTERS, message=INVALID_CHARACTERS_NMT_MESSAGE).dict()
+        )
+    except SameLanguageError:
+        logger.warning("Same source and target language in NMT inference")
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorDetail(code=SAME_LANGUAGE_ERROR, message=SAME_LANGUAGE_ERROR_MESSAGE).dict()
+        )
+    except InvalidLanguageCodeError:
+        logger.warning("Invalid or unsupported language code in NMT inference")
+        source_lang = request.config.language.sourceLanguage
+        target_lang = request.config.language.targetLanguage
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorDetail(
+                code=LANGUAGE_PAIR_NOT_SUPPORTED,
+                message=LANGUAGE_PAIR_NOT_SUPPORTED_MESSAGE.format(source=source_lang, target=target_lang)
+            ).dict()
+        )
+    except LanguagePairNotSupportedError:
+        logger.warning("Language pair not supported in NMT inference")
+        source_lang = request.config.language.sourceLanguage
+        target_lang = request.config.language.targetLanguage
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorDetail(
+                code=LANGUAGE_PAIR_NOT_SUPPORTED,
+                message=LANGUAGE_PAIR_NOT_SUPPORTED_MESSAGE.format(source=source_lang, target=target_lang)
+            ).dict()
+        )
+    except (InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError) as e:
+        logger.warning(f"Validation error: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorDetail(code=INVALID_REQUEST, message=INVALID_REQUEST_NMT_MESSAGE).dict()
+        )
     
-    user_id = getattr(http_request.state, "user_id", None)
-    api_key_id = getattr(http_request.state, "api_key_id", None)
-    session_id = getattr(http_request.state, "session_id", None)
-
-    logger.info(
-        "Processing NMT inference request with %d text input(s), user_id=%s api_key_id=%s session_id=%s",
-        len(request.input),
-        user_id,
-        api_key_id,
-        session_id,
-    )
-
-    response = await nmt_service.run_inference(
-        request=request,
-        user_id=user_id,
-        api_key_id=api_key_id,
-        session_id=session_id,
-        auth_headers=extract_auth_headers(http_request)
-    )
-    logger.info("NMT inference completed successfully")
-    return response
+    except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as e:
+        # Re-raise service-specific errors (they will be handled by error handler middleware)
+        raise
+    
+    except Exception as e:
+        logger.error(f"NMT inference failed: {e}", exc_info=True)
+        
+        # Extract context from request state for better error messages
+        service_id = getattr(http_request.state, "service_id", None)
+        triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+        model_name = getattr(http_request.state, "triton_model_name", None)
+        
+        # Return appropriate error based on exception type
+        from services.nmt_service import TritonInferenceError
+        if "Triton" in str(e) or "triton" in str(e).lower() or isinstance(e, TritonInferenceError):
+            error_code = MODEL_UNAVAILABLE if model_name else SERVICE_UNAVAILABLE
+            error_message = MODEL_UNAVAILABLE_NMT_MESSAGE if model_name else SERVICE_UNAVAILABLE_NMT_MESSAGE
+            raise HTTPException(
+                status_code=503,
+                detail=ErrorDetail(code=error_code, message=error_message).dict()
+            )
+        elif "translation" in str(e).lower() or "failed" in str(e).lower():
+            raise HTTPException(
+                status_code=500,
+                detail=ErrorDetail(code=TRANSLATION_FAILED, message=TRANSLATION_FAILED_MESSAGE).dict()
+            )
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=ErrorDetail(code=INTERNAL_SERVER_ERROR, message=str(e) if str(e) else INTERNAL_SERVER_ERROR_MESSAGE).dict()
+            )
+ 

@@ -3,11 +3,50 @@ Authentication middleware for API Gateway
 Authentication is delegated to auth-service for centralized validation
 """
 import os
+import sys
 import logging
 from typing import Optional, Dict, Any
 from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import httpx
+
+# Import error messages - use importlib for reliable file-based import
+import importlib.util
+import os
+
+# Try regular import first
+try:
+    from services.constants.error_messages import (
+        AUTH_FAILED,
+        AUTH_FAILED_MESSAGE
+    )
+except ImportError:
+    # Fallback: direct file import using importlib (more reliable)
+    error_messages_path = "/app/services/constants/error_messages.py"
+    # Try multiple possible paths
+    possible_paths = [
+        error_messages_path,
+        os.path.join(os.path.dirname(__file__), "..", "services", "constants", "error_messages.py"),
+        os.path.join("/app", "services", "constants", "error_messages.py")
+    ]
+    
+    error_messages = None
+    for path in possible_paths:
+        abs_path = os.path.abspath(path)
+        if os.path.exists(abs_path):
+            spec = importlib.util.spec_from_file_location("error_messages", abs_path)
+            if spec and spec.loader:
+                error_messages = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(error_messages)
+                break
+    
+    if error_messages:
+        AUTH_FAILED = error_messages.AUTH_FAILED
+        AUTH_FAILED_MESSAGE = error_messages.AUTH_FAILED_MESSAGE
+    else:
+        # Last resort: define constants directly
+        AUTH_FAILED = "AUTH_FAILED"
+        AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +124,10 @@ class AuthMiddleware:
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired token",
+                detail={
+                    "code": AUTH_FAILED,
+                    "message": AUTH_FAILED_MESSAGE
+                },
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
