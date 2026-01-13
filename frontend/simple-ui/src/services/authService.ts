@@ -91,6 +91,19 @@ class AuthService {
           errorMessage = errorData.map((err: any) => err.detail || err.message || String(err)).join(', ');
         }
         
+        // Check if error is "Invalid authentication credentials" (session expiry)
+        const errorMessageLower = errorMessage.toLowerCase();
+        const isInvalidAuth = errorMessageLower.includes('invalid authentication credentials') ||
+                            (response.status === 401 && errorMessageLower.includes('invalid'));
+        
+        if (isInvalidAuth && typeof window !== 'undefined') {
+          // Clear tokens and redirect to login
+          this.clearAuthTokens();
+          this.clearStoredUser();
+          window.location.href = '/';
+          throw new Error('Session expired. Please sign in again.');
+        }
+        
         // Add status code to error message for debugging
         const error = new Error(errorMessage);
         (error as any).status = response.status;

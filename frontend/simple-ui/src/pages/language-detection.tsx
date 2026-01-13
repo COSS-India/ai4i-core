@@ -19,6 +19,7 @@ import Head from "next/head";
 import React, { useState } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import { performLanguageDetectionInference } from "../services/languageDetectionService";
+import { extractErrorInfo } from "../utils/errorHandler";
 
 const LanguageDetectionPage: React.FC = () => {
   const toast = useToast();
@@ -64,24 +65,12 @@ const LanguageDetectionPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Prioritize API error message from response
-      let errorMessage = "Failed to perform language detection";
-      
-      if (err?.response?.data?.detail?.message) {
-        errorMessage = err.response.data.detail.message;
-      } else if (err?.response?.data?.message) {
-        errorMessage = err.response.data.message;
-      } else if (err?.response?.data?.detail) {
-        if (typeof err.response.data.detail === 'string') {
-          errorMessage = err.response.data.detail;
-        }
-      } else if (err?.message) {
-        errorMessage = err.message;
-      }
+      // Use centralized error handler
+      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
       
       setError(errorMessage);
       toast({
-        title: "Error",
+        title: errorTitle,
         description: errorMessage,
         status: "error",
         duration: 5000,

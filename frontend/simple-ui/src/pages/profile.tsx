@@ -136,7 +136,7 @@ const ProfilePage: React.FC = () => {
     }
     return null;
   });
-
+  
   // API Key Management state (for Admin/Moderator)
   const [allApiKeys, setAllApiKeys] = useState<AdminAPIKeyWithUserResponse[]>([]);
   const [isLoadingAllApiKeys, setIsLoadingAllApiKeys] = useState(false);
@@ -323,10 +323,41 @@ const ProfilePage: React.FC = () => {
     const newErrors: Record<string, string> = {};
 
     if (userFormData.phone_number && userFormData.phone_number.length > 0) {
-      // Basic phone validation (allows numbers, spaces, dashes, parentheses, plus)
-      const phoneRegex = /^[\d\s\-+()]+$/;
-      if (!phoneRegex.test(userFormData.phone_number)) {
-        newErrors.phone_number = "Invalid phone number format";
+      // Indian phone number validation
+      const phoneNumber = userFormData.phone_number.trim().replace(/\s+/g, '');
+      
+      // Remove common separators for validation
+      const cleanedPhone = phoneNumber.replace(/[-\s()]/g, '');
+      
+      // Indian phone number patterns:
+      // +91XXXXXXXXXX (13 digits: +91 + 10 digits)
+      // 91XXXXXXXXXX (12 digits: 91 + 10 digits)
+      // 0XXXXXXXXXX (11 digits: 0 + 10 digits)
+      // XXXXXXXXXX (10 digits: just the number)
+      
+      let isValid = false;
+      let digits = '';
+      
+      if (cleanedPhone.startsWith('+91')) {
+        // Format: +91XXXXXXXXXX
+        digits = cleanedPhone.substring(3);
+        isValid = digits.length === 10 && /^[6-9]\d{9}$/.test(digits);
+      } else if (cleanedPhone.startsWith('91') && cleanedPhone.length === 12) {
+        // Format: 91XXXXXXXXXX
+        digits = cleanedPhone.substring(2);
+        isValid = /^[6-9]\d{9}$/.test(digits);
+      } else if (cleanedPhone.startsWith('0') && cleanedPhone.length === 11) {
+        // Format: 0XXXXXXXXXX
+        digits = cleanedPhone.substring(1);
+        isValid = /^[6-9]\d{9}$/.test(digits);
+      } else if (cleanedPhone.length === 10) {
+        // Format: XXXXXXXXXX (10 digits)
+        digits = cleanedPhone;
+        isValid = /^[6-9]\d{9}$/.test(digits);
+      }
+      
+      if (!isValid) {
+        newErrors.phone_number = "Invalid Indian phone number. Please enter a valid 10-digit mobile number (starting with 6-9) or use formats: +91XXXXXXXXXX, 91XXXXXXXXXX, 0XXXXXXXXXX, or XXXXXXXXXX";
       }
     }
 
@@ -374,18 +405,71 @@ const ProfilePage: React.FC = () => {
     }
   };
 
+  const validatePhoneNumber = (phoneNumber: string): string | null => {
+    if (!phoneNumber || phoneNumber.trim().length === 0) {
+      return null; // Empty is valid (optional field)
+    }
+    
+    const cleanedPhone = phoneNumber.trim().replace(/\s+/g, '').replace(/[-\s()]/g, '');
+    let digits = '';
+    
+    if (cleanedPhone.startsWith('+91')) {
+      digits = cleanedPhone.substring(3);
+      if (digits.length === 10 && /^[6-9]\d{9}$/.test(digits)) {
+        return null; // Valid
+      }
+    } else if (cleanedPhone.startsWith('91') && cleanedPhone.length === 12) {
+      digits = cleanedPhone.substring(2);
+      if (/^[6-9]\d{9}$/.test(digits)) {
+        return null; // Valid
+      }
+    } else if (cleanedPhone.startsWith('0') && cleanedPhone.length === 11) {
+      digits = cleanedPhone.substring(1);
+      if (/^[6-9]\d{9}$/.test(digits)) {
+        return null; // Valid
+      }
+    } else if (cleanedPhone.length === 10) {
+      digits = cleanedPhone;
+      if (/^[6-9]\d{9}$/.test(digits)) {
+        return null; // Valid
+      }
+    }
+    
+    // Only show error if user has entered something substantial (more than 3 characters)
+    if (cleanedPhone.length > 3) {
+      return "Invalid Indian phone number. Please enter a valid 10-digit mobile number (starting with 6-9) or use formats: +91XXXXXXXXXX, 91XXXXXXXXXX, 0XXXXXXXXXX, or XXXXXXXXXX";
+    }
+    
+    return null; // Don't show error for partial input
+  };
+
   const handleInputChange = (field: keyof UserUpdateRequest, value: string | Record<string, any>) => {
     setUserFormData((prev) => ({
       ...prev,
       [field]: value,
     }));
-    // Clear error for this field when user starts typing
-    if (errors[field]) {
+    
+    // Real-time validation for phone number
+    if (field === 'phone_number' && typeof value === 'string') {
+      const error = validatePhoneNumber(value);
       setErrors((prev) => {
         const newErrors = { ...prev };
-        delete newErrors[field];
+        if (error) {
+          newErrors.phone_number = error;
+        } else {
+          delete newErrors.phone_number;
+        }
         return newErrors;
       });
+    } else {
+      // Clear error for other fields when user starts typing
+      if (errors[field]) {
+        setErrors((prev) => {
+          const newErrors = { ...prev };
+          delete newErrors[field];
+          return newErrors;
+        });
+      }
     }
   };
 
@@ -830,8 +914,14 @@ const ProfilePage: React.FC = () => {
                       isReadOnly={!isEditingUser}
                       onChange={(e) => handleInputChange("phone_number", e.target.value)}
                       bg={isEditingUser ? "white" : inputReadOnlyBg}
-                      placeholder="Enter your phone number"
+                      placeholder="+91XXXXXXXXXX or XXXXXXXXXX"
+                      type="tel"
                     />
+                    {isEditingUser && !errors.phone_number && (
+                      <Text fontSize="xs" color="gray.500" mt={1}>
+                        Enter a valid Indian mobile number (10 digits starting with 6-9)
+                      </Text>
+                    )}
                     {errors.phone_number && (
                       <FormErrorMessage>{errors.phone_number}</FormErrorMessage>
                     )}
@@ -1161,9 +1251,9 @@ const ProfilePage: React.FC = () => {
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
                         <HStack justify="space-between">
-                          <Heading size="md" color="gray.700">
-                            Role-Based Access Control (RBAC)
-                          </Heading>
+                        <Heading size="md" color="gray.700">
+                          Role-Based Access Control (RBAC)
+                        </Heading>
                           {(user?.roles?.includes('MODERATOR') && !user?.roles?.includes('ADMIN') && !user?.is_superuser) && (
                             <Badge colorScheme="orange" fontSize="sm" p={2}>
                               View Only
