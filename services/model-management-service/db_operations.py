@@ -24,8 +24,8 @@ import json
 import time
 from datetime import datetime
 
-# Model versioning configuration
 MAX_ACTIVE_VERSIONS_PER_MODEL = int(os.getenv("MAX_ACTIVE_VERSIONS_PER_MODEL", "5"))
+ALLOW_DEPRECATED_MODEL_CHANGES = os.getenv("ALLOW_DEPRECATED_MODEL_CHANGES", "true").lower() == "true"
 
 
 async def is_model_version_used_by_published_service(model_id: str, version: str) -> tuple[bool, List[str]]:
@@ -340,6 +340,21 @@ async def update_model(payload: ModelUpdateRequest):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Model with ID {payload.modelId} and version {payload.version} not found."
+            )
+
+        # Check if model is DEPRECATED and updates are not allowed
+        if existing_model.version_status == VersionStatus.DEPRECATED and not ALLOW_DEPRECATED_MODEL_CHANGES:
+            logger.warning(
+                f"Cannot update model {payload.modelId} v{payload.version}: "
+                f"Model status is DEPRECATED and ALLOW_DEPRECATED_MODEL_CHANGES is false"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "kind": "DeprecatedModelUpdateNotAllowed",
+                    "message": f"Model version '{payload.modelId}' v{payload.version} cannot be modified because it is "
+                               f"DEPRECATED and ALLOW_DEPRECATED_MODEL_CHANGES is set to false."
+                }
             )
 
         # Check max active versions if changing status to ACTIVE
