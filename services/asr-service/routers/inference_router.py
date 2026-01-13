@@ -7,6 +7,9 @@ import time
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+from ai4icore_logging import get_correlation_id, get_logger
 
 from models.asr_request import ASRInferenceRequest
 from models.asr_response import ASRInferenceResponse
@@ -25,14 +28,9 @@ from utils.validation_utils import (
 from middleware.exceptions import AuthenticationError, AuthorizationError
 from middleware.auth_provider import AuthProvider
 
-# Import OpenTelemetry for manual span creation
-try:
-    from opentelemetry import trace
-    TRACING_AVAILABLE = True
-except ImportError:
-    TRACING_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+# Use service name to get the same tracer instance as main.py
+tracer = trace.get_tracer("asr-service")
 
 # Create router with authentication dependency
 inference_router = APIRouter(
@@ -130,27 +128,139 @@ async def run_inference(
 ) -> ASRInferenceResponse:
     """Run ASR inference on audio inputs."""
     start_time = time.time()
-    request_id = None
+    
+    # FastAPIInstrumentor already creates a span for the request
+    # We'll add attributes to the current span instead of creating a new one
+    # This avoids duplicate spans in Jaeger
+    current_span = trace.get_current_span()
+    span = current_span if (current_span and current_span.is_recording()) else None
+    
+    try:
+            # Extract auth context from request.state (if middleware is configured)
+            user_id = getattr(http_request.state, "user_id", None)
+            api_key_id = getattr(http_request.state, "api_key_id", None)
+            session_id = getattr(http_request.state, "session_id", None)
+            
+            # Get correlation ID for log/trace correlation
+            correlation_id = get_correlation_id(http_request) or getattr(http_request.state, "correlation_id", None)
+            
+            # Add attributes to current span if it exists (created by FastAPIInstrumentor)
+            if span:
+                if correlation_id:
+                    span.set_attribute("correlation.id", correlation_id)
+                # Add request metadata to span
+                span.set_attribute("asr.audio_count", len(request.audio))
+                span.set_attribute("asr.service_id", request.config.serviceId if request.config else "unknown")
+                span.set_attribute("asr.language", request.config.language.sourceLanguage if request.config and request.config.language else "unknown")
+                
+                # Track request size (approximate)
+                try:
+                    import json
+                    request_size = len(json.dumps(request.dict()).encode('utf-8'))
+                    span.set_attribute("http.request.size_bytes", request_size)
+                except Exception:
+                    pass
+                
+                if user_id:
+                    span.set_attribute("user.id", str(user_id))
+                if api_key_id:
+                    span.set_attribute("api_key.id", str(api_key_id))
+                if session_id:
+                    span.set_attribute("session.id", str(session_id))
+                
+                # Add span event for request start
+                span.add_event("asr.inference.started", {
+                    "audio_count": len(request.audio),
+                    "service_id": request.config.serviceId if request.config else "unknown"
+                })
 
-    # Create a descriptive span for ASR inference when tracing is enabled
-    if TRACING_AVAILABLE:
-        tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span("ASR Inference") as span:
-            span.set_attribute("service.name", "asr")
-            span.set_attribute("service.type", "asr")
-            span.set_attribute("asr.audio_count", len(request.audio))
-            try:
-                span.set_attribute("asr.service_id", request.config.serviceId)
-                span.set_attribute("asr.language", request.config.language.sourceLanguage)
-            except Exception:
-                # Config may be missing or malformed; don't fail tracing because of this
-                pass
-            return await _run_asr_inference_internal(request, http_request, asr_service, start_time)
-    else:
-        return await _run_asr_inference_internal(request, http_request, asr_service, start_time)
+            logger.info(
+                "Processing ASR inference request with %d audio input(s), user_id=%s api_key_id=%s session_id=%s",
+                len(request.audio),
+                user_id,
+                api_key_id,
+                session_id,
+            )
+
+            # Run inference
+            response = await _run_asr_inference_impl(request, http_request, asr_service, start_time)
+            
+            # Add response metadata to span if it exists
+            if span:
+                span.set_attribute("asr.output_count", len(response.output))
+                span.set_attribute("http.status_code", 200)
+                
+                # Track response size (approximate)
+                try:
+                    import json
+                    response_size = len(json.dumps(response.dict()).encode('utf-8'))
+                    span.set_attribute("http.response.size_bytes", response_size)
+                except Exception:
+                    pass
+                
+                # Add span event for successful completion
+                processing_time = time.time() - start_time
+                span.set_attribute("asr.processing_time_seconds", processing_time)
+                span.add_event("asr.inference.completed", {
+                    "output_count": len(response.output),
+                    "status": "success",
+                    "processing_time_seconds": processing_time
+                })
+                span.set_status(Status(StatusCode.OK))
+            logger.info("ASR inference completed successfully")
+            return response
+
+        except ValueError as exc:
+            if span:
+                span.set_attribute("error", True)
+                span.set_attribute("error.type", "ValueError")
+                span.set_attribute("error.message", str(exc))
+                span.set_attribute("http.status_code", 400)
+                span.add_event("asr.inference.failed", {
+                    "error_type": "ValueError",
+                    "error_message": str(exc)
+                })
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                span.record_exception(exc)
+            logger.warning("Validation error in ASR inference: %s", exc)
+            raise
+        except InvalidLanguageCodeError as exc:
+            if span:
+                span.set_attribute("error", True)
+                span.set_attribute("error.type", "InvalidLanguageCodeError")
+                span.set_attribute("error.message", str(exc))
+                span.set_attribute("http.status_code", 400)
+                span.add_event("asr.inference.failed", {
+                    "error_type": "InvalidLanguageCodeError",
+                    "error_message": str(exc)
+                })
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                span.record_exception(exc)
+            logger.warning("Language validation error in ASR inference: %s", exc)
+            raise
+        except Exception as exc:
+            if span:
+                span.set_attribute("error", True)
+                span.set_attribute("error.type", type(exc).__name__)
+                span.set_attribute("error.message", str(exc))
+                span.set_attribute("http.status_code", 500)
+                span.add_event("asr.inference.failed", {
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc)
+                })
+                span.set_status(Status(StatusCode.ERROR, str(exc)))
+                span.record_exception(exc)
+            service_id = getattr(http_request.state, "service_id", None)
+            triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+            model_name = getattr(http_request.state, "triton_model_name", None)
+            logger.error(
+                "ASR inference failed: %s (serviceId=%s, endpoint=%s, model=%s)",
+                exc, service_id, triton_endpoint, model_name, exc_info=True
+            )
+            raise
 
 
-async def _run_asr_inference_internal(
+async def _run_asr_inference_impl(
     request: ASRInferenceRequest,
     http_request: Request,
     asr_service: ASRService,
@@ -166,14 +276,6 @@ async def _run_asr_inference_internal(
         # Validate request
         await validate_request(request)
 
-        # Log request
-        logger.info(
-            "Processing ASR inference request with %d audio inputs - user_id=%s api_key_id=%s",
-            len(request.audio),
-            user_id,
-            api_key_id,
-        )
-
         # Run inference with auth context
         response = await asr_service.run_inference(
             request=request,
@@ -181,10 +283,6 @@ async def _run_asr_inference_internal(
             api_key_id=api_key_id,
             session_id=session_id,
         )
-
-        # Log completion
-        processing_time = time.time() - start_time
-        logger.info("ASR inference completed in %.2fs", processing_time)
 
         # Debug: Log response structure
         logger.info("Response contains %d transcript(s)", len(response.output))

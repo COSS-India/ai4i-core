@@ -19,14 +19,12 @@ import time
 import traceback
 
 # Import OpenTelemetry for tracing
-try:
-    from opentelemetry import trace
-    from opentelemetry.trace import Status, StatusCode
-    TRACING_AVAILABLE = True
-except ImportError:
-    TRACING_AVAILABLE = False
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+from ai4icore_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+tracer = trace.get_tracer("asr-service")
 
 
 def add_error_handlers(app: FastAPI) -> None:
@@ -35,6 +33,17 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthenticationError)
     async def authentication_error_handler(request: Request, exc: AuthenticationError):
         """Handle authentication errors."""
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("auth.operation", "reject_authentication")
+                reject_span.set_attribute("auth.rejected", True)
+                reject_span.set_attribute("error.type", "AuthenticationError")
+                reject_span.set_attribute("error.reason", "authentication_failed")
+                reject_span.set_attribute("error.message", exc.message)
+                reject_span.set_attribute("error.code", "AUTHENTICATION_ERROR")
+                reject_span.set_attribute("http.status_code", 401)
+                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+        
         error_detail = ErrorDetail(
             message=exc.message,
             code="AUTHENTICATION_ERROR",
@@ -48,6 +57,17 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthorizationError)
     async def authorization_error_handler(request: Request, exc: AuthorizationError):
         """Handle authorization errors."""
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("auth.operation", "reject_authorization")
+                reject_span.set_attribute("auth.rejected", True)
+                reject_span.set_attribute("error.type", "AuthorizationError")
+                reject_span.set_attribute("error.reason", "authorization_failed")
+                reject_span.set_attribute("error.message", exc.message)
+                reject_span.set_attribute("error.code", "AUTHORIZATION_ERROR")
+                reject_span.set_attribute("http.status_code", 403)
+                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+        
         error_detail = ErrorDetail(
             message=exc.message,
             code="AUTHORIZATION_ERROR",
@@ -76,26 +96,25 @@ def add_error_handlers(app: FastAPI) -> None:
     async def service_error_handler(request: Request, exc: ServiceError):
         """Handle service-specific errors with Jaeger tracing."""
         # Record error in Jaeger span
-        if TRACING_AVAILABLE:
-            try:
-                current_span = trace.get_current_span()
-                if current_span:
-                    current_span.set_attribute("error", True)
-                    current_span.set_attribute("error.code", exc.error_code)
-                    current_span.set_attribute("error.message", exc.message)
-                    current_span.set_attribute("error.type", type(exc).__name__)
-                    current_span.set_attribute("http.status_code", exc.status_code)
-                    
-                    if exc.model_name:
-                        current_span.set_attribute("error.model", exc.model_name)
-                    if exc.service_error:
-                        for key, value in exc.service_error.items():
-                            current_span.set_attribute(f"error.{key}", str(value))
-                    
-                    current_span.record_exception(exc)
-                    current_span.set_status(Status(StatusCode.ERROR, exc.message))
-            except Exception:
-                pass  # Don't fail if tracing fails
+        try:
+            current_span = trace.get_current_span()
+            if current_span and current_span.is_recording():
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.code", exc.error_code)
+                current_span.set_attribute("error.message", exc.message)
+                current_span.set_attribute("error.type", type(exc).__name__)
+                current_span.set_attribute("http.status_code", exc.status_code)
+                
+                if exc.model_name:
+                    current_span.set_attribute("error.model", exc.model_name)
+                if exc.service_error:
+                    for key, value in exc.service_error.items():
+                        current_span.set_attribute(f"error.{key}", str(value))
+                
+                current_span.record_exception(exc)
+                current_span.set_status(Status(StatusCode.ERROR, exc.message))
+        except Exception:
+            pass  # Don't fail if tracing fails
         
         error_detail = ErrorDetail(
             message=exc.message,
@@ -111,17 +130,16 @@ def add_error_handlers(app: FastAPI) -> None:
     async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle generic HTTP exceptions."""
         # Record error in Jaeger span
-        if TRACING_AVAILABLE:
-            try:
-                current_span = trace.get_current_span()
-                if current_span:
-                    current_span.set_attribute("error", True)
-                    current_span.set_attribute("error.code", "HTTP_ERROR")
-                    current_span.set_attribute("error.message", str(exc.detail))
-                    current_span.set_attribute("http.status_code", exc.status_code)
-                    current_span.set_status(Status(StatusCode.ERROR, str(exc.detail)))
-            except Exception:
-                pass
+        try:
+            current_span = trace.get_current_span()
+            if current_span and current_span.is_recording():
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.code", "HTTP_ERROR")
+                current_span.set_attribute("error.message", str(exc.detail))
+                current_span.set_attribute("http.status_code", exc.status_code)
+                current_span.set_status(Status(StatusCode.ERROR, str(exc.detail)))
+        except Exception:
+            pass
         
         error_detail = ErrorDetail(
             message=str(exc.detail),
@@ -140,19 +158,18 @@ def add_error_handlers(app: FastAPI) -> None:
         logger.error(f"Traceback: {traceback.format_exc()}")
         
         # Record error in Jaeger span
-        if TRACING_AVAILABLE:
-            try:
-                current_span = trace.get_current_span()
-                if current_span:
-                    current_span.set_attribute("error", True)
-                    current_span.set_attribute("error.code", "INTERNAL_ERROR")
-                    current_span.set_attribute("error.message", str(exc))
-                    current_span.set_attribute("error.type", type(exc).__name__)
-                    current_span.set_attribute("http.status_code", 500)
-                    current_span.record_exception(exc)
-                    current_span.set_status(Status(StatusCode.ERROR, str(exc)))
-            except Exception:
-                pass
+        try:
+            current_span = trace.get_current_span()
+            if current_span and current_span.is_recording():
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.code", "INTERNAL_ERROR")
+                current_span.set_attribute("error.message", str(exc))
+                current_span.set_attribute("error.type", type(exc).__name__)
+                current_span.set_attribute("http.status_code", 500)
+                current_span.record_exception(exc)
+                current_span.set_status(Status(StatusCode.ERROR, str(exc)))
+        except Exception:
+            pass
         
         error_detail = ErrorDetail(
             message="Internal server error",

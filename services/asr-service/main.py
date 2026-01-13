@@ -31,14 +31,55 @@ from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_logging import (
+    get_logger,
+    CorrelationMiddleware,
+    configure_logging,
+)
+from ai4icore_telemetry import setup_tracing
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
-# Configure logging
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+# Configure structured logging
+# This also configures uvicorn loggers to use our formatter and disables access logs
+configure_logging(
+    service_name=os.getenv("SERVICE_NAME", "asr-service"),
+    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
 )
-logger = logging.getLogger(__name__)
+
+# Aggressively disable uvicorn access logger BEFORE uvicorn starts
+# This must happen before uvicorn imports/creates its loggers
+uvicorn_access = logging.getLogger("uvicorn.access")
+uvicorn_access.handlers.clear()
+uvicorn_access.propagate = False
+uvicorn_access.disabled = True
+uvicorn_access.setLevel(logging.CRITICAL + 1)  # Set above CRITICAL to ensure nothing logs
+
+# Also disable at root level by filtering out uvicorn.access messages
+class UvicornAccessFilter(logging.Filter):
+    """Filter to block uvicorn.access log messages."""
+    def filter(self, record):
+        # Block uvicorn.access logger
+        if record.name == "uvicorn.access":
+            return False
+        # Also block messages that look like uvicorn access logs
+        # Format: "INFO: IP:PORT "METHOD PATH HTTP/1.1" STATUS"
+        message = str(record.getMessage())
+        if 'HTTP/1.1"' in message:
+            import re
+            # Match uvicorn access log pattern: INFO: IP:PORT "METHOD PATH HTTP/1.1" STATUS
+            if re.search(r'INFO:\s+\d+\.\d+\.\d+\.\d+:\d+\s+"(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+.*HTTP/1\.1"\s+\d+', message):
+                return False
+        return True
+
+# Add filter to root logger to catch any uvicorn.access messages
+root_logger = logging.getLogger()
+uvicorn_filter = UvicornAccessFilter()
+for handler in root_logger.handlers:
+    handler.addFilter(uvicorn_filter)
+
+# Get logger instance
+logger = get_logger(__name__)
 
 # Global variables for database and Redis connections
 redis_client: redis.Redis = None
@@ -53,6 +94,14 @@ registered_instance_id: str = None
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup and shutdown events."""
     # Startup
+    # Disable uvicorn access logger AFTER uvicorn has started
+    # This ensures it stays disabled even if uvicorn recreates loggers
+    uvicorn_access = logging.getLogger("uvicorn.access")
+    uvicorn_access.handlers.clear()
+    uvicorn_access.propagate = False
+    uvicorn_access.disabled = True
+    uvicorn_access.setLevel(logging.CRITICAL)  # Extra safety - set to highest level
+
     logger.info("Starting ASR Service...")
     
     try:
@@ -163,9 +212,6 @@ async def lifespan(app: FastAPI):
         app.state.triton_api_key = TRITON_API_KEY
         app.state.triton_timeout = TRITON_TIMEOUT
         
-        # Register error handlers
-        add_error_handlers(app)
-        
         # NOTE: Model Management Plugin is registered BEFORE app starts (outside lifespan)
         # to ensure middleware can be added. See line ~330 for registration.
         
@@ -266,10 +312,30 @@ app = FastAPI(
     lifespan=lifespan
 )
     
-# Initialize AI4ICore Observability Plugin
-# Plugin automatically extracts metrics from request bodies - no manual recording needed!
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Correlation middleware (MUST be before RequestLoggingMiddleware)
+# This extracts X-Correlation-ID from headers and sets it in logging context
+app.add_middleware(CorrelationMiddleware)
+
+# Request logging (added BEFORE ObservabilityMiddleware)
+# FastAPI middleware runs in REVERSE order, so this will run AFTER ObservabilityMiddleware
+# This ensures organization is set in context before logging
+app.add_middleware(RequestLoggingMiddleware)
+
+# Observability (MUST be added AFTER RequestLoggingMiddleware)
+# FastAPI middleware runs in REVERSE order, so this will run FIRST
+# This ensures organization is extracted and set in context before RequestLoggingMiddleware logs
 config = PluginConfig.from_env()
 config.enabled = True  # Enable plugin
+config.debug = False  # Disable debug print statements - use structured logging instead
 if not config.customers:
     config.customers = []  # Will be extracted from JWT/headers automatically
 if not config.apps:
@@ -281,29 +347,35 @@ logger.info("✅ AI4ICore Observability Plugin initialized for ASR service")
 
 # Model Management Plugin - registered AFTER Observability
 # so that Model Management runs first and Observability can use cached body
-TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
-model_mgmt_config = ModelManagementConfig(
-    model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
-    model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
-    cache_ttl_seconds=300,
-    triton_endpoint_cache_ttl=300,
-    default_triton_endpoint="",  # No fallback - must come from Model Management
-    default_triton_api_key=TRITON_API_KEY,
-    middleware_enabled=True,
-    middleware_paths=["/api/v1"]
-)
-model_mgmt_plugin = ModelManagementPlugin(model_mgmt_config)
-model_mgmt_plugin.register_plugin(app, redis_client=redis_client)
-logger.info("✅ Model Management Plugin initialized for ASR service")
+try:
+    TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
+    model_mgmt_config = ModelManagementConfig(
+        model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
+        model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
+        cache_ttl_seconds=300,
+        triton_endpoint_cache_ttl=300,
+        default_triton_endpoint="",  # No fallback - must come from Model Management
+        default_triton_api_key=TRITON_API_KEY,
+        middleware_enabled=True,
+        middleware_paths=["/api/v1"],
+        request_timeout=10.0,
+    )
+    model_mgmt_plugin = ModelManagementPlugin(config=model_mgmt_config)
+    model_mgmt_plugin.register_plugin(app, redis_client=redis_client)
+    logger.info("✅ Model Management Plugin initialized for ASR service")
+except Exception as e:
+    logger.warning(f"Failed to initialize Model Management Plugin: {e}")
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+tracer = setup_tracing("asr-service")
+if tracer:
+    logger.info("✅ Distributed tracing initialized for ASR service")
+    # Instrument FastAPI to automatically create spans for all requests
+    FastAPIInstrumentor.instrument_app(app)
+    logger.info("✅ FastAPI instrumentation enabled for tracing")
+else:
+    logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
 
 # Initialize Redis client early for middleware
 redis_client = None
@@ -329,28 +401,20 @@ except Exception as e:
     logger.warning(f"Redis connection failed for middleware: {e}")
     redis_client = None
 
-# NOTE: Model Management Plugin is now registered BEFORE Observability (above)
-# so that Observability runs first and caches the body, then Model Management can use cached body
+# Rate limiting (Redis client will be picked from app.state)
 
-# Add middleware after FastAPI app creation
-# Add request logging middleware
-app.add_middleware(RequestLoggingMiddleware)
+rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
+app.add_middleware(
+    RateLimitMiddleware,
+    redis_client=None,
+    requests_per_minute=rate_limit_per_minute,
+    requests_per_hour=rate_limit_per_hour,
+)
 
-# Add rate limiting middleware (if Redis is available)
-if redis_client:
-    rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-    rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-    app.add_middleware(
-        RateLimitMiddleware,
-        redis_client=redis_client,
-        requests_per_minute=rate_limit_per_minute,
-        requests_per_hour=rate_limit_per_hour
-    )
-    logger.info("Rate limiting middleware added")
-else:
-    logger.warning("Rate limiting middleware skipped - Redis not available")
+# Error handlers
+add_error_handlers(app)
 
-# Mount Socket.IO streaming endpoint will be done in lifespan function
 
 
 @app.get("/")

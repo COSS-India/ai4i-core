@@ -12,6 +12,8 @@ RUN apt-get update && \
 
 # ---- shared plugins (repo-root paths) ----
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
 # ---- requirements ----
@@ -21,6 +23,8 @@ RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
 
 # -----------------------------
@@ -39,6 +43,8 @@ COPY --from=builder /root/.local /root/.local
 ENV PATH=/root/.local/bin:$PATH
 
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
 # ---- application code ----
