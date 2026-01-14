@@ -30,6 +30,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.openapi.utils import get_openapi
 import redis.asyncio as redis
+
+# Import request logging middleware and error handlers
 import httpx
 from auth_middleware import auth_middleware
 from decimal import Decimal
@@ -69,9 +71,21 @@ except ImportError:
         AUTH_FAILED = "AUTH_FAILED"
         AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configure structured JSON logging
+try:
+    from ai4icore_logging import configure_logging, get_logger
+    
+    # Configure logging with JSON formatter
+    configure_logging(
+        service_name=os.getenv("SERVICE_NAME", "api-gateway"),
+        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
+    )
+    
+    logger = get_logger(__name__)
+except ImportError:
+    # Fallback to standard logging if ai4icore_logging is not available
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
 
 # Pydantic models for ASR endpoints
 class AudioInput(BaseModel):
@@ -2052,6 +2066,7 @@ app.add_middleware(
     allowed_hosts=["*"]
 )
 
+
 # Global variables for connections and components
 redis_client = None
 http_client = None
@@ -2954,7 +2969,7 @@ async def nmt_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Perform NMT inference"""
-    await ensure_authenticated_for_request(request, credentials, api_key)
+    ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
@@ -3692,7 +3707,7 @@ async def pipeline_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Execute pipeline inference (e.g., Speech-to-Speech translation)"""
-    await ensure_authenticated_for_request(request, credentials, api_key)
+    ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
@@ -3710,7 +3725,7 @@ async def get_pipeline_info(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get pipeline service information"""
-    await ensure_authenticated_for_request(request, credentials, api_key)
+    ensure_authenticated_for_request(request, credentials, api_key)
     headers = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
