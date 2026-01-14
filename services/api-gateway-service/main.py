@@ -61,13 +61,18 @@ except ImportError:
     FastAPIInstrumentor = None
     logging.warning("OpenTelemetry not available, tracing disabled")
 
-# Get tracer for manual span creation
-tracer = None
-if TRACING_AVAILABLE and trace:
+# Tracer will be initialized after setup_tracing is called
+# Helper function to get tracer dynamically (ensures it's available after setup_tracing)
+def get_tracer():
+    """Get tracer instance dynamically at runtime."""
+    if not TRACING_AVAILABLE or not trace:
+        return None
     try:
-        tracer = trace.get_tracer(__name__)
+        return trace.get_tracer("api-gateway-service")
     except Exception:
-        tracer = None
+        return None
+
+tracer = None  # Will be set after setup_tracing, but use get_tracer() for reliability
 
 # Configure AI4ICore logging
 configure_logging(
@@ -2062,7 +2067,10 @@ async def health_monitor():
 # IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
 if TRACING_AVAILABLE:
     try:
-        tracer = setup_tracing("api-gateway-service")
+        # Setup tracing and get tracer instance
+        setup_tracing("api-gateway-service")
+        # Get the tracer instance (OpenTelemetry tracers are singletons per name)
+        tracer = trace.get_tracer("api-gateway-service")
         if tracer:
             logger.info("✅ Distributed tracing initialized for API Gateway service")
             
@@ -4496,66 +4504,109 @@ async def proxy_request(request: Request, path: str):
     request_id = generate_correlation_id()
     
     try:
-        # Determine target service
-        service_name = await route_manager.get_service_for_path(f"/{path}")
-        if not service_name:
-            raise HTTPException(status_code=404, detail=f"No service found for path: /{path}")
-        
-        # Fallback to direct service URLs if load_balancer is not available
-        if load_balancer is None:
-            logger.debug(f"Using direct service URL fallback for {service_name}")
-            return await proxy_to_service(request, f"/{path}", service_name)
-        
-        # Select healthy instance
-        instance_info = await load_balancer.select_instance(service_name)
-        if not instance_info:
-            raise HTTPException(status_code=503, detail=f"No healthy instances available for service: {service_name}")
-        
-        instance_id, instance_url = instance_info
-        
-        # Prepare forwarding headers (includes trace context injection)
-        headers = prepare_forwarding_headers(request, correlation_id, request_id)
-        
-        # Prepare request body
-        body = None
-        if request.method in ['POST', 'PUT', 'PATCH']:
-            body = await request.body()
-        
-        # Create detailed breakdown spans for API gateway
-        # Main proxy span
-        span_context = tracer.start_as_current_span(f"gateway.proxy.{service_name}") if (TRACING_AVAILABLE and tracer) else nullcontext()
+        # Create main proxy span FIRST (as child of FastAPI auto-instrumented span)
+        # All other spans will be children of this
+        # Get tracer dynamically to ensure it's available
+        tracer_instance = get_tracer()
+        span_context = tracer_instance.start_as_current_span("gateway.proxy") if tracer_instance else nullcontext()
         try:
-            with span_context as downstream_span:
-                if downstream_span:
-                    downstream_span.set_attribute("service.name", service_name)
-                    downstream_span.set_attribute("service.instance", instance_id)
-                    downstream_span.set_attribute("http.method", request.method)
-                    downstream_span.set_attribute("http.url", f"{instance_url}/{path}")
-                    downstream_span.set_attribute("gateway.path", f"/{path}")
-                    downstream_span.set_attribute("gateway.correlation_id", correlation_id)
-                    downstream_span.set_attribute("gateway.request_id", request_id)
+            with span_context as proxy_span:
+                if proxy_span:
+                    proxy_span.set_attribute("gateway.path", f"/{path}")
+                    proxy_span.set_attribute("gateway.method", request.method)
+                    proxy_span.set_attribute("gateway.correlation_id", correlation_id)
+                    proxy_span.set_attribute("gateway.request_id", request_id)
+                
+                # Create span for route resolution (child of proxy span)
+                route_span_context = tracer_instance.start_as_current_span("gateway.resolve_route") if tracer_instance else nullcontext()
+                with route_span_context as route_span:
+                    if route_span:
+                        route_span.set_attribute("gateway.path", f"/{path}")
+                        route_span.set_attribute("gateway.method", request.method)
                     
-                    # Add user context if available
-                    user_id = getattr(request.state, "user_id", None)
-                    if user_id:
-                        downstream_span.set_attribute("gateway.user_id", str(user_id))
+                    # Determine target service
+                    service_name = await route_manager.get_service_for_path(f"/{path}")
                     
-                    # Create child span for request preparation
-                    prep_span_context = tracer.start_as_current_span("gateway.prepare_request") if (TRACING_AVAILABLE and tracer) else nullcontext()
-                    with prep_span_context as prep_span:
-                        if prep_span:
-                            prep_span.set_attribute("gateway.headers_prepared", len(headers))
-                            prep_span.set_attribute("gateway.body_size", len(body) if body else 0)
-                    # prep_span_context closes here
+                    if route_span:
+                        if service_name:
+                            route_span.set_attribute("gateway.service_resolved", service_name)
+                            route_span.set_attribute("gateway.resolution_result", "success")
+                            route_span.set_status(Status(StatusCode.OK))
+                        else:
+                            route_span.set_attribute("gateway.resolution_result", "not_found")
+                            route_span.set_status(Status(StatusCode.ERROR, "Service not found"))
+                    
+                    if not service_name:
+                        raise HTTPException(status_code=404, detail=f"No service found for path: /{path}")
+                
+                # Update proxy span with service name
+                if proxy_span:
+                    proxy_span.set_attribute("gateway.service", service_name)
+                    proxy_span.set_attribute("service.name", service_name)
+                
+                # Create span for service selection (child of proxy span)
+                select_span_context = tracer_instance.start_as_current_span("gateway.select_instance") if tracer_instance else nullcontext()
+                with select_span_context as select_span:
+                    if select_span:
+                        select_span.set_attribute("gateway.service", service_name)
+                        select_span.set_attribute("gateway.load_balancer_available", load_balancer is not None)
+                    
+                    # Fallback to direct service URLs if load_balancer is not available
+                    if load_balancer is None:
+                        if select_span:
+                            select_span.set_attribute("gateway.selection_method", "direct_fallback")
+                            select_span.set_status(Status(StatusCode.OK))
+                        logger.debug(f"Using direct service URL fallback for {service_name}")
+                        return await proxy_to_service(request, f"/{path}", service_name)
+                    
+                    # Select healthy instance
+                    instance_info = await load_balancer.select_instance(service_name)
+                    
+                    if not instance_info:
+                        if select_span:
+                            select_span.set_attribute("gateway.selection_result", "no_healthy_instances")
+                            select_span.set_status(Status(StatusCode.ERROR, "No healthy instances"))
+                        raise HTTPException(status_code=503, detail=f"No healthy instances available for service: {service_name}")
+                    
+                    instance_id, instance_url = instance_info
+                    
+                    if select_span:
+                        select_span.set_attribute("gateway.instance_id", instance_id)
+                        select_span.set_attribute("gateway.instance_url", instance_url)
+                        select_span.set_attribute("gateway.selection_result", "success")
+                        select_span.set_status(Status(StatusCode.OK))
+                
+                # Update proxy span with instance info
+                if proxy_span:
+                    proxy_span.set_attribute("gateway.instance_id", instance_id)
+                    proxy_span.set_attribute("gateway.instance_url", instance_url)
+                    proxy_span.set_attribute("service.instance", instance_id)
+                
+                # Prepare forwarding headers (includes trace context injection)
+                headers = prepare_forwarding_headers(request, correlation_id, request_id)
+                
+                # Prepare request body
+                body = None
+                if request.method in ['POST', 'PUT', 'PATCH']:
+                    body = await request.body()
+                
+                # Create child span for request preparation
+                prep_span_context = tracer_instance.start_as_current_span("gateway.prepare_request") if tracer_instance else nullcontext()
+                with prep_span_context as prep_span:
+                    if prep_span:
+                        prep_span.set_attribute("gateway.headers_prepared", len(headers))
+                        prep_span.set_attribute("gateway.body_size", len(body) if body else 0)
                 
                 # Create child span for HTTP request
-                http_span_context = tracer.start_as_current_span("gateway.http_request") if (TRACING_AVAILABLE and tracer) else nullcontext()
+                http_span_context = tracer_instance.start_as_current_span("gateway.http_request") if tracer_instance else nullcontext()
                 http_start_time = time.time()
                 with http_span_context as http_span:
                     if http_span:
                         http_span.set_attribute("http.method", request.method)
                         http_span.set_attribute("http.url", f"{instance_url}/{path}")
                         http_span.set_attribute("http.target", f"/{path}")
+                        http_span.set_attribute("service.name", service_name)
+                        http_span.set_attribute("service.instance", instance_id)
                     
                     # Forward request
                     response = await http_client.request(
@@ -4577,27 +4628,33 @@ async def proxy_request(request: Request, path: str):
                             http_span.set_status(Status(StatusCode.ERROR, f"HTTP {response.status_code}"))
                         else:
                             http_span.set_status(Status(StatusCode.OK))
-                # http_span_context closes here
                 
                 # Calculate total response time
                 response_time = time.time() - start_time
                 
                 # Create child span for response processing
-                resp_span_context = tracer.start_as_current_span("gateway.process_response") if (TRACING_AVAILABLE and tracer) else nullcontext()
+                resp_span_context = tracer_instance.start_as_current_span("gateway.process_response") if tracer_instance else nullcontext()
                 with resp_span_context as resp_span:
                     if resp_span:
                         resp_span.set_attribute("http.status_code", response.status_code)
                         resp_span.set_attribute("gateway.response_time_ms", round(response_time * 1000, 2))
                 
-                # Update main downstream span with response info
-                if downstream_span:
-                    downstream_span.set_attribute("http.status_code", response.status_code)
-                    downstream_span.set_attribute("response.time_ms", round(response_time * 1000, 2))
-                    downstream_span.set_attribute("gateway.total_time_ms", round(response_time * 1000, 2))
+                # Update proxy span with response info
+                if proxy_span:
+                    proxy_span.set_attribute("http.status_code", response.status_code)
+                    proxy_span.set_attribute("http.url", f"{instance_url}/{path}")
+                    proxy_span.set_attribute("response.time_ms", round(response_time * 1000, 2))
+                    proxy_span.set_attribute("gateway.total_time_ms", round(response_time * 1000, 2))
+                    
+                    # Add user context if available
+                    user_id = getattr(request.state, "user_id", None)
+                    if user_id:
+                        proxy_span.set_attribute("gateway.user_id", str(user_id))
+                    
                     if response.status_code >= 400:
-                        downstream_span.set_status(Status(StatusCode.ERROR, f"HTTP {response.status_code}"))
+                        proxy_span.set_status(Status(StatusCode.ERROR, f"HTTP {response.status_code}"))
                     else:
-                        downstream_span.set_status(Status(StatusCode.OK))
+                        proxy_span.set_status(Status(StatusCode.OK))
                 
                 # Mark main FastAPI span as error if response status is error
                 if TRACING_AVAILABLE and trace and response.status_code >= 400:
@@ -4673,19 +4730,15 @@ async def proxy_request(request: Request, path: str):
         except httpx.HTTPStatusError as e:
             response_time = time.time() - start_time
             
-            # Mark both downstream span and main FastAPI span as error
-            if downstream_span:
-                downstream_span.set_status(Status(StatusCode.ERROR, str(e)))
-                downstream_span.set_attribute("http.status_code", e.response.status_code)
-            
-            # Get current span (FastAPI auto-instrumented span) and mark as error
+            # Mark proxy span and main FastAPI span as error
             if TRACING_AVAILABLE and trace:
                 current_span = trace.get_current_span()
-                if current_span:
-                    current_span.set_status(Status(StatusCode.ERROR, f"HTTP {e.response.status_code}: {str(e)}"))
+                if current_span and current_span.is_recording():
+                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
                     current_span.set_attribute("http.status_code", e.response.status_code)
                     current_span.set_attribute("error", True)
                     current_span.set_attribute("error.message", str(e))
+            
             
             logger.error(
                 f"HTTP error forwarding request to {service_name}: {e}",
@@ -4711,14 +4764,10 @@ async def proxy_request(request: Request, path: str):
         except httpx.RequestError as e:
             response_time = time.time() - start_time
             
-            # Mark both downstream span and main FastAPI span as error
-            if downstream_span:
-                downstream_span.set_status(Status(StatusCode.ERROR, str(e)))
-            
-            # Get current span (FastAPI auto-instrumented span) and mark as error
+            # Mark proxy span and main FastAPI span as error
             if TRACING_AVAILABLE and trace:
                 current_span = trace.get_current_span()
-                if current_span:
+                if current_span and current_span.is_recording():
                     current_span.set_status(Status(StatusCode.ERROR, str(e)))
                     current_span.set_attribute("error", True)
                     current_span.set_attribute("error.message", str(e))
