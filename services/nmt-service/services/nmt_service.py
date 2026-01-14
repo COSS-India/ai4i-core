@@ -10,6 +10,8 @@ from typing import Optional, List, Dict, Tuple
 from uuid import UUID
 
 import numpy as np
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from models.nmt_request import NMTInferenceRequest
 from models.nmt_response import NMTInferenceResponse, TranslationOutput
@@ -25,6 +27,8 @@ from middleware.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+# Use service name to get the same tracer instance as main.py
+tracer = trace.get_tracer("nmt-service")
 
 
 class NMTService:
@@ -328,6 +332,211 @@ class NMTService:
         auth_headers: Optional[Dict[str, str]] = None
     ) -> NMTInferenceResponse:
         """Run NMT inference on the given request"""
+        if not tracer:
+            # Fallback if tracing not available
+            return await self._run_inference_impl(request, user_id, api_key_id, session_id, auth_headers)
+        
+        start_time = time.time()
+        request_id = None
+        
+        with tracer.start_as_current_span("nmt.process_batch") as span:
+            try:
+                # Extract configuration
+                service_id = request.config.serviceId
+                source_lang = request.config.language.sourceLanguage
+                target_lang = request.config.language.targetLanguage
+                
+                span.set_attribute("nmt.total_inputs", len(request.input))
+                span.set_attribute("nmt.service_id", service_id)
+                span.set_attribute("nmt.source_language", source_lang)
+                span.set_attribute("nmt.target_language", target_lang)
+                
+                # Get model name dynamically based on service ID
+                with tracer.start_as_current_span("nmt.get_model_name") as model_span:
+                    model_name = await self.get_model_name(service_id, auth_headers)
+                    model_span.set_attribute("nmt.model_name", model_name)
+                
+                # Store original languages for response
+                original_source_lang = source_lang
+                original_target_lang = target_lang
+                
+                # Handle script codes - only append if explicitly provided in request
+                if request.config.language.sourceScriptCode:
+                    source_lang += "_" + request.config.language.sourceScriptCode
+                    span.set_attribute("nmt.source_script_code", request.config.language.sourceScriptCode)
+                
+                if request.config.language.targetScriptCode:
+                    target_lang += "_" + request.config.language.targetScriptCode
+                    span.set_attribute("nmt.target_script_code", request.config.language.targetScriptCode)
+                
+                # Preprocess input texts
+                with tracer.start_as_current_span("nmt.preprocess_texts") as preprocess_span:
+                    input_texts = []
+                    for text_input in request.input:
+                        # Normalize text: replace newlines with spaces, strip whitespace
+                        normalized_text = text_input.source.replace("\n", " ").strip() if text_input.source else " "
+                        input_texts.append(normalized_text)
+                    total_text_length = sum(len(text) for text in input_texts)
+                    preprocess_span.set_attribute("nmt.total_text_length", total_text_length)
+                    preprocess_span.set_attribute("nmt.preprocessed_count", len(input_texts))
+                
+                # Create database request record
+                with tracer.start_as_current_span("nmt.create_db_request") as db_span:
+                    request_record = await self.repository.create_request(
+                        model_id=service_id,
+                        source_language=original_source_lang,
+                        target_language=original_target_lang,
+                        text_length=total_text_length,
+                        user_id=user_id,
+                        api_key_id=api_key_id,
+                        session_id=session_id
+                    )
+                    request_id = request_record.id
+                    db_span.set_attribute("nmt.request_id", str(request_id))
+                
+                # Batch processing (max 90 texts per batch)
+                max_batch_size = 90
+                output_batch = []
+                batch_count = (len(input_texts) + max_batch_size - 1) // max_batch_size
+                span.set_attribute("nmt.batch_count", batch_count)
+                span.set_attribute("nmt.max_batch_size", max_batch_size)
+                
+                for i in range(0, len(input_texts), max_batch_size):
+                    batch = input_texts[i:i + max_batch_size]
+                    batch_index = i // max_batch_size
+                    
+                    with tracer.start_as_current_span("nmt.process_batch_item") as batch_span:
+                        batch_span.set_attribute("nmt.batch_index", batch_index)
+                        batch_span.set_attribute("nmt.batch_size", len(batch))
+                        
+                        try:
+                            # Get appropriate Triton client for this service
+                            with tracer.start_as_current_span("nmt.get_triton_client") as client_span:
+                                triton_client = await self.get_triton_client(service_id, auth_headers)
+                                service_entry = await self._get_service_registry_entry(service_id, auth_headers)
+                                endpoint = service_entry[0] if service_entry else "default"
+                                client_span.set_attribute("nmt.triton_endpoint", endpoint)
+                                client_span.set_attribute("nmt.model_name", model_name)
+                            
+                            # Apply mapping: "indictrans" -> "nmt" for Triton server
+                            if model_name == "indictrans" or (isinstance(model_name, str) and "indictrans" in model_name.lower()):
+                                logger.info(f"🔧 MAPPING: '{model_name}' -> 'nmt' for Triton (service_id: {service_id})")
+                                model_name = "nmt"
+                            
+                            # Prepare Triton inputs
+                            with tracer.start_as_current_span("nmt.prepare_triton_inputs") as prep_span:
+                                inputs, outputs = triton_client.get_translation_io_for_triton(
+                                    batch, source_lang, target_lang
+                                )
+                                prep_span.set_attribute("nmt.input_count", len(batch))
+                                prep_span.set_attribute("nmt.source_lang", source_lang)
+                                prep_span.set_attribute("nmt.target_lang", target_lang)
+                            
+                            # Send Triton request (triton_client will create its own span)
+                            response = triton_client.send_triton_request(
+                                model_name=model_name,
+                                inputs=inputs,
+                                outputs=outputs
+                            )
+                            
+                            # Extract results
+                            with tracer.start_as_current_span("nmt.extract_results") as extract_span:
+                                encoded_result = response.as_numpy("OUTPUT_TEXT")
+                                if encoded_result is None:
+                                    encoded_result = np.array([])
+                                
+                                output_batch.extend(encoded_result.tolist())
+                                extract_span.set_attribute("nmt.result_count", len(encoded_result.tolist()) if encoded_result is not None else 0)
+                            
+                        except Exception as e:
+                            batch_span.set_attribute("error", True)
+                            batch_span.set_attribute("error.type", type(e).__name__)
+                            batch_span.set_attribute("error.message", str(e))
+                            batch_span.set_status(Status(StatusCode.ERROR, str(e)))
+                            batch_span.record_exception(e)
+                            logger.error(f"Triton inference failed for batch {batch_index}: {e}")
+                            raise TritonInferenceError(f"Triton inference failed: {e}")
+                
+                span.set_attribute("nmt.total_outputs", len(output_batch))
+                
+                # Format response
+                with tracer.start_as_current_span("nmt.format_response") as format_span:
+                    results = []
+                    for source_text, result in zip(input_texts, output_batch):
+                        if isinstance(result, (list, tuple)) and len(result) > 0:
+                            translated_text = result[0].decode("utf-8") if isinstance(result[0], bytes) else str(result[0])
+                        else:
+                            translated_text = str(result) if result is not None else ""
+                        
+                        results.append(TranslationOutput(
+                            source=source_text,
+                            target=translated_text
+                        ))
+                    format_span.set_attribute("nmt.formatted_count", len(results))
+                
+                # Create response
+                response = NMTInferenceResponse(output=results)
+                
+                # Database logging
+                with tracer.start_as_current_span("nmt.create_db_results") as results_span:
+                    for result in results:
+                        await self.repository.create_result(
+                            request_id=request_id,
+                            translated_text=result.target,
+                            source_text=result.source
+                        )
+                    results_span.set_attribute("nmt.db_results_created", len(results))
+                
+                # Update request status
+                processing_time = time.time() - start_time
+                await self.repository.update_request_status(
+                    request_id=request_id,
+                    status="completed",
+                    processing_time=processing_time
+                )
+                
+                span.set_attribute("nmt.processing_time_seconds", processing_time)
+                span.set_attribute("nmt.output_count", len(response.output))
+                
+                logger.info(f"NMT inference completed for request {request_id} in {processing_time:.2f}s")
+                return response
+                
+            except Exception as e:
+                span.set_attribute("error", True)
+                span.set_attribute("error.type", type(e).__name__)
+                span.set_attribute("error.message", str(e))
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.record_exception(e)
+                logger.error(f"NMT inference failed: {e}")
+                
+                # Update request status to failed
+                if request_id:
+                    try:
+                        await self.repository.update_request_status(
+                            request_id=request_id,
+                            status="failed",
+                            error_message=str(e)
+                        )
+                    except Exception as update_error:
+                        logger.error(f"Failed to update request status: {update_error}")
+                
+                # Re-raise with appropriate error type
+                if isinstance(e, TritonInferenceError):
+                    raise
+                elif isinstance(e, TextProcessingError):
+                    raise
+                else:
+                    raise TextProcessingError(f"NMT inference failed: {e}")
+    
+    async def _run_inference_impl(
+        self,
+        request: NMTInferenceRequest,
+        user_id: Optional[int] = None,
+        api_key_id: Optional[int] = None,
+        session_id: Optional[int] = None,
+        auth_headers: Optional[Dict[str, str]] = None
+    ) -> NMTInferenceResponse:
+        """Fallback implementation when tracing is not available."""
         start_time = time.time()
         request_id = None
         
@@ -347,11 +556,9 @@ class NMTService:
             # Handle script codes - only append if explicitly provided in request
             if request.config.language.sourceScriptCode:
                 source_lang += "_" + request.config.language.sourceScriptCode
-            # Removed automatic script code appending to match Triton model expectations
             
             if request.config.language.targetScriptCode:
                 target_lang += "_" + request.config.language.targetScriptCode
-            # Removed automatic script code appending to match Triton model expectations
             
             # Preprocess input texts
             input_texts = []
@@ -384,26 +591,14 @@ class NMTService:
                     # Get appropriate Triton client for this service
                     triton_client = await self.get_triton_client(service_id, auth_headers)
                     
-                    # Log the model name and endpoint for debugging
-                    # Apply mapping: "indictrans" -> "nmt" for Triton server (in case model_name wasn't mapped earlier)
-                    logger.info(f"DEBUG: model_name before mapping: '{model_name}' (type: {type(model_name)}, service_id: {service_id})")
+                    # Apply mapping: "indictrans" -> "nmt" for Triton server
                     if model_name == "indictrans" or (isinstance(model_name, str) and "indictrans" in model_name.lower()):
-                        logger.info(f"Applying final mapping: '{model_name}' -> 'nmt' for Triton (service_id: {service_id})")
                         model_name = "nmt"
-                    service_entry = await self._get_service_registry_entry(service_id, auth_headers)
-                    endpoint = service_entry[0] if service_entry else "default"
-                    logger.info(f"Using Triton endpoint: {endpoint}, model: {model_name} for service: {service_id}")
                     
                     # Prepare Triton inputs
                     inputs, outputs = triton_client.get_translation_io_for_triton(
                         batch, source_lang, target_lang
                     )
-                    
-                    # CRITICAL FIX: Map "indictrans" to "nmt" for Triton server
-                    # The Triton server has the model named "nmt", not "indictrans"
-                    if model_name == "indictrans" or (isinstance(model_name, str) and "indictrans" in model_name.lower()):
-                        logger.info(f"🔧 MAPPING: '{model_name}' -> 'nmt' for Triton (service_id: {service_id})")
-                        model_name = "nmt"
                     
                     # Send Triton request
                     response = triton_client.send_triton_request(
