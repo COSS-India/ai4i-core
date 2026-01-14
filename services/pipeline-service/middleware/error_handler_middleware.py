@@ -28,12 +28,15 @@ except ImportError:
         """Fallback correlation ID getter."""
         return getattr(request.state, 'correlation_id', None) or request.headers.get('x-correlation-id', 'unknown')
 
-# Import OpenTelemetry to extract trace_id
+# Import OpenTelemetry to extract trace_id and create spans
 try:
     from opentelemetry import trace
+    from opentelemetry.trace import Status, StatusCode
     TRACING_AVAILABLE = True
+    tracer = trace.get_tracer("pipeline-service")
 except ImportError:
     TRACING_AVAILABLE = False
+    tracer = None
 
 # Get Jaeger URL from environment or use default
 JAEGER_UI_URL = os.getenv("JAEGER_UI_URL", "http://localhost:16686")
@@ -110,6 +113,25 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthenticationError)
     async def authentication_error_handler(request: Request, exc: AuthenticationError):
         """Handle authentication errors."""
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("auth.operation", "reject_authentication")
+                reject_span.set_attribute("auth.rejected", True)
+                # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
+                reject_span.set_attribute("http.method", request.method)
+                reject_span.set_attribute("http.path", request.url.path)
+                reject_span.set_attribute("http.status_code", 401)
+                reject_span.set_attribute("error.code", "AUTHENTICATION_ERROR")
+                reject_span.set_attribute("error.message", exc.message)
+                
+                # Add correlation ID if available
+                correlation_id = get_correlation_id(request)
+                if correlation_id:
+                    reject_span.set_attribute("correlation.id", correlation_id)
+                
+                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+                reject_span.record_exception(exc)
+        
         # Log to OpenSearch
         _log_error_to_opensearch(request, 401, "AUTHENTICATION_ERROR", exc.message)
         
@@ -126,6 +148,25 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthorizationError)
     async def authorization_error_handler(request: Request, exc: AuthorizationError):
         """Handle authorization errors."""
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("auth.operation", "reject_authorization")
+                reject_span.set_attribute("auth.rejected", True)
+                # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
+                reject_span.set_attribute("http.method", request.method)
+                reject_span.set_attribute("http.path", request.url.path)
+                reject_span.set_attribute("http.status_code", 403)
+                reject_span.set_attribute("error.code", "AUTHORIZATION_ERROR")
+                reject_span.set_attribute("error.message", exc.message)
+                
+                # Add correlation ID if available
+                correlation_id = get_correlation_id(request)
+                if correlation_id:
+                    reject_span.set_attribute("correlation.id", correlation_id)
+                
+                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+                reject_span.record_exception(exc)
+        
         # Log to OpenSearch
         _log_error_to_opensearch(request, 403, "AUTHORIZATION_ERROR", exc.message)
         
@@ -142,6 +183,26 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(RateLimitExceededError)
     async def rate_limit_error_handler(request: Request, exc: RateLimitExceededError):
         """Handle rate limit exceeded errors."""
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("rate_limit.operation", "reject_rate_limit")
+                reject_span.set_attribute("rate_limit.rejected", True)
+                # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
+                reject_span.set_attribute("http.method", request.method)
+                reject_span.set_attribute("http.path", request.url.path)
+                reject_span.set_attribute("http.status_code", 429)
+                reject_span.set_attribute("error.code", "RATE_LIMIT_EXCEEDED")
+                reject_span.set_attribute("error.message", exc.message)
+                reject_span.set_attribute("rate_limit.retry_after", exc.retry_after)
+                
+                # Add correlation ID if available
+                correlation_id = get_correlation_id(request)
+                if correlation_id:
+                    reject_span.set_attribute("correlation.id", correlation_id)
+                
+                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+                reject_span.record_exception(exc)
+        
         # Log to OpenSearch
         _log_error_to_opensearch(request, 429, "RATE_LIMIT_EXCEEDED", exc.message)
         
@@ -329,14 +390,47 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):
         """Handle request validation errors."""
-        # Log to OpenSearch (validation errors happen during body parsing, before route handler)
         method = request.method
         path = request.url.path
+        correlation_id = get_correlation_id(request)
+        
+        # Create span for validation error if tracer is available
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("validation.operation", "reject_validation")
+                reject_span.set_attribute("validation.rejected", True)
+                reject_span.set_attribute("http.method", method)
+                reject_span.set_attribute("http.path", path)
+                reject_span.set_attribute("http.status_code", 422)
+                reject_span.set_attribute("error.code", "VALIDATION_ERROR")
+                reject_span.set_attribute("validation.error_count", len(exc.errors()))
+                
+                # Add correlation ID if available
+                if correlation_id:
+                    reject_span.set_attribute("correlation.id", correlation_id)
+                
+                # Decision point: Analyze validation errors
+                with tracer.start_as_current_span("validation.decision.analyze_errors") as analyze_span:
+                    analyze_span.set_attribute("validation.decision", "analyze_validation_errors")
+                    analyze_span.set_attribute("validation.error_count", len(exc.errors()))
+                    
+                    # Add individual error details to span
+                    for idx, error in enumerate(exc.errors()[:5]):  # Limit to first 5 errors
+                        field_path = ".".join(str(loc) for loc in error.get("loc", []))
+                        analyze_span.set_attribute(f"validation.error.{idx}.field", field_path)
+                        analyze_span.set_attribute(f"validation.error.{idx}.type", error.get("type", "unknown"))
+                        analyze_span.set_attribute(f"validation.error.{idx}.message", error.get("msg", ""))
+                    
+                    analyze_span.set_status(Status(StatusCode.OK))
+                
+                reject_span.set_status(Status(StatusCode.ERROR, "Validation failed"))
+                reject_span.record_exception(exc)
+        
+        # Log to OpenSearch (validation errors happen during body parsing, before route handler)
         client_ip = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("user-agent", "unknown")
         user_id = getattr(request.state, "user_id", None)
         api_key_id = getattr(request.state, "api_key_id", None)
-        correlation_id = get_correlation_id(request)
         
         # Extract trace_id from OpenTelemetry context for Jaeger URL
         trace_id = None

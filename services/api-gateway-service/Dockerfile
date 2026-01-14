@@ -19,6 +19,8 @@ COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 # Copy requirements from service context
 COPY services/api-gateway-service/requirements.txt .
 
+RUN pip install --upgrade pip setuptools wheel
+
 # Install Python dependencies
 RUN pip install --no-cache-dir --user -r requirements.txt
 
