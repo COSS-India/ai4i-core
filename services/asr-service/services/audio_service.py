@@ -239,10 +239,10 @@ class AudioService:
             
             # Download from URL
             try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                return response.content
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    return response.content
             except httpx.TimeoutException:
                 logger.error(f"Timeout downloading audio from {url}")
                 raise UploadTimeoutError("Upload timed out. Please check your internet connection and try again.")
@@ -258,7 +258,6 @@ class AudioService:
             logger.error(f"Failed to download audio from {url}: {e}")
             from utils.validation_utils import UploadFailedError
             raise UploadFailedError("File upload failed. Please check your internet connection and try again.")
-            raise
     
     def stretch_audio(self, input_audio: np.ndarray, speed_factor: float, sample_rate: int) -> np.ndarray:
         """Stretch audio by speed factor using torchaudio."""

@@ -156,8 +156,8 @@ def validate_text_input(text: str, min_length: int = 1, max_length: int = 10000)
         # This allows Indic scripts, Arabic, and other Unicode scripts
         if not re.search(r'[a-zA-Z0-9\u0900-\u097F\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0D00-\u0D7F\u0980-\u09FF\u0A80-\u0AFF\u0600-\u06FF]', text_stripped):
             raise InvalidCharactersError()
-    
-    return True
+        
+        return True
         
     except (NoTextInputError, EmptyInputError, TextTooShortError, TextTooLongError, InvalidCharactersError):
         raise
