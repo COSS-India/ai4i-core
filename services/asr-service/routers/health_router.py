@@ -9,6 +9,8 @@ import time
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import text
+from middleware.exceptions import ErrorDetail
+from services.constants.error_messages import SERVICE_UNAVAILABLE, SERVICE_UNAVAILABLE_MESSAGE
 
 from main import redis_client, db_engine
 
@@ -88,6 +90,12 @@ async def health_check() -> Dict[str, Any]:
     
     # Return appropriate status code
     if health_status["status"] == "unhealthy":
+        error_detail = ErrorDetail(
+            message=SERVICE_UNAVAILABLE_MESSAGE,
+            code=SERVICE_UNAVAILABLE
+        )
+        # Include health status details in the error
+        health_status["error"] = error_detail.dict()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=health_status
@@ -117,6 +125,11 @@ async def readiness_check() -> Dict[str, Any]:
         if not db_engine:
             readiness_status["status"] = "not_ready"
             readiness_status["reason"] = "Database not initialized"
+            error_detail = ErrorDetail(
+                message=SERVICE_UNAVAILABLE_MESSAGE,
+                code=SERVICE_UNAVAILABLE
+            )
+            readiness_status["error"] = error_detail.dict()
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=readiness_status
@@ -126,6 +139,11 @@ async def readiness_check() -> Dict[str, Any]:
         if not redis_client:
             readiness_status["status"] = "not_ready"
             readiness_status["reason"] = "Redis not initialized"
+            error_detail = ErrorDetail(
+                message=SERVICE_UNAVAILABLE_MESSAGE,
+                code=SERVICE_UNAVAILABLE
+            )
+            readiness_status["error"] = error_detail.dict()
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=readiness_status
@@ -164,6 +182,11 @@ async def readiness_check() -> Dict[str, Any]:
         logger.error(f"Readiness check failed: {e}")
         readiness_status["status"] = "not_ready"
         readiness_status["reason"] = str(e)
+        error_detail = ErrorDetail(
+            message=SERVICE_UNAVAILABLE_MESSAGE,
+            code=SERVICE_UNAVAILABLE
+        )
+        readiness_status["error"] = error_detail.dict()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=readiness_status

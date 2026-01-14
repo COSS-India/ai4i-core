@@ -30,6 +30,29 @@ from auth_utils import AuthUtils, ACCESS_TOKEN_EXPIRE_MINUTES
 from oauth_utils import OAuthUtils
 from casbin_enforcer import load_policies_from_db, check_roles_permission
 
+# Import error constants
+try:
+    from services.constants.error_messages import (
+        AUTHENTICATION_REQUIRED,
+        AUTHENTICATION_REQUIRED_MESSAGE,
+        INVALID_CREDENTIALS,
+        INVALID_CREDENTIALS_MESSAGE,
+        SESSION_EXPIRED,
+        SESSION_EXPIRED_MESSAGE,
+        UNAUTHORIZED,
+        UNAUTHORIZED_MESSAGE,
+    )
+except ImportError:
+    # Fallback if constants not available
+    AUTHENTICATION_REQUIRED = "AUTHENTICATION_REQUIRED"
+    AUTHENTICATION_REQUIRED_MESSAGE = "Authentication is required to access this service. Please log in."
+    INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
+    INVALID_CREDENTIALS_MESSAGE = "Invalid credentials provided. Please log in again."
+    SESSION_EXPIRED = "SESSION_EXPIRED"
+    SESSION_EXPIRED_MESSAGE = "Your session has expired. Please log in again."
+    UNAUTHORIZED = "UNAUTHORIZED"
+    UNAUTHORIZED_MESSAGE = "You don't have permission to access this service. Please contact your administrator."
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -79,7 +102,7 @@ async def get_current_user(
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -87,7 +110,7 @@ async def get_current_user(
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -95,14 +118,14 @@ async def get_current_user(
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Inactive user",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -410,14 +433,14 @@ async def login(
     if not user or not AuthUtils.verify_password(login_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Account is deactivated",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -487,7 +510,7 @@ async def refresh_token(
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -495,7 +518,7 @@ async def refresh_token(
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token payload",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -512,7 +535,7 @@ async def refresh_token(
     if not session:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
+            detail={"code": SESSION_EXPIRED, "message": SESSION_EXPIRED_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -521,7 +544,7 @@ async def refresh_token(
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or inactive",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -830,7 +853,7 @@ def require_permission(resource: str, action: str):
         if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Insufficient permissions: requires '{resource}.{action}'",
+                detail={"code": UNAUTHORIZED, "message": f"Insufficient permissions: requires '{resource}.{action}'"},
             )
         return current_user
 
@@ -847,7 +870,7 @@ async def require_admin(
     if "ADMIN" not in user_roles and not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can access this endpoint"
+            detail={"code": UNAUTHORIZED, "message": "Only administrators can access this endpoint"}
         )
     return current_user
 
@@ -1311,7 +1334,7 @@ async def assign_role(
     if "ADMIN" not in user_roles and not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can assign roles"
+            detail={"code": UNAUTHORIZED, "message": "Only administrators can assign roles"}
         )
     
     # Get target user
@@ -1405,7 +1428,7 @@ async def remove_role(
     if "ADMIN" not in user_roles and not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can remove roles"
+            detail={"code": UNAUTHORIZED, "message": "Only administrators can remove roles"}
         )
     
     # Get target user
@@ -1455,7 +1478,7 @@ async def get_user_roles_endpoint(
         if user_id != current_user.id and "ADMIN" not in user_roles and not current_user.is_superuser:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only administrators can view other users' roles"
+                detail={"code": UNAUTHORIZED, "message": "Only administrators can view other users' roles"}
             )
         
         target_user = await AuthUtils.get_user_by_id(db, user_id)

@@ -368,9 +368,16 @@ async def root() -> Dict[str, Any]:
 async def streaming_info() -> Dict[str, Any]:
     """Get streaming endpoint information."""
     if not streaming_service:
+        from middleware.exceptions import ErrorDetail
+        from services.constants.error_messages import SERVICE_UNAVAILABLE, SERVICE_UNAVAILABLE_MESSAGE
+        import time
+        error_detail = ErrorDetail(
+            message=SERVICE_UNAVAILABLE_MESSAGE,
+            code=SERVICE_UNAVAILABLE
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Streaming service not available"
+            detail=error_detail.dict()
         )
     
     return {

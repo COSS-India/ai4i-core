@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements from build context
-COPY requirements.txt .
+COPY services/auth-service/requirements.txt .
 
 # Install Python dependencies (NO --user)
 RUN pip install --no-cache-dir -r requirements.txt
@@ -34,8 +34,14 @@ RUN useradd --create-home --shell /bin/bash app
 # Copy installed Python packages
 COPY --from=builder /usr/local /usr/local
 
-# Copy application code
-COPY . .
+# Copy constants folder (from repo root) - this creates services/constants
+COPY services/constants /app/services/constants
+
+# Create __init__.py files to make services and constants Python packages
+RUN touch /app/services/__init__.py /app/services/constants/__init__.py
+
+# Copy application code from service context
+COPY services/auth-service .
 
 # Fix ownership ONLY for app files
 RUN chown -R app:app /app

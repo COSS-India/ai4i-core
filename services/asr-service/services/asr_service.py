@@ -229,6 +229,8 @@ class ASRService:
     
     async def _get_audio_bytes(self, audio_input) -> bytes:
         """Extract audio bytes from AudioInput."""
+        from utils.validation_utils import UploadFailedError, UploadTimeoutError
+        
         try:
             if audio_input.audioContent:
                 # Decode base64
@@ -237,10 +239,15 @@ class ASRService:
                 # Download from URL
                 return await self.audio_service.download_audio(str(audio_input.audioUri))
             else:
-                raise AudioProcessingError("No audio content or URI provided")
+                from utils.validation_utils import NoFileSelectedError
+                raise NoFileSelectedError("No audio content or URI provided")
+        except (UploadFailedError, UploadTimeoutError, NoFileSelectedError):
+            # Re-raise specific upload errors
+            raise
         except Exception as e:
             logger.error(f"Failed to get audio bytes: {e}")
-            raise AudioProcessingError(f"Failed to get audio bytes: {e}")
+            from utils.validation_utils import UploadFailedError
+            raise UploadFailedError("File upload failed. Please check your internet connection and try again.")
     
     async def _process_audio_input(self, file_handle: BytesIO, target_rate: int) -> np.ndarray:
         """Process audio input through preprocessing pipeline."""

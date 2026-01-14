@@ -4,6 +4,7 @@ FastAPI router for TTS inference endpoints.
 
 import logging
 import time
+import traceback
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,9 +23,51 @@ from utils.validation_utils import (
     validate_audio_format,
     validate_sample_rate,
     validate_text_input,
-    validate_audio_duration
+    validate_audio_duration,
+    InvalidLanguageCodeError,
+    InvalidServiceIdError,
+    InvalidGenderError,
+    InvalidAudioFormatError,
+    InvalidSampleRateError,
+    NoTextInputError,
+    TextTooShortError,
+    TextTooLongError,
+    InvalidCharactersError,
+    EmptyInputError,
+    LanguageMismatchError,
+    VoiceNotAvailableError
 )
-from middleware.exceptions import AuthenticationError, AuthorizationError
+from middleware.exceptions import AuthenticationError, AuthorizationError, ErrorDetail
+from services.constants.error_messages import (
+    NO_TEXT_INPUT,
+    NO_TEXT_INPUT_MESSAGE,
+    TEXT_TOO_SHORT,
+    TEXT_TOO_SHORT_MESSAGE,
+    TEXT_TOO_LONG,
+    TEXT_TOO_LONG_MESSAGE,
+    INVALID_CHARACTERS,
+    INVALID_CHARACTERS_MESSAGE,
+    EMPTY_INPUT,
+    EMPTY_INPUT_MESSAGE,
+    LANGUAGE_MISMATCH,
+    LANGUAGE_MISMATCH_MESSAGE,
+    LANGUAGE_NOT_SUPPORTED,
+    LANGUAGE_NOT_SUPPORTED_TTS_MESSAGE,
+    VOICE_NOT_AVAILABLE,
+    VOICE_NOT_AVAILABLE_MESSAGE,
+    SERVICE_UNAVAILABLE,
+    SERVICE_UNAVAILABLE_TTS_MESSAGE,
+    PROCESSING_FAILED,
+    PROCESSING_FAILED_MESSAGE,
+    MODEL_UNAVAILABLE,
+    MODEL_UNAVAILABLE_TTS_MESSAGE,
+    AUDIO_GEN_FAILED,
+    AUDIO_GEN_FAILED_MESSAGE,
+    INVALID_REQUEST,
+    INVALID_REQUEST_TTS_MESSAGE,
+    INTERNAL_SERVER_ERROR,
+    INTERNAL_SERVER_ERROR_MESSAGE
+)
 
 # Import OpenTelemetry for manual span creation
 try:
@@ -133,14 +176,69 @@ async def _run_tts_inference_internal(request: TTSInferenceRequest, http_request
         
         return response
         
+    except NoTextInputError:
+        logger.warning("No text input provided in TTS inference")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ErrorDetail(code=NO_TEXT_INPUT, message=NO_TEXT_INPUT_MESSAGE).dict()
+        )
+    except EmptyInputError:
+        logger.warning("Empty text input in TTS inference")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ErrorDetail(code=NO_TEXT_INPUT, message=NO_TEXT_INPUT_MESSAGE).dict()
+        )
+    except TextTooShortError:
+        logger.warning("Text too short in TTS inference")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ErrorDetail(code=TEXT_TOO_SHORT, message=TEXT_TOO_SHORT_MESSAGE).dict()
+        )
+    except TextTooLongError:
+        logger.warning("Text too long in TTS inference")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ErrorDetail(code=TEXT_TOO_LONG, message=TEXT_TOO_LONG_MESSAGE).dict()
+        )
+    except InvalidCharactersError:
+        logger.warning("Invalid characters in TTS inference")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ErrorDetail(code=INVALID_CHARACTERS, message=INVALID_CHARACTERS_MESSAGE).dict()
+        )
+    except LanguageMismatchError:
+        logger.warning("Language mismatch in TTS inference")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ErrorDetail(code=LANGUAGE_MISMATCH, message=LANGUAGE_MISMATCH_MESSAGE).dict()
+        )
+    except InvalidLanguageCodeError:
+        logger.warning("Invalid language code in TTS inference")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ErrorDetail(code=LANGUAGE_NOT_SUPPORTED, message=LANGUAGE_NOT_SUPPORTED_TTS_MESSAGE).dict()
+        )
+    except VoiceNotAvailableError:
+        logger.warning("Voice not available in TTS inference")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ErrorDetail(code=VOICE_NOT_AVAILABLE, message=VOICE_NOT_AVAILABLE_MESSAGE).dict()
+        )
+    except (InvalidServiceIdError, InvalidGenderError, InvalidAudioFormatError, InvalidSampleRateError) as e:
+        logger.warning(f"Invalid request parameter in TTS inference: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ErrorDetail(code=INVALID_REQUEST, message=INVALID_REQUEST_TTS_MESSAGE).dict()
+        )
     except ValueError as e:
         logger.warning(f"Validation error in TTS inference: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
+            detail=ErrorDetail(code=INVALID_REQUEST, message=INVALID_REQUEST_TTS_MESSAGE).dict()
         )
     except Exception as e:
         logger.error(f"TTS inference failed: {e}", exc_info=True)
+        logger.error(f"Traceback: {traceback.format_exc()}")
         
         # Import service-specific exceptions
         from middleware.exceptions import (
@@ -160,21 +258,29 @@ async def _run_tts_inference_internal(request: TTSInferenceRequest, http_request
             import re
             model_match = re.search(r"model: '([^']+)'", error_msg)
             model_name = model_match.group(1) if model_match else "tts"
-            raise ModelNotFoundError(
-                message=f"Model '{model_name}' not found in Triton inference server. Please verify the model name and ensure it is loaded.",
-                model_name=model_name
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=ErrorDetail(code=MODEL_UNAVAILABLE, message=MODEL_UNAVAILABLE_TTS_MESSAGE).dict()
             )
         elif "triton" in error_msg.lower() or "connection" in error_msg.lower() or "timeout" in error_msg.lower():
-            raise ServiceUnavailableError(
-                message=f"TTS service unavailable: {error_msg}. Please check Triton server connectivity."
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message=SERVICE_UNAVAILABLE_TTS_MESSAGE).dict()
             )
-        elif "audio" in error_msg.lower():
-            raise AudioProcessingError(f"Audio processing failed: {error_msg}")
+        elif "audio" in error_msg.lower() or "generation" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=ErrorDetail(code=AUDIO_GEN_FAILED, message=AUDIO_GEN_FAILED_MESSAGE).dict()
+            )
+        elif "processing" in error_msg.lower() or "failed" in error_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=ErrorDetail(code=PROCESSING_FAILED, message=PROCESSING_FAILED_MESSAGE).dict()
+            )
         else:
-            # Generic Triton error
-            raise TritonInferenceError(
-                message=f"TTS inference failed: {error_msg}",
-                model_name="tts"
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=ErrorDetail(code=INTERNAL_SERVER_ERROR, message=str(e) if str(e) else INTERNAL_SERVER_ERROR_MESSAGE).dict()
             )
 
 
@@ -245,6 +351,12 @@ async def validate_request(request: TTSInferenceRequest) -> None:
             if text_input.audioDuration:
                 validate_audio_duration(text_input.audioDuration)
         
+    except (NoTextInputError, EmptyInputError, TextTooShortError, TextTooLongError, 
+            InvalidCharactersError, LanguageMismatchError, InvalidLanguageCodeError,
+            VoiceNotAvailableError, InvalidServiceIdError, InvalidGenderError,
+            InvalidAudioFormatError, InvalidSampleRateError):
+        # Re-raise specific validation exceptions directly (they will be caught by handlers above)
+        raise
     except Exception as e:
         logger.warning(f"Request validation failed: {e}")
         raise ValueError(f"Invalid request: {e}")

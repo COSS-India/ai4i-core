@@ -4,7 +4,6 @@ Custom exception classes for authentication and authorization.
 from fastapi import HTTPException
 from pydantic import BaseModel
 from typing import Optional
-import time
 
 
 class AuthenticationError(HTTPException):
@@ -61,7 +60,6 @@ class ErrorDetail(BaseModel):
     """Error detail model for consistent error responses."""
     message: str
     code: Optional[str] = None
-    timestamp: float = time.time()
 
 
 class ErrorResponse(BaseModel):
