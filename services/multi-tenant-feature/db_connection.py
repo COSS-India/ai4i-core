@@ -34,8 +34,9 @@ TenantDBSessionLocal = None
 AuthDBSessionLocal = None
 
 # Base classes for SQLAlchemy models
-TenantDBBase = declarative_base()
-AuthDBBase = declarative_base()
+TenantDBBase = declarative_base()  # For tenant management tables (Tenant, BillingRecord, etc.) in public schema
+AuthDBBase = declarative_base()    # For auth tables (users, api_keys, etc.) in auth_db
+ServiceSchemaBase = declarative_base()  # For service tables (NMT, TTS, ASR, etc.) in tenant schemas
 
 
 def init_postgresql_connections():
