@@ -19,8 +19,9 @@ COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 
 # Copy requirements from build context
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY services/pipeline-service/requirements.txt .
+# Install Python deps with --user flag so they go to /root/.local
+RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Install AI4ICore libraries
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
@@ -64,8 +65,6 @@ COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 RUN chown -R app:app /app /home/app/.local \
     && chmod +x /home/app/.local/bin/* 2>/dev/null || true
 
-# Copy application code 
-COPY . .
 USER app
 
 EXPOSE 8090
