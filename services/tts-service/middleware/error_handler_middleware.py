@@ -17,6 +17,7 @@ from middleware.exceptions import (
 import logging
 import time
 import traceback
+from ai4icore_logging import get_logger, get_correlation_id, get_organization
 
 # Import OpenTelemetry for tracing
 try:
@@ -26,7 +27,8 @@ try:
 except ImportError:
     TRACING_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+tracer = trace.get_tracer("tts-service") if TRACING_AVAILABLE else None
 
 
 def add_error_handlers(app: FastAPI) -> None:
@@ -35,27 +37,180 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthenticationError)
     async def authentication_error_handler(request: Request, exc: AuthenticationError):
         """Handle authentication errors."""
-        error_detail = ErrorDetail(
-            message=exc.message,
-            code="AUTHENTICATION_ERROR",
-            timestamp=time.time()
+        # Extract request info for logging
+        method = request.method
+        path = request.url.path
+        client_ip = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "unknown")
+        
+        # Get correlation ID if available
+        correlation_id = get_correlation_id(request)
+        
+        # Determine specific error code based on exception type and message
+        # Match the exact error codes used by API Gateway for consistency
+        from middleware.exceptions import InvalidAPIKeyError, ExpiredAPIKeyError
+        if isinstance(exc, InvalidAPIKeyError):
+            error_code = "INVALID_API_KEY"
+            error_reason = "invalid_api_key"
+        elif isinstance(exc, ExpiredAPIKeyError):
+            error_code = "EXPIRED_API_KEY"
+            error_reason = "expired_api_key"
+        elif "Invalid or expired token" in exc.message or "token" in exc.message.lower() or "expired" in exc.message.lower():
+            # Map token-related errors to AUTHENTICATION_REQUIRED (matching API Gateway format)
+            error_code = "AUTHENTICATION_REQUIRED"
+            error_reason = "authentication_failed"
+        else:
+            error_code = "AUTHENTICATION_ERROR"
+            error_reason = "authentication_failed"
+        
+        # Create span for authentication error if tracer is available
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("auth.operation", "reject_authentication")
+                reject_span.set_attribute("auth.rejected", True)
+                reject_span.set_attribute("error.type", type(exc).__name__)
+                reject_span.set_attribute("error.reason", error_reason)
+                reject_span.set_attribute("error.message", exc.message)
+                reject_span.set_attribute("error.code", error_code)
+                reject_span.set_attribute("http.status_code", 401)
+                reject_span.set_attribute("http.method", method)
+                reject_span.set_attribute("http.route", path)
+                if correlation_id:
+                    reject_span.set_attribute("correlation.id", correlation_id)
+                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+        
+        # Extract auth context from request.state if available
+        user_id = getattr(request.state, "user_id", None)
+        api_key_id = getattr(request.state, "api_key_id", None)
+        
+        # Get organization from request.state or context
+        organization = getattr(request.state, "organization", None)
+        if not organization:
+            try:
+                organization = get_organization()
+            except Exception:
+                pass
+        
+        # Calculate processing time (approximate, since we don't have start_time)
+        processing_time = 0.001  # Minimal time for auth errors
+        
+        # Build context matching RequestLoggingMiddleware format EXACTLY
+        # This ensures 401 errors appear in OpenSearch with the same structure as 200
+        log_context = {
+            "method": method,
+            "path": path,
+            "status_code": 401,
+            "duration_ms": round(processing_time * 1000, 2),
+            "client_ip": client_ip,
+            "user_agent": user_agent,
+            "error_code": error_code,
+            "error_message": exc.message,
+        }
+        
+        if user_id:
+            log_context["user_id"] = user_id
+        if api_key_id:
+            log_context["api_key_id"] = api_key_id
+        if correlation_id:
+            log_context["correlation_id"] = correlation_id
+        if organization:
+            log_context["organization"] = organization
+        
+        # Log with WARNING level to match RequestLoggingMiddleware for 4xx errors
+        # Format: "{method} {path} - {status_code} - {duration}s" (same as RequestLoggingMiddleware)
+        # This ensures 401 errors appear in OpenSearch with the same structure as 200
+        # IMPORTANT: This explicit logging ensures errors are logged even if RequestLoggingMiddleware
+        # doesn't catch the response (which can happen with exception handlers)
+        # This matches exactly how NMT and OCR log authentication errors
+        logger.warning(
+            f"{method} {path} - 401 - {processing_time:.3f}s",
+            extra={"context": log_context}
         )
+        
+        # Return error response matching the format seen in API Gateway
+        # Format: {"detail": {"error": "ERROR_CODE", "message": "..."}}
         return JSONResponse(
             status_code=401,
-            content={"detail": error_detail.dict()}
+            content={"detail": {"error": error_code, "message": exc.message}}
         )
     
     @app.exception_handler(AuthorizationError)
     async def authorization_error_handler(request: Request, exc: AuthorizationError):
         """Handle authorization errors."""
-        error_detail = ErrorDetail(
-            message=exc.message,
-            code="AUTHORIZATION_ERROR",
-            timestamp=time.time()
+        # Extract request info for logging
+        method = request.method
+        path = request.url.path
+        client_ip = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "unknown")
+        
+        # Get correlation ID if available
+        correlation_id = get_correlation_id(request)
+        
+        # Create span for authorization error if tracer is available
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("auth.operation", "reject_authorization")
+                reject_span.set_attribute("auth.rejected", True)
+                reject_span.set_attribute("error.type", "AuthorizationError")
+                reject_span.set_attribute("error.reason", "authorization_failed")
+                reject_span.set_attribute("error.message", exc.message)
+                reject_span.set_attribute("error.code", "AUTHORIZATION_ERROR")
+                reject_span.set_attribute("http.status_code", 403)
+                reject_span.set_attribute("http.method", method)
+                reject_span.set_attribute("http.route", path)
+                if correlation_id:
+                    reject_span.set_attribute("correlation.id", correlation_id)
+                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+        
+        # Extract auth context from request.state if available
+        user_id = getattr(request.state, "user_id", None)
+        api_key_id = getattr(request.state, "api_key_id", None)
+        
+        # Get organization from request.state or context
+        organization = getattr(request.state, "organization", None)
+        if not organization:
+            try:
+                organization = get_organization()
+            except Exception:
+                pass
+        
+        # Calculate processing time (approximate)
+        processing_time = 0.001
+        
+        # Build context matching RequestLoggingMiddleware format
+        log_context = {
+            "method": method,
+            "path": path,
+            "status_code": 403,
+            "duration_ms": round(processing_time * 1000, 2),
+            "client_ip": client_ip,
+            "user_agent": user_agent,
+            "error_code": "AUTHORIZATION_ERROR",
+            "error_message": exc.message,
+        }
+        
+        if user_id:
+            log_context["user_id"] = user_id
+        if api_key_id:
+            log_context["api_key_id"] = api_key_id
+        if correlation_id:
+            log_context["correlation_id"] = correlation_id
+        if organization:
+            log_context["organization"] = organization
+        
+        # Log with WARNING level
+        # IMPORTANT: This explicit logging ensures errors are logged even if RequestLoggingMiddleware
+        # doesn't catch the response (which can happen with exception handlers)
+        logger.warning(
+            f"{method} {path} - 403 - {processing_time:.3f}s",
+            extra={"context": log_context}
         )
+        
+        # Return error response matching the format seen in API Gateway
+        # Format: {"detail": {"error": "ERROR_CODE", "message": "..."}}
         return JSONResponse(
             status_code=403,
-            content={"detail": error_detail.dict()}
+            content={"detail": {"error": "AUTHORIZATION_ERROR", "message": exc.message}}
         )
     
     @app.exception_handler(RateLimitExceededError)
