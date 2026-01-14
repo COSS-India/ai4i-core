@@ -26,6 +26,8 @@ class Tenant(TenantDBBase):
 
     schema_name = Column(String(255), unique=True, nullable=False) # generated DB schema name
 
+    user_id = Column(Integer, nullable=True, index=True)  # References users.id in auth_db
+
     # subscriptions: list of services e.g. ["tts", "asr", "nmt"]
     subscriptions = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     status = Column(Enum(TenantStatus, native_enum=False, create_type=False), nullable=False, default=TenantStatus.PENDING)

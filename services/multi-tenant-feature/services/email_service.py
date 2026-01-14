@@ -23,7 +23,17 @@ async def send_welcome_email(
     subdomain: str,
     temp_admin_username: str,
     temp_admin_password: str,
-):  
+):
+    """
+    Send welcome email to tenant admin with login credentials after tenant activation.
+    
+    Args:
+        tenant_id: The ID of the tenant
+        contact_email: The contact email of the tenant
+        subdomain: The tenant's subdomain
+        temp_admin_username: Temporary admin username
+        temp_admin_password: Temporary admin password
+    """  
     
     body = WELCOME_EMAIL_BODY.format(
             tenant_id=tenant_id,
@@ -47,7 +57,16 @@ async def send_user_welcome_email(
     subdomain: str,
     temp_username: str,
     temp_password: str,
-):  
+):
+    """
+    Send welcome email to tenant user with login credentials after user registration.
+    
+    Args:
+        user_id: The ID of the user
+        contact_email: The contact email of the user
+        subdomain: The tenant's subdomain
+        temp_username: Temporary username
+        temp_password: Temporary password"""  
     
     body = USER_WELCOME_EMAIL_BODY.format(
             user_id=user_id,
@@ -65,6 +84,13 @@ async def send_user_welcome_email(
 
 
 async def send_verification_email(contact_email: str, verification_link: str):
+    """
+    Send email verification link to tenant contact email for account activation.
+
+    Args:
+        contact_email: The contact email of the tenant
+        verification_link: The verification link to be sent
+    """
 
     logger.info(f"Sending verification email to {contact_email} with link {verification_link}")
 

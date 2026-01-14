@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError , NoResultFound
 from db_connection import get_tenant_db_session
 from models.billing_update import BillingUpdateRequest, BillingUpdateResponse
 
-from tenant_service import update_billing_plan
+from services.tenant_service import update_billing_plan
 from logger import logger
 from middleware.auth_provider import AuthProvider
 
