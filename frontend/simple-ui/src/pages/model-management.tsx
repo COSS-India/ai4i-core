@@ -37,6 +37,7 @@ import React, { useState, useEffect } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import { unpublishModel, getAllModels, createModel, getModelById, updateModel, publishModel } from "../services/modelManagementService";
 import { useAuth } from "../hooks/useAuth";
+import { useSessionExpiry } from "../hooks/useSessionExpiry";
 
 // TypeScript interfaces for model data
 interface OAuthId {
@@ -371,6 +372,7 @@ const ModelManagementPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
   const toast = useToast();
   const { accessToken } = useAuth();
+  const { checkSessionExpiry } = useSessionExpiry();
 
   // Fetch models on component mount
   useEffect(() => {
@@ -444,6 +446,10 @@ const ModelManagementPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Check session expiry before submitting
+    if (!checkSessionExpiry()) return;
+    
     setIsSubmitting(true);
 
     try {
@@ -527,6 +533,9 @@ const ModelManagementPage: React.FC = () => {
   };
 
   const handleViewModel = async (modelId: string) => {
+    // Check session expiry before viewing model
+    if (!checkSessionExpiry()) return;
+    
     try {
       const model = await getModelById(modelId);
       setSelectedModel(model);
@@ -551,6 +560,9 @@ const ModelManagementPage: React.FC = () => {
   const handleUpdateModel = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedModel) return;
+    
+    // Check session expiry before updating
+    if (!checkSessionExpiry()) return;
 
     setIsUpdating(true);
     try {
@@ -596,6 +608,9 @@ const ModelManagementPage: React.FC = () => {
   };
 
   const handlePublish = async (modelId: string) => {
+    // Check session expiry before publishing
+    if (!checkSessionExpiry()) return;
+    
     setPublishingModelId(modelId);
     
     try {
@@ -631,6 +646,9 @@ const ModelManagementPage: React.FC = () => {
   };
 
   const handleUnpublish = async (modelId: string) => {
+    // Check session expiry before unpublishing
+    if (!checkSessionExpiry()) return;
+    
     setUnpublishingModelId(modelId);
     
     try {
