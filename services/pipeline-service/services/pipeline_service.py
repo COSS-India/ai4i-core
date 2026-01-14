@@ -344,161 +344,235 @@ class PipelineService:
         """Execute a single pipeline task with distributed tracing."""
         
         if task.taskType == TaskType.ASR:
-            # Construct ASR request
-            asr_config = {
-                "serviceId": task.config.serviceId,
-                "language": task.config.language.dict(),
-            }
-            
-            # Add optional ASR config fields
-            if task.config.audioFormat:
-                asr_config["audioFormat"] = task.config.audioFormat
-            if task.config.preProcessors:
-                asr_config["preProcessors"] = task.config.preProcessors
-            if task.config.postProcessors:
-                asr_config["postProcessors"] = task.config.postProcessors
-            if task.config.transcriptionFormat:
-                asr_config["transcriptionFormat"] = task.config.transcriptionFormat
-            
-            asr_request = {
-                "audio": input_data.get("audio", []),
-                "config": asr_config
-            }
-            
-            # Add controlConfig if present
-            if control_config:
-                asr_request["controlConfig"] = control_config
-            
-            logger.info(f"📝 ASR request constructed with {len(input_data.get('audio', []))} audio inputs")
-            
-            # Add span attributes for ASR request
-            if TRACING_AVAILABLE:
-                current_span = trace.get_current_span()
-                if current_span:
-                    current_span.set_attribute("asr.service_id", task.config.serviceId)
-                    current_span.set_attribute("asr.audio_count", len(input_data.get("audio", [])))
+            # Construct ASR request with detailed tracing
+            with tracer.start_as_current_span("pipeline.construct_asr_request") as construct_span:
+                asr_config = {
+                    "serviceId": task.config.serviceId,
+                    "language": task.config.language.dict(),
+                }
+                
+                # Add optional ASR config fields
+                if task.config.audioFormat:
+                    asr_config["audioFormat"] = task.config.audioFormat
+                if task.config.preProcessors:
+                    asr_config["preProcessors"] = task.config.preProcessors
+                if task.config.postProcessors:
+                    asr_config["postProcessors"] = task.config.postProcessors
+                if task.config.transcriptionFormat:
+                    asr_config["transcriptionFormat"] = task.config.transcriptionFormat
+                
+                asr_request = {
+                    "audio": input_data.get("audio", []),
+                    "config": asr_config
+                }
+                
+                # Add controlConfig if present
+                if control_config:
+                    asr_request["controlConfig"] = control_config
+                
+                audio_count = len(input_data.get("audio", []))
+                construct_span.set_attribute("asr.service_id", task.config.serviceId)
+                construct_span.set_attribute("asr.audio_count", audio_count)
+                if task.config.audioFormat:
+                    construct_span.set_attribute("asr.audio_format", task.config.audioFormat)
+                if task.config.transcriptionFormat:
+                    construct_span.set_attribute("asr.transcription_format", task.config.transcriptionFormat)
+                
+                logger.info(f"📝 ASR request constructed with {audio_count} audio inputs")
             
             try:
-                # Call ASR service
-                response = await self.service_client.call_asr_service(asr_request, jwt_token=jwt_token, api_key=api_key)
+                # Call ASR service with tracing
+                with tracer.start_as_current_span("pipeline.call_asr_service") as call_span:
+                    call_span.set_attribute("asr.service_id", task.config.serviceId)
+                    call_span.add_event("asr.request.started")
+                    
+                    response = await self.service_client.call_asr_service(asr_request, jwt_token=jwt_token, api_key=api_key)
+                    
+                    output_count = len(response.get("output", []))
+                    call_span.set_attribute("asr.output_count", output_count)
+                    call_span.add_event("asr.request.completed", {
+                        "output_count": output_count
+                    })
                 
-                # Add response attributes to span
-                if TRACING_AVAILABLE:
-                    current_span = trace.get_current_span()
-                    if current_span:
-                        current_span.set_attribute("asr.output_count", len(response.get("output", [])))
-                
-                return PipelineTaskOutput(
-                    taskType="asr",
-                    serviceId=task.config.serviceId,
-                    output=response.get("output", []),
-                    config=response.get("config")
-                )
+                # Process response with tracing
+                with tracer.start_as_current_span("pipeline.process_asr_response") as process_span:
+                    process_span.set_attribute("asr.output_count", output_count)
+                    
+                    result = PipelineTaskOutput(
+                        taskType="asr",
+                        serviceId=task.config.serviceId,
+                        output=response.get("output", []),
+                        config=response.get("config")
+                    )
+                    
+                    process_span.add_event("asr.response.processed")
+                    return result
+                    
             except Exception as e:
                 logger.error(f"❌ ASR service call failed: {e}")
                 if TRACING_AVAILABLE:
                     current_span = trace.get_current_span()
                     if current_span:
                         current_span.set_attribute("error", True)
+                        current_span.set_attribute("error.type", type(e).__name__)
+                        current_span.set_attribute("error.message", str(e))
+                        current_span.set_status(Status(StatusCode.ERROR, str(e)))
                         current_span.record_exception(e)
+                        current_span.add_event("asr.request.failed", {
+                            "error_type": type(e).__name__,
+                            "error_message": str(e)
+                        })
                 raise
         
         elif task.taskType == TaskType.TRANSLATION:
-            # Construct NMT request
-            nmt_request = {
-                "input": input_data.get("input", []),
-                "config": {
-                    "serviceId": task.config.serviceId,
-                    "language": task.config.language.dict()
+            # Construct NMT request with detailed tracing
+            with tracer.start_as_current_span("pipeline.construct_nmt_request") as construct_span:
+                nmt_request = {
+                    "input": input_data.get("input", []),
+                    "config": {
+                        "serviceId": task.config.serviceId,
+                        "language": task.config.language.dict()
+                    }
                 }
-            }
-            
-            logger.info(f"📝 Translation request constructed with {len(input_data.get('input', []))} text inputs")
-            
-            # Add span attributes for NMT request
-            if TRACING_AVAILABLE:
-                current_span = trace.get_current_span()
-                if current_span:
-                    current_span.set_attribute("nmt.service_id", task.config.serviceId)
-                    current_span.set_attribute("nmt.input_count", len(input_data.get("input", [])))
+                
+                input_count = len(input_data.get("input", []))
+                construct_span.set_attribute("nmt.service_id", task.config.serviceId)
+                construct_span.set_attribute("nmt.input_count", input_count)
+                
+                # Add language details to span
+                lang_config = task.config.language.dict()
+                if "sourceLanguage" in lang_config:
+                    construct_span.set_attribute("nmt.source_language", lang_config["sourceLanguage"])
+                if "targetLanguage" in lang_config:
+                    construct_span.set_attribute("nmt.target_language", lang_config["targetLanguage"])
+                if "sourceScriptCode" in lang_config:
+                    construct_span.set_attribute("nmt.source_script_code", lang_config["sourceScriptCode"])
+                if "targetScriptCode" in lang_config:
+                    construct_span.set_attribute("nmt.target_script_code", lang_config["targetScriptCode"])
+                
+                logger.info(f"📝 Translation request constructed with {input_count} text inputs")
             
             try:
-                # Call NMT service
-                response = await self.service_client.call_nmt_service(nmt_request, jwt_token=jwt_token, api_key=api_key)
+                # Call NMT service with tracing
+                with tracer.start_as_current_span("pipeline.call_nmt_service") as call_span:
+                    call_span.set_attribute("nmt.service_id", task.config.serviceId)
+                    call_span.add_event("nmt.request.started")
+                    
+                    response = await self.service_client.call_nmt_service(nmt_request, jwt_token=jwt_token, api_key=api_key)
+                    
+                    output_count = len(response.get("output", []))
+                    call_span.set_attribute("nmt.output_count", output_count)
+                    call_span.add_event("nmt.request.completed", {
+                        "output_count": output_count
+                    })
                 
-                # Add response attributes to span
-                if TRACING_AVAILABLE:
-                    current_span = trace.get_current_span()
-                    if current_span:
-                        current_span.set_attribute("nmt.output_count", len(response.get("output", [])))
-                
-                return PipelineTaskOutput(
-                    taskType="translation",
-                    serviceId=task.config.serviceId,
-                    output=response.get("output", []),
-                    config=None
-                )
+                # Process response with tracing
+                with tracer.start_as_current_span("pipeline.process_nmt_response") as process_span:
+                    process_span.set_attribute("nmt.output_count", output_count)
+                    
+                    result = PipelineTaskOutput(
+                        taskType="translation",
+                        serviceId=task.config.serviceId,
+                        output=response.get("output", []),
+                        config=None
+                    )
+                    
+                    process_span.add_event("nmt.response.processed")
+                    return result
+                    
             except Exception as e:
                 logger.error(f"❌ NMT service call failed: {e}")
                 if TRACING_AVAILABLE:
                     current_span = trace.get_current_span()
                     if current_span:
                         current_span.set_attribute("error", True)
+                        current_span.set_attribute("error.type", type(e).__name__)
+                        current_span.set_attribute("error.message", str(e))
+                        current_span.set_status(Status(StatusCode.ERROR, str(e)))
                         current_span.record_exception(e)
+                        current_span.add_event("nmt.request.failed", {
+                            "error_type": type(e).__name__,
+                            "error_message": str(e)
+                        })
                 raise
         
         elif task.taskType == TaskType.TTS:
-            # Construct TTS request
-            tts_request = {
-                "input": input_data.get("input", []),
-                "config": {
-                    "serviceId": task.config.serviceId,
-                    "language": task.config.language.dict(),
-                    "gender": task.config.gender or "male",
-                    "audioFormat": task.config.audioFormat or "wav",
-                    "samplingRate": 22050,
-                    "encoding": "base64"
+            # Construct TTS request with detailed tracing
+            with tracer.start_as_current_span("pipeline.construct_tts_request") as construct_span:
+                tts_request = {
+                    "input": input_data.get("input", []),
+                    "config": {
+                        "serviceId": task.config.serviceId,
+                        "language": task.config.language.dict(),
+                        "gender": task.config.gender or "male",
+                        "audioFormat": task.config.audioFormat or "wav",
+                        "samplingRate": 22050,
+                        "encoding": "base64"
+                    }
                 }
-            }
-            
-            logger.info(f"📝 TTS request constructed with {len(input_data.get('input', []))} text inputs")
-            
-            # Add span attributes for TTS request
-            if TRACING_AVAILABLE:
-                current_span = trace.get_current_span()
-                if current_span:
-                    current_span.set_attribute("tts.service_id", task.config.serviceId)
-                    current_span.set_attribute("tts.input_count", len(input_data.get("input", [])))
-                    current_span.set_attribute("tts.gender", task.config.gender or "male")
-                    current_span.set_attribute("tts.audio_format", task.config.audioFormat or "wav")
+                
+                input_count = len(input_data.get("input", []))
+                construct_span.set_attribute("tts.service_id", task.config.serviceId)
+                construct_span.set_attribute("tts.input_count", input_count)
+                construct_span.set_attribute("tts.gender", task.config.gender or "male")
+                construct_span.set_attribute("tts.audio_format", task.config.audioFormat or "wav")
+                construct_span.set_attribute("tts.sampling_rate", 22050)
+                construct_span.set_attribute("tts.encoding", "base64")
+                
+                # Add language details
+                lang_config = task.config.language.dict()
+                if "sourceLanguage" in lang_config:
+                    construct_span.set_attribute("tts.language", lang_config["sourceLanguage"])
+                
+                logger.info(f"📝 TTS request constructed with {input_count} text inputs")
             
             try:
-                # Call TTS service
-                response = await self.service_client.call_tts_service(tts_request, jwt_token=jwt_token, api_key=api_key)
+                # Call TTS service with tracing
+                with tracer.start_as_current_span("pipeline.call_tts_service") as call_span:
+                    call_span.set_attribute("tts.service_id", task.config.serviceId)
+                    call_span.add_event("tts.request.started")
+                    
+                    response = await self.service_client.call_tts_service(tts_request, jwt_token=jwt_token, api_key=api_key)
+                    
+                    audio_count = len(response.get("audio", []))
+                    call_span.set_attribute("tts.audio_count", audio_count)
+                    call_span.add_event("tts.request.completed", {
+                        "audio_count": audio_count
+                    })
                 
-                # Add response attributes to span
-                if TRACING_AVAILABLE:
-                    current_span = trace.get_current_span()
-                    if current_span:
-                        current_span.set_attribute("tts.audio_count", len(response.get("audio", [])))
-                
-                logger.info(f"✅ TTS service returned {len(response.get('audio', []))} audio outputs")
-                
-                # TTS service returns audio in "audio" field, map to output
-                return PipelineTaskOutput(
-                    taskType="tts",
-                    serviceId=task.config.serviceId,
-                    output=response.get("audio", []),
-                    audio=response.get("audio", []),
-                    config=response.get("config")
-                )
+                # Process response with tracing
+                with tracer.start_as_current_span("pipeline.process_tts_response") as process_span:
+                    audio_count = len(response.get("audio", []))
+                    process_span.set_attribute("tts.audio_count", audio_count)
+                    
+                    logger.info(f"✅ TTS service returned {audio_count} audio outputs")
+                    
+                    # TTS service returns audio in "audio" field, map to output
+                    result = PipelineTaskOutput(
+                        taskType="tts",
+                        serviceId=task.config.serviceId,
+                        output=response.get("audio", []),
+                        audio=response.get("audio", []),
+                        config=response.get("config")
+                    )
+                    
+                    process_span.add_event("tts.response.processed")
+                    return result
+                    
             except Exception as e:
                 logger.error(f"❌ TTS service call failed: {e}")
                 if TRACING_AVAILABLE:
                     current_span = trace.get_current_span()
                     if current_span:
                         current_span.set_attribute("error", True)
+                        current_span.set_attribute("error.type", type(e).__name__)
+                        current_span.set_attribute("error.message", str(e))
+                        current_span.set_status(Status(StatusCode.ERROR, str(e)))
                         current_span.record_exception(e)
+                        current_span.add_event("tts.request.failed", {
+                            "error_type": type(e).__name__,
+                            "error_message": str(e)
+                        })
                 raise
         
         else:

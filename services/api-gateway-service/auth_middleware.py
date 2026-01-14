@@ -10,6 +10,13 @@ from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import httpx
 
+# Import ai4icore logging for structured JSON logs
+try:
+    from ai4icore_logging import get_logger
+except ImportError:
+    # Fallback will be defined below
+    pass
+
 # Import error messages - use importlib for reliable file-based import
 import importlib.util
 import os
@@ -48,7 +55,16 @@ except ImportError:
         AUTH_FAILED = "AUTH_FAILED"
         AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."
 
-logger = logging.getLogger(__name__)
+# Configure logger with JSON formatting
+try:
+    logger = get_logger(__name__, use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true")
+    # Remove the logger's own handlers and let it propagate to root logger
+    # This ensures all logs use the same handler configuration
+    logger.handlers.clear()
+    logger.propagate = True  # Allow propagation to root logger for consistent handling
+except (NameError, Exception):
+    # Fallback to standard logging if ai4icore_logging is not available
+    logger = logging.getLogger(__name__)
 
 # JWT Configuration
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
