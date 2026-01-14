@@ -94,7 +94,8 @@ def setup_tracing(service_name: str, jaeger_endpoint: Optional[str] = None) -> O
             return None
         
         # Wrap exporter with filtering to reduce noise (filter out http receive/send spans)
-        exporter = FilteringSpanExporter(base_exporter)
+        # Always include send/receive spans for API gateway for detailed breakdown
+        exporter = FilteringSpanExporter(base_exporter, service_name=service_name)
         
         # Add span processors
         # First add organization processor to add org attribute to all spans
@@ -156,6 +157,9 @@ class FilteringSpanExporter(SpanExporter):
     
     These spans are created by FastAPI instrumentation for ASGI operations
     and can clutter traces. This exporter filters them out before exporting.
+    
+    Exception: Always includes send/receive spans for api-gateway-service
+    to provide detailed request/response breakdown.
     """
     
     # Spans to filter out (by name pattern)
@@ -167,9 +171,12 @@ class FilteringSpanExporter(SpanExporter):
         " http send",     # With leading space
     ]
     
-    def __init__(self, base_exporter: SpanExporter):
+    def __init__(self, base_exporter: SpanExporter, service_name: str = None):
         """Initialize the filtering exporter with a base exporter."""
         self.base_exporter = base_exporter
+        self.service_name = service_name
+        # Always include send/receive spans for API gateway
+        self.include_send_receive = service_name == "api-gateway-service"
     
     def export(self, spans):
         """Export spans, filtering out noisy ones."""
@@ -183,6 +190,15 @@ class FilteringSpanExporter(SpanExporter):
             span_name = span.name.lower() if span.name else ""
             should_filter = False
             
+            # Always include send/receive spans for API gateway
+            if self.include_send_receive:
+                # For API gateway, enhance send/receive spans with more details
+                if any(filtered_name.strip() in span_name for filtered_name in self.FILTERED_SPAN_NAMES):
+                    self._enhance_api_gateway_span(span)
+                filtered_spans.append(span)
+                continue
+            
+            # For other services, filter out send/receive spans
             # Check if span name ends with or contains any of the filtered patterns
             # ASGI spans typically have format: "service-name METHOD /path http receive/send"
             for filtered_name in self.FILTERED_SPAN_NAMES:
@@ -199,12 +215,43 @@ class FilteringSpanExporter(SpanExporter):
         # Log filtering stats (only if we filtered something and debug is enabled)
         if filtered_count > 0:
             logger.debug(f"Filtered out {filtered_count} noisy spans (http receive/send)")
+        elif self.include_send_receive:
+            logger.debug(f"Including all spans for {self.service_name} (including send/receive)")
         
         # Export filtered spans
         if filtered_spans:
             return self.base_exporter.export(filtered_spans)
         else:
             return SpanExportResult.SUCCESS
+    
+    def _enhance_api_gateway_span(self, span):
+        """Add detailed attributes to API gateway send/receive spans for better breakdown."""
+        try:
+            # Extract operation details from span name
+            span_name = span.name or ""
+            
+            # Add span type attribute
+            if "http receive" in span_name.lower():
+                span.set_attribute("span.type", "http.receive")
+                span.set_attribute("span.phase", "request")
+            elif "http send" in span_name.lower():
+                span.set_attribute("span.type", "http.send")
+                span.set_attribute("span.phase", "response")
+            
+            # Try to extract HTTP method and path from span name
+            # Format: "api-gateway-service METHOD /path http receive/send"
+            parts = span_name.split()
+            if len(parts) >= 3:
+                method = parts[1] if parts[1] in ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"] else None
+                if method:
+                    span.set_attribute("http.method_extracted", method)
+                if len(parts) >= 3:
+                    path = parts[2] if parts[2].startswith("/") else None
+                    if path:
+                        span.set_attribute("http.path_extracted", path)
+        except Exception as e:
+            # Silently fail if enhancement fails
+            logger.debug(f"Failed to enhance API gateway span: {e}")
     
     def shutdown(self):
         """Shutdown the base exporter."""
