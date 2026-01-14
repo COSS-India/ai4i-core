@@ -109,22 +109,30 @@ async def get_asr_service(
         model_mgmt_error = getattr(request.state, "model_management_error", None)
         
         if service_id:
-                error_detail = ErrorDetail(
-                    message=MODEL_UNAVAILABLE_MESSAGE,
-                    code=MODEL_UNAVAILABLE
-                )
+            # Model Management failed to resolve endpoint for a specific serviceId
+            logger.error(
+                "Model Management did not resolve serviceId: %s and no default endpoint is allowed. Error: %s",
+                service_id,
+                model_mgmt_error,
+            )
+            error_detail = ErrorDetail(
+                message=MODEL_UNAVAILABLE_MESSAGE,
+                code=MODEL_UNAVAILABLE,
+            )
             raise HTTPException(
                 status_code=500,
-                    detail=error_detail.dict(),
-                )
+                detail=error_detail.dict(),
+            )
+        else:
+            # Request is missing required serviceId
             error_detail = ErrorDetail(
                 message=INVALID_REQUEST_MESSAGE,
-                code=INVALID_REQUEST
+                code=INVALID_REQUEST,
             )
-        raise HTTPException(
-            status_code=400,
+            raise HTTPException(
+                status_code=400,
                 detail=error_detail.dict(),
-        )
+            )
     
     model_name = getattr(request.state, "triton_model_name", None)
     
