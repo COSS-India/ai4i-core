@@ -14,6 +14,9 @@ RUN apt-get update && \
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
+# ---- shared constants ----
+COPY services/constants /app/services/constants
+
 # ---- requirements ----
 COPY services/asr-service/requirements.txt .
 
@@ -40,6 +43,9 @@ ENV PATH=/root/.local/bin:$PATH
 
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
+# ---- shared constants ----
+COPY services/constants /app/services/constants
 
 # ---- application code ----
 COPY services/asr-service /app
