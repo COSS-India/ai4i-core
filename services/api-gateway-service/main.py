@@ -4730,30 +4730,84 @@ async def proxy_request(request: Request, path: str):
         except httpx.HTTPStatusError as e:
             response_time = time.time() - start_time
             
-            # Mark proxy span and main FastAPI span as error
+            # Extract context for logging
+            user_id = getattr(request.state, "user_id", None)
+            
+            # Mark proxy span as error
+            if proxy_span:
+                proxy_span.set_status(Status(StatusCode.ERROR, str(e)))
+                proxy_span.set_attribute("http.status_code", e.response.status_code)
+                proxy_span.set_attribute("error", True)
+                proxy_span.set_attribute("error.type", "HTTPStatusError")
+                proxy_span.set_attribute("error.message", str(e))
+                if user_id:
+                    proxy_span.set_attribute("gateway.user_id", str(user_id))
+            
+            # Mark main FastAPI span as error
             if TRACING_AVAILABLE and trace:
                 current_span = trace.get_current_span()
                 if current_span and current_span.is_recording():
                     current_span.set_status(Status(StatusCode.ERROR, str(e)))
                     current_span.set_attribute("http.status_code", e.response.status_code)
                     current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "HTTPStatusError")
                     current_span.set_attribute("error.message", str(e))
+                    if service_name:
+                        current_span.set_attribute("gateway.service", service_name)
+                    if instance_id:
+                        current_span.set_attribute("gateway.instance_id", instance_id)
+                    if correlation_id:
+                        current_span.set_attribute("gateway.correlation_id", correlation_id)
+                    if user_id:
+                        current_span.set_attribute("gateway.user_id", str(user_id))
             
-            
-            logger.error(
-                f"HTTP error forwarding request to {service_name}: {e}",
-                extra={
-                    "context": {
-                        "method": request.method,
-                        "path": path,
-                        "service": service_name,
-                        "status_code": e.response.status_code,
-                        "error": "http_error",
-                        "correlation_id": correlation_id,
-                        "response_time_ms": round(response_time * 1000, 2),
+            # Log 500 errors with full context
+            if e.response.status_code == 500:
+                # Try to get response body for more details
+                response_body = None
+                try:
+                    if hasattr(e.response, 'text'):
+                        response_body = e.response.text[:1000]  # Limit to 1000 chars
+                except Exception:
+                    pass
+                
+                logger.error(
+                    f"HTTP 500 error forwarding request to {service_name}: {e}",
+                    extra={
+                        "context": {
+                            "error_type": "HTTPStatusError",
+                            "error_message": str(e),
+                            "status_code": 500,
+                            "method": request.method,
+                            "path": path,
+                            "service": service_name,
+                            "instance_id": instance_id,
+                            "instance_url": locals().get('instance_url', None),
+                            "user_id": user_id,
+                            "correlation_id": correlation_id,
+                            "request_id": request_id,
+                            "response_time_ms": round(response_time * 1000, 2),
+                            "downstream_response_body": response_body,
+                            "downstream_response_headers": dict(e.response.headers) if hasattr(e.response, 'headers') else None,
+                        }
+                    },
+                    exc_info=True
+                )
+            else:
+                logger.error(
+                    f"HTTP error forwarding request to {service_name}: {e}",
+                    extra={
+                        "context": {
+                            "method": request.method,
+                            "path": path,
+                            "service": service_name,
+                            "status_code": e.response.status_code,
+                            "error": "http_error",
+                            "correlation_id": correlation_id,
+                            "response_time_ms": round(response_time * 1000, 2),
+                        }
                     }
-                }
-            )
+                )
             
             # Update health status for the instance
             if 'instance_id' in locals() and 'service_name' in locals():
@@ -4793,6 +4847,13 @@ async def proxy_request(request: Request, path: str):
             raise HTTPException(status_code=503, detail="Service temporarily unavailable")
         
     except HTTPException as e:
+        response_time = time.time() - start_time
+        
+        # Extract context for logging
+        service_name = locals().get('service_name', None)
+        instance_id = locals().get('instance_id', None)
+        user_id = getattr(request.state, "user_id", None)
+        
         # Mark main FastAPI span as error for HTTP exceptions
         if TRACING_AVAILABLE and trace:
             current_span = trace.get_current_span()
@@ -4800,12 +4861,49 @@ async def proxy_request(request: Request, path: str):
                 current_span.set_status(Status(StatusCode.ERROR, f"HTTP {e.status_code}: {e.detail}"))
                 current_span.set_attribute("http.status_code", e.status_code)
                 current_span.set_attribute("error", True)
-                current_span.set_attribute("error.message", e.detail)
+                current_span.set_attribute("error.type", "HTTPException")
+                current_span.set_attribute("error.message", str(e.detail))
+                if service_name:
+                    current_span.set_attribute("gateway.service", service_name)
+                if instance_id:
+                    current_span.set_attribute("gateway.instance_id", instance_id)
+                if correlation_id:
+                    current_span.set_attribute("gateway.correlation_id", correlation_id)
+                if user_id:
+                    current_span.set_attribute("gateway.user_id", str(user_id))
+        
+        # Log 500 errors with full context
+        if e.status_code == 500:
+            logger.error(
+                f"HTTP 500 error in API Gateway: {e.detail}",
+                extra={
+                    "context": {
+                        "error_type": "HTTPException",
+                        "error_message": str(e.detail),
+                        "status_code": 500,
+                        "method": request.method,
+                        "path": path,
+                        "service": service_name,
+                        "instance_id": instance_id,
+                        "user_id": user_id,
+                        "correlation_id": correlation_id,
+                        "request_id": request_id,
+                        "response_time_ms": round(response_time * 1000, 2),
+                    }
+                },
+                exc_info=True
+            )
+        
         # Re-raise HTTP exceptions
         raise
         
     except Exception as e:
         response_time = time.time() - start_time
+        
+        # Extract context for logging
+        service_name = locals().get('service_name', None)
+        instance_id = locals().get('instance_id', None)
+        user_id = getattr(request.state, "user_id", None)
         
         # Mark main FastAPI span as error
         if TRACING_AVAILABLE and trace:
@@ -4813,16 +4911,33 @@ async def proxy_request(request: Request, path: str):
             if current_span:
                 current_span.set_status(Status(StatusCode.ERROR, str(e)))
                 current_span.set_attribute("error", True)
+                current_span.set_attribute("error.type", type(e).__name__)
                 current_span.set_attribute("error.message", str(e))
+                current_span.set_attribute("http.status_code", 500)
+                current_span.record_exception(e)
+                if service_name:
+                    current_span.set_attribute("gateway.service", service_name)
+                if instance_id:
+                    current_span.set_attribute("gateway.instance_id", instance_id)
+                if correlation_id:
+                    current_span.set_attribute("gateway.correlation_id", correlation_id)
+                if user_id:
+                    current_span.set_attribute("gateway.user_id", str(user_id))
         
         logger.error(
-            f"Unexpected error forwarding request: {e}",
+            f"Unexpected error in API Gateway forwarding request: {e}",
             extra={
                 "context": {
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "status_code": 500,
                     "method": request.method,
                     "path": path,
-                    "error": "unexpected_error",
+                    "service": service_name,
+                    "instance_id": instance_id,
+                    "user_id": user_id,
                     "correlation_id": correlation_id,
+                    "request_id": request_id,
                     "response_time_ms": round(response_time * 1000, 2),
                 }
             },
