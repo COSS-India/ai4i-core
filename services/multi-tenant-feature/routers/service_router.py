@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from db_connection import get_tenant_db_session
 from models.service_create import ServiceCreateRequest , ListServicesResponse , ServiceResponse
 from models.services_update import ServiceUpdateRequest , ServiceUpdateResponse
-from tenant_service import create_service , update_service , list_service
+from services.tenant_service import create_service , update_service , list_service
 
 from logger import logger
 from middleware.auth_provider import AuthProvider
