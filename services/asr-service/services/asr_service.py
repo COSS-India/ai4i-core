@@ -317,13 +317,44 @@ class ASRService:
             return response
             
         except Exception as e:
-            logger.error(f"ASR inference failed: {e}")
+            # Trace and log the error
+            if tracer:
+                try:
+                    current_span = trace.get_current_span()
+                    if current_span and current_span.is_recording():
+                        current_span.set_attribute("error", True)
+                        current_span.set_attribute("error.type", type(e).__name__)
+                        current_span.set_attribute("error.message", str(e))
+                        current_span.set_attribute("http.status_code", 500)
+                        current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                        current_span.record_exception(e)
+                except Exception:
+                    pass  # Don't fail if tracing fails
+            
+            # Log error with full context
+            logger.error(
+                f"ASR inference failed: {e}",
+                extra={
+                    "context": {
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                        "service_id": service_id if 'service_id' in locals() else None,
+                        "language": language if 'language' in locals() else None,
+                        "audio_count": len(request.audio) if 'request' in locals() else None,
+                        "request_id": db_request.id if 'db_request' in locals() else None,
+                    }
+                },
+                exc_info=True
+            )
             
             # Update request status to failed
             if 'db_request' in locals():
-                await self.repository.update_request_status(
-                    db_request.id, "failed", error_message=str(e)
-                )
+                try:
+                    await self.repository.update_request_status(
+                        db_request.id, "failed", error_message=str(e)
+                    )
+                except Exception as update_error:
+                    logger.error(f"Failed to update request status: {update_error}")
             
             raise
     

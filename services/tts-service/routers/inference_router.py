@@ -113,7 +113,54 @@ async def get_tts_service(db: AsyncSession = Depends(get_db_session)) -> TTSServ
         return tts_service
         
     except Exception as e:
-        logger.error(f"Failed to create TTS service: {e}")
+        # Extract context for logging (if available from request)
+        # get_correlation_id is already imported at top of file
+        correlation_id = None
+        user_id = None
+        api_key_id = None
+        try:
+            # Try to get request from context if available
+            from starlette.requests import Request
+            request = getattr(db, 'request', None) if hasattr(db, 'request') else None
+            if request:
+                correlation_id = get_correlation_id(request) or getattr(request.state, "correlation_id", None)
+                user_id = getattr(request.state, "user_id", None)
+                api_key_id = getattr(request.state, "api_key_id", None)
+        except Exception:
+            pass
+        
+        # Trace the error if we're in a span context
+        try:
+            from opentelemetry import trace
+            from opentelemetry.trace import Status, StatusCode
+            if trace:
+                current_span = trace.get_current_span()
+                if current_span and current_span.is_recording():
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", type(e).__name__)
+                    current_span.set_attribute("error.message", str(e))
+                    current_span.set_attribute("http.status_code", 500)
+                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    current_span.record_exception(e)
+                    if correlation_id:
+                        current_span.set_attribute("correlation.id", correlation_id)
+        except Exception:
+            pass  # Don't fail if tracing fails
+        
+        logger.error(
+            f"Failed to create TTS service: {e}",
+            extra={
+                "context": {
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "status_code": 500,
+                    "user_id": user_id,
+                    "api_key_id": api_key_id,
+                    "correlation_id": correlation_id,
+                }
+            },
+            exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to initialize TTS service"
@@ -241,17 +288,54 @@ async def run_inference(
             ) from exc
 
         except Exception as exc:
+            # Extract context for logging
+            user_id = getattr(http_request.state, "user_id", None)
+            api_key_id = getattr(http_request.state, "api_key_id", None)
+            session_id = getattr(http_request.state, "session_id", None)
+            service_id = getattr(http_request.state, "service_id", None)
+            triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+            model_name = getattr(http_request.state, "triton_model_name", None)
+            
+            # Get correlation ID for logging (already imported at top of file)
+            correlation_id = get_correlation_id(http_request) or getattr(http_request.state, "correlation_id", None)
+            
+            # Trace the error
             span.set_attribute("error", True)
             span.set_attribute("error.type", type(exc).__name__)
             span.set_attribute("error.message", str(exc))
             span.set_attribute("http.status_code", getattr(exc, 'status_code', 500))
+            if service_id:
+                span.set_attribute("tts.service_id", service_id)
+            if triton_endpoint:
+                span.set_attribute("triton.endpoint", triton_endpoint)
+            if model_name:
+                span.set_attribute("triton.model_name", model_name)
             span.add_event("tts.inference.failed", {
                 "error_type": type(exc).__name__,
                 "error_message": str(exc)
             })
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
-            logger.error("TTS inference failed: %s", exc, exc_info=True)
+            
+            # Log error with full context
+            logger.error(
+                f"TTS inference failed: {exc}",
+                extra={
+                    "context": {
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                        "service_id": service_id,
+                        "triton_endpoint": triton_endpoint,
+                        "model_name": model_name,
+                        "user_id": user_id,
+                        "api_key_id": api_key_id,
+                        "session_id": session_id,
+                        "correlation_id": correlation_id,
+                        "input_count": len(request.input) if hasattr(request, 'input') else None,
+                    }
+                },
+                exc_info=True
+            )
             
             # Import service-specific exceptions
             from middleware.exceptions import (

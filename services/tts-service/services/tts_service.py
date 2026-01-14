@@ -305,9 +305,26 @@ class TTSService:
                 span.set_attribute("error", True)
                 span.set_attribute("error.type", type(e).__name__)
                 span.set_attribute("error.message", str(e))
+                span.set_attribute("http.status_code", 500)
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.record_exception(e)
-                logger.error(f"TTS inference failed: {e}")
+                
+                # Log error with full context
+                logger.error(
+                    f"TTS inference failed: {e}",
+                    extra={
+                        "context": {
+                            "error_type": type(e).__name__,
+                            "error_message": str(e),
+                            "service_id": request.config.serviceId if hasattr(request, 'config') and request.config else None,
+                            "request_id": request_id,
+                            "user_id": user_id,
+                            "api_key_id": api_key_id,
+                            "session_id": session_id,
+                        }
+                    },
+                    exc_info=True
+                )
                 
                 # Update request status to failed
                 if request_id:
