@@ -17,10 +17,11 @@ class SubscriptionType(str, Enum):
     ASR = "asr"
     NMT = "nmt"
     LLM = "llm"
-    PIPELINE = "pipeline"
+    PIPELINE = "speech_to_speech_pipeline"
     OCR = "ocr"
     NER = "ner"
 
+    Speech_to_Speech_Pipeline = "speech_to_speech_pipeline"
     Transliteration = "transliteration"
     Langauage_detection = "language_detection"
     Speaker_diarization = "speaker_diarization"
