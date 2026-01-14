@@ -76,7 +76,13 @@ configure_logging(
 )
 
 logger = get_logger(__name__)
->>>>>>> d3b2cf3 (feat: telemetry integration in ast)
+
+# Define auth error constants (fallback if not available from services.constants)
+try:
+    from services.constants.error_messages import AUTH_FAILED, AUTH_FAILED_MESSAGE
+except ImportError:
+    AUTH_FAILED = "AUTH_FAILED"
+    AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."
 
 # Pydantic models for ASR endpoints
 class AudioInput(BaseModel):
@@ -4344,14 +4350,13 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             
         except Exception as e:
             response_time = time.time() - start_time
-            if span:
-                span.set_status(Status(StatusCode.ERROR, str(e)))
-                span.set_attribute("error", True)
-                span.set_attribute("error.message", str(e))
-            if current_span:
-                current_span.set_status(Status(StatusCode.ERROR, str(e)))
-                current_span.set_attribute("error", True)
-                current_span.set_attribute("error.message", str(e))
+            # Mark span as error if tracing is available
+            if TRACING_AVAILABLE and trace:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.message", str(e))
             logger.error(
                 f"Error proxying to {service_name}: {e}",
                 extra={
@@ -4381,10 +4386,13 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         
     except Exception as e:
         response_time = time.time() - start_time
-        if current_span:
-            current_span.set_status(Status(StatusCode.ERROR, str(e)))
-            current_span.set_attribute("error", True)
-            current_span.set_attribute("error.message", str(e))
+        # Mark span as error if tracing is available
+        if TRACING_AVAILABLE and trace:
+            current_span = trace.get_current_span()
+            if current_span:
+                current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.message", str(e))
         logger.error(
             f"Error proxying to {service_name}: {e}",
             extra={
@@ -4689,58 +4697,6 @@ async def proxy_request(request: Request, path: str):
             
             raise HTTPException(status_code=503, detail="Service temporarily unavailable")
         
-<<<<<<< HEAD
-        # Calculate response time
-        response_time = time.time() - start_time
-        
-        # Update load balancer metrics
-        await service_registry.update_health(service_name, instance_id, True, response_time)
-        
-        # Log request
-        log_request(request.method, f"/{path}", service_name, instance_id, response_time, response.status_code)
-        
-        # Prepare response headers
-        response_headers = {}
-        for header_name, header_value in response.headers.items():
-            if not is_hop_by_hop_header(header_name):
-                response_headers[header_name] = header_value
-        
-        # Add correlation headers to response
-        response_headers['X-Correlation-ID'] = correlation_id
-        response_headers['X-Request-ID'] = request_id
-        
-        # Return response
-        return Response(
-            content=response.content,
-            status_code=response.status_code,
-            headers=response_headers,
-            media_type=response.headers.get('content-type')
-        )
-        
-    except httpx.HTTPStatusError as e:
-        response_time = time.time() - start_time
-        logger.error(f"HTTP error forwarding request: {e}")
-        
-        # Update health status for the instance
-        if 'instance_id' in locals() and 'service_name' in locals():
-            await service_registry.update_health(service_name, instance_id, False, response_time)
-        
-        raise HTTPException(status_code=e.response.status_code, detail=str(e))
-        
-    except httpx.RequestError as e:
-        response_time = time.time() - start_time
-        logger.error(f"Request error forwarding request: {e}")
-        
-        # Update health status for the instance
-        if 'instance_id' in locals() and 'service_name' in locals():
-            await service_registry.update_health(service_name, instance_id, False, response_time)
-        
-        error_detail = {
-            "code": "SERVICE_UNAVAILABLE",
-            "message": "Service is temporarily unavailable. Please try again in a few minutes."
-        }
-        raise HTTPException(status_code=503, detail=error_detail)
-    
     except HTTPException as e:
         # Mark main FastAPI span as error for HTTP exceptions
         if TRACING_AVAILABLE and trace:
