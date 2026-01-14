@@ -12,6 +12,11 @@ from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy import text
 
 from utils.triton_client import TritonClient
+from middleware.exceptions import ErrorDetail
+from services.constants.error_messages import (
+    SERVICE_UNAVAILABLE,
+    SERVICE_UNAVAILABLE_NMT_MESSAGE
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +71,13 @@ async def health_check(request: Request) -> Dict[str, Any]:
         }
         
         if overall_status == "unhealthy":
-            raise HTTPException(status_code=503, detail=response)
+            raise HTTPException(
+                status_code=503,
+                detail=ErrorDetail(
+                    code=SERVICE_UNAVAILABLE,
+                    message=SERVICE_UNAVAILABLE_NMT_MESSAGE
+                ).dict()
+            )
         
         return response
         
@@ -76,11 +87,10 @@ async def health_check(request: Request) -> Dict[str, Any]:
         logger.error(f"Health check failed: {e}")
         raise HTTPException(
             status_code=503,
-            detail={
-                "status": "unhealthy",
-                "error": str(e),
-                "timestamp": asyncio.get_event_loop().time()
-            }
+            detail=ErrorDetail(
+                code=SERVICE_UNAVAILABLE,
+                message=SERVICE_UNAVAILABLE_NMT_MESSAGE
+            ).dict()
         )
 
 
@@ -95,10 +105,22 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
     try:
         # Check that all critical dependencies are initialized
         if not hasattr(request.app.state, 'redis_client') or not request.app.state.redis_client:
-            raise HTTPException(status_code=503, detail="Redis client not initialized")
+            raise HTTPException(
+                status_code=503,
+                detail=ErrorDetail(
+                    code=SERVICE_UNAVAILABLE,
+                    message=SERVICE_UNAVAILABLE_NMT_MESSAGE
+                ).dict()
+            )
         
         if not hasattr(request.app.state, 'db_engine') or not request.app.state.db_engine:
-            raise HTTPException(status_code=503, detail="Database engine not initialized")
+            raise HTTPException(
+                status_code=503,
+                detail=ErrorDetail(
+                    code=SERVICE_UNAVAILABLE,
+                    message=SERVICE_UNAVAILABLE_NMT_MESSAGE
+                ).dict()
+            )
         
         # Triton endpoint must be resolved via Model Management - no hardcoded fallback
         # Skip Triton check in readiness endpoint (requires Model Management serviceId)
@@ -118,11 +140,10 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
         logger.error(f"Readiness check failed: {e}")
         raise HTTPException(
             status_code=503,
-            detail={
-                "status": "not_ready",
-                "error": str(e),
-                "timestamp": asyncio.get_event_loop().time()
-            }
+            detail=ErrorDetail(
+                code=SERVICE_UNAVAILABLE,
+                message=SERVICE_UNAVAILABLE_NMT_MESSAGE
+            ).dict()
         )
 
 

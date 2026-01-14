@@ -26,6 +26,8 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
 # Copy Model Management plugin
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+# Copy constants folder
+COPY services/constants /app/services/constants
 
 # ✅ INSTALL PLUGINS AS NORMAL PACKAGES (FIX)
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_observability
@@ -59,6 +61,9 @@ ENV PYTHONUNBUFFERED=1
 # Copy plugins into runtime image
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
+# Copy constants folder
+COPY services/constants /app/services/constants
 
 # Copy app code
 COPY services/tts-service /app
