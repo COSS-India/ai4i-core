@@ -29,13 +29,16 @@ except ImportError:
 
 logger = get_logger(__name__)
 
-# Get tracer for manual span creation
-tracer = None
-if TRACING_AVAILABLE and trace:
+# Function to get tracer dynamically (called at runtime, not import time)
+# This ensures tracer is available after setup_tracing is called in main.py
+def get_tracer():
+    """Get tracer instance dynamically at runtime."""
+    if not TRACING_AVAILABLE or not trace:
+        return None
     try:
-        tracer = trace.get_tracer(__name__)
+        return trace.get_tracer("api-gateway-service")
     except Exception:
-        tracer = None
+        return None
 
 # Public routes that don't require authentication
 PUBLIC_ROUTES = [
@@ -146,179 +149,252 @@ class AuthGatewayMiddleware(BaseHTTPMiddleware):
         if not requires_auth(path):
             return await call_next(request)
         
-        # Create span for authentication (child of FastAPI auto-instrumented span)
-        span_context = tracer.start_as_current_span("gateway.auth") if tracer else nullcontext()
-        with span_context as span:
-            if span:
-                span.set_attribute("http.method", method)
-                span.set_attribute("http.route", path)
-                span.set_attribute("correlation_id", correlation_id or "unknown")
+        # Create main authorization span (similar to OCR service's request.authorize)
+        # start_as_current_span automatically creates a child of the current active span (FastAPI span)
+        # Get tracer dynamically at runtime (not at import time)
+        tracer = get_tracer()
+        if tracer:
+            auth_span_context = tracer.start_as_current_span("request.authorize")
+        else:
+            auth_span_context = nullcontext()
+        
+        with auth_span_context as auth_span:
+            if auth_span:
+                auth_span.set_attribute("http.method", method)
+                auth_span.set_attribute("http.route", path)
+                auth_span.set_attribute("correlation_id", correlation_id or "unknown")
+                auth_span.set_attribute("gateway.operation", "authorize_request")
             
-            # Require authentication
-            try:
-                user = await auth_middleware.require_auth(request)
+            # Decision: Check if authorization header is present
+            # Use the same tracer instance (already retrieved above)
+            token_span_context = tracer.start_as_current_span("auth.decision.check_token_presence") if tracer else nullcontext()
+            with token_span_context as token_span:
+                auth_header = request.headers.get("Authorization")
+                if token_span:
+                    token_span.set_attribute("auth.decision", "check_token_presence")
+                    token_span.set_attribute("auth.authorization_present", bool(auth_header))
                 
-                # Set user context in request state
-                request.state.user = user
-                request.state.user_id = user.get("user_id")
-                request.state.username = user.get("username")
-                request.state.permissions = user.get("permissions", [])
-                request.state.is_authenticated = True
+                if not auth_header or not auth_header.startswith("Bearer "):
+                    if token_span:
+                        token_span.set_attribute("auth.decision.result", "rejected")
+                        token_span.set_attribute("error.type", "MissingToken")
+                        token_span.set_attribute("error.reason", "token_missing")
+                        token_span.set_status(Status(StatusCode.ERROR, "Token missing"))
+                        auth_span.set_attribute("auth.authorized", False)
+                        auth_span.set_attribute("error.type", "MissingToken")
+                        auth_span.set_status(Status(StatusCode.ERROR, "Token missing"))
+                    
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Authentication required",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
                 
-                # Add user info to span
-                if span:
-                    span.set_attribute("user.id", str(user.get("user_id", "unknown")))
-                    span.set_attribute("user.username", user.get("username", "unknown"))
-                    span.set_status(Status(StatusCode.OK))
+                if token_span:
+                    token_span.set_attribute("auth.decision.result", "passed")
+                    token_span.set_status(Status(StatusCode.OK))
+            
+            # Extract token
+            token = auth_header.split(" ")[1] if auth_header else None
+            if auth_span:
+                auth_span.set_attribute("auth.token_present", bool(token))
+                auth_span.set_attribute("auth.token_length", len(token) if token else 0)
+            
+            # Decision: Verify token with auth service
+            # Use the same tracer instance (already retrieved above)
+            verify_span_context = tracer.start_as_current_span("auth.decision.verify_token") if tracer else nullcontext()
+            with verify_span_context as verify_span:
+                if verify_span:
+                    verify_span.set_attribute("auth.decision", "verify_token")
+                    verify_span.set_attribute("auth.method", "JWT")
                 
-                logger.info(
-                    f"Authentication successful for {method} {path}",
-                    extra={
-                        "context": {
-                            "method": method,
-                            "path": path,
-                            "user_id": user.get("user_id"),
-                            "username": user.get("username"),
-                            "correlation_id": correlation_id,
+                # Require authentication
+                try:
+                    user = await auth_middleware.require_auth(request)
+                    
+                    if verify_span:
+                        verify_span.set_attribute("auth.decision.result", "passed")
+                        verify_span.set_status(Status(StatusCode.OK))
+                    
+                    # Set user context in request state
+                    request.state.user = user
+                    request.state.user_id = user.get("user_id")
+                    request.state.username = user.get("username")
+                    request.state.permissions = user.get("permissions", [])
+                    request.state.is_authenticated = True
+                    
+                    # Add user info to auth span
+                    if auth_span:
+                        auth_span.set_attribute("auth.authorized", True)
+                        auth_span.set_attribute("auth.method", "JWT")
+                        auth_span.set_attribute("user.id", str(user.get("user_id", "unknown")))
+                        auth_span.set_attribute("user.username", user.get("username", "unknown"))
+                        auth_span.set_attribute("user.permissions_count", len(user.get("permissions", [])))
+                        auth_span.set_status(Status(StatusCode.OK))
+                    
+                    logger.info(
+                        f"Authentication successful for {method} {path}",
+                        extra={
+                            "context": {
+                                "method": method,
+                                "path": path,
+                                "user_id": user.get("user_id"),
+                                "username": user.get("username"),
+                                "correlation_id": correlation_id,
+                            }
                         }
-                    }
-                )
-                
-            except HTTPException as e:
-                # Handle 401 Unauthorized
-                if e.status_code == status.HTTP_401_UNAUTHORIZED:
+                    )
+                    
+                except HTTPException as e:
                     error_detail = str(e.detail)
                     
-                    # Mark auth span as error
-                    if span:
-                        span.set_status(Status(StatusCode.ERROR, error_detail))
-                        span.set_attribute("error.type", "authentication_error")
-                        span.set_attribute("error.message", error_detail)
-                        span.set_attribute("http.status_code", 401)
+                    # Handle 401 Unauthorized
+                    if e.status_code == status.HTTP_401_UNAUTHORIZED:
+                        if verify_span:
+                            verify_span.set_attribute("auth.decision.result", "rejected")
+                            verify_span.set_attribute("error.type", "AuthenticationError")
+                            verify_span.set_attribute("error.reason", "token_invalid")
+                            verify_span.set_status(Status(StatusCode.ERROR, error_detail))
+                        
+                        # Mark auth span as error
+                        if auth_span:
+                            auth_span.set_status(Status(StatusCode.ERROR, error_detail))
+                            auth_span.set_attribute("error.type", "authentication_error")
+                            auth_span.set_attribute("error.message", error_detail)
+                            auth_span.set_attribute("auth.authorized", False)
+                            auth_span.set_attribute("http.status_code", 401)
+                        
+                        # Mark main FastAPI span as error (this is what shows in red in Jaeger)
+                        if TRACING_AVAILABLE and trace:
+                            current_span = trace.get_current_span()
+                            if current_span:
+                                current_span.set_status(Status(StatusCode.ERROR, f"Authentication failed: {error_detail}"))
+                                current_span.set_attribute("http.status_code", 401)
+                                current_span.set_attribute("error", True)
+                                current_span.set_attribute("error.type", "authentication_error")
+                                current_span.set_attribute("error.message", error_detail)
+                        
+                        logger.warning(
+                            f"Authentication failed (401) for {method} {path}: {error_detail}",
+                            extra={
+                                "context": {
+                                    "method": method,
+                                    "path": path,
+                                    "status_code": 401,
+                                    "error": "authentication_failed",
+                                    "error_detail": error_detail,
+                                    "correlation_id": correlation_id,
+                                    "client_ip": request.client.host if request.client else "unknown",
+                                }
+                            }
+                        )
+                        
+                        # Return 401 response
+                        return Response(
+                            content=f'{{"detail": "{error_detail}", "error": "AUTHENTICATION_REQUIRED"}}',
+                            status_code=401,
+                            headers={"WWW-Authenticate": "Bearer"},
+                            media_type="application/json"
+                        )
                     
-                    # Mark main FastAPI span as error (this is what shows in red in Jaeger)
+                    # Handle 403 Forbidden
+                    elif e.status_code == status.HTTP_403_FORBIDDEN:
+                        error_detail = str(e.detail)
+                        
+                        # Mark auth span as error
+                        if auth_span:
+                            auth_span.set_status(Status(StatusCode.ERROR, error_detail))
+                            auth_span.set_attribute("error.type", "authorization_error")
+                            auth_span.set_attribute("error.message", error_detail)
+                            auth_span.set_attribute("auth.authorized", False)
+                            auth_span.set_attribute("http.status_code", 403)
+                        
+                        # Mark main FastAPI span as error (this is what shows in red in Jaeger)
+                        if TRACING_AVAILABLE and trace:
+                            current_span = trace.get_current_span()
+                            if current_span:
+                                current_span.set_status(Status(StatusCode.ERROR, f"Authorization failed: {error_detail}"))
+                                current_span.set_attribute("http.status_code", 403)
+                                current_span.set_attribute("error", True)
+                                current_span.set_attribute("error.type", "authorization_error")
+                                current_span.set_attribute("error.message", error_detail)
+                        
+                        # Get user info if available
+                        user_id = getattr(request.state, "user_id", None)
+                        username = getattr(request.state, "username", None)
+                        
+                        logger.warning(
+                            f"Authorization failed (403) for {method} {path}: {error_detail}",
+                            extra={
+                                "context": {
+                                    "method": method,
+                                    "path": path,
+                                    "status_code": 403,
+                                    "error": "authorization_failed",
+                                    "error_detail": error_detail,
+                                    "user_id": user_id,
+                                    "username": username,
+                                    "correlation_id": correlation_id,
+                                    "client_ip": request.client.host if request.client else "unknown",
+                                }
+                            }
+                        )
+                        
+                        # Return 403 response
+                        return Response(
+                            content=f'{{"detail": "{error_detail}", "error": "AUTHORIZATION_FAILED"}}',
+                            status_code=403,
+                            media_type="application/json"
+                        )
+                    
+                    # Re-raise other HTTP exceptions
+                    raise
+                
+                except Exception as e:
+                    # Handle unexpected errors during authentication
+                    error_msg = str(e)
+                    
+                    # Mark verify span as error
+                    if verify_span:
+                        verify_span.set_attribute("auth.decision.result", "rejected")
+                        verify_span.set_attribute("error.type", "UnexpectedError")
+                        verify_span.set_status(Status(StatusCode.ERROR, error_msg))
+                    
+                    # Mark auth span as error
+                    if auth_span:
+                        auth_span.set_status(Status(StatusCode.ERROR, error_msg))
+                        auth_span.set_attribute("error.type", "authentication_error")
+                        auth_span.set_attribute("error.message", error_msg)
+                        auth_span.set_attribute("auth.authorized", False)
+                    
+                    # Mark main FastAPI span as error
                     if TRACING_AVAILABLE and trace:
                         current_span = trace.get_current_span()
                         if current_span:
-                            current_span.set_status(Status(StatusCode.ERROR, f"Authentication failed: {error_detail}"))
-                            current_span.set_attribute("http.status_code", 401)
+                            current_span.set_status(Status(StatusCode.ERROR, f"Authentication error: {error_msg}"))
                             current_span.set_attribute("error", True)
                             current_span.set_attribute("error.type", "authentication_error")
-                            current_span.set_attribute("error.message", error_detail)
+                            current_span.set_attribute("error.message", error_msg)
                     
-                    logger.warning(
-                        f"Authentication failed (401) for {method} {path}: {error_detail}",
+                    logger.error(
+                        f"Unexpected error during authentication for {method} {path}: {error_msg}",
                         extra={
                             "context": {
                                 "method": method,
                                 "path": path,
-                                "status_code": 401,
-                                "error": "authentication_failed",
-                                "error_detail": error_detail,
+                                "error": "authentication_error",
+                                "error_detail": error_msg,
                                 "correlation_id": correlation_id,
-                                "client_ip": request.client.host if request.client else "unknown",
                             }
-                        }
+                        },
+                        exc_info=True
                     )
                     
-                    # Return 401 response
                     return Response(
-                        content=f'{{"detail": "{error_detail}", "error": "AUTHENTICATION_REQUIRED"}}',
-                        status_code=401,
-                        headers={"WWW-Authenticate": "Bearer"},
+                        content='{"detail": "Authentication service error", "error": "AUTHENTICATION_ERROR"}',
+                        status_code=500,
                         media_type="application/json"
                     )
-                
-                # Handle 403 Forbidden
-                elif e.status_code == status.HTTP_403_FORBIDDEN:
-                    error_detail = str(e.detail)
-                    
-                    # Mark auth span as error
-                    if span:
-                        span.set_status(Status(StatusCode.ERROR, error_detail))
-                        span.set_attribute("error.type", "authorization_error")
-                        span.set_attribute("error.message", error_detail)
-                        span.set_attribute("http.status_code", 403)
-                    
-                    # Mark main FastAPI span as error (this is what shows in red in Jaeger)
-                    if TRACING_AVAILABLE and trace:
-                        current_span = trace.get_current_span()
-                        if current_span:
-                            current_span.set_status(Status(StatusCode.ERROR, f"Authorization failed: {error_detail}"))
-                            current_span.set_attribute("http.status_code", 403)
-                            current_span.set_attribute("error", True)
-                            current_span.set_attribute("error.type", "authorization_error")
-                            current_span.set_attribute("error.message", error_detail)
-                    
-                    # Get user info if available
-                    user_id = getattr(request.state, "user_id", None)
-                    username = getattr(request.state, "username", None)
-                    
-                    logger.warning(
-                        f"Authorization failed (403) for {method} {path}: {error_detail}",
-                        extra={
-                            "context": {
-                                "method": method,
-                                "path": path,
-                                "status_code": 403,
-                                "error": "authorization_failed",
-                                "error_detail": error_detail,
-                                "user_id": user_id,
-                                "username": username,
-                                "correlation_id": correlation_id,
-                                "client_ip": request.client.host if request.client else "unknown",
-                            }
-                        }
-                    )
-                    
-                    # Return 403 response
-                    return Response(
-                        content=f'{{"detail": "{error_detail}", "error": "AUTHORIZATION_FAILED"}}',
-                        status_code=403,
-                        media_type="application/json"
-                    )
-                
-                # Re-raise other HTTP exceptions
-                raise
-            
-            except Exception as e:
-                # Handle unexpected errors during authentication
-                error_msg = str(e)
-                
-                # Mark auth span as error
-                if span:
-                    span.set_status(Status(StatusCode.ERROR, error_msg))
-                    span.set_attribute("error.type", "authentication_error")
-                    span.set_attribute("error.message", error_msg)
-                
-                # Mark main FastAPI span as error
-                if TRACING_AVAILABLE and trace:
-                    current_span = trace.get_current_span()
-                    if current_span:
-                        current_span.set_status(Status(StatusCode.ERROR, f"Authentication error: {error_msg}"))
-                        current_span.set_attribute("error", True)
-                        current_span.set_attribute("error.type", "authentication_error")
-                        current_span.set_attribute("error.message", error_msg)
-                
-                logger.error(
-                    f"Unexpected error during authentication for {method} {path}: {error_msg}",
-                    extra={
-                        "context": {
-                            "method": method,
-                            "path": path,
-                            "error": "authentication_error",
-                            "error_detail": error_msg,
-                            "correlation_id": correlation_id,
-                        }
-                    },
-                    exc_info=True
-                )
-                
-                return Response(
-                    content='{"detail": "Authentication service error", "error": "AUTHENTICATION_ERROR"}',
-                    status_code=500,
-                    media_type="application/json"
-                )
             
             # Process request with authenticated user
             response = await call_next(request)
