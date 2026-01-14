@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 try:
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider, SpanProcessor
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.trace import Span
     
@@ -72,18 +72,19 @@ def setup_tracing(service_name: str, jaeger_endpoint: Optional[str] = None) -> O
         trace.set_tracer_provider(tracer_provider)
         
         # Create exporter based on availability
+        base_exporter = None
         if OTLP_AVAILABLE:
             # Use OTLP exporter (recommended, works with Jaeger all-in-one)
             # Remove http:// prefix if present, OTLP expects host:port format
             endpoint = jaeger_endpoint.replace("http://", "").replace("https://", "")
-            exporter = OTLPSpanExporter(
+            base_exporter = OTLPSpanExporter(
                 endpoint=endpoint,
                 insecure=True  # For local development
             )
             logger.info(f"✅ Using OTLP exporter for Jaeger at {endpoint}")
         elif JAEGER_THRIFT_AVAILABLE:
             # Fallback to Jaeger Thrift exporter
-            exporter = JaegerExporter(
+            base_exporter = JaegerExporter(
                 agent_host_name="jaeger",
                 agent_port=6831,
             )
@@ -92,12 +93,15 @@ def setup_tracing(service_name: str, jaeger_endpoint: Optional[str] = None) -> O
             logger.error("❌ No tracing exporter available")
             return None
         
+        # Wrap exporter with filtering to reduce noise (filter out http receive/send spans)
+        exporter = FilteringSpanExporter(base_exporter)
+        
         # Add span processors
         # First add organization processor to add org attribute to all spans
         organization_processor = OrganizationSpanProcessor()
         tracer_provider.add_span_processor(organization_processor)
         
-        # Then add batch processor for exporting
+        # Then add batch processor for exporting (with filtering exporter)
         span_processor = BatchSpanProcessor(exporter)
         tracer_provider.add_span_processor(span_processor)
         
@@ -144,6 +148,71 @@ class OrganizationSpanProcessor(SpanProcessor):
     def force_flush(self, timeout_millis: int = 30000) -> bool:
         """Force flush any pending spans."""
         return True
+
+
+class FilteringSpanExporter(SpanExporter):
+    """
+    Span exporter wrapper that filters out noisy spans like http receive/send.
+    
+    These spans are created by FastAPI instrumentation for ASGI operations
+    and can clutter traces. This exporter filters them out before exporting.
+    """
+    
+    # Spans to filter out (by name pattern)
+    # These are created by ASGI instrumentation and create noise in traces
+    FILTERED_SPAN_NAMES = [
+        "http receive",
+        "http send",
+        " http receive",  # With leading space (common in ASGI spans)
+        " http send",     # With leading space
+    ]
+    
+    def __init__(self, base_exporter: SpanExporter):
+        """Initialize the filtering exporter with a base exporter."""
+        self.base_exporter = base_exporter
+    
+    def export(self, spans):
+        """Export spans, filtering out noisy ones."""
+        if not spans:
+            return SpanExportResult.SUCCESS
+        
+        # Filter out spans matching filtered patterns
+        filtered_spans = []
+        filtered_count = 0
+        for span in spans:
+            span_name = span.name.lower() if span.name else ""
+            should_filter = False
+            
+            # Check if span name ends with or contains any of the filtered patterns
+            # ASGI spans typically have format: "service-name METHOD /path http receive/send"
+            for filtered_name in self.FILTERED_SPAN_NAMES:
+                filtered_lower = filtered_name.lower().strip()
+                # Check if span name ends with the pattern or contains it
+                if span_name.endswith(filtered_lower) or filtered_lower in span_name:
+                    should_filter = True
+                    filtered_count += 1
+                    break
+            
+            if not should_filter:
+                filtered_spans.append(span)
+        
+        # Log filtering stats (only if we filtered something and debug is enabled)
+        if filtered_count > 0:
+            logger.debug(f"Filtered out {filtered_count} noisy spans (http receive/send)")
+        
+        # Export filtered spans
+        if filtered_spans:
+            return self.base_exporter.export(filtered_spans)
+        else:
+            return SpanExportResult.SUCCESS
+    
+    def shutdown(self):
+        """Shutdown the base exporter."""
+        return self.base_exporter.shutdown()
+    
+    def force_flush(self, timeout_millis: int = 30000):
+        """Force flush the base exporter."""
+        return self.base_exporter.force_flush(timeout_millis)
 
 
 def get_tracer(service_name: str) -> Optional[object]:

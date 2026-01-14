@@ -183,9 +183,10 @@ async def run_inference(
     request_id = None
     
     # Create a descriptive span for ASR inference when tracing is enabled
+    # This will be a child of the FastAPI auto-instrumented span
     if TRACING_AVAILABLE:
         tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span("ASR Inference") as span:
+        with tracer.start_as_current_span("asr.inference") as span:
             span.set_attribute("service.name", "asr")
             span.set_attribute("service.type", "asr")
             span.set_attribute("asr.audio_count", len(request.audio))

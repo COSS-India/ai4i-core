@@ -17,6 +17,7 @@ import logging
 import uuid
 import time
 import json
+from contextlib import nullcontext
 from datetime import datetime, date
 from typing import Dict, Any, List, Optional, Tuple, Union
 from enum import Enum
@@ -25,6 +26,7 @@ from urllib.parse import urlencode, urlparse, parse_qs
 from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field, EmailStr
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -34,44 +36,47 @@ import httpx
 from auth_middleware import auth_middleware
 from decimal import Decimal
 
-# Import error messages using importlib (same approach as auth_middleware)
-import importlib.util
-import os
-try:
-    from services.constants.error_messages import (
-        AUTH_FAILED,
-        AUTH_FAILED_MESSAGE
-    )
-except ImportError:
-    # Fallback: direct file import using importlib
-    error_messages_path = "/app/services/constants/error_messages.py"
-    possible_paths = [
-        error_messages_path,
-        os.path.join(os.path.dirname(__file__), "..", "services", "constants", "error_messages.py"),
-        os.path.join("/app", "services", "constants", "error_messages.py")
-    ]
-    
-    error_messages = None
-    for path in possible_paths:
-        abs_path = os.path.abspath(path)
-        if os.path.exists(abs_path):
-            spec = importlib.util.spec_from_file_location("error_messages", abs_path)
-            if spec and spec.loader:
-                error_messages = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(error_messages)
-                break
-    
-    if error_messages:
-        AUTH_FAILED = error_messages.AUTH_FAILED
-        AUTH_FAILED_MESSAGE = error_messages.AUTH_FAILED_MESSAGE
-    else:
-        # Last resort: define constants directly
-        AUTH_FAILED = "AUTH_FAILED"
-        AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."
+# AI4ICore logging and telemetry
+from ai4icore_logging import (
+    get_logger,
+    CorrelationMiddleware,
+    configure_logging,
+)
+from ai4icore_telemetry import setup_tracing
+from middleware.request_logging import RequestLoggingMiddleware
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# OpenTelemetry for distributed tracing
+try:
+    from opentelemetry import trace
+    from opentelemetry.propagate import inject
+    from opentelemetry.trace import Status, StatusCode
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
+    trace = None
+    inject = None
+    Status = None
+    StatusCode = None
+    FastAPIInstrumentor = None
+    logging.warning("OpenTelemetry not available, tracing disabled")
+
+# Get tracer for manual span creation
+tracer = None
+if TRACING_AVAILABLE and trace:
+    try:
+        tracer = trace.get_tracer(__name__)
+    except Exception:
+        tracer = None
+
+# Configure AI4ICore logging
+configure_logging(
+    service_name=os.getenv("SERVICE_NAME", "api-gateway-service"),
+    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
+)
+
+logger = get_logger(__name__)
+>>>>>>> d3b2cf3 (feat: telemetry integration in ast)
 
 # Pydantic models for ASR endpoints
 class AudioInput(BaseModel):
@@ -1945,6 +1950,16 @@ def prepare_forwarding_headers(request: Request, correlation_id: str, request_id
     headers['X-Request-ID'] = request_id
     headers['X-Gateway-Timestamp'] = str(int(time.time() * 1000))
     
+    # Inject OpenTelemetry trace context for distributed tracing
+    if TRACING_AVAILABLE and inject:
+        try:
+            current_span = trace.get_current_span()
+            if current_span and current_span.is_recording():
+                inject(headers)
+                logger.debug("✅ Trace context injected into request headers")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to inject trace context: {e}")
+    
     return headers
 
 def log_request(method: str, path: str, service: str, instance: str, duration: float, status_code: int) -> None:
@@ -2036,6 +2051,82 @@ async def health_monitor():
         except Exception as e:
             logger.error(f"Health monitor error: {e}")
             await asyncio.sleep(health_check_interval)
+
+# Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+if TRACING_AVAILABLE:
+    try:
+        tracer = setup_tracing("api-gateway-service")
+        if tracer:
+            logger.info("✅ Distributed tracing initialized for API Gateway service")
+            
+            # Instrument FastAPI with OpenTelemetry
+            # Exclude health check and metrics endpoints to reduce span noise
+            FastAPIInstrumentor.instrument_app(
+                app,
+                excluded_urls="/health,/metrics,/enterprise/metrics,/docs,/redoc,/openapi.json"
+            )
+            logger.info("✅ FastAPI instrumented for distributed tracing")
+        else:
+            logger.warning("⚠️ Tracing setup returned None")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to setup tracing: {e}")
+
+# Add correlation middleware (must be first to set correlation ID)
+app.add_middleware(CorrelationMiddleware)
+
+# Add authentication/authorization middleware (after correlation, before logging)
+from middleware.auth_middleware_gateway import AuthGatewayMiddleware
+app.add_middleware(AuthGatewayMiddleware)
+
+# Add request logging middleware (after correlation middleware)
+app.add_middleware(RequestLoggingMiddleware)
+
+# Add response interceptor middleware to mark errors on spans
+# This MUST be added first so it runs last (FastAPI middleware runs in reverse order)
+# This ensures it runs after all other middleware and can mark errors on the final response
+class ErrorMarkingMiddleware(BaseHTTPMiddleware):
+    """Middleware to mark spans as errors for 4xx/5xx responses."""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        # Mark span as error if status code indicates error
+        # This runs after all other middleware, so it can mark errors on responses from auth middleware
+        if TRACING_AVAILABLE and trace and response.status_code >= 400:
+            current_span = trace.get_current_span()
+            if current_span:
+                # Set error status - this is what makes it appear in red in Jaeger
+                current_span.set_status(Status(StatusCode.ERROR, f"HTTP {response.status_code}"))
+                current_span.set_attribute("http.status_code", response.status_code)
+                current_span.set_attribute("error", True)
+                
+                # Set specific error types
+                if response.status_code == 401:
+                    current_span.set_attribute("error.type", "authentication_error")
+                    # Try to extract error message from response body if available
+                    try:
+                        if hasattr(response, 'body'):
+                            body_str = response.body.decode('utf-8') if isinstance(response.body, bytes) else str(response.body)
+                            if 'AUTHENTICATION_REQUIRED' in body_str or 'Invalid or expired token' in body_str:
+                                current_span.set_attribute("error.message", "Authentication required or token invalid")
+                    except Exception:
+                        pass
+                elif response.status_code == 403:
+                    current_span.set_attribute("error.type", "authorization_error")
+                    try:
+                        if hasattr(response, 'body'):
+                            body_str = response.body.decode('utf-8') if isinstance(response.body, bytes) else str(response.body)
+                            if 'AUTHORIZATION_FAILED' in body_str:
+                                current_span.set_attribute("error.message", "Authorization failed")
+                    except Exception:
+                        pass
+                else:
+                    current_span.set_attribute("error.type", "http_error")
+        
+        return response
+
+# Add this FIRST so it runs LAST (after all other middleware)
+app.add_middleware(ErrorMarkingMiddleware)
 
 # Add CORS middleware
 app.add_middleware(
@@ -2706,7 +2797,7 @@ async def asr_inference(
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
-    # Use build_auth_headers to properly set X-Auth-Source header
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/asr/inference", "asr-service", method="POST", body=body, headers=headers)
 
@@ -2786,9 +2877,7 @@ async def tts_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Perform batch TTS inference on text inputs"""
-    # Don't authenticate at API Gateway - let TTS service handle authentication
-    # This allows TTS service to log authentication errors to OpenSearch
-    # (Same pattern as NMT/OCR - they handle auth in the service)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
@@ -4144,7 +4233,7 @@ async def proxy_to_auth_service(request: Request, path: str):
 
 # Helper function to proxy requests to any service
 async def proxy_to_service(request: Optional[Request], path: str, service_name: str, method: str = "GET", body: Optional[bytes] = None, headers: Optional[Dict[str, str]] = None):
-    """Proxy request to any service using direct URLs (bypassing service registry)"""
+    """Proxy request to any service using direct URLs (bypassing service registry) with tracing"""
     global http_client
     
     # Direct service URL mapping (bypassing service registry)
@@ -4184,17 +4273,32 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
                 body = await request.body()
             headers = dict(request.headers)
             params = request.query_params
+            
+            # Inject trace context if not already present
+            if TRACING_AVAILABLE and inject:
+                try:
+                    inject(headers)
+                except Exception:
+                    pass
         else:
             # IMPORTANT: leave params as None so any querystring already present
             # in the URL (e.g. "/path?x=1") is not overwritten by an empty dict.
             params = None
             if headers is None:
                 headers = {}
+            
+            # Inject trace context
+            if TRACING_AVAILABLE and inject:
+                try:
+                    inject(headers)
+                except Exception:
+                    pass
         
         # Forward request to service (5 minute timeout for LLM service, 300s for others)
         timeout_value = 300.0 if service_name == 'llm-service' else 300.0
         final_url = f"{service_url}{path}"
         
+        start_time = time.time()
         try:
             response = await http_client.request(
                 method=method,
@@ -4205,14 +4309,63 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
                 follow_redirects=True,
                 timeout=timeout_value
             )
+            
+            response_time = time.time() - start_time
+            
+            # Log 401/403 errors
+            if response.status_code == 401:
+                logger.warning(
+                    f"401 Unauthorized from {service_name} for {method} {path}",
+                    extra={
+                        "context": {
+                            "method": method,
+                            "path": path,
+                            "service": service_name,
+                            "status_code": 401,
+                            "error": "downstream_authentication_failed",
+                            "response_time_ms": round(response_time * 1000, 2),
+                        }
+                    }
+                )
+            elif response.status_code == 403:
+                logger.warning(
+                    f"403 Forbidden from {service_name} for {method} {path}",
+                    extra={
+                        "context": {
+                            "method": method,
+                            "path": path,
+                            "service": service_name,
+                            "status_code": 403,
+                            "error": "downstream_authorization_failed",
+                            "response_time_ms": round(response_time * 1000, 2),
+                        }
+                    }
+                )
+            
         except Exception as e:
-            logger.error(f"Error proxying to {service_name}: {e}")
-            # Return error in the format expected by clients
-            error_detail = {
-                "code": "SERVICE_UNAVAILABLE",
-                "message": f"{service_name.replace('-', ' ').title()} is temporarily unavailable. Please try again in a few minutes."
-            }
-            raise HTTPException(status_code=503, detail=error_detail)
+            response_time = time.time() - start_time
+            if span:
+                span.set_status(Status(StatusCode.ERROR, str(e)))
+                span.set_attribute("error", True)
+                span.set_attribute("error.message", str(e))
+            if current_span:
+                current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.message", str(e))
+            logger.error(
+                f"Error proxying to {service_name}: {e}",
+                extra={
+                    "context": {
+                        "method": method,
+                        "path": path,
+                        "service": service_name,
+                        "error": "proxy_error",
+                        "response_time_ms": round(response_time * 1000, 2),
+                    }
+                },
+                exc_info=True
+            )
+            raise HTTPException(status_code=500, detail=f"{service_name} temporarily unavailable")
         
         # Return response
         return Response(
@@ -4222,14 +4375,30 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             media_type=response.headers.get('content-type')
         )
         
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+        
     except Exception as e:
-        logger.error(f"Error proxying to {service_name}: {e}")
-        # Return error in the format expected by clients
-        error_detail = {
-            "code": "SERVICE_UNAVAILABLE",
-            "message": f"{service_name.replace('-', ' ').title()} is temporarily unavailable. Please try again in a few minutes."
-        }
-        raise HTTPException(status_code=503, detail=error_detail)
+        response_time = time.time() - start_time
+        if current_span:
+            current_span.set_status(Status(StatusCode.ERROR, str(e)))
+            current_span.set_attribute("error", True)
+            current_span.set_attribute("error.message", str(e))
+        logger.error(
+            f"Error proxying to {service_name}: {e}",
+            extra={
+                "context": {
+                    "method": method,
+                    "path": path,
+                    "service": service_name,
+                    "error": "proxy_error",
+                    "response_time_ms": round(response_time * 1000, 2),
+                }
+            },
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail=f"{service_name} temporarily unavailable")
 
 
 # Helper function to proxy requests with explicit query parameters
@@ -4311,7 +4480,7 @@ async def proxy_to_service_with_params(
 
 @app.api_route("/{path:path}", methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'])
 async def proxy_request(request: Request, path: str):
-    """Catch-all route handler for request forwarding"""
+    """Catch-all route handler for request forwarding with tracing"""
     global service_registry, load_balancer, route_manager, http_client
     
     start_time = time.time()
@@ -4336,7 +4505,7 @@ async def proxy_request(request: Request, path: str):
         
         instance_id, instance_url = instance_info
         
-        # Prepare forwarding headers
+        # Prepare forwarding headers (includes trace context injection)
         headers = prepare_forwarding_headers(request, correlation_id, request_id)
         
         # Prepare request body
@@ -4344,16 +4513,183 @@ async def proxy_request(request: Request, path: str):
         if request.method in ['POST', 'PUT', 'PATCH']:
             body = await request.body()
         
-        # Forward request
-        response = await http_client.request(
-            method=request.method,
-            url=f"{instance_url}/{path}",
-            headers=headers,
-            params=request.query_params,
-            content=body,
-            timeout=30.0
-        )
+        # Create child span for downstream service call (child of FastAPI auto-instrumented span)
+        span_context = tracer.start_as_current_span(f"gateway.proxy.{service_name}") if (TRACING_AVAILABLE and tracer) else nullcontext()
+        try:
+            with span_context as downstream_span:
+                if downstream_span:
+                    downstream_span.set_attribute("service.name", service_name)
+                    downstream_span.set_attribute("service.instance", instance_id)
+                    downstream_span.set_attribute("http.method", request.method)
+                    downstream_span.set_attribute("http.url", f"{instance_url}/{path}")
+                
+                # Forward request
+                response = await http_client.request(
+                    method=request.method,
+                    url=f"{instance_url}/{path}",
+                    headers=headers,
+                    params=request.query_params,
+                    content=body,
+                    timeout=30.0
+                )
+                
+                # Calculate response time
+                response_time = time.time() - start_time
+                
+                # Update span with response info
+                if downstream_span:
+                    downstream_span.set_attribute("http.status_code", response.status_code)
+                    downstream_span.set_attribute("response.time_ms", round(response_time * 1000, 2))
+                    if response.status_code >= 400:
+                        downstream_span.set_status(Status(StatusCode.ERROR, f"HTTP {response.status_code}"))
+                    else:
+                        downstream_span.set_status(Status(StatusCode.OK))
+                
+                # Mark main FastAPI span as error if response status is error
+                if TRACING_AVAILABLE and trace and response.status_code >= 400:
+                    current_span = trace.get_current_span()
+                    if current_span:
+                        current_span.set_status(Status(StatusCode.ERROR, f"HTTP {response.status_code}"))
+                        current_span.set_attribute("http.status_code", response.status_code)
+                        current_span.set_attribute("error", True)
+                        current_span.set_attribute("error.message", f"Downstream service returned {response.status_code}")
+                
+                # Update load balancer metrics
+                await service_registry.update_health(service_name, instance_id, True, response_time)
+                
+                # Log request
+                log_request(request.method, f"/{path}", service_name, instance_id, response_time, response.status_code)
+                
+                # Log 401/403 errors with trace context
+                if response.status_code == 401:
+                    user_id = getattr(request.state, "user_id", None)
+                    logger.warning(
+                        f"401 Unauthorized from {service_name} for {request.method} {path}",
+                        extra={
+                            "context": {
+                                "method": request.method,
+                                "path": path,
+                                "service": service_name,
+                                "status_code": 401,
+                                "error": "downstream_authentication_failed",
+                                "user_id": user_id,
+                                "correlation_id": correlation_id,
+                                "response_time_ms": round(response_time * 1000, 2),
+                            }
+                        }
+                    )
+                elif response.status_code == 403:
+                    user_id = getattr(request.state, "user_id", None)
+                    username = getattr(request.state, "username", None)
+                    logger.warning(
+                        f"403 Forbidden from {service_name} for {request.method} {path}",
+                        extra={
+                            "context": {
+                                "method": request.method,
+                                "path": path,
+                                "service": service_name,
+                                "status_code": 403,
+                                "error": "downstream_authorization_failed",
+                                "user_id": user_id,
+                                "username": username,
+                                "correlation_id": correlation_id,
+                                "response_time_ms": round(response_time * 1000, 2),
+                            }
+                        }
+                    )
+                
+                # Prepare response headers
+                response_headers = {}
+                for header_name, header_value in response.headers.items():
+                    if not is_hop_by_hop_header(header_name):
+                        response_headers[header_name] = header_value
+                
+                # Add correlation headers to response
+                response_headers['X-Correlation-ID'] = correlation_id
+                response_headers['X-Request-ID'] = request_id
+                
+                # Return response
+                return Response(
+                    content=response.content,
+                    status_code=response.status_code,
+                    headers=response_headers,
+                    media_type=response.headers.get('content-type')
+                )
+                
+        except httpx.HTTPStatusError as e:
+            response_time = time.time() - start_time
+            
+            # Mark both downstream span and main FastAPI span as error
+            if downstream_span:
+                downstream_span.set_status(Status(StatusCode.ERROR, str(e)))
+                downstream_span.set_attribute("http.status_code", e.response.status_code)
+            
+            # Get current span (FastAPI auto-instrumented span) and mark as error
+            if TRACING_AVAILABLE and trace:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_status(Status(StatusCode.ERROR, f"HTTP {e.response.status_code}: {str(e)}"))
+                    current_span.set_attribute("http.status_code", e.response.status_code)
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.message", str(e))
+            
+            logger.error(
+                f"HTTP error forwarding request to {service_name}: {e}",
+                extra={
+                    "context": {
+                        "method": request.method,
+                        "path": path,
+                        "service": service_name,
+                        "status_code": e.response.status_code,
+                        "error": "http_error",
+                        "correlation_id": correlation_id,
+                        "response_time_ms": round(response_time * 1000, 2),
+                    }
+                }
+            )
+            
+            # Update health status for the instance
+            if 'instance_id' in locals() and 'service_name' in locals():
+                await service_registry.update_health(service_name, instance_id, False, response_time)
+            
+            raise HTTPException(status_code=e.response.status_code, detail=str(e))
+            
+        except httpx.RequestError as e:
+            response_time = time.time() - start_time
+            
+            # Mark both downstream span and main FastAPI span as error
+            if downstream_span:
+                downstream_span.set_status(Status(StatusCode.ERROR, str(e)))
+            
+            # Get current span (FastAPI auto-instrumented span) and mark as error
+            if TRACING_AVAILABLE and trace:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.message", str(e))
+            
+            logger.error(
+                f"Request error forwarding to {service_name}: {e}",
+                extra={
+                    "context": {
+                        "method": request.method,
+                        "path": path,
+                        "service": service_name,
+                        "error": "request_error",
+                        "correlation_id": correlation_id,
+                        "response_time_ms": round(response_time * 1000, 2),
+                    }
+                }
+            )
+            
+            # Update health status for the instance
+            if 'instance_id' in locals() and 'service_name' in locals():
+                await service_registry.update_health(service_name, instance_id, False, response_time)
+            
+            raise HTTPException(status_code=503, detail="Service temporarily unavailable")
         
+<<<<<<< HEAD
         # Calculate response time
         response_time = time.time() - start_time
         
@@ -4404,10 +4740,43 @@ async def proxy_request(request: Request, path: str):
             "message": "Service is temporarily unavailable. Please try again in a few minutes."
         }
         raise HTTPException(status_code=503, detail=error_detail)
+    
+    except HTTPException as e:
+        # Mark main FastAPI span as error for HTTP exceptions
+        if TRACING_AVAILABLE and trace:
+            current_span = trace.get_current_span()
+            if current_span and e.status_code >= 400:
+                current_span.set_status(Status(StatusCode.ERROR, f"HTTP {e.status_code}: {e.detail}"))
+                current_span.set_attribute("http.status_code", e.status_code)
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.message", e.detail)
+        # Re-raise HTTP exceptions
+        raise
         
     except Exception as e:
         response_time = time.time() - start_time
-        logger.error(f"Unexpected error forwarding request: {e}")
+        
+        # Mark main FastAPI span as error
+        if TRACING_AVAILABLE and trace:
+            current_span = trace.get_current_span()
+            if current_span:
+                current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.message", str(e))
+        
+        logger.error(
+            f"Unexpected error forwarding request: {e}",
+            extra={
+                "context": {
+                    "method": request.method,
+                    "path": path,
+                    "error": "unexpected_error",
+                    "correlation_id": correlation_id,
+                    "response_time_ms": round(response_time * 1000, 2),
+                }
+            },
+            exc_info=True
+        )
         raise HTTPException(status_code=500, detail="Internal server error")
 
 if __name__ == "__main__":
