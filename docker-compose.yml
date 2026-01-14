@@ -379,11 +379,11 @@ services:
         aliases:
           - config-service
     # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    #   test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 30s
     restart: unless-stopped
 
   metrics-service:
@@ -611,6 +611,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     networks:
       - microservices-network
     healthcheck:
@@ -641,7 +645,9 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - ner-service
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
       interval: 30s
@@ -682,8 +688,8 @@ services:
 
   pipeline-service:
     build:
-      context: ./services/pipeline-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/pipeline-service/Dockerfile
     container_name: ai4v-pipeline-service
     ports:
       - "8092:8090"
@@ -749,6 +755,7 @@ services:
       - REQUIRE_API_KEY=${MODEL_MANAGEMENT_REQUIRE_API_KEY:-true}
       - ALLOW_ANONYMOUS_ACCESS=${MODEL_MANAGEMENT_ALLOW_ANONYMOUS_ACCESS:-false}
       - MAX_ACTIVE_VERSIONS_PER_MODEL=${MAX_ACTIVE_VERSIONS_PER_MODEL:-5}
+      - ALLOW_DEPRECATED_MODEL_CHANGES=${ALLOW_DEPRECATED_MODEL_CHANGES:-true}
     depends_on:
       postgres:
         condition: service_healthy
@@ -1032,6 +1039,106 @@ services:
       retries: 3
 
 
+  # Telemetry: OpenSearch (for logs)
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: ai4v-opensearch
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+      - ./infrastructure/opensearch/opensearch.yml:/usr/share/opensearch/config/opensearch.yml
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9204:9200"
+      - "9600:9600"
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # OpenSearch initialization - ensures index template is created on startup
+  opensearch-init:
+    image: curlimages/curl:latest
+    container_name: ai4v-opensearch-init
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    volumes:
+      - ./infrastructure/opensearch/init-opensearch.sh:/init-opensearch.sh:ro
+      - ./infrastructure/opensearch/index-template.json:/index-template.json:ro
+    environment:
+      - OPENSEARCH_URL=http://opensearch:9200
+      - TEMPLATE_FILE=/index-template.json
+    command: ["sh", "/init-opensearch.sh"]
+    restart: "no"
+
+  # Telemetry: OpenSearch Dashboards (for log visualization)
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.11.0
+    container_name: ai4v-opensearch-dashboards
+    ports:
+      - "5602:5601"
+    environment:
+      - OPENSEARCH_HOSTS=http://opensearch:9200
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+      - SERVER_BASEPATH=/opensearch
+      - SERVER_REWRITEBASEPATH=true
+    networks:
+      - microservices-network
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Telemetry: Jaeger (for distributed tracing)
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: ai4v-jaeger
+    ports:
+      - "16686:16686"  # UI
+      - "14268:14268"  # HTTP collector
+      - "6831:6831/udp"  # UDP agent
+      - "4317:4317"  # OTLP gRPC
+      - "4318:4318"  # OTLP HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - QUERY_BASE_PATH=/jaeger
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  # Telemetry: Fluent Bit (for log collection)
+  fluent-bit:
+    image: fluent/fluent-bit:latest
+    container_name: ai4v-fluent-bit
+    volumes:
+      - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
+      - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
+      - ./infrastructure/fluent-bit/extract_context.lua:/fluent-bit/scripts/extract_context.lua:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - microservices-network
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+
 
 volumes:
   postgres-data:
@@ -1058,6 +1165,8 @@ volumes:
     driver: local
   grafana-data:
     driver: local
+  opensearch-data:
+    driver: local
 
 networks:
   microservices-network:
@@ -1065,3 +1174,4 @@ networks:
     ipam:
       config:
         - subnet: 172.31.0.0/16
+

@@ -1,3 +1,5 @@
+<<<<<<< HEAD
+=======
 -- Initialize all required databases for microservices
 -- This script is automatically executed when PostgreSQL container starts for the first time
 
@@ -90,3 +92,4 @@ COMMENT ON DATABASE dashboard_db IS 'Dashboard Service database';
 COMMENT ON DATABASE model_management_db IS 'Model Management Service database';
 COMMENT ON DATABASE konga IS 'Kong Manager (Konga) database';
 COMMENT ON DATABASE unleash IS 'Unleash feature flag management database';
+>>>>>>> 65b91282ea6b20c576db0d431b16ce8905cf3f57

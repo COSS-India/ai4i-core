@@ -37,7 +37,6 @@ ENV PATH=/home/app/.local/bin:$PATH
 
 # Copy application source
 COPY services/alerting-service/ .
-
 # Permissions
 RUN chown -R app:app /app /home/app/.local
 USER app
