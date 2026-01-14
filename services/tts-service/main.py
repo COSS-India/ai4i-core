@@ -336,7 +336,11 @@ tracer = setup_tracing("tts-service")
 if tracer:
     logger.info("✅ Distributed tracing initialized for TTS service")
     # Instrument FastAPI to automatically create spans for all requests
-    FastAPIInstrumentor.instrument_app(app)
+    # Exclude health check endpoints to reduce span noise
+    FastAPIInstrumentor.instrument_app(
+        app,
+        excluded_urls="/health,/metrics,/enterprise/metrics,/docs,/redoc,/openapi.json"
+    )
     logger.info("✅ FastAPI instrumentation enabled for tracing")
 else:
     logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")

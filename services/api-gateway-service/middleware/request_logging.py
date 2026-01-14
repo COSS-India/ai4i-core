@@ -1,5 +1,5 @@
 """
-Request/response logging middleware for tracking ASR API usage.
+Request/response logging middleware for tracking API Gateway usage.
 
 Uses structured JSON logging with trace correlation, compatible with OpenSearch dashboards.
 """
@@ -107,3 +107,4 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         response.headers["X-Process-Time"] = f"{processing_time:.3f}"
 
         return response
+
