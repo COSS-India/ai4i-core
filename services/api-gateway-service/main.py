@@ -20,7 +20,7 @@ from urllib.parse import urlencode, urlparse, parse_qs
 from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -774,6 +774,59 @@ class VersionStatus(str, Enum):
     ACTIVE = "ACTIVE"
     DEPRECATED = "DEPRECATED"
 
+class LicenseEnum(str, Enum):
+    """Enumeration of valid license types for models."""
+    # Permissive Licenses
+    MIT = "MIT"
+    APACHE_2_0 = "Apache-2.0"
+    BSD_2_CLAUSE = "BSD-2-Clause"
+    BSD_3_CLAUSE = "BSD-3-Clause"
+    ISC = "ISC"
+    UNLICENSE = "Unlicense"
+    ZLIB = "Zlib"
+    
+    # Copyleft Licenses
+    GPL_2_0 = "GPL-2.0"
+    GPL_3_0 = "GPL-3.0"
+    LGPL_2_1 = "LGPL-2.1"
+    LGPL_3_0 = "LGPL-3.0"
+    AGPL_3_0 = "AGPL-3.0"
+    MPL_2_0 = "MPL-2.0"
+    EPL_2_0 = "EPL-2.0"
+    CDDL_1_0 = "CDDL-1.0"
+    
+    # Microsoft Licenses
+    MS_PL = "Ms-PL"
+    MS_RL = "Ms-RL"
+    
+    # Creative Commons Licenses
+    CC0_1_0 = "CC0-1.0"
+    CC_BY_4_0 = "CC-BY-4.0"
+    CC_BY_SA_4_0 = "CC-BY-SA-4.0"
+    CC_BY_NC_4_0 = "CC-BY-NC-4.0"
+    CC_BY_NC_SA_4_0 = "CC-BY-NC-SA-4.0"
+    CC_BY_ND_4_0 = "CC-BY-ND-4.0"
+    CC_BY_NC_ND_4_0 = "CC-BY-NC-ND-4.0"
+    
+    # AI/ML Specific Licenses
+    OPENRAIL_M = "OpenRAIL-M"
+    OPENRAIL_S = "OpenRAIL-S"
+    BIGSCIENCE_OPENRAIL_M = "BigScience-OpenRAIL-M"
+    CREATIVEML_OPENRAIL_M = "CreativeML-OpenRAIL-M"
+    APACHE_2_0_WITH_LLM_EXCEPTION = "Apache-2.0-with-LLM-exception"
+    
+    # Academic/Research Licenses
+    ACADEMIC_FREE_LICENSE_3_0 = "AFL-3.0"
+    
+    # Other Common Licenses
+    ARTISTIC_LICENSE_2_0 = "Artistic-2.0"
+    ECLIPSE_PUBLIC_LICENSE_1_0 = "EPL-1.0"
+    
+    # Special Categories
+    PROPRIETARY = "Proprietary"
+    CUSTOM = "Custom"
+    OTHER = "Other"
+
 class ModelCreateRequest(BaseModel):
     """Request model for creating a new model."""
     modelId: str = Field(..., description="Unique model identifier")
@@ -790,6 +843,29 @@ class ModelCreateRequest(BaseModel):
     inferenceEndPoint: InferenceEndPoint = Field(..., description="Inference endpoint configuration")
     benchmarks: List[Benchmark] = Field(..., description="List of benchmarks")
     submitter: Submitter = Field(..., description="Submitter information")
+
+    @field_validator("license", mode="before")
+    def validate_license(cls, v):
+        if not v:
+            raise ValueError("License field is required")
+        
+        if isinstance(v, str):
+            v_normalized = v.strip()
+            # Check if the license matches any enum value (case-insensitive)
+            for enum_member in LicenseEnum:
+                if enum_member.value.lower() == v_normalized.lower():
+                    return enum_member.value
+            
+            # If no match found, raise error with valid options
+            valid_licenses = [e.value for e in LicenseEnum]
+            raise ValueError(
+                f"Invalid license '{v}'. Valid licenses are: {', '.join(valid_licenses)}"
+            )
+        
+        if isinstance(v, LicenseEnum):
+            return v.value
+        
+        return v
 
 class ModelUpdateRequest(BaseModel):
     """Request model for updating an existing model."""
@@ -808,6 +884,30 @@ class ModelUpdateRequest(BaseModel):
     inferenceEndPoint: Optional[InferenceEndPoint] = Field(None, description="Inference endpoint configuration")
     benchmarks: Optional[List[Benchmark]] = Field(None, description="List of benchmarks")
     submitter: Optional[Submitter] = Field(None, description="Submitter information")
+
+    @field_validator("license", mode="before")
+    def validate_license(cls, v):
+        # Allow None for optional field in updates
+        if v is None:
+            return v
+        
+        if isinstance(v, str):
+            v_normalized = v.strip()
+            # Check if the license matches any enum value (case-insensitive)
+            for enum_member in LicenseEnum:
+                if enum_member.value.lower() == v_normalized.lower():
+                    return enum_member.value
+            
+            # If no match found, raise error with valid options
+            valid_licenses = [e.value for e in LicenseEnum]
+            raise ValueError(
+                f"Invalid license '{v}'. Valid licenses are: {', '.join(valid_licenses)}"
+            )
+        
+        if isinstance(v, LicenseEnum):
+            return v.value
+        
+        return v
 
 class ModelViewRequest(BaseModel):
     """Request model for viewing a model."""

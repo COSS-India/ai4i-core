@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel , field_validator, ConfigDict
-from models.type_enum import TaskTypeEnum
+from models.type_enum import TaskTypeEnum, LicenseEnum
 from models.db_models import VersionStatus
 
 class ModelProcessingType(BaseModel):
@@ -103,6 +103,29 @@ class ModelCreateRequest(BaseModel):
     inferenceEndPoint: InferenceEndPoint
     benchmarks: List[Benchmark]
     submitter: Submitter
+
+    @field_validator("license", mode="before")
+    def validate_license(cls, v):
+        if not v:
+            raise ValueError("License field is required")
+        
+        if isinstance(v, str):
+            v_normalized = v.strip()
+            # Check if the license matches any enum value (case-insensitive)
+            for enum_member in LicenseEnum:
+                if enum_member.value.lower() == v_normalized.lower():
+                    return enum_member.value
+            
+            # If no match found, raise error with valid options
+            valid_licenses = [e.value for e in LicenseEnum]
+            raise ValueError(
+                f"Invalid license '{v}'. Valid licenses are: {', '.join(valid_licenses)}"
+            )
+        
+        if isinstance(v, LicenseEnum):
+            return v.value
+        
+        return v
 
     model_config = {
         "validate_by_name": True,  
