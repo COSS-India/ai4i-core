@@ -4521,7 +4521,8 @@ async def proxy_request(request: Request, path: str):
         if request.method in ['POST', 'PUT', 'PATCH']:
             body = await request.body()
         
-        # Create child span for downstream service call (child of FastAPI auto-instrumented span)
+        # Create detailed breakdown spans for API gateway
+        # Main proxy span
         span_context = tracer.start_as_current_span(f"gateway.proxy.{service_name}") if (TRACING_AVAILABLE and tracer) else nullcontext()
         try:
             with span_context as downstream_span:
@@ -4530,24 +4531,69 @@ async def proxy_request(request: Request, path: str):
                     downstream_span.set_attribute("service.instance", instance_id)
                     downstream_span.set_attribute("http.method", request.method)
                     downstream_span.set_attribute("http.url", f"{instance_url}/{path}")
+                    downstream_span.set_attribute("gateway.path", f"/{path}")
+                    downstream_span.set_attribute("gateway.correlation_id", correlation_id)
+                    downstream_span.set_attribute("gateway.request_id", request_id)
+                    
+                    # Add user context if available
+                    user_id = getattr(request.state, "user_id", None)
+                    if user_id:
+                        downstream_span.set_attribute("gateway.user_id", str(user_id))
+                    
+                    # Create child span for request preparation
+                    prep_span_context = tracer.start_as_current_span("gateway.prepare_request") if (TRACING_AVAILABLE and tracer) else nullcontext()
+                    with prep_span_context as prep_span:
+                        if prep_span:
+                            prep_span.set_attribute("gateway.headers_prepared", len(headers))
+                            prep_span.set_attribute("gateway.body_size", len(body) if body else 0)
+                    # prep_span_context closes here
                 
-                # Forward request
-                response = await http_client.request(
-                    method=request.method,
-                    url=f"{instance_url}/{path}",
-                    headers=headers,
-                    params=request.query_params,
-                    content=body,
-                    timeout=30.0
-                )
+                # Create child span for HTTP request
+                http_span_context = tracer.start_as_current_span("gateway.http_request") if (TRACING_AVAILABLE and tracer) else nullcontext()
+                http_start_time = time.time()
+                with http_span_context as http_span:
+                    if http_span:
+                        http_span.set_attribute("http.method", request.method)
+                        http_span.set_attribute("http.url", f"{instance_url}/{path}")
+                        http_span.set_attribute("http.target", f"/{path}")
+                    
+                    # Forward request
+                    response = await http_client.request(
+                        method=request.method,
+                        url=f"{instance_url}/{path}",
+                        headers=headers,
+                        params=request.query_params,
+                        content=body,
+                        timeout=30.0
+                    )
+                    
+                    # Update HTTP span with response info
+                    if http_span:
+                        http_time = (time.time() - http_start_time) * 1000
+                        http_span.set_attribute("http.status_code", response.status_code)
+                        http_span.set_attribute("http.response_time_ms", round(http_time, 2))
+                        http_span.set_attribute("http.response_size", len(response.content) if hasattr(response, 'content') else 0)
+                        if response.status_code >= 400:
+                            http_span.set_status(Status(StatusCode.ERROR, f"HTTP {response.status_code}"))
+                        else:
+                            http_span.set_status(Status(StatusCode.OK))
+                # http_span_context closes here
                 
-                # Calculate response time
+                # Calculate total response time
                 response_time = time.time() - start_time
                 
-                # Update span with response info
+                # Create child span for response processing
+                resp_span_context = tracer.start_as_current_span("gateway.process_response") if (TRACING_AVAILABLE and tracer) else nullcontext()
+                with resp_span_context as resp_span:
+                    if resp_span:
+                        resp_span.set_attribute("http.status_code", response.status_code)
+                        resp_span.set_attribute("gateway.response_time_ms", round(response_time * 1000, 2))
+                
+                # Update main downstream span with response info
                 if downstream_span:
                     downstream_span.set_attribute("http.status_code", response.status_code)
                     downstream_span.set_attribute("response.time_ms", round(response_time * 1000, 2))
+                    downstream_span.set_attribute("gateway.total_time_ms", round(response_time * 1000, 2))
                     if response.status_code >= 400:
                         downstream_span.set_status(Status(StatusCode.ERROR, f"HTTP {response.status_code}"))
                     else:
