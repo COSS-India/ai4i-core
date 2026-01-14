@@ -22,16 +22,19 @@ RUN pip install --upgrade pip setuptools wheel
 # Install Python deps
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Copy observability plugin
+# Copy AI4ICore plugins from monorepo
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
-# Copy Model Management plugin
+COPY libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
 # Copy constants folder
 COPY services/constants /app/services/constants
 
-# ✅ INSTALL PLUGINS AS NORMAL PACKAGES (FIX)
-RUN pip install --no-cache-dir --user /app/libs/ai4icore_observability
-RUN pip install --no-cache-dir --user /app/libs/ai4icore_model_management
+# Install AI4ICore plugins
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
 
 
 # -----------------------------
@@ -58,8 +61,10 @@ ENV PATH="/home/app/.local/bin:$PATH"
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
 
-# Copy plugins into runtime image
+# Copy AI4ICore plugins into runtime image
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
 # Copy constants folder
@@ -76,4 +81,6 @@ EXPOSE 8088
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD curl -f http://localhost:8088/health || exit 1
 
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8088"]
+# Run the application
+# Disable uvicorn access logs since we use RequestLoggingMiddleware with trace_id
+ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8088", "--no-access-log"]

@@ -2786,15 +2786,14 @@ async def tts_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Perform batch TTS inference on text inputs"""
-    await ensure_authenticated_for_request(request, credentials, api_key)
+    # Don't authenticate at API Gateway - let TTS service handle authentication
+    # This allows TTS service to log authentication errors to OpenSearch
+    # (Same pattern as NMT/OCR - they handle auth in the service)
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/tts/inference", "tts-service", method="POST", body=body, headers=headers)
 
 @app.get("/api/v1/tts/models", tags=["TTS"])

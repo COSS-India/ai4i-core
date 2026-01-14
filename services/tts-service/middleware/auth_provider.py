@@ -15,8 +15,9 @@ from repositories.user_repository import UserRepository
 from repositories.tts_repository import get_db_session
 from models.auth_models import ApiKeyDB, UserDB
 from middleware.exceptions import AuthenticationError, InvalidAPIKeyError, ExpiredAPIKeyError, AuthorizationError
+from ai4icore_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Constants for auth service communication
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
