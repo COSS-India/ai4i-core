@@ -13,8 +13,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements from service context
-# (build context is ./services/api-gateway-service in docker-compose.yml)
-COPY requirements.txt .
+COPY services/api-gateway-service/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --user -r requirements.txt
@@ -38,8 +37,15 @@ RUN useradd --create-home --shell /bin/bash app
 # Copy installed Python packages
 COPY --from=builder /root/.local /home/app/.local
 
+# Copy constants folder (COPY automatically creates parent directories)
+COPY services/constants /app/services/constants
+
+# Create __init__.py files to make services and constants Python packages
+# (needed for: from services.constants.error_messages import ...)
+RUN touch /app/services/__init__.py /app/services/constants/__init__.py
+
 # Copy application code from service context
-COPY . .
+COPY services/api-gateway-service .
 
 # Fix permissions
 RUN chown -R app:app /app /home/app/.local \
