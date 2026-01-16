@@ -7,11 +7,34 @@ from middleware.exceptions import (
     AuthenticationError, 
     AuthorizationError, 
     RateLimitExceededError,
-    ErrorDetail
+    ErrorDetail,
+    ServiceError,
+    TritonInferenceError,
+    ModelNotFoundError,
+    ServiceUnavailableError,
+    AudioProcessingError
+)
+from services.constants.error_messages import (
+    AUTH_FAILED,
+    AUTH_FAILED_MESSAGE,
+    RATE_LIMIT_EXCEEDED,
+    RATE_LIMIT_EXCEEDED_MESSAGE,
+    SERVICE_UNAVAILABLE,
+    SERVICE_UNAVAILABLE_MESSAGE,
+    INVALID_REQUEST,
+    INVALID_REQUEST_MESSAGE
 )
 import logging
 import time
 import traceback
+
+# Import OpenTelemetry for tracing
+try:
+    from opentelemetry import trace
+    from opentelemetry.trace import Status, StatusCode
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +46,8 @@ def add_error_handlers(app: FastAPI) -> None:
     async def authentication_error_handler(request: Request, exc: AuthenticationError):
         """Handle authentication errors."""
         error_detail = ErrorDetail(
-            message=exc.message,
-            code="AUTHENTICATION_ERROR",
-            timestamp=time.time()
+            message=AUTH_FAILED_MESSAGE,
+            code=AUTH_FAILED
         )
         return JSONResponse(
             status_code=401,
@@ -37,8 +59,7 @@ def add_error_handlers(app: FastAPI) -> None:
         """Handle authorization errors."""
         error_detail = ErrorDetail(
             message=exc.message,
-            code="AUTHORIZATION_ERROR",
-            timestamp=time.time()
+            code="AUTHORIZATION_ERROR"
         )
         return JSONResponse(
             status_code=403,
@@ -48,10 +69,11 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(RateLimitExceededError)
     async def rate_limit_error_handler(request: Request, exc: RateLimitExceededError):
         """Handle rate limit exceeded errors."""
+        # Format message with retry_after value
+        message = RATE_LIMIT_EXCEEDED_MESSAGE.format(x=exc.retry_after)
         error_detail = ErrorDetail(
-            message=exc.message,
-            code="RATE_LIMIT_EXCEEDED",
-            timestamp=time.time()
+            message=message,
+            code=RATE_LIMIT_EXCEEDED
         )
         return JSONResponse(
             status_code=429,
@@ -59,29 +81,189 @@ def add_error_handlers(app: FastAPI) -> None:
             headers={"Retry-After": str(exc.retry_after)}
         )
     
-    @app.exception_handler(HTTPException)
-    async def http_exception_handler(request: Request, exc: HTTPException):
-        """Handle generic HTTP exceptions."""
+    @app.exception_handler(ServiceError)
+    async def service_error_handler(request: Request, exc: ServiceError):
+        """Handle service-specific errors with Jaeger tracing."""
+        # Record error in Jaeger span
+        if TRACING_AVAILABLE:
+            try:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.code", exc.error_code)
+                    current_span.set_attribute("error.message", exc.message)
+                    current_span.set_attribute("error.type", type(exc).__name__)
+                    current_span.set_attribute("http.status_code", exc.status_code)
+                    
+                    if exc.model_name:
+                        current_span.set_attribute("error.model", exc.model_name)
+                    if exc.service_error:
+                        for key, value in exc.service_error.items():
+                            current_span.set_attribute(f"error.{key}", str(value))
+                    
+                    current_span.record_exception(exc)
+                    current_span.set_status(Status(StatusCode.ERROR, exc.message))
+            except Exception:
+                pass  # Don't fail if tracing fails
+        
         error_detail = ErrorDetail(
-            message=str(exc.detail),
-            code="HTTP_ERROR",
-            timestamp=time.time()
+            message=exc.message,
+            code=exc.error_code
         )
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": error_detail.dict()}
         )
     
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException):
+        """Handle generic HTTP exceptions."""
+        # Extract context for logging
+        from ai4icore_logging import get_correlation_id
+        correlation_id = get_correlation_id(request)
+        user_id = getattr(request.state, "user_id", None)
+        api_key_id = getattr(request.state, "api_key_id", None)
+        service_id = getattr(request.state, "service_id", None)
+        
+        # Record error in Jaeger span (dev code)
+        if TRACING_AVAILABLE:
+            try:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.code", "HTTP_ERROR")
+                    current_span.set_attribute("error.message", str(exc.detail))
+                    current_span.set_attribute("http.status_code", exc.status_code)
+                    if service_id:
+                        current_span.set_attribute("asr.service_id", service_id)
+                    if correlation_id:
+                        current_span.set_attribute("correlation.id", correlation_id)
+                    current_span.set_status(Status(StatusCode.ERROR, str(exc.detail)))
+            except Exception:
+                pass  # Don't fail if tracing fails
+        
+        # Log 500 errors with full context
+        if exc.status_code == 500:
+            logger.error(
+                f"HTTP 500 error in ASR service: {exc.detail}",
+                extra={
+                    "context": {
+                        "error_type": "HTTPException",
+                        "error_message": str(exc.detail),
+                        "status_code": 500,
+                        "service_id": service_id,
+                        "user_id": user_id,
+                        "api_key_id": api_key_id,
+                        "correlation_id": correlation_id,
+                        "path": request.url.path,
+                        "method": request.method,
+                    }
+                },
+                exc_info=True
+            )
+        
+        # Map status codes to error constants (our changes)
+        status_code = exc.status_code
+        error_code = None
+        error_message = str(exc.detail)
+        
+        # Check if detail is already an ErrorDetail dict (from routers)
+        if isinstance(exc.detail, dict) and "code" in exc.detail and "message" in exc.detail:
+            # Already formatted as ErrorDetail, return as-is
+            return JSONResponse(
+                status_code=status_code,
+                content={"detail": exc.detail}
+            )
+        
+        # Map common status codes to error constants
+        if status_code == 503:
+            error_code = SERVICE_UNAVAILABLE
+            error_message = SERVICE_UNAVAILABLE_MESSAGE
+        elif status_code == 400:
+            error_code = INVALID_REQUEST
+            error_message = INVALID_REQUEST_MESSAGE
+        elif status_code == 401:
+            error_code = AUTH_FAILED
+            error_message = AUTH_FAILED_MESSAGE
+        elif status_code == 500:
+            # For 500 errors, preserve the actual error message from logs
+            error_code = "INTERNAL_SERVER_ERROR"
+            # Keep the actual error message from exc.detail
+            error_message = error_message
+        else:
+            # For unmapped errors, use the detail as message and generate a code
+            error_code = f"HTTP_{status_code}_ERROR"
+        
+        error_detail = ErrorDetail(
+            message=error_message,
+            code=error_code
+        )
+        return JSONResponse(
+            status_code=status_code,
+            content={"detail": error_detail.dict()}
+        )
+    
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
         """Handle unexpected exceptions."""
-        logger.error(f"Unexpected error: {exc}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        # Extract context for logging
+        from ai4icore_logging import get_correlation_id
+        correlation_id = get_correlation_id(request)
+        user_id = getattr(request.state, "user_id", None)
+        api_key_id = getattr(request.state, "api_key_id", None)
+        service_id = getattr(request.state, "service_id", None)
+        triton_endpoint = getattr(request.state, "triton_endpoint", None)
+        model_name = getattr(request.state, "triton_model_name", None)
         
+        # Record error in Jaeger span (dev code)
+        if TRACING_AVAILABLE:
+            try:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.code", "INTERNAL_ERROR")
+                    current_span.set_attribute("error.message", str(exc))
+                    current_span.set_attribute("error.type", type(exc).__name__)
+                    current_span.set_attribute("http.status_code", 500)
+                    if service_id:
+                        current_span.set_attribute("asr.service_id", service_id)
+                    if triton_endpoint:
+                        current_span.set_attribute("triton.endpoint", triton_endpoint)
+                    if model_name:
+                        current_span.set_attribute("triton.model_name", model_name)
+                    if correlation_id:
+                        current_span.set_attribute("correlation.id", correlation_id)
+                    current_span.record_exception(exc)
+                    current_span.set_status(Status(StatusCode.ERROR, str(exc)))
+            except Exception:
+                pass  # Don't fail if tracing fails
+        
+        # Log the full error with traceback and context
+        error_message = str(exc)
+        logger.error(
+            f"Unexpected error in ASR service: {exc}",
+            extra={
+                "context": {
+                    "error_type": type(exc).__name__,
+                    "error_message": error_message,
+                    "status_code": 500,
+                    "service_id": service_id,
+                    "triton_endpoint": triton_endpoint,
+                    "model_name": model_name,
+                    "user_id": user_id,
+                    "api_key_id": api_key_id,
+                    "correlation_id": correlation_id,
+                    "path": request.url.path,
+                    "method": request.method,
+                }
+            },
+            exc_info=True
+        )
+        
+        # Preserve the actual error message from the exception (our changes)
         error_detail = ErrorDetail(
-            message="Internal server error",
-            code="INTERNAL_ERROR",
-            timestamp=time.time()
+            message=error_message,  # Use actual error message from exception
+            code="INTERNAL_SERVER_ERROR"
         )
         return JSONResponse(
             status_code=500,
