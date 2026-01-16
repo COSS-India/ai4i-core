@@ -8,7 +8,7 @@ from models.tenant_subscription import (
     TenantSubscriptionRemoveRequest,
     TenantSubscriptionResponse,
 )
-from tenant_service import add_subscriptions, remove_subscriptions
+from services.tenant_service import add_subscriptions, remove_subscriptions
 from logger import logger
 from middleware.auth_provider import AuthProvider
 
