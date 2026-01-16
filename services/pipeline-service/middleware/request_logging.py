@@ -117,6 +117,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_context["jaeger_trace_url"] = jaeger_trace_url
 
         # Log with appropriate level using structured logging
+        # Skip logging 400-series errors - these are logged at gateway level only
+        # Log 200-series (success) and 500-series (server errors) at service level
         if LOGGING_AVAILABLE:
             if 200 <= status_code < 300:
                 logger.info(
@@ -124,10 +126,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     extra={"context": log_context}
                 )
             elif 400 <= status_code < 500:
-                logger.warning(
-                    f"{method} {path} - {status_code} - {processing_time:.3f}s",
-                    extra={"context": log_context}
-                )
+                # Don't log 400-series errors - gateway handles this to avoid duplicates
+                pass
             else:
                 logger.error(
                     f"{method} {path} - {status_code} - {processing_time:.3f}s",
@@ -138,7 +138,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             if 200 <= status_code < 300:
                 logger.info(f"{method} {path} - {status_code} - {processing_time:.3f}s")
             elif 400 <= status_code < 500:
-                logger.warning(f"{method} {path} - {status_code} - {processing_time:.3f}s")
+                # Don't log 400-series errors - gateway handles this to avoid duplicates
+                pass
             else:
                 logger.error(f"{method} {path} - {status_code} - {processing_time:.3f}s")
 

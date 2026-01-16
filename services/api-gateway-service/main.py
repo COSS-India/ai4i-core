@@ -1993,6 +1993,9 @@ def prepare_forwarding_headers(request: Request, correlation_id: str, request_id
 
 def log_request(method: str, path: str, service: str, instance: str, duration: float, status_code: int) -> None:
     """Log request details for observability"""
+    # Skip logging 400-series errors - these are logged by RequestLoggingMiddleware to avoid duplicates
+    if 400 <= status_code < 500:
+        return
     logger.info(
         f"Request: {method} {path} -> {service}:{instance} "
         f"({duration:.3f}s, {status_code})"
@@ -4345,35 +4348,7 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             
             response_time = time.time() - start_time
             
-            # Log 401/403 errors
-            if response.status_code == 401:
-                logger.warning(
-                    f"401 Unauthorized from {service_name} for {method} {path}",
-                    extra={
-                        "context": {
-                            "method": method,
-                            "path": path,
-                            "service": service_name,
-                            "status_code": 401,
-                            "error": "downstream_authentication_failed",
-                            "response_time_ms": round(response_time * 1000, 2),
-                        }
-                    }
-                )
-            elif response.status_code == 403:
-                logger.warning(
-                    f"403 Forbidden from {service_name} for {method} {path}",
-                    extra={
-                        "context": {
-                            "method": method,
-                            "path": path,
-                            "service": service_name,
-                            "status_code": 403,
-                            "error": "downstream_authorization_failed",
-                            "response_time_ms": round(response_time * 1000, 2),
-                        }
-                    }
-                )
+            # Don't log 403 errors here - RequestLoggingMiddleware handles all 400-series errors to avoid duplicates
             
         except Exception as e:
             response_time = time.time() - start_time
@@ -4690,43 +4665,12 @@ async def proxy_request(request: Request, path: str):
                 # Log request
                 log_request(request.method, f"/{path}", service_name, instance_id, response_time, response.status_code)
                 
-                # Log 401/403 errors with trace context
-                if response.status_code == 401:
-                    user_id = getattr(request.state, "user_id", None)
-                    logger.warning(
-                        f"401 Unauthorized from {service_name} for {request.method} {path}",
-                        extra={
-                            "context": {
-                                "method": request.method,
-                                "path": path,
-                                "service": service_name,
-                                "status_code": 401,
-                                "error": "downstream_authentication_failed",
-                                "user_id": user_id,
-                                "correlation_id": correlation_id,
-                                "response_time_ms": round(response_time * 1000, 2),
-                            }
-                        }
-                    )
-                elif response.status_code == 403:
-                    user_id = getattr(request.state, "user_id", None)
-                    username = getattr(request.state, "username", None)
-                    logger.warning(
-                        f"403 Forbidden from {service_name} for {request.method} {path}",
-                        extra={
-                            "context": {
-                                "method": request.method,
-                                "path": path,
-                                "service": service_name,
-                                "status_code": 403,
-                                "error": "downstream_authorization_failed",
-                                "user_id": user_id,
-                                "username": username,
-                                "correlation_id": correlation_id,
-                                "response_time_ms": round(response_time * 1000, 2),
-                            }
-                        }
-                    )
+                # Mark that this response came from a downstream service (so RequestLoggingMiddleware knows not to log 500+)
+                # This prevents duplicate logging when service returns 500+ errors
+                request.state.downstream_response = True
+                request.state.downstream_status_code = response.status_code
+                
+                # Don't log 403 errors here - RequestLoggingMiddleware handles all 400-series errors to avoid duplicates
                 
                 # Prepare response headers
                 response_headers = {}
@@ -4751,6 +4695,11 @@ async def proxy_request(request: Request, path: str):
             
             # Extract context for logging
             user_id = getattr(request.state, "user_id", None)
+            
+            # Mark that this error came from a downstream service response (so RequestLoggingMiddleware knows not to log 500+)
+            # This prevents duplicate logging when service returns 500+ errors
+            request.state.downstream_response = True
+            request.state.downstream_status_code = e.response.status_code
             
             # Mark proxy span as error
             if proxy_span:
@@ -4780,39 +4729,10 @@ async def proxy_request(request: Request, path: str):
                     if user_id:
                         current_span.set_attribute("gateway.user_id", str(user_id))
             
-            # Log 500 errors with full context
-            if e.response.status_code == 500:
-                # Try to get response body for more details
-                response_body = None
-                try:
-                    if hasattr(e.response, 'text'):
-                        response_body = e.response.text[:1000]  # Limit to 1000 chars
-                except Exception:
-                    pass
-                
-                logger.error(
-                    f"HTTP 500 error forwarding request to {service_name}: {e}",
-                    extra={
-                        "context": {
-                            "error_type": "HTTPStatusError",
-                            "error_message": str(e),
-                            "status_code": 500,
-                            "method": request.method,
-                            "path": path,
-                            "service": service_name,
-                            "instance_id": instance_id,
-                            "instance_url": locals().get('instance_url', None),
-                            "user_id": user_id,
-                            "correlation_id": correlation_id,
-                            "request_id": request_id,
-                            "response_time_ms": round(response_time * 1000, 2),
-                            "downstream_response_body": response_body,
-                            "downstream_response_headers": dict(e.response.headers) if hasattr(e.response, 'headers') else None,
-                        }
-                    },
-                    exc_info=True
-                )
-            else:
+            # Don't log 500+ errors here - they are logged at service level to avoid duplicates
+            # The response will still be returned to the client with the correct status code
+            # For 400-series errors, RequestLoggingMiddleware will handle logging
+            if e.response.status_code < 500:
                 logger.error(
                     f"HTTP error forwarding request to {service_name}: {e}",
                     extra={
@@ -4837,6 +4757,12 @@ async def proxy_request(request: Request, path: str):
         except httpx.RequestError as e:
             response_time = time.time() - start_time
             
+            # Mark that this is a gateway-generated error (service unavailable)
+            # RequestLoggingMiddleware will log this since it's not a downstream response
+            # Store service info for better logging context
+            request.state.gateway_error_service = service_name
+            request.state.gateway_error_type = "service_unavailable"
+            
             # Mark proxy span and main FastAPI span as error
             if TRACING_AVAILABLE and trace:
                 current_span = trace.get_current_span()
@@ -4845,19 +4771,7 @@ async def proxy_request(request: Request, path: str):
                     current_span.set_attribute("error", True)
                     current_span.set_attribute("error.message", str(e))
             
-            logger.error(
-                f"Request error forwarding to {service_name}: {e}",
-                extra={
-                    "context": {
-                        "method": request.method,
-                        "path": path,
-                        "service": service_name,
-                        "error": "request_error",
-                        "correlation_id": correlation_id,
-                        "response_time_ms": round(response_time * 1000, 2),
-                    }
-                }
-            )
+            # Don't log here - RequestLoggingMiddleware will handle logging for gateway-generated errors
             
             # Update health status for the instance
             if 'instance_id' in locals() and 'service_name' in locals():
@@ -4891,27 +4805,8 @@ async def proxy_request(request: Request, path: str):
                 if user_id:
                     current_span.set_attribute("gateway.user_id", str(user_id))
         
-        # Log 500 errors with full context
-        if e.status_code == 500:
-            logger.error(
-                f"HTTP 500 error in API Gateway: {e.detail}",
-                extra={
-                    "context": {
-                        "error_type": "HTTPException",
-                        "error_message": str(e.detail),
-                        "status_code": 500,
-                        "method": request.method,
-                        "path": path,
-                        "service": service_name,
-                        "instance_id": instance_id,
-                        "user_id": user_id,
-                        "correlation_id": correlation_id,
-                        "request_id": request_id,
-                        "response_time_ms": round(response_time * 1000, 2),
-                    }
-                },
-                exc_info=True
-            )
+        # Don't log HTTP exceptions here - RequestLoggingMiddleware handles all logging
+        # This prevents duplicates and ensures consistent logging format
         
         # Re-raise HTTP exceptions
         raise

@@ -281,12 +281,11 @@ def add_error_handlers(app: FastAPI) -> None:
             log_context["jaeger_trace_url"] = jaeger_trace_url
         
         # Log with appropriate level
+        # Skip logging 400-series errors - these are logged at API Gateway level to avoid duplicates
         if LOGGING_AVAILABLE:
             if 400 <= exc.status_code < 500:
-                logger.warning(
-                    f"{method} {path} - {exc.status_code} - 0.000s",
-                    extra={"context": log_context}
-                )
+                # Don't log 400-series errors - gateway handles this
+                pass
             else:
                 logger.error(
                     f"{method} {path} - {exc.status_code} - 0.000s",
@@ -294,7 +293,8 @@ def add_error_handlers(app: FastAPI) -> None:
                 )
         else:
             if 400 <= exc.status_code < 500:
-                logger.warning(f"{method} {path} - {exc.status_code} - {error_message}")
+                # Don't log 400-series errors - gateway handles this
+                pass
             else:
                 logger.error(f"{method} {path} - {exc.status_code} - {error_message}")
         
