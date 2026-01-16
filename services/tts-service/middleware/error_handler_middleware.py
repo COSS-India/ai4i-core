@@ -180,16 +180,8 @@ def add_error_handlers(app: FastAPI) -> None:
         if organization:
             log_context["organization"] = organization
         
-        # Log with WARNING level to match RequestLoggingMiddleware for 4xx errors
-        # Format: "{method} {path} - {status_code} - {duration}s" (same as RequestLoggingMiddleware)
-        # This ensures 401 errors appear in OpenSearch with the same structure as 200
-        # IMPORTANT: This explicit logging ensures errors are logged even if RequestLoggingMiddleware
-        # doesn't catch the response (which can happen with exception handlers)
-        # This matches exactly how NMT and OCR log authentication errors
-        logger.warning(
-            f"{method} {path} - 401 - {processing_time:.3f}s",
-            extra={"context": log_context}
-        )
+        # Don't log 401 errors here - they are logged at API Gateway level to avoid duplicates
+        # The response will still go through RequestLoggingMiddleware, but it will skip 400-series errors
         
         # Return error response matching the format seen in API Gateway
         # Format: {"detail": {"error": "ERROR_CODE", "message": "..."}}

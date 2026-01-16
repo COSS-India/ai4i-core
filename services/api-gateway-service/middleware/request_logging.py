@@ -85,23 +85,38 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_context["correlation_id"] = correlation_id
         if organization:
             log_context["organization"] = organization
+        
+        # Add gateway error context if available (for service unavailable scenarios)
+        gateway_error_service = getattr(request.state, "gateway_error_service", None)
+        if gateway_error_service:
+            log_context["gateway_error_service"] = gateway_error_service
+            log_context["gateway_error_type"] = getattr(request.state, "gateway_error_type", "unknown")
 
         # Log with appropriate level using structured logging
+        # Skip logging successful requests (200-299) - these are logged at service level
+        # Skip logging server errors (500+) from downstream services - these are logged at service level to avoid duplicates
+        # Log gateway-generated server errors (500+) - these indicate gateway issues (service unavailable, etc.)
+        # Log authentication (401) and authorization (403) errors at gateway level
+        # Other client errors (400, 404, etc.) are also logged at gateway level
         if 200 <= status_code < 300:
-            logger.info(
-                f"{method} {path} - {status_code} - {processing_time:.3f}s",
-                extra={"context": log_context},
-            )
+            # Don't log successful requests - let downstream services handle this
+            pass
         elif 400 <= status_code < 500:
+            # Log client errors (401, 403, etc.) for authentication/authorization tracking at gateway
             logger.warning(
                 f"{method} {path} - {status_code} - {processing_time:.3f}s",
                 extra={"context": log_context},
             )
         else:
-            logger.error(
-                f"{method} {path} - {status_code} - {processing_time:.3f}s",
-                extra={"context": log_context},
-            )
+            # For server errors (500+), only log if it's gateway-generated (service unavailable, etc.)
+            # If it came from a downstream service, skip logging to avoid duplicates
+            if gateway_error_service:
+                # Gateway-generated error (service down, connection error, etc.) - log it
+                logger.error(
+                    f"{method} {path} - {status_code} - {processing_time:.3f}s",
+                    extra={"context": log_context},
+                )
+            # else: downstream service returned 500+ - already logged at service level, skip to avoid duplicates
 
         # Add processing time header
         response.headers["X-Process-Time"] = f"{processing_time:.3f}"
