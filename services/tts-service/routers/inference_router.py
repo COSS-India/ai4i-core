@@ -68,21 +68,23 @@ from services.constants.error_messages import (
     INTERNAL_SERVER_ERROR,
     INTERNAL_SERVER_ERROR_MESSAGE
 )
+from middleware.exceptions import AuthenticationError, AuthorizationError
+from middleware.auth_provider import AuthProvider
 
-# Import OpenTelemetry for manual span creation
-try:
-    from opentelemetry import trace
-    TRACING_AVAILABLE = True
-except ImportError:
-    TRACING_AVAILABLE = False
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+from ai4icore_logging import get_correlation_id
 
 logger = logging.getLogger(__name__)
+# Use service name to get the same tracer instance as main.py
+tracer = trace.get_tracer("tts-service")
 
 # Create router
-# Authentication is handled by Kong + Auth Service, no need for AuthProvider here
+# Enforce auth and permission checks on all routes (same as OCR and NMT)
 inference_router = APIRouter(
     prefix="/api/v1/tts", 
-    tags=["TTS Inference"]
+    tags=["TTS Inference"],
+    dependencies=[Depends(AuthProvider)]  # Enforce auth and permission checks on all routes
 )
 
 
@@ -111,7 +113,54 @@ async def get_tts_service(db: AsyncSession = Depends(get_db_session)) -> TTSServ
         return tts_service
         
     except Exception as e:
-        logger.error(f"Failed to create TTS service: {e}")
+        # Extract context for logging (if available from request)
+        # get_correlation_id is already imported at top of file
+        correlation_id = None
+        user_id = None
+        api_key_id = None
+        try:
+            # Try to get request from context if available
+            from starlette.requests import Request
+            request = getattr(db, 'request', None) if hasattr(db, 'request') else None
+            if request:
+                correlation_id = get_correlation_id(request) or getattr(request.state, "correlation_id", None)
+                user_id = getattr(request.state, "user_id", None)
+                api_key_id = getattr(request.state, "api_key_id", None)
+        except Exception:
+            pass
+        
+        # Trace the error if we're in a span context
+        try:
+            from opentelemetry import trace
+            from opentelemetry.trace import Status, StatusCode
+            if trace:
+                current_span = trace.get_current_span()
+                if current_span and current_span.is_recording():
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", type(e).__name__)
+                    current_span.set_attribute("error.message", str(e))
+                    current_span.set_attribute("http.status_code", 500)
+                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    current_span.record_exception(e)
+                    if correlation_id:
+                        current_span.set_attribute("correlation.id", correlation_id)
+        except Exception:
+            pass  # Don't fail if tracing fails
+        
+        logger.error(
+            f"Failed to create TTS service: {e}",
+            extra={
+                "context": {
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "status_code": 500,
+                    "user_id": user_id,
+                    "api_key_id": api_key_id,
+                    "correlation_id": correlation_id,
+                }
+            },
+            exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to initialize TTS service"
@@ -129,159 +178,232 @@ async def run_inference(
     http_request: Request,
     tts_service: TTSService = Depends(get_tts_service)
 ) -> TTSInferenceResponse:
-    """Run TTS inference on text inputs."""
-    start_time = time.time()
-    request_id = None
+    """
+    Run TTS inference on the given request.
     
-    # Create a descriptive span for TTS inference
-    if TRACING_AVAILABLE:
-        tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span("TTS Inference") as span:
-            span.set_attribute("service.name", "tts")
-            span.set_attribute("service.type", "tts")
+    Creates detailed trace spans for the entire inference operation.
+    """
+    # Create a span for the entire inference operation
+    # This will be a child of the FastAPI auto-instrumented span
+    if not tracer:
+        # Fallback if tracing not available
+        return await _run_tts_inference_impl(request, http_request, tts_service)
+    
+    with tracer.start_as_current_span("tts.inference") as span:
+        try:
+            # Extract auth context from request.state (if middleware is configured)
+            user_id = getattr(http_request.state, "user_id", None)
+            api_key_id = getattr(http_request.state, "api_key_id", None)
+            session_id = getattr(http_request.state, "session_id", None)
+            
+            # Get correlation ID for log/trace correlation
+            correlation_id = get_correlation_id(http_request) or getattr(http_request.state, "correlation_id", None)
+            if correlation_id:
+                span.set_attribute("correlation.id", correlation_id)
+
+            # Add request metadata to span
             span.set_attribute("tts.input_count", len(request.input))
             span.set_attribute("tts.service_id", request.config.serviceId)
             span.set_attribute("tts.language", request.config.language.sourceLanguage)
             span.set_attribute("tts.gender", request.config.gender.value)
             span.set_attribute("tts.audio_format", request.config.audioFormat.value)
-            return await _run_tts_inference_internal(request, http_request, tts_service, start_time)
-    else:
-        return await _run_tts_inference_internal(request, http_request, tts_service, start_time)
+            if request.config.samplingRate:
+                span.set_attribute("tts.sampling_rate", request.config.samplingRate)
+            
+            # Track request size (approximate)
+            try:
+                import json
+                request_size = len(json.dumps(request.dict()).encode('utf-8'))
+                span.set_attribute("http.request.size_bytes", request_size)
+            except Exception:
+                pass
+            
+            if user_id:
+                span.set_attribute("user.id", str(user_id))
+            if api_key_id:
+                span.set_attribute("api_key.id", str(api_key_id))
+            if session_id:
+                span.set_attribute("session.id", str(session_id))
+            
+            # Add span event for request start
+            span.add_event("tts.inference.started", {
+                "input_count": len(request.input),
+                "service_id": request.config.serviceId,
+                "language": request.config.language.sourceLanguage,
+                "gender": request.config.gender.value
+            })
+
+            logger.info(
+                "Processing TTS inference request with %d text input(s), user_id=%s api_key_id=%s session_id=%s",
+                len(request.input),
+                user_id,
+                api_key_id,
+                session_id,
+            )
+
+            # Run inference
+            response = await tts_service.run_inference(
+                request=request,
+                user_id=user_id,
+                api_key_id=api_key_id,
+                session_id=session_id
+            )
+            
+            # Add response metadata
+            span.set_attribute("tts.output_count", len(response.audio))
+            span.set_attribute("http.status_code", 200)
+            
+            # Track response size (approximate)
+            try:
+                import json
+                response_size = len(json.dumps(response.dict()).encode('utf-8'))
+                span.set_attribute("http.response.size_bytes", response_size)
+            except Exception:
+                pass
+            
+            # Add span event for successful completion
+            span.add_event("tts.inference.completed", {
+                "output_count": len(response.audio),
+                "status": "success"
+            })
+            span.set_status(Status(StatusCode.OK))
+            logger.info("TTS inference completed successfully")
+            return response
+
+        except ValueError as exc:
+            span.set_attribute("error", True)
+            span.set_attribute("error.type", type(exc).__name__)
+            span.set_attribute("error.message", str(exc))
+            span.set_attribute("http.status_code", 400)
+            span.add_event("tts.inference.failed", {
+                "error_type": type(exc).__name__,
+                "error_message": str(exc)
+            })
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
+            logger.warning("Validation error in TTS inference: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc)
+            ) from exc
+
+        except Exception as exc:
+            # Extract context for logging
+            user_id = getattr(http_request.state, "user_id", None)
+            api_key_id = getattr(http_request.state, "api_key_id", None)
+            session_id = getattr(http_request.state, "session_id", None)
+            service_id = getattr(http_request.state, "service_id", None)
+            triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+            model_name = getattr(http_request.state, "triton_model_name", None)
+            
+            # Get correlation ID for logging (already imported at top of file)
+            correlation_id = get_correlation_id(http_request) or getattr(http_request.state, "correlation_id", None)
+            
+            # Trace the error
+            span.set_attribute("error", True)
+            span.set_attribute("error.type", type(exc).__name__)
+            span.set_attribute("error.message", str(exc))
+            span.set_attribute("http.status_code", getattr(exc, 'status_code', 500))
+            if service_id:
+                span.set_attribute("tts.service_id", service_id)
+            if triton_endpoint:
+                span.set_attribute("triton.endpoint", triton_endpoint)
+            if model_name:
+                span.set_attribute("triton.model_name", model_name)
+            span.add_event("tts.inference.failed", {
+                "error_type": type(exc).__name__,
+                "error_message": str(exc)
+            })
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
+            
+            # Log error with full context
+            logger.error(
+                f"TTS inference failed: {exc}",
+                extra={
+                    "context": {
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                        "service_id": service_id,
+                        "triton_endpoint": triton_endpoint,
+                        "model_name": model_name,
+                        "user_id": user_id,
+                        "api_key_id": api_key_id,
+                        "session_id": session_id,
+                        "correlation_id": correlation_id,
+                        "input_count": len(request.input) if hasattr(request, 'input') else None,
+                    }
+                },
+                exc_info=True
+            )
+            
+            # Import service-specific exceptions
+            from middleware.exceptions import (
+                TritonInferenceError,
+                ModelNotFoundError,
+                ServiceUnavailableError,
+                AudioProcessingError
+            )
+            
+            # Check if it's already a service-specific error
+            if isinstance(exc, (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, AudioProcessingError)):
+                raise
+            
+            # Check error type and raise appropriate exception
+            error_msg = str(exc)
+            if "unknown model" in error_msg.lower() or ("model" in error_msg.lower() and "not found" in error_msg.lower()):
+                import re
+                model_match = re.search(r"model: '([^']+)'", error_msg)
+                model_name = model_match.group(1) if model_match else "tts"
+                raise ModelNotFoundError(
+                    message=f"Model '{model_name}' not found in Triton inference server. Please verify the model name and ensure it is loaded.",
+                    model_name=model_name
+                )
+            elif "triton" in error_msg.lower() or "connection" in error_msg.lower() or "timeout" in error_msg.lower():
+                raise ServiceUnavailableError(
+                    message=f"TTS service unavailable: {error_msg}. Please check Triton server connectivity."
+                )
+            elif "audio" in error_msg.lower():
+                raise AudioProcessingError(f"Audio processing failed: {error_msg}")
+            else:
+                # Generic Triton error
+                raise TritonInferenceError(
+                    message=f"TTS inference failed: {error_msg}",
+                    model_name="tts"
+                )
 
 
-async def _run_tts_inference_internal(request: TTSInferenceRequest, http_request: Request, tts_service: TTSService, start_time: float) -> TTSInferenceResponse:
-    """Internal TTS inference logic."""
-    try:
-        # Extract auth context from request.state
-        user_id = getattr(http_request.state, 'user_id', None)
-        api_key_id = getattr(http_request.state, 'api_key_id', None)
-        session_id = getattr(http_request.state, 'session_id', None)
-        
-        # Validate request
-        await validate_request(request)
-        
-        # Log request
-        logger.info(f"Processing TTS inference request with {len(request.input)} text inputs - user_id={user_id} api_key_id={api_key_id}")
-        
-        response = await tts_service.run_inference(
-            request=request,
-            user_id=user_id,
-            api_key_id=api_key_id,
-            session_id=session_id
-        )
-        
-        # Log completion
-        processing_time = time.time() - start_time
-        logger.info(f"TTS inference completed in {processing_time:.2f}s")
-        
-        return response
-        
-    except NoTextInputError:
-        logger.warning("No text input provided in TTS inference")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ErrorDetail(code=NO_TEXT_INPUT, message=NO_TEXT_INPUT_MESSAGE).dict()
-        )
-    except EmptyInputError:
-        logger.warning("Empty text input in TTS inference")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ErrorDetail(code=NO_TEXT_INPUT, message=NO_TEXT_INPUT_MESSAGE).dict()
-        )
-    except TextTooShortError:
-        logger.warning("Text too short in TTS inference")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ErrorDetail(code=TEXT_TOO_SHORT, message=TEXT_TOO_SHORT_MESSAGE).dict()
-        )
-    except TextTooLongError:
-        logger.warning("Text too long in TTS inference")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ErrorDetail(code=TEXT_TOO_LONG, message=TEXT_TOO_LONG_MESSAGE).dict()
-        )
-    except InvalidCharactersError:
-        logger.warning("Invalid characters in TTS inference")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ErrorDetail(code=INVALID_CHARACTERS, message=INVALID_CHARACTERS_MESSAGE).dict()
-        )
-    except LanguageMismatchError:
-        logger.warning("Language mismatch in TTS inference")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ErrorDetail(code=LANGUAGE_MISMATCH, message=LANGUAGE_MISMATCH_MESSAGE).dict()
-        )
-    except InvalidLanguageCodeError:
-        logger.warning("Invalid language code in TTS inference")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ErrorDetail(code=LANGUAGE_NOT_SUPPORTED, message=LANGUAGE_NOT_SUPPORTED_TTS_MESSAGE).dict()
-        )
-    except VoiceNotAvailableError:
-        logger.warning("Voice not available in TTS inference")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ErrorDetail(code=VOICE_NOT_AVAILABLE, message=VOICE_NOT_AVAILABLE_MESSAGE).dict()
-        )
-    except (InvalidServiceIdError, InvalidGenderError, InvalidAudioFormatError, InvalidSampleRateError) as e:
-        logger.warning(f"Invalid request parameter in TTS inference: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ErrorDetail(code=INVALID_REQUEST, message=INVALID_REQUEST_TTS_MESSAGE).dict()
-        )
-    except ValueError as e:
-        logger.warning(f"Validation error in TTS inference: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ErrorDetail(code=INVALID_REQUEST, message=INVALID_REQUEST_TTS_MESSAGE).dict()
-        )
-    except Exception as e:
-        logger.error(f"TTS inference failed: {e}", exc_info=True)
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        
-        # Import service-specific exceptions
-        from middleware.exceptions import (
-            TritonInferenceError,
-            ModelNotFoundError,
-            ServiceUnavailableError,
-            AudioProcessingError
-        )
-        
-        # Check if it's already a service-specific error
-        if isinstance(e, (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, AudioProcessingError)):
-            raise
-        
-        # Check error type and raise appropriate exception
-        error_msg = str(e)
-        if "unknown model" in error_msg.lower() or ("model" in error_msg.lower() and "not found" in error_msg.lower()):
-            import re
-            model_match = re.search(r"model: '([^']+)'", error_msg)
-            model_name = model_match.group(1) if model_match else "tts"
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=ErrorDetail(code=MODEL_UNAVAILABLE, message=MODEL_UNAVAILABLE_TTS_MESSAGE).dict()
-            )
-        elif "triton" in error_msg.lower() or "connection" in error_msg.lower() or "timeout" in error_msg.lower():
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message=SERVICE_UNAVAILABLE_TTS_MESSAGE).dict()
-            )
-        elif "audio" in error_msg.lower() or "generation" in error_msg.lower():
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=ErrorDetail(code=AUDIO_GEN_FAILED, message=AUDIO_GEN_FAILED_MESSAGE).dict()
-            )
-        elif "processing" in error_msg.lower() or "failed" in error_msg.lower():
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=ErrorDetail(code=PROCESSING_FAILED, message=PROCESSING_FAILED_MESSAGE).dict()
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=ErrorDetail(code=INTERNAL_SERVER_ERROR, message=str(e) if str(e) else INTERNAL_SERVER_ERROR_MESSAGE).dict()
-            )
+async def _run_tts_inference_impl(
+    request: TTSInferenceRequest,
+    http_request: Request,
+    tts_service: TTSService,
+) -> TTSInferenceResponse:
+    """Fallback implementation when tracing is not available."""
+    # Validate request
+    await validate_request(request)
+    
+    # Extract auth context from request.state
+    user_id = getattr(http_request.state, 'user_id', None)
+    api_key_id = getattr(http_request.state, 'api_key_id', None)
+    session_id = getattr(http_request.state, 'session_id', None)
+    
+    logger.info(
+        "Processing TTS inference request with %d text input(s), user_id=%s api_key_id=%s session_id=%s",
+        len(request.input),
+        user_id,
+        api_key_id,
+        session_id,
+    )
+
+    response = await tts_service.run_inference(
+        request=request,
+        user_id=user_id,
+        api_key_id=api_key_id,
+        session_id=session_id
+    )
+    
+    logger.info("TTS inference completed successfully")
+    return response
 
 
 @inference_router.get(
