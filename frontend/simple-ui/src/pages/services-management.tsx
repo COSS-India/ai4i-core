@@ -52,6 +52,7 @@ import {
 } from "../services/servicesManagementService";
 import { getAllModels, getModelById } from "../services/modelManagementService";
 import { useAuth } from "../hooks/useAuth";
+import { useSessionExpiry } from "../hooks/useSessionExpiry";
 
 const ServicesManagementPage: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
@@ -80,6 +81,7 @@ const ServicesManagementPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
   const toast = useToast();
   const { accessToken } = useAuth();
+  const { checkSessionExpiry } = useSessionExpiry();
   const { isOpen, onOpen, onClose } = useDisclosure();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
@@ -188,8 +190,11 @@ const ServicesManagementPage: React.FC = () => {
     }));
   };
 
-  // Handle model selection and derive task_type
+  // Handle model selection and derive task_type and modelVersion
   const handleModelChange = async (modelId: string) => {
+    // Check session expiry before fetching model details
+    if (!checkSessionExpiry()) return;
+    
     setFormData((prev) => ({
       ...prev,
       modelId: modelId,
@@ -204,13 +209,15 @@ const ServicesManagementPage: React.FC = () => {
         // The task_type might be in model.task.type or model.task_type
         const taskType = modelDetails?.task?.type || modelDetails?.task_type || modelDetails?.taskType || "";
         
-        if (taskType) {
-          setFormData((prev) => ({
-            ...prev,
-            modelId: modelId,
-            task_type: taskType,
-          }));
-        }
+        // Extract model version (required field after migration)
+        const modelVersion = modelDetails?.version || modelDetails?.modelVersion || "1.0";
+        
+        setFormData((prev) => ({
+          ...prev,
+          modelId: modelId,
+          task_type: taskType,
+          modelVersion: modelVersion,
+        }));
       } catch (error: any) {
         console.error("Failed to fetch model details:", error);
         toast({
@@ -224,16 +231,21 @@ const ServicesManagementPage: React.FC = () => {
         setIsLoadingModels(false);
       }
     } else {
-      // Clear task_type if no model selected
+      // Clear task_type and modelVersion if no model selected
       setFormData((prev) => ({
         ...prev,
         task_type: "",
+        modelVersion: "",
       }));
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Check session expiry before submitting
+    if (!checkSessionExpiry()) return;
+    
     setIsSubmitting(true);
 
     try {
@@ -282,6 +294,9 @@ const ServicesManagementPage: React.FC = () => {
   };
 
   const handleViewService = async (serviceId: string) => {
+    // Check session expiry before viewing service
+    if (!checkSessionExpiry()) return;
+    
     try {
       const service = await getServiceById(serviceId);
       setSelectedService(service);
@@ -302,6 +317,10 @@ const ServicesManagementPage: React.FC = () => {
 
   const handleUpdateService = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Check session expiry before updating
+    if (!checkSessionExpiry()) return;
+    
     if (!selectedService?.uuid) {
       toast({
         title: "Update Failed",
@@ -355,6 +374,9 @@ const ServicesManagementPage: React.FC = () => {
   };
 
   const handleDeleteConfirm = async () => {
+    // Check session expiry before deleting
+    if (!checkSessionExpiry()) return;
+    
     if (!serviceToDelete?.uuid) {
       toast({
         title: "Delete Failed",
@@ -983,17 +1005,17 @@ const ServicesManagementPage: React.FC = () => {
                                           model_id: modelId, // Keep for backward compatibility
                                         }));
 
-                                        // Fetch model details and derive task_type
+                                        // Fetch model details and derive task_type and modelVersion
                                         if (modelId) {
                                           try {
                                             const modelDetails = await getModelById(modelId);
                                             const taskType = modelDetails?.task?.type || modelDetails?.task_type || modelDetails?.taskType || "";
-                                            if (taskType) {
-                                              setUpdateFormData((prev) => ({
-                                                ...prev,
-                                                task_type: taskType,
-                                              }));
-                                            }
+                                            const modelVersion = modelDetails?.version || modelDetails?.modelVersion || "1.0";
+                                            setUpdateFormData((prev) => ({
+                                              ...prev,
+                                              task_type: taskType,
+                                              modelVersion: modelVersion,
+                                            }));
                                           } catch (error: any) {
                                             console.error("Failed to fetch model details:", error);
                                           }
