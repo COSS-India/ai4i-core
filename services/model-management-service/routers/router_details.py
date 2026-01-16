@@ -75,14 +75,16 @@ async def list_models_request(
 #################################################### Service apis ####################################################
 
 
-@router_details.post("/view_service", response_model=ServiceViewResponse)
+@router_details.post("/view_service")
 async def view_service_request(payload: ServiceViewRequest):
+    # Note: response_model removed to allow returning dict with extra fields preserved
     
     try: 
         data = await get_service_details(payload.serviceId)
 
         if not data:
             raise HTTPException(status_code=404, detail="Service not found")
+        # Return dict directly to preserve all fields including model_name in inferenceEndPoint
         return data
     
     except HTTPException:

@@ -9,6 +9,11 @@ import time
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, status, Request
 from sqlalchemy import text
+from middleware.exceptions import ErrorDetail
+from services.constants.error_messages import (
+    SERVICE_UNAVAILABLE,
+    SERVICE_UNAVAILABLE_TTS_MESSAGE
+)
 
 
 logger = logging.getLogger(__name__)
@@ -88,7 +93,10 @@ async def health_check(request: Request) -> Dict[str, Any]:
     if health_status["status"] == "unhealthy":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=health_status
+            detail=ErrorDetail(
+                code=SERVICE_UNAVAILABLE,
+                message=SERVICE_UNAVAILABLE_TTS_MESSAGE
+            ).dict()
         )
     
     return health_status
@@ -117,7 +125,10 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
             readiness_status["reason"] = "Database not initialized"
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=readiness_status
+                detail=ErrorDetail(
+                    code=SERVICE_UNAVAILABLE,
+                    message=SERVICE_UNAVAILABLE_TTS_MESSAGE
+                ).dict()
             )
         
         # Check if Redis is available
@@ -126,7 +137,10 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
             readiness_status["reason"] = "Redis not initialized"
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=readiness_status
+                detail=ErrorDetail(
+                    code=SERVICE_UNAVAILABLE,
+                    message=SERVICE_UNAVAILABLE_TTS_MESSAGE
+                ).dict()
             )
         
         # Test database connection
@@ -149,7 +163,10 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
                 readiness_status["reason"] = "Triton server not ready"
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=readiness_status
+                    detail=ErrorDetail(
+                        code=SERVICE_UNAVAILABLE,
+                        message=SERVICE_UNAVAILABLE_TTS_MESSAGE
+                    ).dict()
                 )
         except ImportError:
             # Triton client not available, but that's okay for readiness
@@ -168,7 +185,10 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
         readiness_status["reason"] = str(e)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=readiness_status
+            detail=ErrorDetail(
+                code=SERVICE_UNAVAILABLE,
+                message=SERVICE_UNAVAILABLE_TTS_MESSAGE
+            ).dict()
         )
 
 

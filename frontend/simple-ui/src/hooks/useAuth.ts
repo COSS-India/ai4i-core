@@ -4,6 +4,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { User, AuthState, LoginRequest, RegisterRequest } from '../types/auth';
 import authService from '../services/authService';
+import { useTokenRefresh } from './useTokenRefresh';
 
 // Broadcast auth state changes so other hook instances (e.g., Header) can react immediately
 const AUTH_UPDATED_EVENT = 'auth:updated';
@@ -16,6 +17,13 @@ export const useAuth = () => {
     isAuthenticated: false,
     isLoading: true,
     error: null,
+  });
+
+  // Enable automatic token refresh when user is authenticated
+  useTokenRefresh({
+    enableBackgroundRefresh: authState.isAuthenticated,
+    refreshInterval: 300000, // Check every 5 minutes
+    refreshThresholdMinutes: 5, // Refresh if token expires within 5 minutes
   });
 
   // Initialize auth state

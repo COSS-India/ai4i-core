@@ -13,6 +13,8 @@ export interface Service {
   publishedOn?: number;
   modelId?: string;
   model_id?: string; // For backward compatibility
+  modelVersion?: string;
+  model_version?: string; // For backward compatibility
   endpoint?: string;
   endpoint_url?: string; // For backward compatibility
   api_key?: string;
@@ -96,6 +98,7 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
       hardwareDescription: serviceData.hardwareDescription || 'Default hardware',
       publishedOn: serviceData.publishedOn || Math.floor(Date.now() / 1000),
       modelId: serviceData.modelId || serviceData.model_id,
+      modelVersion: serviceData.modelVersion || serviceData.model_version || '1.0', // Default to '1.0' if not provided
       endpoint: serviceData.endpoint || serviceData.endpoint_url,
       api_key: serviceData.api_key || serviceData.apiKey || '',
     };
@@ -141,6 +144,7 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
       hardwareDescription: serviceData.hardwareDescription,
       publishedOn: serviceData.publishedOn,
       modelId: serviceData.modelId || serviceData.model_id,
+      modelVersion: serviceData.modelVersion || serviceData.model_version,
       endpoint: serviceData.endpoint || serviceData.endpoint_url,
       api_key: serviceData.api_key || serviceData.apiKey,
     };
