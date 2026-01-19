@@ -5,7 +5,7 @@ from .model_create import InferenceEndPoint , Submitter , TaskResponse
 
 class ModelViewRequest(BaseModel):
     modelId: str
-    version: Optional[str] = None  # Optional version to get specific version
+    version: Optional[str] = None
 
 
 class ModelViewResponse(BaseModel):
