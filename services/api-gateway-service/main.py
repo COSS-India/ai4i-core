@@ -1979,8 +1979,8 @@ route_manager = None
 health_monitor_task = None
 
 # Try-It anonymous access controls
-TRY_IT_LIMIT = int(os.getenv("TRY_IT_LIMIT", "5"))
-TRY_IT_TTL_SECONDS = int(os.getenv("TRY_IT_TTL_SECONDS", "3600"))
+TRY_IT_LIMIT = int(os.environ["TRY_IT_LIMIT"])
+TRY_IT_TTL_SECONDS = int(os.environ["TRY_IT_TTL_SECONDS"])
 try_it_counters: Dict[str, Dict[str, Any]] = {}
 
 # Utility functions
