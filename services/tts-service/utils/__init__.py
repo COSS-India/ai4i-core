@@ -29,10 +29,18 @@ from utils.validation_utils import (
     validate_gender,
     validate_audio_format as validate_audio_format_validation,
     validate_sample_rate as validate_sample_rate_validation,
+    validate_text_input,
     SUPPORTED_LANGUAGES,
     InvalidLanguageCodeError,
     InvalidServiceIdError,
-    InvalidGenderError
+    InvalidGenderError,
+    NoTextInputError,
+    TextTooShortError,
+    TextTooLongError,
+    InvalidCharactersError,
+    EmptyInputError,
+    LanguageMismatchError,
+    VoiceNotAvailableError
 )
 
 __all__ = [
@@ -56,8 +64,16 @@ __all__ = [
     "validate_gender",
     "validate_audio_format_validation",
     "validate_sample_rate_validation",
+    "validate_text_input",
     "SUPPORTED_LANGUAGES",
     "InvalidLanguageCodeError",
     "InvalidServiceIdError",
-    "InvalidGenderError"
+    "InvalidGenderError",
+    "NoTextInputError",
+    "TextTooShortError",
+    "TextTooLongError",
+    "InvalidCharactersError",
+    "EmptyInputError",
+    "LanguageMismatchError",
+    "VoiceNotAvailableError"
 ]

@@ -297,8 +297,8 @@ services:
   # Microservices
   api-gateway-service:
     build:
-      context: ./services/api-gateway-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/api-gateway-service/Dockerfile
     container_name: ai4v-api-gateway
     ports:
       - "8080:8080"
@@ -326,8 +326,8 @@ services:
 
   auth-service:
     build:
-      context: ./services/auth-service/
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/auth-service/Dockerfile
     container_name: ai4v-auth-service
     ports:
       - "8081:8081"
@@ -1146,7 +1146,7 @@ services:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
       - ./infrastructure/fluent-bit/extract_context.lua:/fluent-bit/scripts/extract_context.lua:ro
-      - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - microservices-network

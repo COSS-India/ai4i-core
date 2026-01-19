@@ -8,7 +8,7 @@ from models.user_create import UserRegisterRequest , UserRegisterResponse
 from models.tenant_status import TenantStatusUpdateRequest , TenantStatusUpdateResponse
 from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
 
-from tenant_service import (
+from services.tenant_service import (
     create_new_tenant , 
     register_user,
     update_tenant_status,
