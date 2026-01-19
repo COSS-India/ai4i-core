@@ -306,7 +306,8 @@ services:
       - ENV_FILE=.env
       # Swagger/OpenAPI server URL used in the generated docs
       # Prod: point Swagger to public API Gateway URL
-      - SWAGGER_SERVER_URL=http://core-v1.ai4inclusion.org:8080  
+      - TRY_IT_LIMIT=5
+      - TRY_IT_TTL_SECONDS=3600
     env_file:
       - ./services/api-gateway-service/.env
     depends_on:
