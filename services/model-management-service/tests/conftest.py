@@ -244,6 +244,9 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "unit: Unit tests for isolated components")
     config.addinivalue_line("markers", "integration: Integration tests requiring database")
     config.addinivalue_line("markers", "versioning: Model versioning specific tests")
+    config.addinivalue_line("markers", "hash_id: Hash-based ID generation tests")
+    config.addinivalue_line("markers", "license: License validation tests")
+    config.addinivalue_line("markers", "name_validation: Name validation tests")
 
 
 # Pytest plugins
