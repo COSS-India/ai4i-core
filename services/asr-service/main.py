@@ -6,7 +6,6 @@ Provides batch ASR inference using Triton Inference Server.
 """
 
 import asyncio
-import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Dict, Any
@@ -16,6 +15,16 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+
+from ai4icore_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_logging import (
+    get_logger,
+    CorrelationMiddleware,
+    configure_logging,
+)
+from ai4icore_telemetry import setup_tracing
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
 # Import streaming service components
 from services.streaming_service import StreamingASRService
@@ -30,15 +39,25 @@ from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
-from ai4icore_observability import ObservabilityPlugin, PluginConfig
-from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
-# Configure logging
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+# Configure structured logging (to OpenSearch, with correlation IDs)
+configure_logging(
+    service_name=os.getenv("SERVICE_NAME", "asr-service"),
+    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
 )
-logger = logging.getLogger(__name__)
+
+# Aggressively disable uvicorn access logger BEFORE uvicorn starts
+# This must happen before uvicorn imports/creates its loggers
+import logging
+
+uvicorn_access = logging.getLogger("uvicorn.access")
+uvicorn_access.handlers.clear()
+uvicorn_access.propagate = False
+uvicorn_access.disabled = True
+uvicorn_access.setLevel(logging.CRITICAL + 1)
+
+# Get logger instance
+logger = get_logger(__name__)
 
 # Global variables for database and Redis connections
 redis_client: redis.Redis = None
@@ -296,6 +315,17 @@ model_mgmt_plugin = ModelManagementPlugin(model_mgmt_config)
 model_mgmt_plugin.register_plugin(app, redis_client=redis_client)
 logger.info("✅ Model Management Plugin initialized for ASR service")
 
+# Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+tracer = setup_tracing("asr-service")
+if tracer:
+    logger.info("✅ Distributed tracing initialized for ASR service")
+    # Instrument FastAPI to automatically create spans for all requests
+    FastAPIInstrumentor.instrument_app(app)
+    logger.info("✅ FastAPI instrumentation enabled for tracing")
+else:
+    logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -333,7 +363,9 @@ except Exception as e:
 # so that Observability runs first and caches the body, then Model Management can use cached body
 
 # Add middleware after FastAPI app creation
-# Add request logging middleware
+# Correlation middleware (MUST be before RequestLoggingMiddleware)
+app.add_middleware(CorrelationMiddleware)
+# Structured request logging middleware (logs to OpenSearch)
 app.add_middleware(RequestLoggingMiddleware)
 
 # Add rate limiting middleware (if Redis is available)
@@ -368,9 +400,16 @@ async def root() -> Dict[str, Any]:
 async def streaming_info() -> Dict[str, Any]:
     """Get streaming endpoint information."""
     if not streaming_service:
+        from middleware.exceptions import ErrorDetail
+        from services.constants.error_messages import SERVICE_UNAVAILABLE, SERVICE_UNAVAILABLE_MESSAGE
+        import time
+        error_detail = ErrorDetail(
+            message=SERVICE_UNAVAILABLE_MESSAGE,
+            code=SERVICE_UNAVAILABLE
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Streaming service not available"
+            detail=error_detail.dict()
         )
     
     return {

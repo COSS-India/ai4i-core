@@ -1,7 +1,7 @@
 """
-Request/response logging middleware for tracking NMT API usage.
+Request/response logging middleware for tracking API Gateway usage.
 
-Uses structured JSON logging with trace correlation.
+Uses structured JSON logging with trace correlation, compatible with OpenSearch dashboards.
 """
 
 import time
@@ -9,16 +9,8 @@ import time
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from ai4icore_logging import get_logger, get_correlation_id, get_organization
-import os
-import logging
 
-# Get logger - but configure it to use root logger's handler for consistency
-# This ensures logs go through the handler configured by configure_logging() in main.py
-logger = get_logger(__name__, use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true")
-# Remove the logger's own handlers and let it propagate to root logger
-# This ensures all logs use the same handler configuration
-logger.handlers.clear()
-logger.propagate = True  # Allow propagation to root logger for consistent handling
+logger = get_logger(__name__)
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -41,21 +33,21 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Extract auth context from request.state if available
         user_id = getattr(request.state, "user_id", None)
         api_key_id = getattr(request.state, "api_key_id", None)
-        
+
         # Get correlation ID (set by CorrelationMiddleware)
         correlation_id = get_correlation_id(request)
-        
+
         # Process request first (this will trigger ObservabilityMiddleware which sets organization)
         # Note: FastAPI exception handlers (like RequestValidationError) will catch
         # exceptions and return responses, which will still come back through this middleware
         # We don't catch exceptions here - let FastAPI's exception handlers handle them
         # The response from exception handlers will still come back through this middleware
+        response: Response
         try:
             response = await call_next(request)
         except Exception:
             # If an exception occurs, FastAPI's exception handlers will catch it
-            # and return a response. That response will come back through this middleware
-            # So we re-raise to let the exception handler work
+            # and return a response. That response will come back through this middleware.
             raise
 
         # Calculate processing time
@@ -63,18 +55,18 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # Determine log level based on status code
         status_code = response.status_code
-        
+
         # Get organization from request.state first (set by ObservabilityMiddleware)
         # This is more reliable than contextvars in async middleware
         organization = getattr(request.state, "organization", None)
-        
+
         # Fallback: try to get from context if request.state doesn't have it
         if not organization:
             try:
                 organization = get_organization()
             except Exception:
-                pass
-        
+                organization = None
+
         # Build context for structured logging
         log_context = {
             "method": method,
@@ -84,7 +76,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             "client_ip": client_ip,
             "user_agent": user_agent,
         }
-        
+
         if user_id:
             log_context["user_id"] = user_id
         if api_key_id:
@@ -93,25 +85,41 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_context["correlation_id"] = correlation_id
         if organization:
             log_context["organization"] = organization
+        
+        # Add gateway error context if available (for service unavailable scenarios)
+        gateway_error_service = getattr(request.state, "gateway_error_service", None)
+        if gateway_error_service:
+            log_context["gateway_error_service"] = gateway_error_service
+            log_context["gateway_error_type"] = getattr(request.state, "gateway_error_type", "unknown")
 
         # Log with appropriate level using structured logging
-        # Skip logging 400-series errors - these are logged at gateway level only
-        # Log 200-series (success) and 500-series (server errors) at service level
+        # Skip logging successful requests (200-299) - these are logged at service level
+        # Skip logging server errors (500+) from downstream services - these are logged at service level to avoid duplicates
+        # Log gateway-generated server errors (500+) - these indicate gateway issues (service unavailable, etc.)
+        # Log authentication (401) and authorization (403) errors at gateway level
+        # Other client errors (400, 404, etc.) are also logged at gateway level
         if 200 <= status_code < 300:
-            logger.info(
-                f"{method} {path} - {status_code} - {processing_time:.3f}s",
-                extra={"context": log_context}
-            )
-        elif 400 <= status_code < 500:
-            # Don't log 400-series errors - gateway handles this to avoid duplicates
+            # Don't log successful requests - let downstream services handle this
             pass
-        else:
-            logger.error(
+        elif 400 <= status_code < 500:
+            # Log client errors (401, 403, etc.) for authentication/authorization tracking at gateway
+            logger.warning(
                 f"{method} {path} - {status_code} - {processing_time:.3f}s",
-                extra={"context": log_context}
+                extra={"context": log_context},
             )
+        else:
+            # For server errors (500+), only log if it's gateway-generated (service unavailable, etc.)
+            # If it came from a downstream service, skip logging to avoid duplicates
+            if gateway_error_service:
+                # Gateway-generated error (service down, connection error, etc.) - log it
+                logger.error(
+                    f"{method} {path} - {status_code} - {processing_time:.3f}s",
+                    extra={"context": log_context},
+                )
+            # else: downstream service returned 500+ - already logged at service level, skip to avoid duplicates
 
         # Add processing time header
         response.headers["X-Process-Time"] = f"{processing_time:.3f}"
 
         return response
+
