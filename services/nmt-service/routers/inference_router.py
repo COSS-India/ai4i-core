@@ -35,6 +35,33 @@ from middleware.exceptions import (
     ErrorDetail
 )
 
+from services.constants.error_messages import (
+    NO_TEXT_INPUT,
+    NO_TEXT_INPUT_NMT_MESSAGE,
+    TEXT_TOO_SHORT,
+    TEXT_TOO_SHORT_NMT_MESSAGE,
+    TEXT_TOO_LONG,
+    TEXT_TOO_LONG_NMT_MESSAGE,
+    INVALID_CHARACTERS,
+    INVALID_CHARACTERS_NMT_MESSAGE,
+    EMPTY_INPUT,
+    EMPTY_INPUT_NMT_MESSAGE,
+    SAME_LANGUAGE_ERROR,
+    SAME_LANGUAGE_ERROR_MESSAGE,
+    LANGUAGE_PAIR_NOT_SUPPORTED,
+    LANGUAGE_PAIR_NOT_SUPPORTED_MESSAGE,
+    SERVICE_UNAVAILABLE,
+    SERVICE_UNAVAILABLE_NMT_MESSAGE,
+    TRANSLATION_FAILED,
+    TRANSLATION_FAILED_MESSAGE,
+    MODEL_UNAVAILABLE,
+    MODEL_UNAVAILABLE_NMT_MESSAGE,
+    INVALID_REQUEST,
+    INVALID_REQUEST_NMT_MESSAGE,
+    INTERNAL_SERVER_ERROR,
+    INTERNAL_SERVER_ERROR_MESSAGE
+)
+
 logger = logging.getLogger(__name__)
 # Use service name to get the same tracer instance as main.py
 tracer = trace.get_tracer("nmt-service")
@@ -259,7 +286,10 @@ async def run_inference(
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
             logger.warning("Validation error in NMT inference: %s", exc)
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=400,
+                detail=ErrorDetail(code=INVALID_REQUEST, message=INVALID_REQUEST_NMT_MESSAGE).dict()
+            ) from exc
 
         except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as exc:
             span.set_attribute("error", True)
@@ -295,17 +325,22 @@ async def run_inference(
             
             # Return appropriate error based on exception type
             if "Triton" in str(exc) or "triton" in str(exc).lower():
-                error_detail = f"Triton inference failed for serviceId '{service_id}'"
-                if triton_endpoint and model_name:
-                    error_detail += f" at endpoint '{triton_endpoint}' with model '{model_name}': {str(exc)}. "
-                    error_detail += "Please verify the model is registered in Model Management and the Triton server is accessible."
-                elif service_id:
-                    error_detail += f": {str(exc)}. Please verify the service is registered in Model Management."
-                else:
-                    error_detail += f": {str(exc)}"
-                raise HTTPException(status_code=503, detail=error_detail) from exc
+                error_code = MODEL_UNAVAILABLE if model_name else SERVICE_UNAVAILABLE
+                error_message = MODEL_UNAVAILABLE_NMT_MESSAGE if model_name else SERVICE_UNAVAILABLE_NMT_MESSAGE
+                raise HTTPException(
+                    status_code=503,
+                    detail=ErrorDetail(code=error_code, message=error_message).dict()
+                ) from exc
+            elif "translation" in str(exc).lower() or "failed" in str(exc).lower():
+                raise HTTPException(
+                    status_code=500,
+                    detail=ErrorDetail(code=TRANSLATION_FAILED, message=TRANSLATION_FAILED_MESSAGE).dict()
+                ) from exc
             else:
-                raise HTTPException(status_code=500, detail=f"NMT inference failed: {str(exc)}") from exc
+                raise HTTPException(
+                    status_code=500,
+                    detail=ErrorDetail(code=INTERNAL_SERVER_ERROR, message=INTERNAL_SERVER_ERROR_MESSAGE).dict()
+                ) from exc
 
 
 async def _run_nmt_inference_impl(
@@ -343,3 +378,4 @@ async def _run_nmt_inference_impl(
     )
     logger.info("NMT inference completed successfully")
     return response
+ 

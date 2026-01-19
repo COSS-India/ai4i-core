@@ -24,7 +24,16 @@ from .validation_utils import (
     InvalidServiceIdError,
     InvalidAudioInputError,
     InvalidPreprocessorError,
-    InvalidPostprocessorError
+    InvalidPostprocessorError,
+    NoFileSelectedError,
+    UnsupportedFormatError,
+    FileTooLargeError,
+    InvalidFileError,
+    UploadFailedError,
+    AudioTooShortError,
+    AudioTooLongError,
+    EmptyAudioFileError,
+    UploadTimeoutError
 )
 
 __all__ = [
@@ -50,5 +59,14 @@ __all__ = [
     "InvalidServiceIdError",
     "InvalidAudioInputError",
     "InvalidPreprocessorError",
-    "InvalidPostprocessorError"
+    "InvalidPostprocessorError",
+    "NoFileSelectedError",
+    "UnsupportedFormatError",
+    "FileTooLargeError",
+    "InvalidFileError",
+    "UploadFailedError",
+    "AudioTooShortError",
+    "AudioTooLongError",
+    "EmptyAudioFileError",
+    "UploadTimeoutError"
 ]

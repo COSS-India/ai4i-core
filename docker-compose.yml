@@ -297,8 +297,8 @@ services:
   # Microservices
   api-gateway-service:
     build:
-      context: ./services/api-gateway-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/api-gateway-service/Dockerfile
     container_name: ai4v-api-gateway
     ports:
       - "8080:8080"
@@ -326,8 +326,8 @@ services:
 
   auth-service:
     build:
-      context: ./services/auth-service/
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/auth-service/Dockerfile
     container_name: ai4v-auth-service
     ports:
       - "8081:8081"
@@ -1037,6 +1037,23 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: ai4v-node-exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+    networks:
+      - microservices-network
 
 
   # Telemetry: OpenSearch (for logs)

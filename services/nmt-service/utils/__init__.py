@@ -14,7 +14,14 @@ from utils.validation_utils import (
     InvalidLanguagePairError,
     InvalidServiceIdError,
     BatchSizeExceededError,
-    InvalidTextInputError
+    InvalidTextInputError,
+    NoTextInputError,
+    TextTooShortError,
+    TextTooLongError,
+    InvalidCharactersError,
+    EmptyInputError,
+    SameLanguageError,
+    LanguagePairNotSupportedError
 )
 
 __all__ = [
@@ -29,5 +36,12 @@ __all__ = [
     "InvalidLanguagePairError",
     "InvalidServiceIdError",
     "BatchSizeExceededError",
-    "InvalidTextInputError"
+    "InvalidTextInputError",
+    "NoTextInputError",
+    "TextTooShortError",
+    "TextTooLongError",
+    "InvalidCharactersError",
+    "EmptyInputError",
+    "SameLanguageError",
+    "LanguagePairNotSupportedError"
 ]

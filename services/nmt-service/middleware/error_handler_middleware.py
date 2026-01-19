@@ -19,8 +19,35 @@ from middleware.exceptions import (
     ServiceUnavailableError,
     TextProcessingError
 )
+from services.constants.error_messages import (
+    AUTH_FAILED,
+    AUTH_FAILED_NMT_MESSAGE,
+    RATE_LIMIT_EXCEEDED,
+    RATE_LIMIT_EXCEEDED_NMT_MESSAGE,
+    SERVICE_UNAVAILABLE,
+    SERVICE_UNAVAILABLE_NMT_MESSAGE,
+    INVALID_REQUEST,
+    INVALID_REQUEST_NMT_MESSAGE,
+    INTERNAL_SERVER_ERROR,
+    INTERNAL_SERVER_ERROR_MESSAGE,
+    NO_TEXT_INPUT,
+    NO_TEXT_INPUT_NMT_MESSAGE,
+    TEXT_TOO_SHORT,
+    TEXT_TOO_SHORT_NMT_MESSAGE,
+    TEXT_TOO_LONG,
+    TEXT_TOO_LONG_NMT_MESSAGE,
+    INVALID_CHARACTERS,
+    INVALID_CHARACTERS_NMT_MESSAGE,
+    EMPTY_INPUT,
+    EMPTY_INPUT_NMT_MESSAGE,
+    SAME_LANGUAGE_ERROR,
+    SAME_LANGUAGE_ERROR_MESSAGE,
+    LANGUAGE_PAIR_NOT_SUPPORTED,
+    LANGUAGE_PAIR_NOT_SUPPORTED_MESSAGE,
+    TRANSLATION_FAILED,
+    TRANSLATION_FAILED_MESSAGE
+)
 import logging
-import time
 import traceback
 
 logger = get_logger(__name__)
@@ -29,7 +56,6 @@ tracer = trace.get_tracer("nmt-service")
 
 def add_error_handlers(app: FastAPI) -> None:
     """Register exception handlers for common exceptions."""
-    
     
     @app.exception_handler(AuthenticationError)
     async def authentication_error_handler(request: Request, exc: AuthenticationError):
@@ -49,9 +75,8 @@ def add_error_handlers(app: FastAPI) -> None:
                 # automatically in parent spans when exception was raised
         
         error_detail = ErrorDetail(
-            message=exc.message,
-            code="AUTHENTICATION_ERROR",
-            timestamp=time.time()
+            message=AUTH_FAILED_NMT_MESSAGE,
+            code=AUTH_FAILED
         )
         return JSONResponse(
             status_code=401,
@@ -78,8 +103,7 @@ def add_error_handlers(app: FastAPI) -> None:
         
         error_detail = ErrorDetail(
             message=exc.message,
-            code="AUTHORIZATION_ERROR",
-            timestamp=time.time()
+            code="AUTHORIZATION_ERROR"
         )
         return JSONResponse(
             status_code=403,
@@ -106,9 +130,8 @@ def add_error_handlers(app: FastAPI) -> None:
                 # automatically in parent spans when exception was raised
         
         error_detail = ErrorDetail(
-            message=exc.message,
-            code="RATE_LIMIT_EXCEEDED",
-            timestamp=time.time()
+            message=RATE_LIMIT_EXCEEDED_NMT_MESSAGE.format(x=exc.retry_after),
+            code=RATE_LIMIT_EXCEEDED
         )
         return JSONResponse(
             status_code=429,
@@ -244,24 +267,8 @@ def add_error_handlers(app: FastAPI) -> None:
         if correlation_id:
             log_context["correlation_id"] = correlation_id
         
-        # Log with WARNING level to match RequestLoggingMiddleware for 4xx errors
-        # Format: "{method} {path} - {status_code} - {duration}s" (same as RequestLoggingMiddleware)
-        # This ensures 422 errors appear in OpenSearch with the same format as 401/403
-        # 
-        # IMPORTANT: This MUST log because FastAPI's RequestValidationError happens
-        # during body parsing, BEFORE the route handler, and the response from this
-        # exception handler might not go through RequestLoggingMiddleware properly.
-        try:
-            logger.warning(
-                f"{method} {path} - 422 - {processing_time:.3f}s",
-                extra={"context": log_context}
-            )
-        except Exception as log_exc:
-            # Fallback: If structured logging fails, use basic logging
-            logging.warning(
-                f"422 Validation Error: {method} {path} - {full_message}",
-                exc_info=log_exc
-            )
+        # Don't log 422 errors here - they are logged at API Gateway level to avoid duplicates
+        # The response will be logged by the gateway when it receives the 422 status code
         
         error_detail = ErrorDetail(
             message="Validation error",
@@ -324,11 +331,41 @@ def add_error_handlers(app: FastAPI) -> None:
             except Exception:
                 pass
         
-        error_detail = ErrorDetail(
-            message=str(exc.detail),
-            code="HTTP_ERROR",
-            timestamp=time.time()
-        )
+        # Check if detail is already an ErrorDetail dict
+        if isinstance(exc.detail, dict) and "code" in exc.detail:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail}
+            )
+        
+        # Map specific status codes to error constants
+        if exc.status_code == 503:
+            error_detail = ErrorDetail(
+                message=SERVICE_UNAVAILABLE_NMT_MESSAGE,
+                code=SERVICE_UNAVAILABLE
+            )
+        elif exc.status_code == 400:
+            error_detail = ErrorDetail(
+                message=INVALID_REQUEST_NMT_MESSAGE,
+                code=INVALID_REQUEST
+            )
+        elif exc.status_code == 401:
+            error_detail = ErrorDetail(
+                message=AUTH_FAILED_NMT_MESSAGE,
+                code=AUTH_FAILED
+            )
+        elif exc.status_code == 500:
+            # For 500 errors, use the actual error message
+            error_detail = ErrorDetail(
+                message=str(exc.detail) if exc.detail else INTERNAL_SERVER_ERROR_MESSAGE,
+                code=INTERNAL_SERVER_ERROR
+            )
+        else:
+            error_detail = ErrorDetail(
+                message=str(exc.detail),
+                code="HTTP_ERROR"
+            )
+        
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": error_detail.dict()}
@@ -360,9 +397,8 @@ def add_error_handlers(app: FastAPI) -> None:
         logger.error(f"Traceback: {traceback.format_exc()}")
         
         error_detail = ErrorDetail(
-            message="Internal server error",
-            code="INTERNAL_ERROR",
-            timestamp=time.time()
+            message=str(exc) if str(exc) else INTERNAL_SERVER_ERROR_MESSAGE,
+            code=INTERNAL_SERVER_ERROR
         )
         return JSONResponse(
             status_code=500,
