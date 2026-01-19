@@ -23,8 +23,29 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from ai4icore_observability import ObservabilityPlugin, PluginConfig
+# Observability imports (optional)
+OBSERVABILITY_AVAILABLE = False
+ObservabilityPlugin = None
+PluginConfig = None
+try:
+    from ai4icore_observability import ObservabilityPlugin, PluginConfig
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    pass
+
+# Model Management imports (required)
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
+
+# Telemetry imports (optional)
+TELEMETRY_AVAILABLE = False
+setup_tracing = None
+FastAPIInstrumentor = None
+try:
+    from ai4icore_telemetry import setup_tracing
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    TELEMETRY_AVAILABLE = True
+except ImportError:
+    pass  # Will be handled below
 
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
@@ -39,14 +60,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-# Observability plugin (optional)
-try:
-    from ai4icore_observability import ObservabilityPlugin, PluginConfig
-    OBSERVABILITY_AVAILABLE = True
-except ImportError:
-    OBSERVABILITY_AVAILABLE = False
-    logger.warning("AI4ICore Observability Plugin not available - continuing without it")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
@@ -246,7 +259,7 @@ app = FastAPI(
 )
 
 # Observability (optional)
-if OBSERVABILITY_AVAILABLE:
+if OBSERVABILITY_AVAILABLE and ObservabilityPlugin:
     try:
         config = PluginConfig.from_env()
         config.enabled = True
@@ -260,6 +273,28 @@ if OBSERVABILITY_AVAILABLE:
         logger.info("AI4ICore Observability Plugin initialized for NER service")
     except Exception as e:
         logger.warning(f"Failed to initialize Observability Plugin: {e}")
+
+# Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+if TELEMETRY_AVAILABLE and setup_tracing:
+    try:
+        tracer = setup_tracing("ner-service")
+        if tracer:
+            logger.info("✅ Distributed tracing initialized for NER service")
+            # Instrument FastAPI to automatically create spans for all requests
+            # Exclude health check endpoints to reduce span noise
+            if FastAPIInstrumentor:
+                FastAPIInstrumentor.instrument_app(
+                    app,
+                    excluded_urls="/health,/metrics,/enterprise/metrics,/docs,/redoc,/openapi.json"
+                )
+                logger.info("✅ FastAPI instrumentation enabled for tracing")
+        else:
+            logger.warning("⚠️ Tracing setup returned None")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to setup tracing: {e}")
+else:
+    logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
 
 # Initialize Redis client early for middleware (synchronous for Model Management Plugin)
 redis_client_sync = None

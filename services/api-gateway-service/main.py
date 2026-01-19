@@ -1759,86 +1759,291 @@ def build_auth_headers(request: Request, credentials: Optional[HTTPAuthorization
 
 async def ensure_authenticated_for_request(req: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> None:
     """Enforce authentication - require BOTH Bearer token AND API key for all services."""
-    requires_both = requires_both_auth_and_api_key(req)
-    
-    if requires_both:
-        # For ASR, NMT, TTS, Pipeline, LLM: require BOTH Bearer token AND API key
-        token = credentials.credentials if credentials else None
-        
-        # Check if Bearer token is missing
-        if not token:
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "code": AUTH_FAILED,
-                    "message": AUTH_FAILED_MESSAGE
-                },
-                headers={"WWW-Authenticate": "Bearer"}
-            )
-        
-        # Validate Bearer token
-        payload = await auth_middleware.verify_token(token)
-        if payload is None:
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "code": AUTH_FAILED,
-                    "message": AUTH_FAILED_MESSAGE
-                },
-                headers={"WWW-Authenticate": "Bearer"}
-            )
-        
-        # Check if API key is missing
-        if not api_key:
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "error": "API_KEY_MISSING",
-                    "message": "API key is required to access this service."
-                }
-            )
-        
-        # Validate API key permissions
-        service, action = determine_service_and_action(req)
+    # Get tracer for creating spans
+    tracer = None
+    if TRACING_AVAILABLE:
         try:
-            await validate_api_key_permissions(api_key, service, action)
-        except HTTPException as e:
-            # Re-raise with the specific error message from auth-service
-            raise
-    else:
-        # For other services: existing logic (either Bearer OR API key)
-        auth_source = (req.headers.get("x-auth-source") or "").upper()
-        use_api_key = api_key is not None and auth_source == "API_KEY"
-
-        if use_api_key:
-            # Validate API key permissions via auth-service
-            service, action = determine_service_and_action(req)
-            try:
-                await validate_api_key_permissions(api_key, service, action)
-            except HTTPException as e:
-                raise
-            return
-
-        # Default: require Bearer token
-        if not credentials or not credentials.credentials:
-            raise HTTPException(
-                status_code=401, 
-                detail="Not authenticated: Bearer access token required (Authorization header)",
-                headers={"WWW-Authenticate": "Bearer"}
-            )
+            tracer = trace.get_tracer("api-gateway-service")
+        except Exception:
+            pass
+    
+    # Create main authentication span
+    auth_span_context = tracer.start_as_current_span("gateway.authenticate") if tracer else nullcontext()
+    
+    with auth_span_context as auth_span:
+        if auth_span:
+            auth_span.set_attribute("gateway.operation", "authenticate_request")
+            auth_span.set_attribute("http.method", req.method)
+            auth_span.set_attribute("http.route", req.url.path)
         
-        token = credentials.credentials
-        payload = await auth_middleware.verify_token(token)
+        requires_both = requires_both_auth_and_api_key(req)
+        if auth_span:
+            auth_span.set_attribute("auth.requires_both", requires_both)
         
-        if payload is None:
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "code": AUTH_FAILED,
-                    "message": AUTH_FAILED_MESSAGE
-                },
-                headers={"WWW-Authenticate": "Bearer"}
-            )
+        if requires_both:
+            # For ASR, NMT, TTS, Pipeline, LLM: require BOTH Bearer token AND API key
+            token = credentials.credentials if credentials else None
+            
+            # Validate Bearer token with span
+            token_span_context = tracer.start_as_current_span("gateway.auth.validate_token") if tracer else nullcontext()
+            with token_span_context as token_span:
+                if token_span:
+                    token_span.set_attribute("auth.method", "Bearer")
+                    token_span.set_attribute("auth.token_present", bool(token))
+                
+                # Check if Bearer token is missing
+                if not token:
+                    if token_span:
+                        token_span.set_attribute("error", True)
+                        token_span.set_attribute("error.type", "MissingToken")
+                        token_span.set_attribute("error.message", "Bearer token is required")
+                        token_span.set_status(Status(StatusCode.ERROR, "Token missing"))
+                    if auth_span:
+                        auth_span.set_attribute("auth.authenticated", False)
+                        auth_span.set_attribute("error.type", "MissingToken")
+                        auth_span.set_status(Status(StatusCode.ERROR, "Token missing"))
+                    raise HTTPException(
+                        status_code=401,
+                        detail={
+                            "code": AUTH_FAILED,
+                            "message": AUTH_FAILED_MESSAGE
+                        },
+                        headers={"WWW-Authenticate": "Bearer"}
+                    )
+                
+                # Validate Bearer token
+                try:
+                    payload = await auth_middleware.verify_token(token)
+                    if token_span:
+                        token_span.set_attribute("auth.token_valid", payload is not None)
+                        if payload:
+                            token_span.set_attribute("user.id", str(payload.get("sub", "unknown")))
+                            token_span.set_attribute("user.username", payload.get("username", "unknown"))
+                            token_span.set_status(Status(StatusCode.OK))
+                        else:
+                            token_span.set_attribute("error", True)
+                            token_span.set_attribute("error.type", "InvalidToken")
+                            token_span.set_status(Status(StatusCode.ERROR, "Token validation failed"))
+                    
+                    if payload is None:
+                        if auth_span:
+                            auth_span.set_attribute("auth.authenticated", False)
+                            auth_span.set_attribute("error.type", "InvalidToken")
+                            auth_span.set_status(Status(StatusCode.ERROR, "Token validation failed"))
+                        raise HTTPException(
+                            status_code=401,
+                            detail={
+                                "code": AUTH_FAILED,
+                                "message": AUTH_FAILED_MESSAGE
+                            },
+                            headers={"WWW-Authenticate": "Bearer"}
+                        )
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    if token_span:
+                        token_span.set_attribute("error", True)
+                        token_span.set_attribute("error.type", type(e).__name__)
+                        token_span.set_attribute("error.message", str(e))
+                        token_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    raise
+            
+            # Validate API key with span
+            api_key_span_context = tracer.start_as_current_span("gateway.auth.validate_api_key") if tracer else nullcontext()
+            with api_key_span_context as api_key_span:
+                if api_key_span:
+                    api_key_span.set_attribute("auth.method", "API_KEY")
+                    api_key_span.set_attribute("auth.api_key_present", bool(api_key))
+                
+                # Check if API key is missing
+                if not api_key:
+                    if api_key_span:
+                        api_key_span.set_attribute("error", True)
+                        api_key_span.set_attribute("error.type", "MissingAPIKey")
+                        api_key_span.set_attribute("error.message", "API key is required")
+                        api_key_span.set_status(Status(StatusCode.ERROR, "API key missing"))
+                    if auth_span:
+                        auth_span.set_attribute("auth.authenticated", False)
+                        auth_span.set_attribute("error.type", "MissingAPIKey")
+                        auth_span.set_status(Status(StatusCode.ERROR, "API key missing"))
+                    raise HTTPException(
+                        status_code=401,
+                        detail={
+                            "error": "API_KEY_MISSING",
+                            "message": "API key is required to access this service."
+                        }
+                    )
+                
+                # Validate API key permissions
+                service, action = determine_service_and_action(req)
+                if api_key_span:
+                    api_key_span.set_attribute("auth.service", service)
+                    api_key_span.set_attribute("auth.action", action)
+                
+                # Create authorization span for permission check
+                authz_span_context = tracer.start_as_current_span("gateway.authorize") if tracer else nullcontext()
+                with authz_span_context as authz_span:
+                    if authz_span:
+                        authz_span.set_attribute("gateway.operation", "authorize_request")
+                        authz_span.set_attribute("auth.service", service)
+                        authz_span.set_attribute("auth.action", action)
+                        authz_span.set_attribute("auth.method", "API_KEY")
+                    
+                    try:
+                        await validate_api_key_permissions(api_key, service, action)
+                        if authz_span:
+                            authz_span.set_attribute("auth.authorized", True)
+                            authz_span.set_status(Status(StatusCode.OK))
+                        if api_key_span:
+                            api_key_span.set_attribute("auth.api_key_valid", True)
+                            api_key_span.set_status(Status(StatusCode.OK))
+                        if auth_span:
+                            auth_span.set_attribute("auth.authenticated", True)
+                            auth_span.set_attribute("auth.authorized", True)
+                            auth_span.set_status(Status(StatusCode.OK))
+                    except HTTPException as e:
+                        if authz_span:
+                            authz_span.set_attribute("auth.authorized", False)
+                            authz_span.set_attribute("error", True)
+                            authz_span.set_attribute("error.type", "AuthorizationFailed")
+                            authz_span.set_attribute("error.message", str(e.detail))
+                            authz_span.set_attribute("http.status_code", e.status_code)
+                            authz_span.set_status(Status(StatusCode.ERROR, str(e.detail)))
+                        if api_key_span:
+                            api_key_span.set_attribute("auth.api_key_valid", False)
+                            api_key_span.set_attribute("error", True)
+                            api_key_span.set_attribute("error.type", "AuthorizationFailed")
+                            api_key_span.set_status(Status(StatusCode.ERROR, str(e.detail)))
+                        if auth_span:
+                            auth_span.set_attribute("auth.authenticated", True)  # Token was valid
+                            auth_span.set_attribute("auth.authorized", False)
+                            auth_span.set_attribute("error.type", "AuthorizationFailed")
+                            auth_span.set_status(Status(StatusCode.ERROR, str(e.detail)))
+                        # Re-raise with the specific error message from auth-service
+                        raise
+        else:
+            # For other services: existing logic (either Bearer OR API key)
+            auth_source = (req.headers.get("x-auth-source") or "").upper()
+            use_api_key = api_key is not None and auth_source == "API_KEY"
+            if auth_span:
+                auth_span.set_attribute("auth.source", auth_source)
+                auth_span.set_attribute("auth.use_api_key", use_api_key)
+
+            if use_api_key:
+                # Validate API key permissions via auth-service
+                service, action = determine_service_and_action(req)
+                
+                # Validate API key with span
+                api_key_span_context = tracer.start_as_current_span("gateway.auth.validate_api_key") if tracer else nullcontext()
+                with api_key_span_context as api_key_span:
+                    if api_key_span:
+                        api_key_span.set_attribute("auth.method", "API_KEY")
+                        api_key_span.set_attribute("auth.service", service)
+                        api_key_span.set_attribute("auth.action", action)
+                    
+                    # Create authorization span for permission check
+                    authz_span_context = tracer.start_as_current_span("gateway.authorize") if tracer else nullcontext()
+                    with authz_span_context as authz_span:
+                        if authz_span:
+                            authz_span.set_attribute("gateway.operation", "authorize_request")
+                            authz_span.set_attribute("auth.service", service)
+                            authz_span.set_attribute("auth.action", action)
+                            authz_span.set_attribute("auth.method", "API_KEY")
+                        
+                        try:
+                            await validate_api_key_permissions(api_key, service, action)
+                            if authz_span:
+                                authz_span.set_attribute("auth.authorized", True)
+                                authz_span.set_status(Status(StatusCode.OK))
+                            if api_key_span:
+                                api_key_span.set_attribute("auth.api_key_valid", True)
+                                api_key_span.set_status(Status(StatusCode.OK))
+                            if auth_span:
+                                auth_span.set_attribute("auth.authenticated", True)
+                                auth_span.set_attribute("auth.authorized", True)
+                                auth_span.set_status(Status(StatusCode.OK))
+                        except HTTPException as e:
+                            if authz_span:
+                                authz_span.set_attribute("auth.authorized", False)
+                                authz_span.set_attribute("error", True)
+                                authz_span.set_attribute("error.type", "AuthorizationFailed")
+                                authz_span.set_attribute("error.message", str(e.detail))
+                                authz_span.set_status(Status(StatusCode.ERROR, str(e.detail)))
+                            if api_key_span:
+                                api_key_span.set_attribute("auth.api_key_valid", False)
+                                api_key_span.set_attribute("error", True)
+                                api_key_span.set_status(Status(StatusCode.ERROR, str(e.detail)))
+                            if auth_span:
+                                auth_span.set_attribute("auth.authenticated", False)
+                                auth_span.set_attribute("auth.authorized", False)
+                                auth_span.set_attribute("error.type", "AuthorizationFailed")
+                                auth_span.set_status(Status(StatusCode.ERROR, str(e.detail)))
+                            raise
+                return
+
+            # Default: require Bearer token
+            token_span_context = tracer.start_as_current_span("gateway.auth.validate_token") if tracer else nullcontext()
+            with token_span_context as token_span:
+                if token_span:
+                    token_span.set_attribute("auth.method", "Bearer")
+                    token_span.set_attribute("auth.token_present", bool(credentials and credentials.credentials))
+                
+                if not credentials or not credentials.credentials:
+                    if token_span:
+                        token_span.set_attribute("error", True)
+                        token_span.set_attribute("error.type", "MissingToken")
+                        token_span.set_attribute("error.message", "Bearer token is required")
+                        token_span.set_status(Status(StatusCode.ERROR, "Token missing"))
+                    if auth_span:
+                        auth_span.set_attribute("auth.authenticated", False)
+                        auth_span.set_attribute("error.type", "MissingToken")
+                        auth_span.set_status(Status(StatusCode.ERROR, "Token missing"))
+                    raise HTTPException(
+                        status_code=401, 
+                        detail="Not authenticated: Bearer access token required (Authorization header)",
+                        headers={"WWW-Authenticate": "Bearer"}
+                    )
+                
+                token = credentials.credentials
+                try:
+                    payload = await auth_middleware.verify_token(token)
+                    if token_span:
+                        token_span.set_attribute("auth.token_valid", payload is not None)
+                        if payload:
+                            token_span.set_attribute("user.id", str(payload.get("sub", "unknown")))
+                            token_span.set_attribute("user.username", payload.get("username", "unknown"))
+                            token_span.set_status(Status(StatusCode.OK))
+                        else:
+                            token_span.set_attribute("error", True)
+                            token_span.set_attribute("error.type", "InvalidToken")
+                            token_span.set_status(Status(StatusCode.ERROR, "Token validation failed"))
+                    
+                    if payload is None:
+                        if auth_span:
+                            auth_span.set_attribute("auth.authenticated", False)
+                            auth_span.set_attribute("error.type", "InvalidToken")
+                            auth_span.set_status(Status(StatusCode.ERROR, "Token validation failed"))
+                        raise HTTPException(
+                            status_code=401,
+                            detail={
+                                "code": AUTH_FAILED,
+                                "message": AUTH_FAILED_MESSAGE
+                            },
+                            headers={"WWW-Authenticate": "Bearer"}
+                        )
+                    if auth_span:
+                        auth_span.set_attribute("auth.authenticated", True)
+                        auth_span.set_attribute("auth.authorized", True)  # Bearer token implies authorization
+                        auth_span.set_status(Status(StatusCode.OK))
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    if token_span:
+                        token_span.set_attribute("error", True)
+                        token_span.set_attribute("error.type", type(e).__name__)
+                        token_span.set_attribute("error.message", str(e))
+                        token_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    raise
 
 # --- OpenAPI customization: add x-auth-source dropdown param globally ---
 def custom_openapi():
@@ -3243,7 +3448,7 @@ async def ner_inference(
 ):
     """Perform NER inference on one or more text inputs"""
     try:
-        await ensure_authenticated_for_request(request, credentials, api_key)
+        ensure_authenticated_for_request(request, credentials, api_key)
     except Exception as e:
         raise
 
@@ -4330,8 +4535,16 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
                 except Exception:
                     pass
         
-        # Forward request to service (5 minute timeout for LLM service, 300s for others)
-        timeout_value = 300.0 if service_name == 'llm-service' else 300.0
+        # Forward request to service
+        # Use longer timeout for LLM, shorter for other services to avoid long hangs
+        if service_name == 'llm-service':
+            timeout_value = 300.0
+        elif service_name == 'ner-service':
+            # NER needs time for Triton inference (default 30s) + processing overhead
+            # Set to 60s to allow for Triton timeout + NER processing time
+            timeout_value = float(os.getenv("NER_SERVICE_TIMEOUT_SECONDS", "60.0"))
+        else:
+            timeout_value = float(os.getenv("DEFAULT_SERVICE_TIMEOUT_SECONDS", "60.0"))
         final_url = f"{service_url}{path}"
         
         start_time = time.time()
