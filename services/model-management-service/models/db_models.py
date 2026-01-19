@@ -16,7 +16,7 @@ class Model(AppDBBase):
     __tablename__ = "models"
     # __table_args__ = {'schema': DB_SCHEMA}
     __table_args__ = (
-        UniqueConstraint('model_id', 'version', name='uq_model_id_version'),
+        UniqueConstraint('name', 'version', name='uq_name_version'),
     )
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

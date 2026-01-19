@@ -28,10 +28,10 @@ router_admin = APIRouter(
 @router_admin.post("/create/model", response_model=str)
 async def create_model_request(payload: ModelCreateRequest):
     try:
-        await save_model_to_db(payload)
+        model_id = await save_model_to_db(payload)
 
         logger.info(f"Model '{payload.name}' inserted successfully.")
-        return f"Model '{payload.name}' (ID: {payload.modelId}) created successfully."
+        return f"Model '{payload.name}' (ID: {model_id}) created successfully."
 
     except HTTPException:
         raise
