@@ -997,8 +997,8 @@ class ServiceStatus(BaseModel):
     lastUpdated: str = Field(..., description="Last update timestamp")
 
 class ModelManagementServiceCreateRequest(BaseModel):
-    """Request model for creating a new service in model management."""
-    serviceId: str = Field(..., description="Unique service identifier")
+    """Request model for creating a new service in model management.
+    Note: serviceId is auto-generated as hash of (model_name, model_version, service_name)."""
     name: str = Field(..., description="Service name")
     serviceDescription: str = Field(..., description="Service description")
     hardwareDescription: str = Field(..., description="Hardware description")
@@ -1010,22 +1010,6 @@ class ModelManagementServiceCreateRequest(BaseModel):
     healthStatus: Optional[ServiceStatus] = Field(None, description="Health status")
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = Field(None, description="Benchmark data")
     isPublished: Optional[bool] = Field(False, description="Whether the service is published (defaults to false)")
-
-    @field_validator("serviceId")
-    def validate_service_id(cls, v):
-        """Validate service ID format: only alphanumeric, hyphen, and forward slash allowed."""
-        if not v:
-            raise ValueError("Service ID is required")
-        
-        # Pattern: alphanumeric, hyphen, and forward slash only
-        import re
-        pattern = r'^[a-zA-Z0-9/-]+$'
-        if not re.match(pattern, v):
-            raise ValueError(
-                "Service ID must contain only alphanumeric characters, hyphens (-), and forward slashes (/). "
-                f"Example: 'ai4bharath/indictrans-gpu'. Got: '{v}'"
-            )
-        return v
 
     @field_validator("name")
     def validate_name(cls, v):
@@ -1051,37 +1035,19 @@ class LanguagePair(BaseModel):
     targetScriptCode: Optional[str] = Field("", description="Target script code")
 
 class ModelManagementServiceUpdateRequest(BaseModel):
-    """Request model for updating an existing service in model management. Only serviceId is required, all other fields are optional for partial updates."""
-    serviceId: str = Field(..., description="Unique service identifier")
-    name: Optional[str] = Field(None, description="Service name")
+    """Request model for updating an existing service in model management. 
+    Only serviceId is required for identification. name, modelId, and modelVersion are NOT updatable 
+    since service_id is derived from them."""
+    serviceId: str = Field(..., description="Unique service identifier (used for identification, not updatable)")
     serviceDescription: Optional[str] = Field(None, description="Service description")
     hardwareDescription: Optional[str] = Field(None, description="Hardware description")
     publishedOn: Optional[int] = Field(None, description="Publication timestamp")
-    modelId: Optional[str] = Field(None, description="Associated model identifier")
-    modelVersion: Optional[str] = Field(None, description="Model version")
     endpoint: Optional[str] = Field(None, description="Service endpoint URL")
     api_key: Optional[str] = Field(None, description="API key for the service")
     languagePair: Optional[LanguagePair] = Field(None, description="Language pair configuration")
     healthStatus: Optional[ServiceStatus] = Field(None, description="Health status")
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = Field(None, description="Benchmark data")
     isPublished: Optional[bool] = Field(None, description="Set to true to publish, false to unpublish the service")
-
-    @field_validator("name")
-    def validate_name(cls, v):
-        """Validate service name format: only alphanumeric, hyphen, and forward slash allowed."""
-        # Allow None for optional field in updates
-        if v is None:
-            return v
-        
-        # Pattern: alphanumeric, hyphen, and forward slash only
-        import re
-        pattern = r'^[a-zA-Z0-9/-]+$'
-        if not re.match(pattern, v):
-            raise ValueError(
-                "Service name must contain only alphanumeric characters, hyphens (-), and forward slashes (/). "
-                f"Example: 'ai4bharath/indictrans-gpu'. Got: '{v}'"
-            )
-        return v
 
 class ServiceViewRequest(BaseModel):
     """Request model for viewing a service."""

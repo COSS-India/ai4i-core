@@ -58,6 +58,37 @@ def generate_model_id(model_name: str, version: str) -> str:
     return model_id
 
 
+def generate_service_id(model_name: str, model_version: str, service_name: str) -> str:
+    """
+    Generate a deterministic service_id hash from model_name, model_version, and service_name.
+    Uses SHA256 for enterprise-standard hashing, truncated to 32 characters.
+    
+    Args:
+        model_name: The name of the model
+        model_version: The version of the model
+        service_name: The name of the service
+        
+    Returns:
+        A hexadecimal hash string (32 characters, first half of SHA256)
+    """
+    # Normalize inputs: strip whitespace and convert to lowercase for consistency
+    normalized_model_name = model_name.strip().lower()
+    normalized_model_version = model_version.strip().lower()
+    normalized_service_name = service_name.strip().lower()
+    
+    # Create a deterministic string from model_name, model_version, and service_name
+    hash_input = f"{normalized_model_name}:{normalized_model_version}:{normalized_service_name}"
+    
+    # Generate SHA256 hash
+    hash_obj = hashlib.sha256(hash_input.encode('utf-8'))
+    full_hash = hash_obj.hexdigest()
+    
+    # Truncate to 32 characters (first half of SHA256)
+    service_id = full_hash[:32]
+    
+    return service_id
+
+
 async def is_model_version_used_by_published_service(model_id: str, version: str) -> tuple[bool, List[str]]:
     """
     Check if a specific model version is being used by any published service.
@@ -788,31 +819,47 @@ async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bo
 async def save_service_to_db(payload: ServiceCreateRequest):
     """
     Save a new service entry to the database.
+    Includes:
+      - Look up model to get model_name
+      - Generate service_id from hash of (model_name, model_version, service_name)
+      - Duplicate (model_id, model_version, name) check
+      - Record creation
+      - Commit / rollback
     """
     db: AsyncSession = AppDatabase()
     try:
-        # Pre-check for duplicates service id
-        result = await db.execute(select(Service).where(Service.service_id == payload.serviceId))
-        existing = result.scalars().first()
-        if existing:
-            logger.warning(f"Duplicate service_id: {payload.serviceId}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Service with ID {payload.serviceId} already exists."
-            )
-        
-        # Check if associated model version exists
+        # Check if associated model version exists and get model_name
         result = await db.execute(
             select(Model).where(
                 Model.model_id == payload.modelId,
                 Model.version == payload.modelVersion
             )
         )
-        model_exists = result.scalars().first()
-        if not model_exists:
+        model = result.scalars().first()
+        if not model:
             raise HTTPException(
                 status_code=400,
                 detail=f"Model with ID {payload.modelId} and version {payload.modelVersion} does not exist, cannot create service."
+            )
+        
+        # Generate service_id from hash of (model_name, model_version, service_name)
+        generated_service_id = generate_service_id(model.name, payload.modelVersion, payload.name)
+        
+        # Pre-check for duplicates: check if (model_id, model_version, name) combination already exists
+        # Since service_id is now a hash of (model_name, model_version, service_name), this ensures uniqueness
+        stmt = select(Service).where(
+            Service.model_id == payload.modelId,
+            Service.model_version == payload.modelVersion,
+            Service.name == payload.name
+        )
+        result = await db.execute(stmt)
+        existing = result.scalars().first()
+        
+        if existing:
+            logger.warning(f"Duplicate service: model_id={payload.modelId}, model_version={payload.modelVersion}, name={payload.name}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Service with name '{payload.name}' for model '{model.name}' version '{payload.modelVersion}' already exists."
             )
         
         payload_dict = _json_safe(payload.model_dump(by_alias=True))
@@ -822,13 +869,16 @@ async def save_service_to_db(payload: ServiceCreateRequest):
         # Auto-generate publishedOn if not provided
         if not payload_dict.get("publishedOn"):
             payload_dict["publishedOn"] = now_epoch
+        
+        # Add generated service_id to payload_dict for cache
+        payload_dict["serviceId"] = generated_service_id
 
         # Handle isPublished - default to False if not provided
         is_published = payload_dict.get("isPublished", False)
         published_at = int(time.time()) if is_published else None
         
         new_service = Service(
-            service_id=payload_dict.get("serviceId"),
+            service_id=generated_service_id,
             name=payload_dict.get("name"),
             service_description=payload_dict.get("serviceDescription"),
             hardware_description=payload_dict.get("hardwareDescription"),
@@ -845,10 +895,10 @@ async def save_service_to_db(payload: ServiceCreateRequest):
         db.add(new_service)
         await db.commit()
         await db.refresh(new_service)
-        logger.info(f"Service {payload.serviceId} successfully saved to DB.")
+        logger.info(f"Service '{payload.name}' (ID: {generated_service_id}) for model '{model.name}' v{payload.modelVersion} successfully saved to DB.")
 
 
-        # Cache the model in Redis
+        # Cache the service in Redis
         try:
             cache_entry = ServiceCache(**payload_dict)
             cache_entry.save()
@@ -856,6 +906,7 @@ async def save_service_to_db(payload: ServiceCreateRequest):
         except Exception as ce:
             logger.warning(f"Could not cache service {new_service.service_id}: {ce}")
 
+        return generated_service_id
 
     except HTTPException:
         raise
@@ -871,6 +922,7 @@ async def update_service(request: ServiceUpdateRequest):
     """
     Update an existing service record in PostgreSQL and refresh Redis cache.
     Note: serviceId is used as identifier and is NOT changed during update.
+    Note: name, modelId, and modelVersion are NOT updatable since service_id is derived from them.
     """
 
     db: AsyncSession = AppDatabase()
@@ -883,10 +935,9 @@ async def update_service(request: ServiceUpdateRequest):
         request_dict = request.model_dump(exclude_none=True,by_alias=True)
 
         # 1. Build DB update dict
+        # Note: name, modelId, modelVersion are NOT updatable since service_id is derived from (model_name, model_version, service_name)
         db_update = {}
 
-        if "name" in request_dict:
-            db_update["name"] = request_dict["name"]
         if "serviceDescription" in request_dict:
             db_update["service_description"] = request_dict["serviceDescription"]
         if "hardwareDescription" in request_dict:
@@ -895,10 +946,6 @@ async def update_service(request: ServiceUpdateRequest):
             db_update["endpoint"] = request_dict["endpoint"]
         if "api_key" in request_dict:
             db_update["api_key"] = request_dict["api_key"]
-        if "modelId" in request_dict:
-            db_update["model_id"] = request_dict["modelId"]
-        if "modelVersion" in request_dict:
-            db_update["model_version"] = request_dict["modelVersion"]
         if "healthStatus" in request_dict:
             db_update["health_status"] = _json_safe(request_dict["healthStatus"])
         if "benchmarks" in request_dict:
@@ -930,24 +977,8 @@ async def update_service(request: ServiceUpdateRequest):
             return 0  # Service not found
 
         if not db_update:
-            logger.warning("No valid update fields provided for service update. Valid fields: name, serviceDescription, hardwareDescription, endpoint, api_key, modelId, modelVersion, healthStatus, benchmarks, isPublished")
+            logger.warning("No valid update fields provided for service update. Valid fields: serviceDescription, hardwareDescription, endpoint, api_key, healthStatus, benchmarks, isPublished. Note: name, modelId, modelVersion are not updatable.")
             return -1  # No valid fields provided
-        
-        # Validate model exists only if modelId is being updated
-        if request.modelId is not None:
-            model_version_to_check = request_dict.get("modelVersion") or db_service.model_version
-            result_model = await db.execute(
-                select(Model).where(
-                    Model.model_id == request.modelId,
-                    Model.version == model_version_to_check
-                )
-            )
-            model_exists = result_model.scalars().first()
-            if not model_exists:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Model with ID {request.modelId} and version {model_version_to_check} does not exist, cannot update service."
-                )
         
         stmt_update = (
             update(Service)
@@ -1260,6 +1291,9 @@ async def list_all_services(
         # Filter by publish status if provided
         if is_published is not None:
             query = query.where(Service.is_published == is_published)
+
+        # Default sort: active (published) services first, then by most recently created
+        query = query.order_by(desc(Service.is_published), desc(Service.created_at))
 
         try:
             result = await db.execute(query)

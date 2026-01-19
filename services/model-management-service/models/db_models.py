@@ -49,10 +49,12 @@ class Model(AppDBBase):
 
 class Service(AppDBBase):
     __tablename__ = "services"
-    # __table_args__ = {'schema': DB_SCHEMA}
+    __table_args__ = (
+        UniqueConstraint('model_id', 'model_version', 'name', name='uq_model_id_version_service_name'),
+    )
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    service_id = Column(String(255), unique=True, nullable=False)
+    service_id = Column(String(255), unique=True, nullable=False)  # Hash of (model_name, model_version, service_name)
     name = Column(String(255), nullable=False)
     service_description = Column(Text)
     hardware_description = Column(Text)
