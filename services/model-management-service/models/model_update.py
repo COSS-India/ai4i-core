@@ -1,5 +1,6 @@
 from typing import List, Optional , Dict, Any
 from pydantic import BaseModel, field_validator
+import re
 from .model_create import (
     Benchmark,
     InferenceEndPoint,
@@ -25,6 +26,22 @@ class ModelUpdateRequest(BaseModel):
     inferenceEndPoint: Optional[InferenceEndPoint] = None
     benchmarks: Optional[List[Benchmark]] = None
     submitter: Optional[Submitter] = None
+
+    @field_validator("name")
+    def validate_name(cls, v):
+        """Validate model name format: only alphanumeric, hyphen, and forward slash allowed."""
+        # Allow None for optional field in updates
+        if v is None:
+            return v
+        
+        # Pattern: alphanumeric, hyphen, and forward slash only
+        pattern = r'^[a-zA-Z0-9/-]+$'
+        if not re.match(pattern, v):
+            raise ValueError(
+                "Model name must contain only alphanumeric characters, hyphens (-), and forward slashes (/). "
+                f"Example: 'ai4bharath/indictrans-gpu'. Got: '{v}'"
+            )
+        return v
 
     @field_validator("license", mode="before")
     def validate_license(cls, v):

@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 from typing import Dict, Any, List
 import os
+import hashlib
 
 from models.db_models import Model , Service, VersionStatus
 from models.cache_models_services import ModelCache , ServiceCache
@@ -26,6 +27,35 @@ from datetime import datetime
 
 MAX_ACTIVE_VERSIONS_PER_MODEL = int(os.getenv("MAX_ACTIVE_VERSIONS_PER_MODEL", "5"))
 ALLOW_DEPRECATED_MODEL_CHANGES = os.getenv("ALLOW_DEPRECATED_MODEL_CHANGES", "true").lower() == "true"
+
+
+def generate_model_id(model_name: str, version: str) -> str:
+    """
+    Generate a deterministic model_id hash from model_name and version.
+    Uses SHA256 for enterprise-standard hashing, truncated to 32 characters.
+    
+    Args:
+        model_name: The name of the model
+        version: The version of the model
+        
+    Returns:
+        A hexadecimal hash string (32 characters, first half of SHA256)
+    """
+    # Normalize inputs: strip whitespace and convert to lowercase for consistency
+    normalized_name = model_name.strip().lower()
+    normalized_version = version.strip().lower()
+    
+    # Create a deterministic string from name and version
+    hash_input = f"{normalized_name}:{normalized_version}"
+    
+    # Generate SHA256 hash
+    hash_obj = hashlib.sha256(hash_input.encode('utf-8'))
+    full_hash = hash_obj.hexdigest()
+    
+    # Truncate to 32 characters (first half of SHA256)
+    model_id = full_hash[:32]
+    
+    return model_id
 
 
 async def is_model_version_used_by_published_service(model_id: str, version: str) -> tuple[bool, List[str]]:
@@ -127,7 +157,8 @@ async def save_model_to_db(payload: ModelCreateRequest):
     """
     Save a new model entry to the database.
     Includes:
-      - Duplicate (model_id, version) check
+      - Generate model_id from hash of (name, version)
+      - Duplicate (name, version) check
       - Max active versions enforcement
       - Record creation
       - Commit / rollback
@@ -135,27 +166,32 @@ async def save_model_to_db(payload: ModelCreateRequest):
     """
     db: AsyncSession = AppDatabase()
     try:
-        # Pre-check for duplicates: check if (model_id, version) combination already exists
+        # Generate model_id from hash of (name, version)
+        generated_model_id = generate_model_id(payload.name, payload.version)
+        
+        # Pre-check for duplicates: check if (name, version) combination already exists
+        # Since model_id is now a hash of (name, version), checking by name and version ensures uniqueness
         stmt = select(Model).where(
-            Model.model_id == payload.modelId,
+            Model.name == payload.name,
             Model.version == payload.version
         )
         result = await db.execute(stmt)
         existing = result.scalar()
 
         if existing:
-            logger.warning(f"Duplicate model_id and version: {payload.modelId} v{payload.version}")
+            logger.warning(f"Duplicate model name and version: {payload.name} v{payload.version}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Model with ID {payload.modelId} and version {payload.version} already exists."
+                detail=f"Model with name '{payload.name}' and version '{payload.version}' already exists."
             )
         
         # Check max active versions if this version is being created as ACTIVE
         version_status = payload.versionStatus if hasattr(payload, 'versionStatus') and payload.versionStatus else VersionStatus.ACTIVE
         if version_status == VersionStatus.ACTIVE:
-            # Count active versions for this model_id
+            # Count active versions for this model (by name, since model_id is now a hash)
+            # We need to find all models with the same name and count active versions
             active_count_stmt = select(sql_func.count(Model.id)).where(
-                Model.model_id == payload.modelId,
+                Model.name == payload.name,
                 Model.version_status == VersionStatus.ACTIVE
             )
             active_count_result = await db.execute(active_count_stmt)
@@ -163,12 +199,12 @@ async def save_model_to_db(payload: ModelCreateRequest):
             
             if active_count >= MAX_ACTIVE_VERSIONS_PER_MODEL:
                 logger.warning(
-                    f"Max active versions ({MAX_ACTIVE_VERSIONS_PER_MODEL}) reached for model {payload.modelId}. "
+                    f"Max active versions ({MAX_ACTIVE_VERSIONS_PER_MODEL}) reached for model '{payload.name}'. "
                     f"Current active versions: {active_count}"
                 )
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Maximum number of active versions ({MAX_ACTIVE_VERSIONS_PER_MODEL}) reached for model {payload.modelId}. "
+                    detail=f"Maximum number of active versions ({MAX_ACTIVE_VERSIONS_PER_MODEL}) reached for model '{payload.name}'. "
                            f"Please deprecate an existing active version before creating a new one."
                 )
         
@@ -177,11 +213,12 @@ async def save_model_to_db(payload: ModelCreateRequest):
         now_epoch = int(time.time())
 
         payload_dict["submittedOn"] = now_epoch
-        payload_dict["updatedOn"] = None  
+        payload_dict["updatedOn"] = None
+        payload_dict["modelId"] = generated_model_id  # Add generated model_id to payload_dict for cache
 
         # Create new model record
         new_model = Model(
-            model_id=payload_dict.get("modelId"),
+            model_id=generated_model_id,
             version=payload_dict.get("version"),
             version_status=version_status,
             version_status_updated_at=datetime.now(),
@@ -202,7 +239,7 @@ async def save_model_to_db(payload: ModelCreateRequest):
         db.add(new_model)
         await db.commit()
         await db.refresh(new_model)
-        logger.info(f"Model {payload.modelId} v{payload.version} successfully saved to DB.")
+        logger.info(f"Model '{payload.name}' (ID: {generated_model_id}) v{payload.version} successfully saved to DB.")
 
         # Cache the model in Redis
         try:
@@ -212,6 +249,8 @@ async def save_model_to_db(payload: ModelCreateRequest):
             logger.info(f"Model {new_model.model_id} v{new_model.version} cached in Redis.")
         except Exception as ce:
             logger.warning(f"Could not cache model {new_model.model_id} v{new_model.version}: {ce}")
+
+        return generated_model_id
 
     except HTTPException:
         raise
@@ -408,6 +447,14 @@ async def update_model(payload: ModelUpdateRequest):
             # Skip versionStatus as we handle it above
             if key == "versionStatus":
                 continue
+
+            # Prevent name updates - model_id is a hash of (name, version), so changing name would break model_id
+            if key == "name":
+                logger.warning(f"Attempted to update name for model {payload.modelId} v{payload.version}. Name updates are not allowed as model_id is derived from name and version.")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Model name cannot be updated. Model ID is derived from name and version. Create a new model version with the new name instead."
+                )
 
             # Skip None values for PATCH
             if value is None:
@@ -644,18 +691,19 @@ async def get_model_details(model_id: str, version: str = None) -> Dict[str, Any
          await db.close()
     
 
-async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bool = True) -> List[Dict[str, Any]]:
+async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bool = True, model_name: str | None = None) -> List[Dict[str, Any]]:
     """
     Fetch all model records from DB and convert to response format.
     
     Args:
         task_type: Optional filter by task type (asr, nmt, tts, etc.)
         include_deprecated: If False, only returns ACTIVE versions. Defaults to True.
+        model_name: Optional filter by model name. Returns all versions of models matching this name.
     
     Ordering:
-    1. By model_id (grouped together)
-    2. ACTIVE versions first within each model
-    3. Latest (by submitted_on) first within same status
+    1. By submitted_on descending (latest first) - primary sort
+    2. ACTIVE versions first within same submitted_on
+    3. By model_id as final tiebreaker
     """
 
     db: AsyncSession = AppDatabase()
@@ -672,15 +720,19 @@ async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bo
         if task_type:
             query = query.where(Model.task['type'].astext == task_type.value)
         
+        # Filter by model name if provided (case-insensitive match)
+        if model_name:
+            query = query.where(sql_func.lower(Model.name) == sql_func.lower(model_name))
+        
         # Filter out deprecated versions if requested
         if not include_deprecated:
             query = query.where(Model.version_status == VersionStatus.ACTIVE)
         
-        # Order by model_id, then ACTIVE first, then latest first
+        # Order by submitted_on descending (latest first), then ACTIVE first, then model_id
         query = query.order_by(
-            Model.model_id,
+            desc(Model.submitted_on),
             status_priority,
-            desc(Model.submitted_on)
+            Model.model_id
         )
 
         result = await db.execute(query)
