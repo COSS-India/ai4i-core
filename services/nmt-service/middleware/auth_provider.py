@@ -83,6 +83,14 @@ def determine_service_and_action(request: Request) -> Tuple[str, str]:
     return service, action
 
 
+def is_try_it_request(request: Request) -> bool:
+    """Allow anonymous Try-It access for NMT inference only."""
+    try_it = request.headers.get("X-Try-It") or request.headers.get("x-try-it")
+    if not try_it or str(try_it).lower() != "true":
+        return False
+    return request.method.upper() == "POST" and request.url.path.endswith("/api/v1/nmt/inference")
+
+
 # JWT Configuration for local verification
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
@@ -633,6 +641,14 @@ async def AuthProvider(
     db: AsyncSession = Depends(get_db_session)
 ) -> Dict[str, Any]:
     """Authentication provider for NMT - supports AUTH_TOKEN, API_KEY, BOTH."""
+    if is_try_it_request(request):
+        request.state.user_id = None
+        request.state.api_key_id = None
+        request.state.api_key_name = None
+        request.state.user_email = None
+        request.state.is_authenticated = False
+        return {"user_id": None, "api_key_id": None, "user": None, "api_key": None}
+
     if not tracer:
         return await _auth_provider_impl(request, authorization, x_api_key, x_auth_source, db)
     
@@ -777,6 +793,14 @@ async def _auth_provider_impl(
     db: AsyncSession
 ) -> Dict[str, Any]:
     """Fallback implementation when tracing is not available."""
+    if is_try_it_request(request):
+        request.state.user_id = None
+        request.state.api_key_id = None
+        request.state.api_key_name = None
+        request.state.user_email = None
+        request.state.is_authenticated = False
+        return {"user_id": None, "api_key_id": None, "user": None, "api_key": None}
+
     auth_source = (x_auth_source or "API_KEY").upper()
 
     if auth_source == "AUTH_TOKEN":
