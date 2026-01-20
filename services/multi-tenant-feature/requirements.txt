@@ -1,6 +1,4 @@
-passlib==1.7.4
-bcrypt==3.2.2 # bcrypt 3.2.2 is compatible with passlib 1.7.4
-
+passlib[argon2]>=1.7.4
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 sqlalchemy>=2.0.0
