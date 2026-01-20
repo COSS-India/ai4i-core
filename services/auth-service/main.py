@@ -31,6 +31,10 @@ from auth_utils import AuthUtils, ACCESS_TOKEN_EXPIRE_MINUTES
 from oauth_utils import OAuthUtils
 from casbin_enforcer import load_policies_from_db, check_roles_permission
 
+# Refresh token lifetimes
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+REFRESH_TOKEN_EXPIRE_HOURS = int(os.getenv("REFRESH_TOKEN_EXPIRE_HOURS", "24"))
+
 # Import error constants
 try:
     from services.constants.error_messages import (
@@ -609,7 +613,11 @@ async def login(
     
     # Generate tokens
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    refresh_token_expires = timedelta(days=7) if login_data.remember_me else timedelta(hours=24)
+    refresh_token_expires = (
+        timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        if login_data.remember_me
+        else timedelta(hours=REFRESH_TOKEN_EXPIRE_HOURS)
+    )
     
     access_token = AuthUtils.create_access_token(
         data=token_data,
@@ -720,6 +728,19 @@ async def refresh_token(
             detail={"code": SESSION_EXPIRED, "message": SESSION_EXPIRED_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Sliding window: extend session expiry on successful refresh
+    remember_me = False
+    if getattr(session, "device_info", None):
+        try:
+            remember_me = bool(session.device_info.get("remember_me"))
+        except Exception:
+            remember_me = False
+    session.expires_at = (
+        datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        if remember_me
+        else datetime.utcnow() + timedelta(hours=REFRESH_TOKEN_EXPIRE_HOURS)
+    )
     
     # Get user
     user = await AuthUtils.get_user_by_id(db, int(user_id))
@@ -1122,6 +1143,10 @@ async def create_api_key(
         for perm in ["asr.inference", "nmt.inference", "tts.inference"]:
             if perm not in requested_permissions:
                 requested_permissions.append(perm)
+    # Ensure pipeline.inference is present when any service inference is requested
+    if any(perm in requested_permissions for perm in ["asr.inference", "nmt.inference", "tts.inference"]):
+        if "pipeline.inference" not in requested_permissions:
+            requested_permissions.append("pipeline.inference")
 
     # Generate API key
     api_key_value = AuthUtils.generate_api_key()
@@ -1300,6 +1325,10 @@ async def update_api_key(
             for perm in ["asr.inference", "nmt.inference", "tts.inference"]:
                 if perm not in updated_permissions:
                     updated_permissions.append(perm)
+        # Ensure pipeline.inference is present when any service inference is requested
+        if any(perm in updated_permissions for perm in ["asr.inference", "nmt.inference", "tts.inference"]):
+            if "pipeline.inference" not in updated_permissions:
+                updated_permissions.append("pipeline.inference")
         api_key.permissions = updated_permissions
     # Allow toggling active status (soft-enable/soft-disable)
     if update_data.is_active is not None:
@@ -1482,7 +1511,7 @@ async def google_callback(
         
         # 7. Generate JWT tokens
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        refresh_token_expires = timedelta(days=7)
+        refresh_token_expires = timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
         
         jwt_access_token = AuthUtils.create_access_token(
             data=token_data,
