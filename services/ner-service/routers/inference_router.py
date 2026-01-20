@@ -91,6 +91,7 @@ def get_ner_service(request: Request) -> NerService:
     response_model=NerInferenceResponse,
     summary="Perform batch NER inference",
     description="Run NER on one or more text inputs using Dhruva NER via Triton.",
+    dependencies=[Depends(AuthProvider)],  # Explicitly enforce auth at endpoint level (in addition to router-level)
 )
 async def run_inference(
     request_body: NerInferenceRequest,
