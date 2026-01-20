@@ -3055,7 +3055,19 @@ async def audio_lang_detection_inference(
     api_key: Optional[str] = Security(api_key_scheme),
 ):
     """Perform audio language detection inference on one or more audio files"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    # Log incoming request for debugging
+    logger.info(
+        f"Received audio-lang-detection inference request - has_token={credentials is not None and credentials.credentials is not None}, has_api_key={api_key is not None}, path={request.url.path}"
+    )
+    
+    try:
+        ensure_authenticated_for_request(request, credentials, api_key)
+    except HTTPException as e:
+        logger.warning(
+            f"Authentication failed for audio-lang-detection inference: status={e.status_code}, detail={e.detail}, path={request.url.path}"
+        )
+        raise
+    
     import json
 
     body = json.dumps(payload.dict()).encode()
@@ -3064,6 +3076,8 @@ async def audio_lang_detection_inference(
         headers["Authorization"] = f"Bearer {credentials.credentials}"
     if api_key:
         headers["X-API-Key"] = api_key
+    
+    logger.info(f"Proxying audio-lang-detection inference request to service")
     return await proxy_to_service(
         None, "/api/v1/audio-lang-detection/inference", "audio-lang-detection-service", method="POST", body=body, headers=headers
     )
@@ -4334,6 +4348,21 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         timeout_value = 300.0 if service_name == 'llm-service' else 300.0
         final_url = f"{service_url}{path}"
         
+        # Log proxy request details for debugging
+        logger.info(
+            f"Proxying {method} request to {service_name}: {final_url}",
+            extra={
+                "context": {
+                    "method": method,
+                    "path": path,
+                    "service": service_name,
+                    "url": final_url,
+                    "has_body": body is not None,
+                    "body_size": len(body) if body else 0,
+                }
+            }
+        )
+        
         start_time = time.time()
         try:
             response = await http_client.request(
@@ -4347,6 +4376,20 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             )
             
             response_time = time.time() - start_time
+            
+            # Log successful proxy response
+            logger.info(
+                f"Proxy response from {service_name}: {response.status_code} in {response_time:.3f}s",
+                extra={
+                    "context": {
+                        "method": method,
+                        "path": path,
+                        "service": service_name,
+                        "status_code": response.status_code,
+                        "response_time_ms": round(response_time * 1000, 2),
+                    }
+                }
+            )
             
             # Don't log 403 errors here - RequestLoggingMiddleware handles all 400-series errors to avoid duplicates
             
