@@ -1099,7 +1099,11 @@ async def update_service(request: ServiceUpdateRequest):
         await db.close()
 
 async def delete_service_by_uuid(id_str: str) -> int:
-    """Delete service by UUID (id)"""
+    """
+    Delete service by UUID (id).
+    
+    Published services cannot be deleted - they must be unpublished first.
+    """
    
     db: AsyncSession = AppDatabase()
 
@@ -1114,20 +1118,34 @@ async def delete_service_by_uuid(id_str: str) -> int:
         service = result.scalars().first()
 
         if not service:
-            logger.warning(f"Model with UUID {uuid} not found for delete.")
+            logger.warning(f"Service with UUID {uuid} not found for delete.")
             return 0
 
         service_id = service.service_id
+
+        # Check if service is published (cannot delete published services)
+        if service.is_published:
+            logger.warning(
+                f"Cannot delete service {service_id}: Service is currently published"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "kind": "PublishedServiceCannotBeDeleted",
+                    "message": f"Service '{service_id}' cannot be deleted because it is currently published. "
+                               f"Unpublish the service first to delete it."
+                }
+            )
 
         try:
             cache_entry = ServiceCache.get(service_id)
 
             if cache_entry:
-                ModelCache.delete(service_id)
-                logger.info(f"Cache deleted for modelId='{service_id}'")
+                ServiceCache.delete(service_id)
+                logger.info(f"Cache deleted for serviceId='{service_id}'")
 
         except Exception as cache_err:
-            logger.warning(f"ModelCache delete failed for {uuid}: {cache_err}")
+            logger.warning(f"ServiceCache delete failed for {uuid}: {cache_err}")
 
 
         await db.execute(delete(Service).where(Service.id == uuid))
@@ -1136,6 +1154,9 @@ async def delete_service_by_uuid(id_str: str) -> int:
         logger.info(f"DB: Service with ID {uuid} deleted successfully.")
 
         return 1
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception as e:
         await db.rollback()
         logger.exception("Error deleting service from DB.")
