@@ -12,13 +12,12 @@ class LanguagePair(BaseModel):
 
 
 class ServiceUpdateRequest(BaseModel):
+    # Note: serviceId is used only for identifying the service to update
+    # Note: name, modelId, and modelVersion are NOT updatable since service_id is derived from them
     serviceId: str
-    name: Optional[str] = None
     serviceDescription: Optional[str] = None
     hardwareDescription: Optional[str] = None
     publishedOn: Optional[int] = None
-    modelId: Optional[str] = None
-    modelVersion: Optional[str] = None  
     endpoint: Optional[str] = None
     api_key: Optional[str] = None
     languagePair: Optional[LanguagePair] = None

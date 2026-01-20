@@ -1,11 +1,11 @@
 from typing import List, Optional
 
-from .model_create import Task
+from .model_create import TaskResponse
 from .service_view import ServiceResponse
 
 
 class ServiceListResponse(ServiceResponse):
-    task: Task
+    task: TaskResponse  # Use TaskResponse to allow invalid task types from DB
     languages: List[dict]
     modelVersion: Optional[str] = None
     versionStatus: Optional[str] = None
