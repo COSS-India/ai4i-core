@@ -2,17 +2,22 @@
 
 import {
   Box,
+  FormControl,
+  FormLabel,
   Grid,
   GridItem,
   Heading,
+  HStack,
   Progress,
+  Select,
+  Spinner,
   Text,
   useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React from "react";
+import React, { useState, useEffect } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import LoadingSpinner from "../components/common/LoadingSpinner";
 import DualComparison from "../components/llm/DualComparison";
@@ -20,10 +25,11 @@ import LanguageSelector from "../components/llm/LanguageSelector";
 import TextInput from "../components/llm/TextInput";
 import { LLM_SUPPORTED_LANGUAGES } from "../config/constants";
 import { useLLM } from "../hooks/useLLM";
-import { listLLMModels } from "../services/llmService";
+import { listLLMModels, listLLMServices } from "../services/llmService";
 
 const LLMPage: React.FC = () => {
   const toast = useToast();
+  const [serviceId, setServiceId] = useState<string>("");
   const {
     selectedModelId,
     inputLanguage,
@@ -47,7 +53,14 @@ const LLMPage: React.FC = () => {
     setSelectedModelId,
     clearResults,
     swapLanguages,
-  } = useLLM();
+  } = useLLM(serviceId);
+
+  // Fetch available LLM services
+  const { data: llmServices, isLoading: servicesLoading } = useQuery({
+    queryKey: ["llm-services"],
+    queryFn: listLLMServices,
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
 
   // Fetch available LLM models
   const { data: models, isLoading: modelsLoading } = useQuery({
@@ -55,6 +68,15 @@ const LLMPage: React.FC = () => {
     queryFn: listLLMModels,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
+
+  // Auto-select first available LLM service when list loads
+  useEffect(() => {
+    if (!llmServices || llmServices.length === 0) return;
+    if (!serviceId) {
+      // If no service selected, select first available
+      setServiceId(llmServices[0].service_id);
+    }
+  }, [llmServices, serviceId]);
 
   const availableLanguages = LLM_SUPPORTED_LANGUAGES.map((lang) => lang.code);
 
@@ -109,6 +131,62 @@ const LLMPage: React.FC = () => {
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
+                {/* Service Selection */}
+                <FormControl>
+                  <FormLabel fontSize="sm" fontWeight="semibold">
+                    LLM Service:
+                  </FormLabel>
+                  {servicesLoading ? (
+                    <HStack spacing={2} p={2}>
+                      <Spinner size="sm" color="orange.500" />
+                      <Text fontSize="sm" color="gray.600">Loading services...</Text>
+                    </HStack>
+                  ) : (
+                    <Select
+                      value={serviceId}
+                      onChange={(e) => setServiceId(e.target.value)}
+                      placeholder="Select an LLM service"
+                      disabled={fetching}
+                      size="md"
+                      borderColor="gray.300"
+                      _focus={{
+                        borderColor: "orange.400",
+                        boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
+                      }}
+                    >
+                      {llmServices?.map((service) => (
+                        <option key={service.service_id} value={service.service_id}>
+                          {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                  {serviceId && llmServices && (
+                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                      {(() => {
+                        const selectedService = llmServices.find(s => s.service_id === serviceId);
+                        return selectedService ? (
+                          <>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Service ID:</strong> {selectedService.service_id}
+                            </Text>
+                            {selectedService.serviceDescription && (
+                              <Text fontSize="sm" color="gray.700" mb={1}>
+                                <strong>Description:</strong> {selectedService.serviceDescription}
+                              </Text>
+                            )}
+                            {selectedService.supported_languages.length > 0 && (
+                              <Text fontSize="sm" color="gray.700">
+                                <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
+                              </Text>
+                            )}
+                          </>
+                        ) : null;
+                      })()}
+                    </Box>
+                  )}
+                </FormControl>
+
                 {/* Language Selector */}
                 <Box>
                   <LanguageSelector
