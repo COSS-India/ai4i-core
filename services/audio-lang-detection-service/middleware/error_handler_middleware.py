@@ -3,6 +3,8 @@ Global error handler middleware for consistent error responses.
 """
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from middleware.exceptions import (
     AuthenticationError, 
     AuthorizationError, 
@@ -14,6 +16,7 @@ import time
 import traceback
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer("audio-lang-detection-service")
 
 
 def add_error_handlers(app: FastAPI) -> None:
@@ -22,6 +25,20 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthenticationError)
     async def authentication_error_handler(request: Request, exc: AuthenticationError):
         """Handle authentication errors."""
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("auth.operation", "reject_authentication")
+                reject_span.set_attribute("auth.rejected", True)
+                # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
+                reject_span.set_attribute("error.type", "AuthenticationError")
+                reject_span.set_attribute("error.reason", "authentication_failed")
+                reject_span.set_attribute("error.message", exc.message)
+                reject_span.set_attribute("error.code", "AUTHENTICATION_ERROR")
+                reject_span.set_attribute("http.status_code", 401)
+                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+                # Don't record exception here - OpenTelemetry already recorded it
+                # automatically in parent spans when exception was raised
+        
         error_detail = ErrorDetail(
             message=exc.message,
             code="AUTHENTICATION_ERROR",
@@ -35,6 +52,20 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthorizationError)
     async def authorization_error_handler(request: Request, exc: AuthorizationError):
         """Handle authorization errors."""
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("auth.operation", "reject_authorization")
+                reject_span.set_attribute("auth.rejected", True)
+                # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
+                reject_span.set_attribute("error.type", "AuthorizationError")
+                reject_span.set_attribute("error.reason", "authorization_failed")
+                reject_span.set_attribute("error.message", exc.message)
+                reject_span.set_attribute("error.code", "AUTHORIZATION_ERROR")
+                reject_span.set_attribute("http.status_code", 403)
+                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+                # Don't record exception here - OpenTelemetry already recorded it
+                # automatically in parent spans when exception was raised
+        
         error_detail = ErrorDetail(
             message=exc.message,
             code="AUTHORIZATION_ERROR",
@@ -48,6 +79,21 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(RateLimitExceededError)
     async def rate_limit_error_handler(request: Request, exc: RateLimitExceededError):
         """Handle rate limit exceeded errors."""
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("rate_limit.operation", "reject_rate_limit")
+                reject_span.set_attribute("rate_limit.rejected", True)
+                # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
+                reject_span.set_attribute("error.type", "RateLimitExceededError")
+                reject_span.set_attribute("error.reason", "rate_limit_exceeded")
+                reject_span.set_attribute("error.message", exc.message)
+                reject_span.set_attribute("error.code", "RATE_LIMIT_EXCEEDED")
+                reject_span.set_attribute("rate_limit.retry_after", exc.retry_after)
+                reject_span.set_attribute("http.status_code", 429)
+                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+                # Don't record exception here - OpenTelemetry already recorded it
+                # automatically in parent spans when exception was raised
+        
         error_detail = ErrorDetail(
             message=exc.message,
             code="RATE_LIMIT_EXCEEDED",
