@@ -47,6 +47,16 @@ try:
 except ImportError:
     pass  # Will be handled below
 
+# Logging imports
+LOGGING_AVAILABLE = False
+configure_logging = None
+get_logger = None
+try:
+    from ai4icore_logging import configure_logging, get_logger
+    LOGGING_AVAILABLE = True
+except ImportError:
+    pass
+
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
@@ -55,11 +65,28 @@ from middleware.error_handler_middleware import add_error_handlers
 from models import database_models
 from models import auth_models  # Import to ensure auth tables are created
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+# Configure structured logging (to OpenSearch, with correlation IDs)
+if LOGGING_AVAILABLE:
+    configure_logging(
+        service_name=os.getenv("SERVICE_NAME", "ner-service"),
+        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
+    )
+    logger = get_logger(__name__)
+    
+    # Aggressively disable uvicorn access logger BEFORE uvicorn starts
+    # This must happen before uvicorn imports/creates its loggers
+    uvicorn_access = logging.getLogger("uvicorn.access")
+    uvicorn_access.handlers.clear()
+    uvicorn_access.propagate = False
+    uvicorn_access.disabled = True
+    uvicorn_access.setLevel(logging.CRITICAL + 1)  # Set above CRITICAL to ensure nothing logs
+else:
+    # Fallback to standard logging if ai4icore_logging is not available
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO"),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+    logger = logging.getLogger(__name__)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
