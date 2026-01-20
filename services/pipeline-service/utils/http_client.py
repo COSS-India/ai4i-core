@@ -224,6 +224,18 @@ class ServiceClient:
                     span.set_attribute("service.type", "asr")
                     span.set_attribute("span.kind", "client")  # Mark as outgoing client call
                     
+                    # Add request details
+                    if "audio" in request_data:
+                        span.set_attribute("asr.request.audio_count", len(request_data["audio"]))
+                    if "config" in request_data and "serviceId" in request_data["config"]:
+                        span.set_attribute("asr.request.service_id", request_data["config"]["serviceId"])
+                    
+                    # Add event for request start
+                    span.add_event("asr.request.start", {
+                        "url": service_url,
+                        "service": "asr"
+                    })
+                    
                     start_time = time.time()
                     response = await self.client.post(
                         service_url,
@@ -237,6 +249,17 @@ class ServiceClient:
                     
                     response.raise_for_status()
                     result = response.json()
+                    
+                    # Add response details
+                    if "output" in result:
+                        span.set_attribute("asr.response.output_count", len(result["output"]))
+                    
+                    # Add event for request completion
+                    span.add_event("asr.request.complete", {
+                        "status_code": response.status_code,
+                        "duration_ms": elapsed_time * 1000
+                    })
+                    
                     logger.info(f"✅ ASR service completed successfully in {elapsed_time:.2f}s")
                     return result
             else:
@@ -345,6 +368,25 @@ class ServiceClient:
                     span.set_attribute("service.type", "nmt")
                     span.set_attribute("span.kind", "client")  # Mark as outgoing client call
                     
+                    # Add request details
+                    if "input" in request_data:
+                        span.set_attribute("nmt.request.input_count", len(request_data["input"]))
+                    if "config" in request_data:
+                        if "serviceId" in request_data["config"]:
+                            span.set_attribute("nmt.request.service_id", request_data["config"]["serviceId"])
+                        if "language" in request_data["config"]:
+                            lang = request_data["config"]["language"]
+                            if "sourceLanguage" in lang:
+                                span.set_attribute("nmt.request.source_language", lang["sourceLanguage"])
+                            if "targetLanguage" in lang:
+                                span.set_attribute("nmt.request.target_language", lang["targetLanguage"])
+                    
+                    # Add event for request start
+                    span.add_event("nmt.request.start", {
+                        "url": service_url,
+                        "service": "nmt"
+                    })
+                    
                     start_time = time.time()
                     response = await self.client.post(
                         service_url,
@@ -358,6 +400,17 @@ class ServiceClient:
                     
                     response.raise_for_status()
                     result = response.json()
+                    
+                    # Add response details
+                    if "output" in result:
+                        span.set_attribute("nmt.response.output_count", len(result["output"]))
+                    
+                    # Add event for request completion
+                    span.add_event("nmt.request.complete", {
+                        "status_code": response.status_code,
+                        "duration_ms": elapsed_time * 1000
+                    })
+                    
                     logger.info(f"✅ NMT service completed successfully in {elapsed_time:.2f}s")
                     return result
             else:
@@ -466,6 +519,27 @@ class ServiceClient:
                     span.set_attribute("service.type", "tts")
                     span.set_attribute("span.kind", "client")  # Mark as outgoing client call
                     
+                    # Add request details
+                    if "input" in request_data:
+                        span.set_attribute("tts.request.input_count", len(request_data["input"]))
+                    if "config" in request_data:
+                        if "serviceId" in request_data["config"]:
+                            span.set_attribute("tts.request.service_id", request_data["config"]["serviceId"])
+                        if "gender" in request_data["config"]:
+                            span.set_attribute("tts.request.gender", request_data["config"]["gender"])
+                        if "audioFormat" in request_data["config"]:
+                            span.set_attribute("tts.request.audio_format", request_data["config"]["audioFormat"])
+                        if "language" in request_data["config"]:
+                            lang = request_data["config"]["language"]
+                            if "sourceLanguage" in lang:
+                                span.set_attribute("tts.request.language", lang["sourceLanguage"])
+                    
+                    # Add event for request start
+                    span.add_event("tts.request.start", {
+                        "url": service_url,
+                        "service": "tts"
+                    })
+                    
                     start_time = time.time()
                     response = await self.client.post(
                         service_url,
@@ -479,6 +553,17 @@ class ServiceClient:
                     
                     response.raise_for_status()
                     result = response.json()
+                    
+                    # Add response details
+                    if "audio" in result:
+                        span.set_attribute("tts.response.audio_count", len(result["audio"]))
+                    
+                    # Add event for request completion
+                    span.add_event("tts.request.complete", {
+                        "status_code": response.status_code,
+                        "duration_ms": elapsed_time * 1000
+                    })
+                    
                     logger.info(f"✅ TTS service completed successfully in {elapsed_time:.2f}s")
                     return result
             else:

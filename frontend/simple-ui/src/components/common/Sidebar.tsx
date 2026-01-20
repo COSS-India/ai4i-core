@@ -34,6 +34,7 @@ import {
   IoChevronDownOutline,
 } from "react-icons/io5";
 import { useAuth } from "../../hooks/useAuth";
+import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { useFeatureFlag } from "../../hooks/useFeatureFlag";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
@@ -307,6 +308,7 @@ const baseNavItems: NavItem[] = [
 const Sidebar: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading } = useAuth();
+  const { checkSessionExpiry } = useSessionExpiry();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
   const [isMobile] = useMediaQuery("(max-width: 1080px)");
@@ -431,12 +433,9 @@ const Sidebar: React.FC = () => {
                 router.push("/");
                 return;
               }
-              if (requiresAuth && !isAuthenticated) {
-                if (typeof window !== 'undefined') {
-                  sessionStorage.setItem('redirectAfterAuth', item.path);
-                }
-                router.push("/auth");
-                return;
+              // Check session expiry before navigation for authenticated routes
+              if (requiresAuth) {
+                if (!checkSessionExpiry()) return;
               }
               router.push(item.path);
             };
@@ -556,12 +555,9 @@ const Sidebar: React.FC = () => {
                 const handleClick = async (e: React.MouseEvent) => {
                   e.preventDefault();
                   if (isLoading) return;
-                  if (requiresAuth && !isAuthenticated) {
-                    if (typeof window !== 'undefined') {
-                      sessionStorage.setItem('redirectAfterAuth', item.path);
-                    }
-                    router.push("/auth");
-                    return;
+                  // Check session expiry before navigation for authenticated routes
+                  if (requiresAuth) {
+                    if (!checkSessionExpiry()) return;
                   }
                   router.push(item.path);
                 };

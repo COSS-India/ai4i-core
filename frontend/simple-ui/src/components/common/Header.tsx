@@ -17,6 +17,7 @@ import {
 import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../../hooks/useAuth";
+import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import AuthModal from "../auth/AuthModal";
 import ApiKeyViewerModal from "./ApiKeyViewerModal";
 
@@ -28,6 +29,7 @@ const Header: React.FC = () => {
     isLoading: isAuthLoading,
     logout,
   } = useAuth();
+  const { checkSessionExpiry } = useSessionExpiry();
 
   const [isApiKeyViewerOpen, setIsApiKeyViewerOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -36,6 +38,26 @@ const Header: React.FC = () => {
   // Determine if we should show user menu or sign in button
   const showUserMenu =
     !isAuthLoading && isUserAuthenticated && user && user.username;
+
+  // Check session expiry on mount and when user changes
+  useEffect(() => {
+    if (isUserAuthenticated && !isAuthLoading) {
+      checkSessionExpiry();
+    }
+  }, [isUserAuthenticated, isAuthLoading, checkSessionExpiry]);
+
+  // Periodic session expiry check (every 60 seconds)
+  useEffect(() => {
+    if (!isUserAuthenticated || isAuthLoading) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      checkSessionExpiry();
+    }, 60000); // Check every 60 seconds
+
+    return () => clearInterval(intervalId);
+  }, [isUserAuthenticated, isAuthLoading, checkSessionExpiry]);
 
   // Update title based on route
   useEffect(() => {
@@ -173,13 +195,25 @@ const Header: React.FC = () => {
                   size="sm"
                 />
                 <MenuList>
-                  <MenuItem onClick={() => router.push("/profile")}>
+                  <MenuItem onClick={() => {
+                    // Check session expiry before navigating to profile
+                    if (!checkSessionExpiry()) return;
+                    router.push("/profile");
+                  }}>
                     Profile
                   </MenuItem>
-                  {/* <MenuItem onClick={() => setIsApiKeyViewerOpen(true)}>
+                  {/* <MenuItem onClick={() => {
+                    // Check session expiry before opening API Key viewer
+                    if (!checkSessionExpiry()) return;
+                    setIsApiKeyViewerOpen(true);
+                  }}>
                     API Key
                   </MenuItem> */}
-                  <MenuItem onClick={() => logout()}>Sign out</MenuItem>
+                  <MenuItem onClick={async () => {
+                    // Check session expiry before logout
+                    if (!checkSessionExpiry()) return;
+                    await logout();
+                  }}>Sign out</MenuItem>
                 </MenuList>
               </Menu>
             )}

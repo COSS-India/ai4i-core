@@ -118,6 +118,13 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle generic HTTP exceptions."""
+        # Extract context for logging
+        from ai4icore_logging import get_correlation_id
+        correlation_id = get_correlation_id(request)
+        user_id = getattr(request.state, "user_id", None)
+        api_key_id = getattr(request.state, "api_key_id", None)
+        service_id = getattr(request.state, "service_id", None)
+        
         # Record error in Jaeger span (dev code)
         if TRACING_AVAILABLE:
             try:
@@ -127,9 +134,33 @@ def add_error_handlers(app: FastAPI) -> None:
                     current_span.set_attribute("error.code", "HTTP_ERROR")
                     current_span.set_attribute("error.message", str(exc.detail))
                     current_span.set_attribute("http.status_code", exc.status_code)
+                    if service_id:
+                        current_span.set_attribute("asr.service_id", service_id)
+                    if correlation_id:
+                        current_span.set_attribute("correlation.id", correlation_id)
                     current_span.set_status(Status(StatusCode.ERROR, str(exc.detail)))
             except Exception:
                 pass  # Don't fail if tracing fails
+        
+        # Log 500 errors with full context
+        if exc.status_code == 500:
+            logger.error(
+                f"HTTP 500 error in ASR service: {exc.detail}",
+                extra={
+                    "context": {
+                        "error_type": "HTTPException",
+                        "error_message": str(exc.detail),
+                        "status_code": 500,
+                        "service_id": service_id,
+                        "user_id": user_id,
+                        "api_key_id": api_key_id,
+                        "correlation_id": correlation_id,
+                        "path": request.url.path,
+                        "method": request.method,
+                    }
+                },
+                exc_info=True
+            )
         
         # Map status codes to error constants (our changes)
         status_code = exc.status_code
@@ -175,10 +206,14 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
         """Handle unexpected exceptions."""
-        # Log the full error with traceback
-        error_message = str(exc)
-        logger.error(f"Unexpected error: {exc}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        # Extract context for logging
+        from ai4icore_logging import get_correlation_id
+        correlation_id = get_correlation_id(request)
+        user_id = getattr(request.state, "user_id", None)
+        api_key_id = getattr(request.state, "api_key_id", None)
+        service_id = getattr(request.state, "service_id", None)
+        triton_endpoint = getattr(request.state, "triton_endpoint", None)
+        model_name = getattr(request.state, "triton_model_name", None)
         
         # Record error in Jaeger span (dev code)
         if TRACING_AVAILABLE:
@@ -190,10 +225,40 @@ def add_error_handlers(app: FastAPI) -> None:
                     current_span.set_attribute("error.message", str(exc))
                     current_span.set_attribute("error.type", type(exc).__name__)
                     current_span.set_attribute("http.status_code", 500)
+                    if service_id:
+                        current_span.set_attribute("asr.service_id", service_id)
+                    if triton_endpoint:
+                        current_span.set_attribute("triton.endpoint", triton_endpoint)
+                    if model_name:
+                        current_span.set_attribute("triton.model_name", model_name)
+                    if correlation_id:
+                        current_span.set_attribute("correlation.id", correlation_id)
                     current_span.record_exception(exc)
                     current_span.set_status(Status(StatusCode.ERROR, str(exc)))
             except Exception:
                 pass  # Don't fail if tracing fails
+        
+        # Log the full error with traceback and context
+        error_message = str(exc)
+        logger.error(
+            f"Unexpected error in ASR service: {exc}",
+            extra={
+                "context": {
+                    "error_type": type(exc).__name__,
+                    "error_message": error_message,
+                    "status_code": 500,
+                    "service_id": service_id,
+                    "triton_endpoint": triton_endpoint,
+                    "model_name": model_name,
+                    "user_id": user_id,
+                    "api_key_id": api_key_id,
+                    "correlation_id": correlation_id,
+                    "path": request.url.path,
+                    "method": request.method,
+                }
+            },
+            exc_info=True
+        )
         
         # Preserve the actual error message from the exception (our changes)
         error_detail = ErrorDetail(

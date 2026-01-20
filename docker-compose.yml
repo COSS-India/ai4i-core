@@ -306,7 +306,8 @@ services:
       - ENV_FILE=.env
       # Swagger/OpenAPI server URL used in the generated docs
       # Prod: point Swagger to public API Gateway URL
-      - SWAGGER_SERVER_URL=http://core-v1.ai4inclusion.org:8080  
+      - TRY_IT_LIMIT=5
+      - TRY_IT_TTL_SECONDS=3600
     env_file:
       - ./services/api-gateway-service/.env
     depends_on:
@@ -1037,6 +1038,23 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: ai4v-node-exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+    networks:
+      - microservices-network
 
 
   # Telemetry: OpenSearch (for logs)
