@@ -1327,7 +1327,6 @@ class UserRegisterRequest(BaseModel):
     tenant_id: str = Field(..., description="Tenant identifier", example="acme-corp-5d448a")
     email: EmailStr = Field(..., description="User email address")
     username: str = Field(..., min_length=3, max_length=100, description="Username")
-    password: Optional[str] = Field(None, min_length=8, description="User password (if not provided, a random password will be generated)")
     services: List[str] = Field(..., description="List of services the user has access to", example=["tts", "asr"])
     is_approved: bool = Field(False, description="Indicates if the user is approved by tenant admin")
 
@@ -4535,10 +4534,13 @@ async def verify_email(
     headers = build_auth_headers(request, credentials, api_key)
     headers['Content-Type'] = 'application/json'
     query_string = f"?token={token}"
-    return await proxy_to_service(
+
+    
+    return await proxy_to_service_with_params(
         request,
-        f"/email/verify{query_string}",
+        "/email/verify",
         "multi-tenant-service",
+        {"token": token},
         method="GET",
         headers=headers
     )
@@ -4663,6 +4665,29 @@ async def list_services(
         request,
         "/list/services",
         "multi-tenant-service",
+        method="GET",
+        headers=headers
+    )
+
+@app.get("/api/v1/multi-tenant/resolve-tenant-from-user/{user_id}", tags=["Multi-Tenant"])
+async def resolve_tenant_from_user(
+    user_id: int,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Resolve tenant context from user_id.
+    Used by services to get tenant schema information for routing.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    return await proxy_to_service_with_params(
+        request,
+        f"/resolve/tenant/from/user",
+        "multi-tenant-service",
+        {"user_id": user_id},
         method="GET",
         headers=headers
     )

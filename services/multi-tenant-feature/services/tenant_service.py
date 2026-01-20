@@ -6,6 +6,9 @@ from sqlalchemy import insert , select , update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError , NoResultFound
 
+import os
+import httpx
+
 from utils.utils import (
     generate_tenant_id,
     generate_subdomain,
@@ -43,13 +46,14 @@ from services.email_service import send_welcome_email, send_verification_email ,
 
 from logger import logger
 from uuid import UUID
-import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
 EMAIL_VERIFICATION_LINK = str(os.getenv("EMAIL_VERIFICATION_LINK",""))
 DB_NAME                 = str(os.getenv("APP_DB_NAME", "multi_tenant_db"))
+API_GATEWAY_URL        = str(os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080"))
+API_GATEWAY_TIMEOUT       = float(os.getenv("API_GATEWAY_TIMEOUT", "10"))
 
 
 # Service to table mapping - maps service names to their corresponding table names (__tablename__)
@@ -626,29 +630,28 @@ async def create_new_tenant(
         "user_id": None,                           # Will be set upon email verification
     }
 
-    # Validate services are active TODO: Implement if service deactivation is supported
-    # services = await tenant_db.scalars(
-    #     select(ServiceConfig).where(
-    #         ServiceConfig.service_name.in_(requested_services),
-    #         ServiceConfig.is_active.is_(True),
-    #     )
-    # )
-    # services = services.all()
+    # Validate services are active
+    services = await db.scalars(
+        select(ServiceConfig).where(
+            ServiceConfig.service_name.in_(tenant_data.get("subscriptions", [])),
+            ServiceConfig.is_active.is_(True),
+        )
+    )
+    services = services.all()
+
+    requested_services = {s.value for s in tenant_data.get("subscriptions", [])}
 
     # Extract service names that are valid & active
-    # active_service_names = {service.service_name for service in services}
+    active_service_names = {service.service_name for service in services}
     
-    # # Find missing or inactive services
-    # invalid_or_inactive_services = set(tenant_data.get("subscriptions", [])) - set(active_service_names)
+    # Find missing or inactive services
+    invalid_or_inactive_services = set(requested_services) - set(active_service_names)
     
-    # if invalid_or_inactive_services:
-    #     raise HTTPException(
-    #         status_code=400,
-    #         detail={
-    #             "message": "One or more services are invalid or inactive",
-    #             "invalid_services": list(invalid_or_inactive_services),
-    #         },
-    #     )
+    if invalid_or_inactive_services:
+        raise HTTPException(
+            status_code=400,
+            detail=f"One or more services are invalid or inactive {list(invalid_or_inactive_services)}",
+        )
     
     stmt = insert(Tenant).values(**tenant_data).returning(Tenant)
     result = await db.execute(stmt)
@@ -751,21 +754,59 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
 
     admin_username = f"admin@{tenant.tenant_id}"
     plain_password = generate_random_password(length = 8)
-    # logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id}")
+
+    # TODO: Add logging for password generation , Remove once done testing
+    # logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+
+    # Store temp credentials on tenant for email / audit purposes
     hashed_password = hash_password(plain_password)
 
     tenant.temp_admin_username = admin_username
     tenant.temp_admin_password_hash = hashed_password
-    
-    admin_user = UserDB(
-            email=tenant.contact_email,
-            username=admin_username,
-            hashed_password=hashed_password,
-            is_active=True,
-            is_verified=True,
-        )
-    auth_db.add(admin_user)
 
+    # Create tenant admin user in auth-service via /api/v1/auth/register
+    try:
+        async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
+            auth_response = await client.post(
+                f"{API_GATEWAY_URL}/api/v1/auth/register",
+                json={
+                    "email": tenant.contact_email,
+                    "username": admin_username,
+                    "password": plain_password,
+                    "confirm_password": plain_password,
+                    "full_name": tenant.organization_name,
+                    "phone_number": None,
+                    "timezone": "UTC",
+                    "language": "en",
+                    "is_tenant": True,
+                },
+            )
+    except httpx.RequestError as e:
+        logger.error(f"Failed to call auth-service for tenant admin registration: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication service unavailable while creating tenant admin user",
+        )
+
+    if auth_response.status_code != 201:
+        logger.error(
+            f"Auth-service /api/v1/auth/register failed for tenant {tenant.tenant_id}: "
+            f"status={auth_response.status_code}, body={auth_response.text}"
+        )
+        
+        raise HTTPException(
+            status_code=auth_response.status_code,
+            detail=auth_response.json() if auth_response.headers.get("content-type", "").startswith("application/json") else auth_response.text,
+        )
+
+    auth_user = auth_response.json()
+    admin_user_id = auth_user.get("id")
+    if not admin_user_id:
+        logger.error(f"Auth-service did not return user id for tenant admin {tenant.tenant_id}: {auth_user}")
+        raise HTTPException(
+            status_code=500,
+            detail="Authentication service response missing user id for tenant admin",
+        )
 
     audit = AuditLog(
         tenant_id=tenant.id,
@@ -780,19 +821,8 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     )
     tenant_db.add(audit)
 
-    try:
-        await auth_db.commit()
-    except IntegrityError as e:
-        logger.error(f"Integrity error while committing admin user to auth_db for tenant {tenant.tenant_id}: {e}")
-        await auth_db.rollback()
-        raise HTTPException(status_code=409, detail="Failed to create admin user")
-    except Exception as e:
-        logger.exception(f"Error committing admin user to auth_db: {e}")
-        await auth_db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to create admin user in authentication database")
-    
-    # Insert user_id into tenant
-    tenant.user_id = admin_user.id
+    # Insert user_id from auth-service into tenant
+    tenant.user_id = admin_user_id
 
     try:
         await tenant_db.commit()
@@ -1319,32 +1349,56 @@ async def register_user(
     if existing_tenant_user:
         raise HTTPException(status_code=409,detail="User already registered under this tenant")
 
-    # Generate / hash password
-    plain_password = payload.password or generate_random_password(length=12)
-    hashed_password = hash_password(plain_password)
+    # Generate password (if not provided). Hashing is handled by auth-service.
+    plain_password = generate_random_password(length=12)
 
-    # Create user in AUTH DB
-    user = UserDB(
-        email=payload.email,
-        username=payload.username,
-        hashed_password=hashed_password,
-        is_active=True,
-        is_verified=True,
-    )
-
+    # Create user in AUTH-SERVICE via /api/v1/auth/register
     try:
-        auth_db.add(user)
-        await auth_db.commit()
-        await auth_db.refresh(user)
-    except Exception as e:
-        await auth_db.rollback()
-        logger.error(f"Failed to create user in auth DB: {e}")
-        raise HTTPException(status_code=409, detail="User already exists")
+        async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
+            auth_response = await client.post(
+                f"{API_GATEWAY_URL}/api/v1/auth/register",
+                json={
+                    "email": payload.email,
+                    "username": payload.username,
+                    "password": plain_password,
+                    "confirm_password": plain_password,
+                    "full_name": None,
+                    "phone_number": None,
+                    "timezone": "UTC",
+                    "language": "en",
+                    "is_tenant": False,
+                },
+            )
+    except httpx.RequestError as e:
+        logger.error(f"Failed to call auth-service for tenant user registration: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication service unavailable while creating tenant user",
+        )
+
+    if auth_response.status_code != 201:
+        logger.error(
+            f"Auth-service /api/v1/auth/register failed for tenant user {payload.username} "
+            f"under tenant {tenant.tenant_id}: status={auth_response.status_code}, body={auth_response.text}"
+        )
+        raise HTTPException(
+            status_code=auth_response.status_code,
+            detail=auth_response.json() if auth_response.headers.get("content-type", "").startswith("application/json") else auth_response.text,
+        )
+
+    auth_user = auth_response.json()
+    user_id = auth_user.get("id")
+    if not user_id:
+        logger.error(f"Auth-service did not return user id for tenant user {payload.username}: {auth_user}")
+        raise HTTPException(
+            status_code=500,
+            detail="Authentication service response missing user id for tenant user",
+        )
     
     if payload.is_approved:
         #Create TenantUser entry only if user is approved
         tenant_user = TenantUser(
-                user_id=user.id,
+                user_id=user_id,
                 tenant_uuid=tenant.id,
                 tenant_id=tenant.tenant_id,
                 username=payload.username,
@@ -1402,7 +1456,7 @@ async def register_user(
 
     background_tasks.add_task(
         send_user_welcome_email,
-        user.id,
+        user_id,
         payload.email,
         None,  # add subdomain if required
         payload.username,
@@ -1414,12 +1468,12 @@ async def register_user(
     )
 
     response = UserRegisterResponse(
-        user_id=user.id,
+        user_id=user_id,
         tenant_id=tenant.tenant_id,
-        username=user.username,
-        email=user.email,
+        username=payload.username,
+        email=payload.email,
         services=list(requested_services),
-        created_at=user.created_at,
+        created_at=datetime.utcnow(),
     )
 
     return response
