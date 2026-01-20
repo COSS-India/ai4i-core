@@ -5043,7 +5043,7 @@ async def proxy_request(request: Request, path: str):
                     if select_span:
                         select_span.set_attribute("gateway.service", service_name)
                         select_span.set_attribute("gateway.load_balancer_available", load_balancer is not None)
-                    
+
                     # Fallback to direct service URLs if load_balancer is not available
                     if load_balancer is None:
                         if select_span:
@@ -5051,10 +5051,10 @@ async def proxy_request(request: Request, path: str):
                             select_span.set_status(Status(StatusCode.OK))
                         logger.debug(f"Using direct service URL fallback for {service_name}")
                         return await proxy_to_service(request, f"/{path}", service_name)
-                    
+
                     # Select healthy instance
                     instance_info = await load_balancer.select_instance(service_name)
-                    
+
                     if not instance_info:
                         if select_span:
                             select_span.set_attribute("gateway.selection_result", "no_healthy_instances")
