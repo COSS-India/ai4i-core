@@ -586,6 +586,7 @@ async def delete_model_by_uuid(id_str: str) -> int:
     Delete model by internal UUID (id).
     
     Model versions associated with published services are immutable and cannot be deleted.
+    Unpublished services associated with the model version will be automatically deleted.
     """
 
     db: AsyncSession = AppDatabase()
@@ -628,6 +629,41 @@ async def delete_model_by_uuid(id_str: str) -> int:
                 }
             )
 
+        # ---- Delete unpublished services associated with this model version ----
+        # Find unpublished services to clear their cache entries
+        unpublished_services_result = await db.execute(
+            select(Service.service_id).where(
+                Service.model_id == model_id,
+                Service.model_version == model_version,
+                Service.is_published == False
+            )
+        )
+        unpublished_service_ids = [row[0] for row in unpublished_services_result.fetchall()]
+        
+        if unpublished_service_ids:
+            # Clear cache for unpublished services
+            for service_id in unpublished_service_ids:
+                try:
+                    cache_entry = ServiceCache.get(service_id)
+                    if cache_entry:
+                        ServiceCache.delete(service_id)
+                        logger.info(f"Cache deleted for serviceId='{service_id}'")
+                except Exception as cache_err:
+                    logger.warning(f"ServiceCache delete failed for {service_id}: {cache_err}")
+            
+            # Delete unpublished services from DB
+            await db.execute(
+                delete(Service).where(
+                    Service.model_id == model_id,
+                    Service.model_version == model_version,
+                    Service.is_published == False
+                )
+            )
+            logger.info(
+                f"Deleted {len(unpublished_service_ids)} unpublished service(s) associated with "
+                f"model {model_id} v{model_version}: {unpublished_service_ids}"
+            )
+
         # ---- Delete from Cache ----
         try:
             cache_entry = ModelCache.get(model_id)
@@ -646,6 +682,9 @@ async def delete_model_by_uuid(id_str: str) -> int:
         logger.info(f"DB: Model with ID {uuid} deleted successfully.")
 
         return 1
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception as e:
         await db.rollback()
         logger.exception("Error deleting model from DB.")
