@@ -1247,8 +1247,8 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
             "submitter": model.submitter,
         }
         
-        # Create ModelCreateRequest using model_validate to allow extra fields
-        model_payload = ModelCreateRequest.model_validate(model_payload_dict)
+        # Create ModelCreateRequest using model_construct to skip validation (data already exists in DB)
+        model_payload = ModelCreateRequest.model_construct(**model_payload_dict)
         # 3. API Key + Usage — COMMENTED OUT FOR NOW
         # api_keys = []
         # total_usage = 0
