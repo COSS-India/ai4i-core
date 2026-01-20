@@ -267,24 +267,8 @@ def add_error_handlers(app: FastAPI) -> None:
         if correlation_id:
             log_context["correlation_id"] = correlation_id
         
-        # Log with WARNING level to match RequestLoggingMiddleware for 4xx errors
-        # Format: "{method} {path} - {status_code} - {duration}s" (same as RequestLoggingMiddleware)
-        # This ensures 422 errors appear in OpenSearch with the same format as 401/403
-        # 
-        # IMPORTANT: This MUST log because FastAPI's RequestValidationError happens
-        # during body parsing, BEFORE the route handler, and the response from this
-        # exception handler might not go through RequestLoggingMiddleware properly.
-        try:
-            logger.warning(
-                f"{method} {path} - 422 - {processing_time:.3f}s",
-                extra={"context": log_context}
-            )
-        except Exception as log_exc:
-            # Fallback: If structured logging fails, use basic logging
-            logging.warning(
-                f"422 Validation Error: {method} {path} - {full_message}",
-                exc_info=log_exc
-            )
+        # Don't log 422 errors here - they are logged at API Gateway level to avoid duplicates
+        # The response will be logged by the gateway when it receives the 422 status code
         
         error_detail = ErrorDetail(
             message="Validation error",

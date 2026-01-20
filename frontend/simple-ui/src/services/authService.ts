@@ -153,6 +153,8 @@ class AuthService {
     } else {
       sessionStorage.setItem('access_token', token);
     }
+    // Store login timestamp for session expiry tracking (24 hours)
+    this.setLoginTimestamp();
   }
 
   public getRefreshToken(): string | null {
@@ -183,6 +185,8 @@ class AuthService {
     sessionStorage.removeItem('access_token');
     sessionStorage.removeItem('refresh_token');
     localStorage.removeItem('remember_me');
+    localStorage.removeItem('login_timestamp');
+    sessionStorage.removeItem('login_timestamp');
   }
 
   public clearAuthTokens(): void {
@@ -597,7 +601,117 @@ class AuthService {
     sessionStorage.removeItem('user');
   }
 
-  // Auto-refresh token
+  // Token expiry checking and proactive refresh
+  /**
+   * Decode JWT token payload
+   */
+  private decodeToken(token: string): any | null {
+    try {
+      // JWT has 3 parts: header.payload.signature
+      const parts = token.split('.');
+      if (parts.length !== 3) {
+        return null;
+      }
+      
+      // Decode the payload (second part)
+      const payload = parts[1];
+      const decoded = atob(payload);
+      return JSON.parse(decoded);
+    } catch (error) {
+      console.error('Failed to decode token:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get token expiration time in milliseconds
+   */
+  public getTokenExpiry(): number | null {
+    const token = this.getAccessToken();
+    if (!token) {
+      return null;
+    }
+
+    const payload = this.decodeToken(token);
+    if (!payload || !payload.exp) {
+      return null;
+    }
+
+    // JWT exp is in seconds, convert to milliseconds
+    return payload.exp * 1000;
+  }
+
+  /**
+   * Check if token is expired
+   */
+  public isTokenExpired(): boolean {
+    const expiry = this.getTokenExpiry();
+    if (!expiry) {
+      return true; // If we can't get expiry, assume expired
+    }
+
+    return Date.now() >= expiry;
+  }
+
+  /**
+   * Check if token is expiring soon (within threshold)
+   * @param thresholdMinutes - Minutes before expiry to consider "expiring soon" (default: 5)
+   */
+  public isTokenExpiringSoon(thresholdMinutes: number = 5): boolean {
+    const expiry = this.getTokenExpiry();
+    if (!expiry) {
+      return true; // If we can't get expiry, assume expiring soon
+    }
+
+    const thresholdMs = thresholdMinutes * 60 * 1000;
+    const timeUntilExpiry = expiry - Date.now();
+    
+    return timeUntilExpiry < thresholdMs;
+  }
+
+  /**
+   * Get time until token expiry in milliseconds
+   */
+  public getTimeUntilExpiry(): number | null {
+    const expiry = this.getTokenExpiry();
+    if (!expiry) {
+      return null;
+    }
+
+    return expiry - Date.now();
+  }
+
+  /**
+   * Proactively refresh token if it's expiring soon
+   * @param thresholdMinutes - Refresh if token expires within this many minutes (default: 5)
+   * @returns true if token is valid (either not expiring or successfully refreshed), false otherwise
+   */
+  public async refreshIfExpiringSoon(thresholdMinutes: number = 5): Promise<boolean> {
+    if (!this.isAuthenticated()) {
+      return false;
+    }
+
+    // Check if token is expiring soon
+    if (!this.isTokenExpiringSoon(thresholdMinutes)) {
+      // Token is still valid for a while
+      return true;
+    }
+
+    // Token is expiring soon or expired, try to refresh
+    console.log('Token is expiring soon, attempting proactive refresh...');
+    
+    try {
+      await this.refreshToken();
+      console.log('Token refreshed successfully');
+      return true;
+    } catch (error) {
+      console.error('Failed to refresh token:', error);
+      // Don't clear tokens here - let the 401 handler deal with it
+      return false;
+    }
+  }
+
+  // Auto-refresh token (legacy method, kept for compatibility)
   async ensureValidToken(): Promise<boolean> {
     if (!this.isAuthenticated()) {
       return false;
@@ -618,6 +732,62 @@ class AuthService {
         return false;
       }
     }
+  }
+
+  // Session expiry tracking (24 hours)
+  /**
+   * Store the login timestamp
+   */
+  private setLoginTimestamp(): void {
+    if (typeof window === 'undefined') return;
+    const timestamp = Date.now().toString();
+    const rememberMe = localStorage.getItem('remember_me') === 'true';
+    // Clear from both storages first
+    localStorage.removeItem('login_timestamp');
+    sessionStorage.removeItem('login_timestamp');
+    // Store in appropriate storage
+    if (rememberMe) {
+      localStorage.setItem('login_timestamp', timestamp);
+    } else {
+      sessionStorage.setItem('login_timestamp', timestamp);
+    }
+  }
+
+  /**
+   * Get the login timestamp
+   */
+  public getLoginTimestamp(): number | null {
+    if (typeof window === 'undefined') return null;
+    const timestampStr = localStorage.getItem('login_timestamp') || sessionStorage.getItem('login_timestamp');
+    return timestampStr ? parseInt(timestampStr, 10) : null;
+  }
+
+  /**
+   * Check if the session has expired (24 hours)
+   */
+  public isSessionExpired(): boolean {
+    const loginTimestamp = this.getLoginTimestamp();
+    if (!loginTimestamp) {
+      // No timestamp found, consider expired
+      return true;
+    }
+    const now = Date.now();
+    const twentyFourHoursInMs = 24 * 60 * 60 * 1000; // 24 hours
+    return (now - loginTimestamp) >= twentyFourHoursInMs;
+  }
+
+  /**
+   * Get time remaining until session expiry in milliseconds
+   */
+  public getTimeUntilSessionExpiry(): number | null {
+    const loginTimestamp = this.getLoginTimestamp();
+    if (!loginTimestamp) {
+      return null;
+    }
+    const now = Date.now();
+    const twentyFourHoursInMs = 24 * 60 * 60 * 1000;
+    const timeRemaining = twentyFourHoursInMs - (now - loginTimestamp);
+    return timeRemaining > 0 ? timeRemaining : 0;
   }
 }
 

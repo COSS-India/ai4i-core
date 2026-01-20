@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, Request, HTTPException, Depends, status, Query
+from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import RedirectResponse
@@ -63,6 +64,23 @@ app = FastAPI(
     version="1.0.0",
     description="Identity management and access control for microservices"
 )
+
+# Override OpenAPI server URL for Swagger UI (e.g., localhost)
+swagger_server_url = os.getenv("SWAGGER_SERVER_URL")
+if swagger_server_url:
+    def custom_openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+        openapi_schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+            servers=[{"url": swagger_server_url}],
+        )
+        app.openapi_schema = openapi_schema
+        return app.openapi_schema
+    app.openapi = custom_openapi
 
 # Add CORS middleware
 app.add_middleware(
@@ -632,14 +650,36 @@ async def login(
     user.last_login = now
     
     await db.commit()
+    # Refresh to avoid expired attributes after commit (async DB)
+    await db.refresh(user)
     
     logger.info(f"User logged in: {user.email}")
+
+    # Build user response with roles (same shape as /auth/me)
+    user_dict = {
+        "id": user.id,
+        "email": user.email,
+        "username": user.username,
+        "full_name": user.full_name,
+        "phone_number": user.phone_number,
+        "timezone": user.timezone,
+        "language": user.language,
+        "is_active": user.is_active,
+        "is_verified": user.is_verified,
+        "is_superuser": user.is_superuser,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at,
+        "last_login": user.last_login,
+        "avatar_url": user.avatar_url,
+        "roles": user_roles,
+    }
     
     return LoginResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         token_type="bearer",
-        expires_in=int(access_token_expires.total_seconds())
+        expires_in=int(access_token_expires.total_seconds()),
+        user=user_dict,
     )
 
 @app.post("/api/v1/auth/refresh", response_model=TokenRefreshResponse)
@@ -1076,6 +1116,13 @@ async def create_api_key(
         
         target_user_id = api_key_data.user_id
     
+    # Expand permissions if pipeline.inference is selected
+    requested_permissions = list(api_key_data.permissions or [])
+    if "pipeline.inference" in requested_permissions:
+        for perm in ["asr.inference", "nmt.inference", "tts.inference"]:
+            if perm not in requested_permissions:
+                requested_permissions.append(perm)
+
     # Generate API key
     api_key_value = AuthUtils.generate_api_key()
     api_key_hash = AuthUtils.hash_api_key(api_key_value)
@@ -1092,7 +1139,7 @@ async def create_api_key(
         key_name=api_key_data.key_name,
         key_hash=api_key_hash,
         key_value_encrypted=api_key_encrypted,
-        permissions=api_key_data.permissions,
+        permissions=requested_permissions,
         expires_at=expires_at
     )
     
@@ -1248,7 +1295,12 @@ async def update_api_key(
     if update_data.key_name is not None:
         api_key.key_name = update_data.key_name
     if update_data.permissions is not None:
-        api_key.permissions = update_data.permissions
+        updated_permissions = list(update_data.permissions or [])
+        if "pipeline.inference" in updated_permissions:
+            for perm in ["asr.inference", "nmt.inference", "tts.inference"]:
+                if perm not in updated_permissions:
+                    updated_permissions.append(perm)
+        api_key.permissions = updated_permissions
     # Allow toggling active status (soft-enable/soft-disable)
     if update_data.is_active is not None:
         api_key.is_active = update_data.is_active
