@@ -648,6 +648,11 @@ class AudioLangDetectionInferenceResponse(BaseModel):
     output: List[AudioLangDetectionOutput] = Field(..., description="List of audio language detection results (one per audio input)")
     config: Optional[AudioLangDetectionResponseConfig] = Field(None, description="Response configuration metadata")
 
+class TryItRequest(BaseModel):
+    """Try-It request wrapper for anonymous access."""
+    service_name: str = Field(..., description="Target service name for Try-It (e.g., 'nmt')")
+    payload: Dict[str, Any] = Field(..., description="Service request payload")
+
 class StreamingInfo(BaseModel):
     """Streaming service information."""
     endpoint: str = Field(..., description="WebSocket endpoint URL")
@@ -1757,6 +1762,30 @@ def build_auth_headers(request: Request, credentials: Optional[HTTPAuthorization
     
     return headers
 
+def _get_try_it_key(request: Request) -> str:
+    session_id = request.headers.get("X-Anonymous-Session-Id") or request.headers.get("x-anonymous-session-id")
+    if session_id:
+        return f"tryit:nmt:session:{session_id}"
+    client_ip = request.client.host if request.client else "unknown"
+    return f"tryit:nmt:ip:{client_ip}"
+
+async def _increment_try_it_count(key: str) -> int:
+    # Prefer Redis if available
+    if redis_client:
+        count = await redis_client.incr(key)
+        if count == 1:
+            await redis_client.expire(key, TRY_IT_TTL_SECONDS)
+        return int(count)
+
+    # Fallback: in-memory counter with TTL
+    now = time.time()
+    entry = try_it_counters.get(key)
+    if not entry or (now - entry["started_at"] > TRY_IT_TTL_SECONDS):
+        entry = {"count": 0, "started_at": now}
+    entry["count"] += 1
+    try_it_counters[key] = entry
+    return entry["count"]
+
 async def ensure_authenticated_for_request(req: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> None:
     """Enforce authentication - require BOTH Bearer token AND API key for all services."""
     requires_both = requires_both_auth_and_api_key(req)
@@ -1948,6 +1977,11 @@ service_registry = None
 load_balancer = None
 route_manager = None
 health_monitor_task = None
+
+# Try-It anonymous access controls
+TRY_IT_LIMIT = int(os.environ["TRY_IT_LIMIT"])
+TRY_IT_TTL_SECONDS = int(os.environ["TRY_IT_TTL_SECONDS"])
+try_it_counters: Dict[str, Dict[str, Any]] = {}
 
 # Utility functions
 def generate_correlation_id() -> str:
@@ -3066,6 +3100,39 @@ async def audio_lang_detection_inference(
         headers["X-API-Key"] = api_key
     return await proxy_to_service(
         None, "/api/v1/audio-lang-detection/inference", "audio-lang-detection-service", method="POST", body=body, headers=headers
+    )
+
+# Try-It endpoint (anonymous access for NMT only)
+@app.post("/api/v1/try-it", response_model=Dict[str, Any], tags=["Try It"])
+async def try_it_inference(
+    payload: TryItRequest,
+    request: Request,
+):
+    """Anonymous Try-It access. Only NMT is allowed; others require login."""
+    service_name = payload.service_name.strip().lower()
+    if service_name not in {"nmt", "nmt-service"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Please login to access other services."
+        )
+
+    key = _get_try_it_key(request)
+    count = await _increment_try_it_count(key)
+    if count > TRY_IT_LIMIT:
+        raise HTTPException(
+            status_code=403,
+            detail="Please login to access other services."
+        )
+
+    import json
+    body = json.dumps(payload.payload).encode()
+    return await proxy_to_service(
+        None,
+        "/api/v1/nmt/inference",
+        "nmt-service",
+        method="POST",
+        body=body,
+        headers={"X-Try-It": "true"},
     )
 
 # NMT Service Endpoints (Proxy to NMT Service)
