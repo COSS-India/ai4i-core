@@ -61,8 +61,6 @@ cp services/telemetry-service/env.template services/telemetry-service/.env
 cp frontend/simple-ui/env.template frontend/simple-ui/.env
 ```
 
-**Tip:** You can run all the service environment copy commands at once by copying the entire block above.
-
 **Note:** You can edit these `.env` files if you need to customize settings, but the defaults should work for initial setup.
 
 ## Step 3: Start All Services
