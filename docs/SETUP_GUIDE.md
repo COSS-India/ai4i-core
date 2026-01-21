@@ -63,17 +63,38 @@ cp frontend/simple-ui/env.template frontend/simple-ui/.env
 
 **Tip:** You can run all the service environment copy commands at once by copying the entire block above.
 
-**Note:** You can edit these `.env` files if you need to customize settings, but the defaults should work for initial setup. Not all services need to be started for basic functionality - see Step 3 for minimum required services.
+**Note:** You can edit these `.env` files if you need to customize settings, but the defaults should work for initial setup.
 
 ## Step 3: Start All Services
 
 Start all services using Docker Compose. This will automatically start all required infrastructure (PostgreSQL, Redis, etc.):
 
 ```bash
-docker compose up -d api-gateway-service auth-service config-service asr-service tts-service nmt-service pipeline-service simple-ui-frontend
+docker compose up -d \
+  api-gateway-service \
+  auth-service \
+  config-service \
+  model-management-service \
+  asr-service \
+  tts-service \
+  nmt-service \
+  llm-service \
+  transliteration-service \
+  ocr-service \
+  ner-service \
+  language-detection-service \
+  language-diarization-service \
+  audio-lang-detection-service \
+  speaker-diarization-service \
+  pipeline-service \
+  metrics-service \
+  telemetry-service \
+  alerting-service \
+  dashboard-service \
+  simple-ui-frontend
 ```
 
-**Note:** The first time you run this, Docker will build the images, which may take 5-10 minutes. Subsequent starts will be much faster.
+**Note:** The first time you run this, Docker will build the images, which may take 20-40 minutes depending on your machine and network speed. Subsequent starts will be much faster.
 
 Wait for all services to be healthy (check with `docker compose ps`).
 
