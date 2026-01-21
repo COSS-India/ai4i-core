@@ -1,5 +1,7 @@
 /**
- * Hook for checking and handling session expiry (24 hours)
+ * Hook for checking and handling session expiry
+ * - 7 days if remember_me is true
+ * - 24 hours if remember_me is false
  */
 import { useCallback } from 'react';
 import { useRouter } from 'next/router';
@@ -37,16 +39,22 @@ export const useSessionExpiry = () => {
       return false;
     }
 
-    // Check if session has expired (24 hours)
+    // Check if session has expired (24 hours or 7 days depending on remember_me)
     if (authService.isSessionExpired()) {
       // Clear tokens and user data
       authService.clearAuthTokens();
       authService.clearStoredUser();
 
+      // Get remember_me setting for appropriate message
+      const rememberMe = typeof window !== 'undefined' 
+        ? localStorage.getItem('remember_me') === 'true' 
+        : false;
+      const sessionDuration = rememberMe ? '7 days' : '24 hours';
+
       // Show toast notification
       toast({
         title: 'Session Expired',
-        description: 'Your session has expired after 24 hours. Please log in again.',
+        description: `Your session has expired after ${sessionDuration}. Please log in again.`,
         status: 'warning',
         duration: 5000,
         isClosable: true,

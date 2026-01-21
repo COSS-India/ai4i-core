@@ -153,7 +153,7 @@ class AuthService {
     } else {
       sessionStorage.setItem('access_token', token);
     }
-    // Store login timestamp for session expiry tracking (24 hours)
+    // Store login timestamp for session expiry tracking (7 days if remember_me, else 24 hours)
     this.setLoginTimestamp();
   }
 
@@ -734,7 +734,7 @@ class AuthService {
     }
   }
 
-  // Session expiry tracking (24 hours)
+  // Session expiry tracking (7 days if remember_me, else 24 hours)
   /**
    * Store the login timestamp
    */
@@ -763,7 +763,9 @@ class AuthService {
   }
 
   /**
-   * Check if the session has expired (24 hours)
+   * Check if the session has expired
+   * - 7 days if remember_me is true
+   * - 24 hours if remember_me is false
    */
   public isSessionExpired(): boolean {
     const loginTimestamp = this.getLoginTimestamp();
@@ -772,12 +774,17 @@ class AuthService {
       return true;
     }
     const now = Date.now();
-    const twentyFourHoursInMs = 24 * 60 * 60 * 1000; // 24 hours
-    return (now - loginTimestamp) >= twentyFourHoursInMs;
+    const rememberMe = localStorage.getItem('remember_me') === 'true';
+    const sessionDurationMs = rememberMe 
+      ? 7 * 24 * 60 * 60 * 1000  // 7 days
+      : 24 * 60 * 60 * 1000;      // 24 hours
+    return (now - loginTimestamp) >= sessionDurationMs;
   }
 
   /**
    * Get time remaining until session expiry in milliseconds
+   * - 7 days if remember_me is true
+   * - 24 hours if remember_me is false
    */
   public getTimeUntilSessionExpiry(): number | null {
     const loginTimestamp = this.getLoginTimestamp();
@@ -785,8 +792,11 @@ class AuthService {
       return null;
     }
     const now = Date.now();
-    const twentyFourHoursInMs = 24 * 60 * 60 * 1000;
-    const timeRemaining = twentyFourHoursInMs - (now - loginTimestamp);
+    const rememberMe = localStorage.getItem('remember_me') === 'true';
+    const sessionDurationMs = rememberMe 
+      ? 7 * 24 * 60 * 60 * 1000  // 7 days
+      : 24 * 60 * 60 * 1000;      // 24 hours
+    const timeRemaining = sessionDurationMs - (now - loginTimestamp);
     return timeRemaining > 0 ? timeRemaining : 0;
   }
 }
