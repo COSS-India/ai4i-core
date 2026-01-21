@@ -11,18 +11,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy AI4ICore Observability Plugin
+# Copy AI4ICore plugins from monorepo
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
-
-# Copy AI4ICore Model Management Plugin
+COPY libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
 # Copy requirements and install Python dependencies
 COPY services/audio-lang-detection-service/requirements.txt .
 # Set pip timeout via environment variable (default is 15 seconds, increase to 300)
 ENV PIP_DEFAULT_TIMEOUT=300
+RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir --user -r requirements.txt
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
 
 
@@ -49,10 +52,10 @@ ENV PATH="/home/app/.local/bin:$PATH"
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
 
-# Copy AI4ICore Observability Plugin
+# Copy AI4ICore plugins
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
-
-# Copy AI4ICore Model Management Plugin
+COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
 # Copy application code
@@ -73,5 +76,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8096/health || exit 1
 
 # Run the application
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8096"]
+# Disable uvicorn access logs since we use RequestLoggingMiddleware with trace_id
+ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8096", "--no-access-log"]
 
