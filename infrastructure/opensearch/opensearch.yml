@@ -2,5 +2,44 @@ cluster.name: docker-cluster
 network.host: 0.0.0.0
 discovery.type: single-node
 
-# Disable security plugin
-plugins.security.disabled: true
+######## Start OpenSearch Security Demo Configuration ########
+# WARNING: This uses demo certificates - DO NOT use in production!
+# For local RBAC testing only
+
+# Enable security plugin for RBAC (local testing with demo certificates)
+plugins.security.disabled: false
+
+# Allow unsafe demo certificates (required for local testing)
+plugins.security.allow_unsafe_democertificates: true
+plugins.security.allow_default_init_securityindex: true
+
+# Admin DN configuration
+plugins.security.authcz.admin_dn:
+  - CN=kirk,OU=client,O=client,L=test, C=de
+
+# Enable snapshot/restore privileges
+plugins.security.enable_snapshot_restore_privilege: true
+
+# Enable REST API roles for role management
+plugins.security.restapi.roles_enabled: ["all_access", "security_rest_api_access"]
+
+# System indices configuration
+plugins.security.system_indices.enabled: true
+plugins.security.system_indices.indices: [".plugins-ml-config", ".plugins-ml-connector", ".plugins-ml-model-group", ".plugins-ml-model", ".plugins-ml-task", ".opensearch-observability", ".opensearch-observability-log", ".opensearch-observability-traces"]
+
+# SSL Configuration - Using demo certificates (esnode.pem files)
+# Demo installer creates esnode.pem (not node.pem)
+# Certificates are mounted from host directory
+plugins.security.ssl.transport.enabled: true
+plugins.security.ssl.transport.pemcert_filepath: certs/esnode.pem
+plugins.security.ssl.transport.pemkey_filepath: certs/esnode-key.pem
+plugins.security.ssl.transport.pemtrustedcas_filepath: certs/root-ca.pem
+plugins.security.ssl.transport.enforce_hostname_verification: false
+
+plugins.security.ssl.http.enabled: true
+plugins.security.ssl.http.pemcert_filepath: certs/esnode.pem
+plugins.security.ssl.http.pemkey_filepath: certs/esnode-key.pem
+plugins.security.ssl.http.pemtrustedcas_filepath: certs/root-ca.pem
+
+# Audit configuration
+plugins.security.audit.type: internal_opensearch

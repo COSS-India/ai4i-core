@@ -19,8 +19,14 @@ echo ""
 
 # Wait for OpenSearch to be ready
 echo "Waiting for OpenSearch to be ready..."
+# Default admin credentials (for demo setup)
+ADMIN_USER="${OPENSEARCH_ADMIN_USER:-admin}"
+ADMIN_PASSWORD="${OPENSEARCH_ADMIN_PASSWORD:-admin}"
+
 for i in $(seq 1 $MAX_RETRIES); do
-    if curl -sf "$OPENSEARCH_URL/_cluster/health" > /dev/null 2>&1; then
+    # Use -k flag to skip SSL verification (for demo certificates)
+    # Use -u flag for authentication when security is enabled
+    if curl -sfk -u "${ADMIN_USER}:${ADMIN_PASSWORD}" "$OPENSEARCH_URL/_cluster/health" > /dev/null 2>&1; then
         echo "✅ OpenSearch is ready!"
         break
     fi
@@ -45,9 +51,12 @@ echo ""
 
 # Apply the index template
 echo "Applying index template '$TEMPLATE_NAME'..."
-TEMPLATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME" \
+# Use -k flag to skip SSL verification (for demo certificates)
+# Use -u flag for authentication when security is enabled
+TEMPLATE_RESPONSE=$(curl -sk -w "\n%{http_code}" -X PUT "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME" \
+    -u "${ADMIN_USER}:${ADMIN_PASSWORD}" \
     -H "Content-Type: application/json" \
-    -d @"$TEMPLATE_FILE")
+    -d @"$TEMPLATE_FILE" 2>/dev/null)
 
 HTTP_CODE=$(echo "$TEMPLATE_RESPONSE" | tail -n1)
 RESPONSE_BODY=$(echo "$TEMPLATE_RESPONSE" | sed '$d')
@@ -60,9 +69,10 @@ if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
 elif [ "$HTTP_CODE" -eq 400 ]; then
     # Template might already exist with different content, try to update it
     echo "⚠️  Template exists, attempting to update..."
-    UPDATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME" \
+    UPDATE_RESPONSE=$(curl -sk -w "\n%{http_code}" -X PUT "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME" \
+        -u "${ADMIN_USER}:${ADMIN_PASSWORD}" \
         -H "Content-Type: application/json" \
-        -d @"$TEMPLATE_FILE")
+        -d @"$TEMPLATE_FILE" 2>/dev/null)
     UPDATE_CODE=$(echo "$UPDATE_RESPONSE" | tail -n1)
     if [ "$UPDATE_CODE" -eq 200 ] || [ "$UPDATE_CODE" -eq 201 ]; then
         echo "✅ Index template '$TEMPLATE_NAME' updated successfully!"
@@ -81,7 +91,7 @@ echo ""
 
 # Verify the template was created
 echo "Verifying template exists..."
-VERIFY_RESPONSE=$(curl -s "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME")
+VERIFY_RESPONSE=$(curl -sk -u "${ADMIN_USER}:${ADMIN_PASSWORD}" "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME" 2>/dev/null)
 if echo "$VERIFY_RESPONSE" | grep -q "\"$TEMPLATE_NAME\""; then
     echo "✅ Template verification successful!"
 else
