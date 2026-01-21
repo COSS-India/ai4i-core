@@ -63,38 +63,21 @@ cp frontend/simple-ui/env.template frontend/simple-ui/.env
 
 **Note:** You can edit these `.env` files if you need to customize settings, but the defaults should work for initial setup.
 
-## Step 3: Start All Services
+## Step 3: Start Infrastructure Services
 
-Start all services using Docker Compose. This will automatically start all required infrastructure (PostgreSQL, Redis, etc.):
+Start the infrastructure services (PostgreSQL, Redis, Kafka, etc.). Application services depend on databases being initialized:
 
 ```bash
-docker compose up -d \
-  api-gateway-service \
-  auth-service \
-  config-service \
-  model-management-service \
-  asr-service \
-  tts-service \
-  nmt-service \
-  llm-service \
-  transliteration-service \
-  ocr-service \
-  ner-service \
-  language-detection-service \
-  language-diarization-service \
-  audio-lang-detection-service \
-  speaker-diarization-service \
-  pipeline-service \
-  metrics-service \
-  telemetry-service \
-  alerting-service \
-  dashboard-service \
-  simple-ui-frontend
+docker compose up -d postgres redis kafka zookeeper influxdb unleash
 ```
 
-**Note:** The first time you run this, Docker will build the images, which may take 20-40 minutes depending on your machine and network speed. Subsequent starts will be much faster.
+Wait for all infrastructure services to be healthy:
 
-Wait for all services to be healthy (check with `docker compose ps`).
+```bash
+docker compose ps
+```
+
+You should see `postgres`, `redis`, `kafka`, `zookeeper`, `influxdb`, and `unleash` all showing as "healthy" or "Up".
 
 ## Step 4: Initialize Database
 
@@ -129,12 +112,41 @@ docker compose exec postgres psql -U dhruva_user -d dhruva_platform -f /tmp/init
 **Note:** The SQL file `infrastructure/postgres/init-all-databases.sql` contains everything needed to set up all databases, tables, and seed data in a single execution. The script now handles existing databases gracefully (errors are ignored if databases already exist).
 
 This script will:
-- Create all required databases (auth_db, config_db, unleash)
+- Create all required databases (auth_db, config_db, model_management_db, unleash)
 - Create all tables and schemas
 - Set up indexes and triggers
 - Insert seed data (default admin user, roles, permissions, etc.)
 
-## Step 5: Verify Setup
+## Step 5: Start Application Services
+
+Now that the databases are ready, start all application services:
+
+```bash
+docker compose up -d \
+  api-gateway-service \
+  auth-service \
+  config-service \
+  model-management-service \
+  asr-service \
+  tts-service \
+  nmt-service \
+  llm-service \
+  transliteration-service \
+  ocr-service \
+  ner-service \
+  language-detection-service \
+  language-diarization-service \
+  audio-lang-detection-service \
+  speaker-diarization-service \
+  pipeline-service \
+  metrics-service \
+  telemetry-service \
+  alerting-service \
+  dashboard-service \
+  simple-ui-frontend
+```
+
+**Note:** The first time you run this, Docker will build the images, which may take 20-40 minutes depending on your machine and network speed. Subsequent starts will be much faster.
 
 Check that all services are running:
 
@@ -144,7 +156,7 @@ docker compose ps
 
 All services should show as "Up" or "healthy".
 
-## Step 6: Access the Platform
+## Step 7: Access the Platform
 
 Once all services are running, you can access:
 
