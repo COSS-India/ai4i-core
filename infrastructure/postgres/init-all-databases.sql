@@ -858,7 +858,400 @@ COMMENT ON COLUMN services.published_at IS 'Unix timestamp when the service was 
 COMMENT ON COLUMN services.unpublished_at IS 'Unix timestamp when the service was unpublished';
 
 -- ============================================================================
--- STEP 5: Seed Data
+-- Seed Data: Sample Models and Services for Each Task Type
+-- ============================================================================
+-- These are placeholder models and services for testing purposes.
+-- Users should UPDATE the endpoint URLs to point to their actual services.
+-- 
+-- Task Types: asr, tts, nmt, llm, transliteration, language-detection,
+--             speaker-diarization, audio-lang-detection, language-diarization,
+--             ocr, ner
+-- ============================================================================
+
+-- Helper function to generate model_id hash (matches Python implementation)
+CREATE OR REPLACE FUNCTION generate_model_id(model_name TEXT, version TEXT) 
+RETURNS VARCHAR(32) AS $$
+BEGIN
+    RETURN SUBSTRING(encode(sha256((LOWER(TRIM(model_name)) || ':' || LOWER(TRIM(version)))::bytea), 'hex'), 1, 32);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Helper function to generate service_id hash (matches Python implementation)
+CREATE OR REPLACE FUNCTION generate_service_id(model_name TEXT, model_version TEXT, service_name TEXT) 
+RETURNS VARCHAR(32) AS $$
+BEGIN
+    RETURN SUBSTRING(encode(sha256((LOWER(TRIM(model_name)) || ':' || LOWER(TRIM(model_version)) || ':' || LOWER(TRIM(service_name)))::bytea), 'hex'), 1, 32);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Current timestamp in epoch milliseconds
+DO $$
+DECLARE
+    current_epoch BIGINT := EXTRACT(EPOCH FROM NOW()) * 1000;
+BEGIN
+    -- ========================================================================
+    -- ASR (Automatic Speech Recognition) Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('ASR-Conformer-Hindi', '1.0.0'),
+        '1.0.0',
+        'ASR-Conformer-Hindi',
+        'Automatic Speech Recognition model for Hindi language using Conformer architecture. UPDATE ENDPOINT before use.',
+        '{"type": "asr"}'::jsonb,
+        '["hi", "en"]'::jsonb,
+        '["general", "conversational"]'::jsonb,
+        'Apache-2.0',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8001/asr/v1/recognize"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('ASR-Conformer-Hindi', '1.0.0', 'asr-hindi-prod'),
+        'asr-hindi-prod',
+        generate_model_id('ASR-Conformer-Hindi', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8001/asr/v1/recognize',
+        'Production ASR service for Hindi. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA T4, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- TTS (Text-to-Speech) Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('TTS-FastPitch-Hindi', '1.0.0'),
+        '1.0.0',
+        'TTS-FastPitch-Hindi',
+        'Text-to-Speech model for Hindi language using FastPitch architecture. UPDATE ENDPOINT before use.',
+        '{"type": "tts"}'::jsonb,
+        '["hi"]'::jsonb,
+        '["general"]'::jsonb,
+        'MIT',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8002/tts/v1/synthesize"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('TTS-FastPitch-Hindi', '1.0.0', 'tts-hindi-prod'),
+        'tts-hindi-prod',
+        generate_model_id('TTS-FastPitch-Hindi', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8002/tts/v1/synthesize',
+        'Production TTS service for Hindi. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA T4, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- NMT (Neural Machine Translation) Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('NMT-IndicTrans2-En-Hi', '1.0.0'),
+        '1.0.0',
+        'NMT-IndicTrans2-En-Hi',
+        'Neural Machine Translation model for English to Hindi using IndicTrans2. UPDATE ENDPOINT before use.',
+        '{"type": "nmt"}'::jsonb,
+        '["en", "hi"]'::jsonb,
+        '["general", "news", "conversational"]'::jsonb,
+        'MIT',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8003/nmt/v1/translate"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('NMT-IndicTrans2-En-Hi', '1.0.0', 'nmt-en-hi-prod'),
+        'nmt-en-hi-prod',
+        generate_model_id('NMT-IndicTrans2-En-Hi', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8003/nmt/v1/translate',
+        'Production NMT service for English-Hindi translation. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA A10, RAM: 32GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- LLM (Large Language Model) Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('LLM-Indic-Chat', '1.0.0'),
+        '1.0.0',
+        'LLM-Indic-Chat',
+        'Large Language Model for Indic languages chat/completion. UPDATE ENDPOINT before use.',
+        '{"type": "llm"}'::jsonb,
+        '["hi", "en", "ta", "te", "bn", "mr", "gu", "kn", "ml", "pa", "or"]'::jsonb,
+        '["general", "conversational", "qa"]'::jsonb,
+        'Apache-2.0',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8004/llm/v1/completions"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('LLM-Indic-Chat', '1.0.0', 'llm-indic-prod'),
+        'llm-indic-prod',
+        generate_model_id('LLM-Indic-Chat', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8004/llm/v1/completions',
+        'Production LLM service for Indic languages. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA A100, RAM: 80GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- Transliteration Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('Transliteration-IndicXlit', '1.0.0'),
+        '1.0.0',
+        'Transliteration-IndicXlit',
+        'Transliteration model for Indic scripts using IndicXlit. UPDATE ENDPOINT before use.',
+        '{"type": "transliteration"}'::jsonb,
+        '["hi", "ta", "te", "bn", "mr", "gu", "kn", "ml", "pa", "or"]'::jsonb,
+        '["general"]'::jsonb,
+        'MIT',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8005/transliteration/v1/transliterate"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('Transliteration-IndicXlit', '1.0.0', 'xlit-indic-prod'),
+        'xlit-indic-prod',
+        generate_model_id('Transliteration-IndicXlit', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8005/transliteration/v1/transliterate',
+        'Production Transliteration service. UPDATE ENDPOINT to your actual service URL.',
+        'CPU: 8 cores, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- Language Detection Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('LangDetect-IndicLID', '1.0.0'),
+        '1.0.0',
+        'LangDetect-IndicLID',
+        'Text language detection model for Indic languages. UPDATE ENDPOINT before use.',
+        '{"type": "language-detection"}'::jsonb,
+        '["hi", "en", "ta", "te", "bn", "mr", "gu", "kn", "ml", "pa", "or"]'::jsonb,
+        '["general"]'::jsonb,
+        'MIT',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8006/langdetect/v1/detect"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('LangDetect-IndicLID', '1.0.0', 'langdetect-prod'),
+        'langdetect-prod',
+        generate_model_id('LangDetect-IndicLID', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8006/langdetect/v1/detect',
+        'Production Language Detection service. UPDATE ENDPOINT to your actual service URL.',
+        'CPU: 4 cores, RAM: 8GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- Speaker Diarization Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('SpeakerDiarization-Pyannote', '1.0.0'),
+        '1.0.0',
+        'SpeakerDiarization-Pyannote',
+        'Speaker diarization model using Pyannote. UPDATE ENDPOINT before use.',
+        '{"type": "speaker-diarization"}'::jsonb,
+        '["*"]'::jsonb,
+        '["general", "meetings", "podcasts"]'::jsonb,
+        'MIT',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8007/speaker-diarization/v1/diarize"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('SpeakerDiarization-Pyannote', '1.0.0', 'speaker-diarize-prod'),
+        'speaker-diarize-prod',
+        generate_model_id('SpeakerDiarization-Pyannote', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8007/speaker-diarization/v1/diarize',
+        'Production Speaker Diarization service. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA T4, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- Audio Language Detection Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('AudioLangDetect-Whisper', '1.0.0'),
+        '1.0.0',
+        'AudioLangDetect-Whisper',
+        'Audio language detection model using Whisper. UPDATE ENDPOINT before use.',
+        '{"type": "audio-lang-detection"}'::jsonb,
+        '["hi", "en", "ta", "te", "bn", "mr"]'::jsonb,
+        '["general"]'::jsonb,
+        'MIT',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8008/audio-langdetect/v1/detect"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('AudioLangDetect-Whisper', '1.0.0', 'audio-langdetect-prod'),
+        'audio-langdetect-prod',
+        generate_model_id('AudioLangDetect-Whisper', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8008/audio-langdetect/v1/detect',
+        'Production Audio Language Detection service. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA T4, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- Language Diarization Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('LangDiarization-MultiLang', '1.0.0'),
+        '1.0.0',
+        'LangDiarization-MultiLang',
+        'Language diarization model for multi-language audio. UPDATE ENDPOINT before use.',
+        '{"type": "language-diarization"}'::jsonb,
+        '["hi", "en", "ta", "te"]'::jsonb,
+        '["code-switching", "multilingual"]'::jsonb,
+        'Apache-2.0',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8009/lang-diarization/v1/diarize"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('LangDiarization-MultiLang', '1.0.0', 'lang-diarize-prod'),
+        'lang-diarize-prod',
+        generate_model_id('LangDiarization-MultiLang', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8009/lang-diarization/v1/diarize',
+        'Production Language Diarization service. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA T4, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- OCR (Optical Character Recognition) Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('OCR-IndicOCR', '1.0.0'),
+        '1.0.0',
+        'OCR-IndicOCR',
+        'Optical Character Recognition model for Indic scripts. UPDATE ENDPOINT before use.',
+        '{"type": "ocr"}'::jsonb,
+        '["hi", "ta", "te", "bn", "mr", "gu", "kn", "ml"]'::jsonb,
+        '["documents", "handwritten", "printed"]'::jsonb,
+        'Apache-2.0',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8010/ocr/v1/recognize"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('OCR-IndicOCR', '1.0.0', 'ocr-indic-prod'),
+        'ocr-indic-prod',
+        generate_model_id('OCR-IndicOCR', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8010/ocr/v1/recognize',
+        'Production OCR service for Indic scripts. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA T4, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- NER (Named Entity Recognition) Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('NER-IndicNER', '1.0.0'),
+        '1.0.0',
+        'NER-IndicNER',
+        'Named Entity Recognition model for Indic languages. UPDATE ENDPOINT before use.',
+        '{"type": "ner"}'::jsonb,
+        '["hi", "en", "ta", "te", "bn", "mr"]'::jsonb,
+        '["general", "news", "legal"]'::jsonb,
+        'MIT',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8011/ner/v1/extract"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('NER-IndicNER', '1.0.0', 'ner-indic-prod'),
+        'ner-indic-prod',
+        generate_model_id('NER-IndicNER', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8011/ner/v1/extract',
+        'Production NER service for Indic languages. UPDATE ENDPOINT to your actual service URL.',
+        'CPU: 8 cores, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+END $$;
+
+-- Log seed data completion
+DO $$
+BEGIN
+    RAISE NOTICE 'Model Management seed data inserted: 11 models and 11 services for all task types';
+    RAISE NOTICE 'IMPORTANT: Update the endpoint URLs to point to your actual services before publishing';
+END $$;
+
+-- ============================================================================
+-- STEP 5: Auth Service Seed Data (auth_db)
 -- ============================================================================
 
 \c auth_db;
