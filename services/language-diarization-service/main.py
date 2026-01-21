@@ -25,6 +25,16 @@ from sqlalchemy.ext.asyncio import (
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
+# Logging imports (structured JSON logging to OpenSearch via ai4icore_logging)
+LOGGING_AVAILABLE = False
+configure_logging = None
+get_logger = None
+try:
+    from ai4icore_logging import configure_logging, get_logger
+    LOGGING_AVAILABLE = True
+except ImportError:
+    pass
+
 from routers import inference_router
 from models import database_models, auth_models
 from utils.service_registry_client import ServiceRegistryHttpClient
@@ -33,11 +43,27 @@ from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from utils.triton_client import TritonClient
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+# Configure structured logging (JSON) so Fluent Bit can forward logs to OpenSearch.
+# Fallback to basic logging if ai4icore_logging is not available.
+if LOGGING_AVAILABLE:
+    configure_logging(
+        service_name=os.getenv("SERVICE_NAME", "language-diarization-service"),
+        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
+    )
+    logger = get_logger(__name__)
+
+    # Disable uvicorn access logger to avoid duplicate plain-text logs
+    uvicorn_access = logging.getLogger("uvicorn.access")
+    uvicorn_access.handlers.clear()
+    uvicorn_access.propagate = False
+    uvicorn_access.disabled = True
+    uvicorn_access.setLevel(logging.CRITICAL + 1)
+else:
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO"),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+    logger = logging.getLogger(__name__)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
