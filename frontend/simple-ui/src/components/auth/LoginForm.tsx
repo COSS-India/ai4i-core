@@ -19,6 +19,7 @@ import {
   InputRightElement,
   Link,
   Text,
+  Tooltip,
   VStack,
 } from "@chakra-ui/react";
 import React, { useState } from "react";
@@ -167,13 +168,19 @@ const LoginForm: React.FC<LoginFormProps> = ({
           </FormControl>
 
           <FormControl>
-            <Checkbox
-              name="remember_me"
-              checked={formData.remember_me}
-              onChange={handleChange}
+            <Tooltip 
+              label="Keep me logged in for 7 days (unchecked: 24 hours)"
+              placement="top"
+              hasArrow
             >
-              Remember me
-            </Checkbox>
+              <Checkbox
+                name="remember_me"
+                checked={formData.remember_me}
+                onChange={handleChange}
+              >
+                Remember me
+              </Checkbox>
+            </Tooltip>
           </FormControl>
 
           <Button
