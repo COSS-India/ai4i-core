@@ -1198,6 +1198,7 @@ class RegisterUser(BaseModel):
     phone_number: Optional[str] = Field(None, description="Phone number")
     timezone: Optional[str] = Field("UTC", description="Timezone")
     language: Optional[str] = Field("en", description="Language code")
+    is_tenant: Optional[bool] = Field(False, description="Whether the user is registering as a tenant")
 
 class LoginRequestBody(BaseModel):
     email: str = Field(..., description="Email address")
