@@ -30,20 +30,40 @@ Edit `.env` if needed (defaults should work for development).
 Copy the environment template for each service and the frontend:
 
 ```bash
-# Services
+# Core Services
 cp services/api-gateway-service/env.template services/api-gateway-service/.env
 cp services/auth-service/env.template services/auth-service/.env
 cp services/config-service/env.template services/config-service/.env
+cp services/model-management-service/env.template services/model-management-service/.env
+cp services/multi-tenant-feature/env.template services/multi-tenant-feature/.env
+
+# AI/ML Services
 cp services/asr-service/env.template services/asr-service/.env
 cp services/tts-service/env.template services/tts-service/.env
 cp services/nmt-service/env.template services/nmt-service/.env
+cp services/llm-service/env.template services/llm-service/.env
+cp services/transliteration-service/env.template services/transliteration-service/.env
+cp services/ocr-service/env.template services/ocr-service/.env
+cp services/ner-service/env.template services/ner-service/.env
+cp services/language-detection-service/env.template services/language-detection-service/.env
+cp services/language-diarization-service/env.template services/language-diarization-service/.env
+cp services/audio-lang-detection-service/env.template services/audio-lang-detection-service/.env
+cp services/speaker-diarization-service/env.template services/speaker-diarization-service/.env
 cp services/pipeline-service/env.template services/pipeline-service/.env
+
+# Observability Services
+cp services/alerting-service/env.template services/alerting-service/.env
+cp services/dashboard-service/env.template services/dashboard-service/.env
+cp services/metrics-service/env.template services/metrics-service/.env
+cp services/telemetry-service/env.template services/telemetry-service/.env
 
 # Frontend
 cp frontend/simple-ui/env.template frontend/simple-ui/.env
 ```
 
-**Note:** You can edit these `.env` files if you need to customize settings, but the defaults should work for initial setup.
+**Tip:** You can run all the service environment copy commands at once by copying the entire block above.
+
+**Note:** You can edit these `.env` files if you need to customize settings, but the defaults should work for initial setup. Not all services need to be started for basic functionality - see Step 3 for minimum required services.
 
 ## Step 3: Start All Services
 
@@ -117,9 +137,37 @@ Once all services are running, you can access:
 
 ### Service Swagger Documentation
 
-- **ASR Service**: http://localhost:8087/docs
-- **TTS Service**: http://localhost:8088/docs
-- **NMT Service**: http://localhost:8091/docs (Note: port 8091, not 8089)
+#### Core Services
+| Service | URL | Port |
+|---------|-----|------|
+| API Gateway | http://localhost:8080/docs | 8080 |
+| Auth Service | http://localhost:8081/docs | 8081 |
+| Config Service | http://localhost:8082/docs | 8082 |
+| Model Management Service | http://localhost:8094/docs | 8094 |
+
+#### AI/ML Services
+| Service | URL | Port |
+|---------|-----|------|
+| ASR Service | http://localhost:8087/docs | 8087 |
+| TTS Service | http://localhost:8088/docs | 8088 |
+| NMT Service | http://localhost:8091/docs | 8091 |
+| LLM Service | http://localhost:8093/docs | 8093 |
+| Transliteration Service | http://localhost:8097/docs | 8097 |
+| OCR Service | http://localhost:8099/docs | 8099 |
+| NER Service | http://localhost:9001/docs | 9001 |
+| Language Detection Service | http://localhost:8098/docs | 8098 |
+| Language Diarization Service | http://localhost:9002/docs | 9002 |
+| Audio Language Detection Service | http://localhost:8096/docs | 8096 |
+| Speaker Diarization Service | http://localhost:8095/docs | 8095 |
+| Pipeline Service | http://localhost:8092/docs | 8092 |
+
+#### Observability Services
+| Service | URL | Port |
+|---------|-----|------|
+| Metrics Service | http://localhost:8083/docs | 8083 |
+| Telemetry Service | http://localhost:8084/docs | 8084 |
+| Alerting Service | http://localhost:8085/docs | 8085 |
+| Dashboard Service | http://localhost:8090/docs | 8090 |
 
 ### Default Credentials
 
