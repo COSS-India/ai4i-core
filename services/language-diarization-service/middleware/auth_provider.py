@@ -133,9 +133,11 @@ async def AuthProvider(
     """Authentication provider dependency with permission checks."""
     auth_source = (x_auth_source or "API_KEY").upper()
 
+    # AUTH_TOKEN mode - authenticate with JWT bearer token only
     if auth_source == "AUTH_TOKEN":
-        raise AuthenticationError("Missing API key")
+        return await authenticate_bearer_token(request, authorization)
 
+    # BOTH mode - require both JWT and API key
     api_key = x_api_key or get_api_key_from_header(authorization)
     if auth_source == "BOTH":
         bearer_result = await authenticate_bearer_token(request, authorization)
@@ -145,14 +147,16 @@ async def AuthProvider(
         await validate_api_key_permissions(api_key, service, action)
         return bearer_result
 
+    # API_KEY mode (default) - require API key only
     if not api_key:
         raise AuthenticationError("Missing API key")
 
     service, action = determine_service_and_action(request)
     await validate_api_key_permissions(api_key, service, action)
 
+    # Store API key info in request.state
     request.state.user_id = None
-    request.state.api_key_id = None
+    request.state.api_key_id = None  # TODO: Get from auth service response
     request.state.api_key_name = None
     request.state.user_email = None
     request.state.is_authenticated = True
