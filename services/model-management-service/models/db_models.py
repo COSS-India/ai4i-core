@@ -36,6 +36,8 @@ class Model(AppDBBase):
     inference_endpoint = Column(JSONB, nullable=False)
     benchmarks = Column(JSONB)
     submitter = Column(JSONB, nullable=False)
+    created_by = Column(String(255), nullable=True)  # User ID (string) who created this model
+    updated_by = Column(String(255), nullable=True)  # User ID (string) who last updated this model
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
@@ -68,6 +70,8 @@ class Service(AppDBBase):
     is_published = Column(Boolean, nullable=False, default=False)
     published_at = Column(BigInteger, default=None)
     unpublished_at = Column(BigInteger, default=None)
+    created_by = Column(String(255), nullable=True)  # User ID (string) who created this service
+    updated_by = Column(String(255), nullable=True)  # User ID (string) who last updated this service
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     

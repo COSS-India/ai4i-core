@@ -184,7 +184,7 @@ def model_redis_safe_payload(payload_dict: Dict[str, Any]) -> Dict[str, Any]:
     return payload_dict
     
 
-async def save_model_to_db(payload: ModelCreateRequest):
+async def save_model_to_db(payload: ModelCreateRequest, created_by: str = None):
     """
     Save a new model entry to the database.
     Includes:
@@ -194,6 +194,9 @@ async def save_model_to_db(payload: ModelCreateRequest):
       - Record creation
       - Commit / rollback
 
+    Args:
+        payload: Model creation request data
+        created_by: User ID (string) who is creating this model (optional)
     """
     db: AsyncSession = AppDatabase()
     try:
@@ -265,6 +268,7 @@ async def save_model_to_db(payload: ModelCreateRequest):
             inference_endpoint=payload_dict.get("inferenceEndPoint",{}),
             benchmarks=payload_dict.get("benchmarks",[]),
             submitter=payload_dict.get("submitter",{}),
+            created_by=created_by,
         )
 
         db.add(new_model)
@@ -355,12 +359,16 @@ async def update_by_filter(filters: Dict[str, Any], data: Dict[str, Any]) -> int
         await db.close()
 
 
-async def update_model(payload: ModelUpdateRequest):
+async def update_model(payload: ModelUpdateRequest, updated_by: str = None):
     """
     Update model record in PostgreSQL and refresh Redis cache.
     Note: modelId and version are used as identifiers to identify which version to update.
     
     Model versions associated with published services are immutable and cannot be updated.
+    
+    Args:
+        payload: Model update request data
+        updated_by: User ID (string) who is updating this model (optional)
     """
 
     if not payload.version:
@@ -502,6 +510,8 @@ async def update_model(payload: ModelUpdateRequest):
                 postgres_data[key] = value
 
         postgres_data["updated_on"] = now_epoch
+        if updated_by is not None:
+            postgres_data["updated_by"] = updated_by
         logger.info(f"Updating DB for model {payload.modelId} v{payload.version} with fields: {list(postgres_data.keys())}")
         logger.debug(f"DB update data: {postgres_data}")
 
@@ -752,6 +762,8 @@ async def get_model_details(model_id: str, version: str = None) -> Dict[str, Any
             "inferenceEndPoint": model.inference_endpoint,
             "source": model.ref_url or "",
             "task": model.task,
+            "createdBy": model.created_by,
+            "updatedBy": model.updated_by,
          }
      
     except Exception as e:
@@ -761,7 +773,7 @@ async def get_model_details(model_id: str, version: str = None) -> Dict[str, Any
          await db.close()
     
 
-async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bool = True, model_name: str | None = None) -> List[Dict[str, Any]]:
+async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bool = True, model_name: str | None = None, created_by: str | None = None) -> List[Dict[str, Any]]:
     """
     Fetch all model records from DB and convert to response format.
     
@@ -769,6 +781,7 @@ async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bo
         task_type: Optional filter by task type (asr, nmt, tts, etc.)
         include_deprecated: If False, only returns ACTIVE versions. Defaults to True.
         model_name: Optional filter by model name. Returns all versions of models matching this name.
+        created_by: Optional filter by user ID (string) who created the model.
     
     Ordering:
     1. By submitted_on descending (latest first) - primary sort
@@ -797,6 +810,10 @@ async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bo
         # Filter out deprecated versions if requested
         if not include_deprecated:
             query = query.where(Model.version_status == VersionStatus.ACTIVE)
+        
+        # Filter by created_by if provided
+        if created_by is not None:
+            query = query.where(Model.created_by == created_by)
         
         # Order by submitted_on descending (latest first), then ACTIVE first, then model_id
         query = query.order_by(
@@ -842,6 +859,8 @@ async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bo
                 "inferenceEndPoint": data.get("inference_endpoint"),
                 "source": data.get("ref_url"),
                 "task": data.get("task", {}),
+                "createdBy": data.get("created_by"),
+                "updatedBy": data.get("updated_by"),
             })
 
         return result
@@ -855,7 +874,7 @@ async def list_all_models(task_type: TaskTypeEnum | None, include_deprecated: bo
 ####################################################### Service Functions #######################################################
 
 
-async def save_service_to_db(payload: ServiceCreateRequest):
+async def save_service_to_db(payload: ServiceCreateRequest, created_by: str = None):
     """
     Save a new service entry to the database.
     Includes:
@@ -864,6 +883,10 @@ async def save_service_to_db(payload: ServiceCreateRequest):
       - Duplicate (model_id, model_version, name) check
       - Record creation
       - Commit / rollback
+    
+    Args:
+        payload: Service creation request data
+        created_by: User ID (string) who is creating this service (optional)
     """
     db: AsyncSession = AppDatabase()
     try:
@@ -930,6 +953,7 @@ async def save_service_to_db(payload: ServiceCreateRequest):
             benchmarks=payload_dict.get("benchmarks", []),
             is_published=is_published,
             published_at=published_at,
+            created_by=created_by,
         )
         db.add(new_service)
         await db.commit()
@@ -957,11 +981,15 @@ async def save_service_to_db(payload: ServiceCreateRequest):
         await db.close()
 
 
-async def update_service(request: ServiceUpdateRequest):
+async def update_service(request: ServiceUpdateRequest, updated_by: str = None):
     """
     Update an existing service record in PostgreSQL and refresh Redis cache.
     Note: serviceId is used as identifier and is NOT changed during update.
     Note: name, modelId, and modelVersion are NOT updatable since service_id is derived from them.
+    
+    Args:
+        request: Service update request data
+        updated_by: User ID (string) who is updating this service (optional)
     """
 
     db: AsyncSession = AppDatabase()
@@ -976,6 +1004,10 @@ async def update_service(request: ServiceUpdateRequest):
         # 1. Build DB update dict
         # Note: name, modelId, modelVersion are NOT updatable since service_id is derived from (model_name, model_version, service_name)
         db_update = {}
+        
+        # Track who made this update
+        if updated_by is not None:
+            db_update["updated_by"] = updated_by
 
         if "serviceDescription" in request_dict:
             db_update["service_description"] = request_dict["serviceDescription"]
@@ -1208,6 +1240,8 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
             "isPublished": service.is_published,
             "publishedAt": datetime.fromtimestamp(service.published_at).isoformat() if service.published_at else None,
             "unpublishedAt": datetime.fromtimestamp(service.unpublished_at).isoformat() if service.unpublished_at else None,
+            "createdBy": service.created_by,
+            "updatedBy": service.updated_by,
         }
 
         result = await db.execute(
@@ -1321,7 +1355,8 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
 
 async def list_all_services(
     task_type: TaskTypeEnum | None, 
-    is_published: bool | None = None
+    is_published: bool | None = None,
+    created_by: str | None = None
 ) -> List[Dict[str, Any]]:
     """
     Fetch all service records from DB and convert to response format.
@@ -1332,6 +1367,7 @@ async def list_all_services(
                       True = only published services, 
                       False = only unpublished services, 
                       None = all services (default)
+        created_by: Optional filter by user ID (string) who created the service.
     """
 
     db: AsyncSession = AppDatabase()
@@ -1351,6 +1387,10 @@ async def list_all_services(
         # Filter by publish status if provided
         if is_published is not None:
             query = query.where(Service.is_published == is_published)
+        
+        # Filter by created_by if provided
+        if created_by is not None:
+            query = query.where(Service.created_by == created_by)
 
         # Default sort: active (published) services first, then by most recently created
         query = query.order_by(desc(Service.is_published), desc(Service.created_at))
@@ -1393,6 +1433,9 @@ async def list_all_services(
                     isPublished=getattr(service, "is_published", False),
                     publishedAt=datetime.fromtimestamp(service.published_at).isoformat() if service.published_at else None,
                     unpublishedAt=datetime.fromtimestamp(service.unpublished_at).isoformat() if service.unpublished_at else None,
+                    # User tracking fields
+                    createdBy=getattr(service, "created_by", None),
+                    updatedBy=getattr(service, "updated_by", None),
 
                     # From MODEL table
                     task=getattr(model, "task", {}) if model else {},
