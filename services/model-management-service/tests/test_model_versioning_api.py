@@ -466,7 +466,7 @@ class TestVersioningErrorResponses:
                     status_code=409,
                     detail={
                         "kind": "ImmutableModelVersion",
-                        "message": "Model version cannot be modified because it is associated with published services."
+                        "message": "Model cannot be modified because it is associated with published services."
                     }
                 )
                 
