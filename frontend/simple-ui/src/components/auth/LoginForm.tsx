@@ -168,11 +168,7 @@ const LoginForm: React.FC<LoginFormProps> = ({
           </FormControl>
 
           <FormControl>
-            <Tooltip 
-              label="Keep me logged in for 7 days (unchecked: 24 hours)"
-              placement="top"
-              hasArrow
-            >
+            
               <Checkbox
                 name="remember_me"
                 checked={formData.remember_me}
@@ -180,7 +176,6 @@ const LoginForm: React.FC<LoginFormProps> = ({
               >
                 Remember me
               </Checkbox>
-            </Tooltip>
           </FormControl>
 
           <Button
