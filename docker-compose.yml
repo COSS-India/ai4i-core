@@ -985,6 +985,7 @@ services:
       - "9090:9090"
     volumes:
       - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infrastructure/prometheus/rules:/etc/prometheus/rules
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -992,8 +993,8 @@ services:
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--storage.tsdb.retention.time=30d'
-      - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
-      # - '--web.external-url=http://localhost:9090'
+      # - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
+      - '--web.external-url=http://localhost:9090'
 
       - '--web.route-prefix=/'
     networks:
@@ -1009,6 +1010,26 @@ services:
       timeout: 10s
       retries: 3
 
+  # Observability: Alertmanager (POC)
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: ai4v-alertmanager
+    ports:
+      - "9095:9093"
+    volumes:
+      - ./infrastructure/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+    networks:
+      - microservices-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+
   # Observability: Grafana
   grafana:
     image: grafana/grafana:latest
@@ -1022,7 +1043,7 @@ services:
       # Combined from both HEAD and remote commits
       - GF_INSTALL_PLUGINS=
       - GF_SERVER_DOMAIN=core-v1.ai4inclusion.org
-      - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
+      # - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
 
     volumes:
@@ -1147,7 +1168,7 @@ services:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
       - ./infrastructure/fluent-bit/extract_context.lua:/fluent-bit/scripts/extract_context.lua:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - microservices-network
@@ -1184,6 +1205,8 @@ volumes:
   grafana-data:
     driver: local
   opensearch-data:
+    driver: local
+  alertmanager-data:
     driver: local
 
 networks:
