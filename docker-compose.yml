@@ -1174,7 +1174,7 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:5601/opensearch/api/status || exit 1"]
+      test: ["CMD-SHELL", "curl -u admin:admin -f http://localhost:5601/opensearch/api/status || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 20
