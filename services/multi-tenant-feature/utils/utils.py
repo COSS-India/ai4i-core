@@ -4,6 +4,7 @@ import secrets
 import uuid
 import string
 from passlib.context import CryptContext
+from passlib.hash import argon2
 
 
 
@@ -56,11 +57,43 @@ def generate_service_id() -> int:
     return secrets.randbits(25)  # max 9.22e18
 
 
+# def generate_random_password(length: int = 8) -> str:
+#     alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+#     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
 def generate_random_password(length: int = 8) -> str:
-    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
-    return "".join(secrets.choice(alphabet) for _ in range(length))
+    if length < 4:
+        raise ValueError("Password length must be at least 4")
+
+    lowercase = string.ascii_lowercase
+    uppercase = string.ascii_uppercase
+    digits = string.digits
+    special = "!@#$%^&*"
+
+    # Ensure required characters
+    password = [
+        secrets.choice(lowercase),
+        secrets.choice(uppercase),
+        secrets.choice(digits),
+        secrets.choice(special),
+    ]
+
+    # Fill remaining length
+    all_chars = lowercase + uppercase + digits + special
+    password += [secrets.choice(all_chars) for _ in range(length - 4)]
+
+    # Shuffle so order is unpredictable
+    secrets.SystemRandom().shuffle(password)
+
+    return "".join(password)
+
 
 def hash_password(password: str) -> str:
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    """
+    Hash a password using argon2 (same algorithm as auth service).
+    """
+    # pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto") # old bcrypt
+    pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
     return pwd_context.hash(password)
 
