@@ -1364,7 +1364,7 @@ async def register_user(
                     "username": payload.username,
                     "password": plain_password,
                     "confirm_password": plain_password,
-                    "full_name": None,
+                    "full_name": payload.full_name,
                     "phone_number": None,
                     "timezone": "UTC",
                     "language": "en",
@@ -1396,6 +1396,9 @@ async def register_user(
             status_code=500,
             detail="Authentication service response missing user id for tenant user",
         )
+    
+    # TODO: Add logging for password generation , Remove once done testing
+    # logger.debug(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
     
     if payload.is_approved:
         #Create TenantUser entry only if user is approved
