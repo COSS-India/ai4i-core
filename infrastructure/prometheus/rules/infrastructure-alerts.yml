@@ -1,0 +1,37 @@
+groups:
+  - name: infrastructure-cpu-alerts
+    interval: 30s
+    rules:
+      # High CPU utilization (cluster-wide)
+      - alert: HighCPUUtilization
+        expr: |
+          100 * (1 - sum(rate(node_cpu_seconds_total{mode="idle"}[5m])) / sum(rate(node_cpu_seconds_total[5m]))) > 80
+        for: 5m
+        labels:
+          severity: warning
+          urgency: medium
+          category: infrastructure
+          alert_type: cpu
+          scope: cluster
+        annotations:
+          summary: "High CPU utilization across cluster"
+          description: "Cluster CPU utilization is {{ $value | humanize }}% (threshold: 80%)"
+          impact: "Performance degradation risk"
+          action: "Check resource-intensive processes or scale up"
+
+      # Critical CPU utilization (cluster-wide)
+      - alert: CriticalCPUUtilization
+        expr: |
+          100 * (1 - sum(rate(node_cpu_seconds_total{mode="idle"}[5m])) / sum(rate(node_cpu_seconds_total[5m]))) > 90
+        for: 2m
+        labels:
+          severity: critical
+          urgency: high
+          category: infrastructure
+          alert_type: cpu
+          scope: cluster
+        annotations:
+          summary: "Critical CPU utilization across cluster"
+          description: "Cluster CPU utilization is {{ $value | humanize }}% (threshold: 90%)"
+          impact: "Severe performance degradation imminent"
+          action: "Immediate action required - scale resources"
