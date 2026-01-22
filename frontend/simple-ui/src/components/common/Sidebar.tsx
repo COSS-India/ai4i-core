@@ -210,7 +210,7 @@ const baseNavItems: NavItem[] = [
     icon: IoLanguageOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
+    requiresAuth: false, // Allow anonymous access with rate limiting
     featureFlag: "nmt-enabled",
   },
   {
