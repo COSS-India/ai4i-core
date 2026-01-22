@@ -14,6 +14,18 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from ai4icore_logging import get_logger, get_correlation_id, get_organization
 
+# Import OpenTelemetry to extract trace_id for Jaeger URL
+try:
+    from opentelemetry import trace
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
+
+# Get Jaeger URL from environment or use default
+# Jaeger UI URL should be just the base URL (e.g., http://localhost:16686)
+# The trace path will be appended as /trace/{trace_id}
+JAEGER_UI_URL = os.getenv("JAEGER_UI_URL", "http://localhost:16686").rstrip('/')
+
 # Get structured logger configured by ai4icore_logging.configure_logging() in main.py
 logger = get_logger(
     __name__,
@@ -47,6 +59,28 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # Get correlation ID (set by CorrelationMiddleware / observability)
         correlation_id = get_correlation_id(request)
+
+        # Extract trace_id from OpenTelemetry context for Jaeger URL
+        # IMPORTANT: Use OpenTelemetry trace_id (128-bit integer) formatted as 32 hex chars
+        # Do NOT use correlation_id (UUID format) as it won't work with Jaeger
+        trace_id_hex = None
+        jaeger_trace_url = None
+        if TRACING_AVAILABLE:
+            try:
+                current_span = trace.get_current_span()
+                if current_span and current_span.get_span_context().is_valid:
+                    span_context = current_span.get_span_context()
+                    # OpenTelemetry trace_id is a 128-bit integer, format as 32 hex characters (no hyphens)
+                    # This is the format Jaeger expects: 32 lowercase hex characters
+                    trace_id_hex = format(span_context.trace_id, '032x')
+                    # Create full Jaeger UI URL
+                    # Path format: /trace/{trace_id} (NOT /jaeger/trace/)
+                    jaeger_trace_url = f"{JAEGER_UI_URL}/trace/{trace_id_hex}"
+            except Exception as e:
+                # If trace extraction fails, continue without it
+                # Log the error for debugging but don't break the request
+                logger.debug(f"Failed to extract trace_id for Jaeger URL: {e}")
+                pass
 
         # Process request (FastAPI/exception handlers will still return a Response)
         try:
@@ -86,6 +120,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_context["correlation_id"] = correlation_id
         if organization:
             log_context["organization"] = organization
+        # Use OpenTelemetry trace_id (32 hex chars) if available, otherwise let JSONFormatter use correlation_id
+        # Note: JSONFormatter will set trace_id from correlation_id if OpenTelemetry trace_id is not available
+        # But for Jaeger URL, we MUST use the OpenTelemetry trace_id (32 hex chars), not correlation_id (UUID)
+        if trace_id_hex:
+            log_context["trace_id"] = trace_id_hex
+        if jaeger_trace_url:
+            log_context["jaeger_trace_url"] = jaeger_trace_url
 
         # For successful inference calls, add extra markers
         if path.endswith("/inference") and 200 <= status_code < 300:
