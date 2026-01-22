@@ -1,7 +1,7 @@
 // Audio Language Detection service API client
 
 import { apiClient, apiEndpoints } from './api';
-import { listServices, ServiceDetailsResponse } from './modelManagementService';
+import { listServices } from './modelManagementService';
 
 export interface AudioLanguageDetectionServiceDetailsResponse {
   service_id: string;

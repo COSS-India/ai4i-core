@@ -1,10 +1,16 @@
 // NMT service testing page with language pair selection and translation
 
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
   Box,
+  Button,
   Grid,
   GridItem,
   Heading,
+  HStack,
   Progress,
   Text,
   useToast,
@@ -12,20 +18,31 @@ import {
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React from "react";
+import { useRouter } from "next/router";
+import React, { useEffect, useState } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import LoadingSpinner from "../components/common/LoadingSpinner";
 import ModelLanguageSelector from "../components/nmt/ModelLanguageSelector";
 import TextTranslator from "../components/nmt/TextTranslator";
 import TranslationResults from "../components/nmt/TranslationResults";
+import { useAuth } from "../hooks/useAuth";
 import { useNMT } from "../hooks/useNMT";
 import {
   getSupportedLanguagePairsForService,
   listNMTServices,
 } from "../services/nmtService";
+import { getRemainingTryItRequests, shouldWarnAboutRateLimit } from "../services/tryItService";
 
 const NMTPage: React.FC = () => {
   const toast = useToast();
+  const router = useRouter();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const [showRateLimitWarning, setShowRateLimitWarning] = useState(false);
+  const [remainingRequests, setRemainingRequests] = useState(5);
+  
+  // Hardcoded service ID for anonymous users (try-it mode)
+  const ANONYMOUS_SERVICE_ID = "ai4bharat/indictrans--gpu-t4";
+  
   const {
     languagePair,
     selectedServiceId,
@@ -44,6 +61,29 @@ const NMTPage: React.FC = () => {
     clearResults,
     swapLanguages,
   } = useNMT();
+  
+  // Set hardcoded service ID for anonymous users
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated && !selectedServiceId) {
+      setSelectedServiceId(ANONYMOUS_SERVICE_ID);
+    }
+  }, [isAuthenticated, authLoading, selectedServiceId, setSelectedServiceId]);
+  
+  // Check if user is anonymous and update rate limit info
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      setShowRateLimitWarning(shouldWarnAboutRateLimit());
+      setRemainingRequests(getRemainingTryItRequests());
+    }
+  }, [isAuthenticated, authLoading, fetched]);
+  
+  // Update remaining requests after each translation
+  useEffect(() => {
+    if (!isAuthenticated && fetched) {
+      setRemainingRequests(getRemainingTryItRequests());
+      setShowRateLimitWarning(shouldWarnAboutRateLimit());
+    }
+  }, [isAuthenticated, fetched]);
 
   // Fetch available services
   const { data: services, isLoading: servicesLoading } = useQuery({
@@ -101,6 +141,41 @@ const NMTPage: React.FC = () => {
             </Text>
           </Box>
 
+          {/* Anonymous User Alert */}
+          {!authLoading && !isAuthenticated && (
+            <Alert
+              status={showRateLimitWarning ? "warning" : "info"}
+              variant="left-accent"
+              borderRadius="md"
+              maxW="1200px"
+              w="full"
+              mx="auto"
+            >
+              <AlertIcon />
+              <Box flex="1">
+                <AlertTitle>
+                  {showRateLimitWarning
+                    ? "Rate Limit Warning"
+                    : "Try Neural Machine Translation"}
+                </AlertTitle>
+                <AlertDescription fontSize="sm">
+                  {showRateLimitWarning ? (
+                    <>
+                      You have approximately <strong>{remainingRequests} translation{remainingRequests !== 1 ? 's' : ''}</strong> remaining.
+                      Sign in to get unlimited access to all services.
+                    </>
+                  ) : (
+                    <>
+                      You&apos;re using NMT without an account. You can try up to{" "}
+                      <strong>5 translations per hour</strong>. Sign in for unlimited access.
+                    </>
+                  )}
+                </AlertDescription>
+              </Box>
+              
+            </Alert>
+          )}
+
           <Grid
             templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
             gap={8}
@@ -111,17 +186,43 @@ const NMTPage: React.FC = () => {
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
-                {/* Service and Language Selector */}
-                <Box>
-                  <ModelLanguageSelector
-                    languagePair={languagePair}
-                    onLanguagePairChange={setLanguagePair}
-                    availableLanguagePairs={languagePairs || []}
-                    loading={pairsLoading || servicesLoading}
-                    selectedServiceId={selectedServiceId}
-                    onServiceChange={setSelectedServiceId}
-                  />
-                </Box>
+                {/* Service and Language Selector - Hidden for anonymous users */}
+                {isAuthenticated && (
+                  <Box>
+                    <ModelLanguageSelector
+                      languagePair={languagePair}
+                      onLanguagePairChange={setLanguagePair}
+                      availableLanguagePairs={languagePairs || []}
+                      loading={pairsLoading || servicesLoading}
+                      selectedServiceId={selectedServiceId}
+                      onServiceChange={setSelectedServiceId}
+                    />
+                  </Box>
+                )}
+                
+                {/* Language Pair Selector Only - For anonymous users */}
+                {!isAuthenticated && !authLoading && (
+                  <Box
+                    p={4}
+                    bg="gray.50"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="gray.200"
+                  >
+                    <Text fontSize="sm" color="gray.700" mb={2} fontWeight="medium">
+                      Select Language Pair
+                    </Text>
+                    <ModelLanguageSelector
+                      languagePair={languagePair}
+                      onLanguagePairChange={setLanguagePair}
+                      availableLanguagePairs={languagePairs || []}
+                      loading={pairsLoading || servicesLoading}
+                      selectedServiceId={selectedServiceId}
+                      onServiceChange={setSelectedServiceId}
+                      hideServiceSelector={true}
+                    />
+                  </Box>
+                )}
 
                 {/* Text Translator */}
                 <Box>
