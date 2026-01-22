@@ -1482,7 +1482,6 @@ async def google_callback(
         user_roles = await AuthUtils.get_user_roles(db, user.id)
         
         # 6.5. Get tenant information
-        # This function checks both tenants table (tenant admin) and tenant_users table (tenant user)
         tenant_info = await get_tenant_info(user.id, multi_tenant_db, user.is_tenant)
         
         # Build JWT payload with tenant info
