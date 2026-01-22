@@ -118,12 +118,27 @@ create_role_with_dls() {
     local dls_query="{\\\"term\\\": {\\\"organization\\\": \\\"${organization}\\\"}}"
     
     # Role definition JSON - use single line to avoid issues with heredoc and curl
-    # - cluster_permissions: What cluster-level actions are allowed (none for viewers)
+    # - cluster_permissions: Required for OpenSearch Dashboards to function
+    #   - cluster_composite_ops: Needed for composite operations in Dashboards
+    #   - cluster_monitor: Needed to check cluster health and status
     # - index_permissions: What index-level actions are allowed
-    #   - index_patterns: Which indices this role can access (logs-* means all log indices)
-    #   - dls: Document Level Security filter (automatically applied to all queries) - must be a JSON string
+    #   - index_patterns: Which indices this role can access
+    #     - logs-*: Log indices with DLS filter (only see their org's logs)
+    #     - .opensearch_dashboards*: Dashboards system indices (needed to use Dashboards UI)
+    #   - dls: Document Level Security filter (only for logs-*, not for Dashboards indices)
     #   - allowed_actions: What actions are allowed (read, search, etc.)
-    local role_json="{\"cluster_permissions\":[],\"index_permissions\":[{\"index_patterns\":[\"logs-*\"],\"dls\":\"${dls_query}\",\"allowed_actions\":[\"read\",\"indices:data/read/*\",\"indices:admin/mappings/get\",\"indices:admin/get\"]}]}"
+    # Add cluster permissions that Dashboards needs:
+    # - cluster_composite_ops: For composite operations
+    # - cluster_monitor: For cluster health checks
+    # - cluster:admin/opendistro/ism/policy/search: For Index State Management (required by Dashboards)
+    # - cluster:admin/opensearch/ql/datasources/read: For QL datasources (required by Dashboards)
+    # Index permissions for logs-* need monitor permissions for Dashboards to resolve index patterns
+    # - indices:monitor/settings/get: Allows Dashboards to get index settings via _cat/indices
+    # - indices:monitor/stats: Allows Dashboards to get index statistics via _cat/indices
+    # These are required for Dashboards to list and resolve index patterns
+    # Dashboards needs indices:data/read/get for reading individual saved objects documents
+    # The 'manage' action should include this, but explicitly adding it ensures compatibility
+    local role_json="{\"cluster_permissions\":[\"cluster_composite_ops\",\"cluster_monitor\",\"cluster:admin/opendistro/ism/policy/search\",\"cluster:admin/opensearch/ql/datasources/read\"],\"index_permissions\":[{\"index_patterns\":[\"logs-*\"],\"dls\":\"${dls_query}\",\"allowed_actions\":[\"read\",\"indices:data/read/*\",\"indices:admin/mappings/get\",\"indices:admin/get\",\"indices:monitor/settings/get\",\"indices:monitor/stats\"]},{\"index_patterns\":[\".opensearch_dashboards*\",\".kibana*\"],\"dls\":\"\",\"allowed_actions\":[\"read\",\"indices:data/read/*\",\"indices:data/read/get\",\"indices:data/write/*\",\"index\",\"delete\",\"manage\"]}],\"tenant_permissions\":[{\"tenant_patterns\":[\"__user__\"],\"allowed_actions\":[\"kibana_all_write\",\"kibana_all_read\"]}]}"
     
     # Create role via OpenSearch REST API (OpenSearch 2.x uses /_plugins/_security/api, not /_plugins/_security/api)
     local response=$(opensearch_request "PUT" "/_plugins/_security/api/roles/${role_name}" "$role_json")

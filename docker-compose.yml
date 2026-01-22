@@ -1173,6 +1173,30 @@ services:
       opensearch-rbac-setup:
         condition: service_completed_successfully
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/opensearch/api/status || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+
+  # OpenSearch Dashboards Index Pattern Setup
+  # Creates index patterns for each user in their tenant via Dashboards API
+  # This ensures index patterns are properly associated with each user's tenant
+  opensearch-dashboards-index-patterns:
+    image: curlimages/curl:latest
+    container_name: ai4v-opensearch-dashboards-index-patterns
+    depends_on:
+      opensearch-dashboards:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    volumes:
+      - ./infrastructure/opensearch/create-index-patterns.sh:/create-index-patterns.sh:ro
+    environment:
+      - OPENSEARCH_DASHBOARDS_URL=http://opensearch-dashboards:5601
+    command: ["sh", "/create-index-patterns.sh"]
+    restart: "no"
 
   # Telemetry: Jaeger (for distributed tracing)
   jaeger:
