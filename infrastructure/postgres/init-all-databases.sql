@@ -761,6 +761,8 @@ CREATE TABLE IF NOT EXISTS models (
     inference_endpoint JSONB NOT NULL,
     benchmarks JSONB,
     submitter JSONB NOT NULL,
+    created_by VARCHAR(255) DEFAULT NULL,  -- User ID (string) who created this model
+    updated_by VARCHAR(255) DEFAULT NULL,  -- User ID (string) who last updated this model
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     -- Unique constraint on (name, version) for versioning support
@@ -786,6 +788,8 @@ CREATE TABLE IF NOT EXISTS services (
     is_published BOOLEAN NOT NULL DEFAULT FALSE,
     published_at BIGINT DEFAULT NULL,
     unpublished_at BIGINT DEFAULT NULL,
+    created_by VARCHAR(255) DEFAULT NULL,  -- User ID (string) who created this service
+    updated_by VARCHAR(255) DEFAULT NULL,  -- User ID (string) who last updated this service
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     -- Unique constraint on (model_id, model_version, name)
@@ -802,6 +806,7 @@ CREATE INDEX IF NOT EXISTS idx_models_task ON models USING GIN (task);
 CREATE INDEX IF NOT EXISTS idx_models_languages ON models USING GIN (languages);
 CREATE INDEX IF NOT EXISTS idx_models_domain ON models USING GIN (domain);
 CREATE INDEX IF NOT EXISTS idx_models_created_at ON models(created_at);
+CREATE INDEX IF NOT EXISTS idx_models_created_by ON models(created_by);
 
 -- Create indexes for services table
 CREATE INDEX IF NOT EXISTS idx_services_service_id ON services(service_id);
@@ -811,6 +816,7 @@ CREATE INDEX IF NOT EXISTS idx_services_model_id_version ON services(model_id, m
 CREATE INDEX IF NOT EXISTS idx_services_is_published ON services(is_published);
 CREATE INDEX IF NOT EXISTS idx_services_created_at ON services(created_at);
 CREATE INDEX IF NOT EXISTS idx_services_health_status ON services USING GIN (health_status);
+CREATE INDEX IF NOT EXISTS idx_services_created_by ON services(created_by);
 
 -- Create trigger for version_status_updated_at
 CREATE OR REPLACE FUNCTION update_version_status_updated_at()
