@@ -758,7 +758,7 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     plain_password = generate_random_password(length = 8)
 
     # TODO: Add logging for password generation , Remove once done testing
-    # logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+    logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
 
     # Store temp credentials on tenant for email / audit purposes
     hashed_password = hash_password(plain_password)
@@ -851,7 +851,7 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
         send_welcome_email,
         tenant_id_str,
         contact_email_str,
-        None,  # subdomain not available
+        None,  # use subdomain if required
         admin_username_str,
         password_str,
     )
@@ -1398,7 +1398,7 @@ async def register_user(
         )
     
     # TODO: Add logging for password generation , Remove once done testing
-    # logger.debug(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+    logger.debug(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
     
     if payload.is_approved:
         #Create TenantUser entry only if user is approved
@@ -1478,6 +1478,7 @@ async def register_user(
         username=payload.username,
         email=payload.email,
         services=list(requested_services),
+        schema=tenant.schema_name,
         created_at=datetime.utcnow(),
     )
 
