@@ -4,9 +4,34 @@ Request/response logging middleware for tracking API usage.
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request, Response
 import logging
+import sys
 import time
 
+# Get logger and configure with JSONFormatter
 logger = logging.getLogger(__name__)
+
+# Only configure if not already configured
+if not logger.handlers:
+    # Import JSONFormatter from ai4icore_logging
+    try:
+        from ai4icore_logging import JSONFormatter
+        import os
+        
+        # Add stdout handler with JSONFormatter
+        handler = logging.StreamHandler(sys.stdout)
+        service_name = os.getenv("SERVICE_NAME", "llm-service")
+        formatter = JSONFormatter(service_name=service_name)
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+    except ImportError:
+        # Fallback to basic logging if ai4icore_logging not available
+        handler = logging.StreamHandler(sys.stdout)
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+
+# Disable propagation to prevent duplicate logs
+logger.propagate = False
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
