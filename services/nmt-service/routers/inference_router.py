@@ -34,6 +34,8 @@ from middleware.exceptions import (
     TextProcessingError,
     ErrorDetail
 )
+from middleware.exceptions import AuthenticationError, AuthorizationError
+from middleware.tenant_db_dependency import get_tenant_db_session
 
 from services.constants.error_messages import (
     NO_TEXT_INPUT,
@@ -75,11 +77,11 @@ inference_router = APIRouter(
 
 
 async def get_db_session(request: Request) -> AsyncSession:
-    """Dependency to get database session"""
+    """Dependency to get database session (legacy - use get_tenant_db_session for tenant routing)"""
     return request.app.state.db_session_factory()
 
 
-async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_db_session)) -> NMTService:
+async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_tenant_db_session)) -> NMTService:
     """
     Dependency to get configured NMT service.
     

@@ -33,6 +33,7 @@ async def send_welcome_email(
         subdomain: The tenant's subdomain
         temp_admin_username: Temporary admin username
         temp_admin_password: Temporary admin password
+        email: Admin email address
     """  
     
     body = WELCOME_EMAIL_BODY.format(
@@ -40,6 +41,7 @@ async def send_welcome_email(
             # subdomain=subdomain,
             username=temp_admin_username,
             password=temp_admin_password,
+            email=contact_email,
             login_url=f"{LOGIN_URL}",
         )
 
@@ -66,13 +68,16 @@ async def send_user_welcome_email(
         contact_email: The contact email of the user
         subdomain: The tenant's subdomain
         temp_username: Temporary username
-        temp_password: Temporary password"""  
+        temp_password: Temporary password
+        email: User email address
+    """  
     
     body = USER_WELCOME_EMAIL_BODY.format(
             user_id=user_id,
             # subdomain=subdomain,
             username=temp_username,
             password=temp_password,
+            email=contact_email,
             login_url=f"{LOGIN_URL}",
         )
 

@@ -12,7 +12,7 @@ from middleware.auth_provider import AuthProvider
 router = APIRouter(
     prefix="/email", 
     tags=["Email Verification"],
-    dependencies=[Depends(AuthProvider)]
+    # dependencies=[Depends(AuthProvider)]
 )
 
 
