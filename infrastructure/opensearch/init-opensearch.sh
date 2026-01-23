@@ -12,6 +12,22 @@ TEMPLATE_FILE="${TEMPLATE_FILE:-/index-template.json}"
 MAX_RETRIES=30
 RETRY_DELAY=2
 
+# Default admin credentials (for demo setup)
+ADMIN_USER="${OPENSEARCH_ADMIN_USER:-admin}"
+ADMIN_PASSWORD="${OPENSEARCH_ADMIN_PASSWORD:-admin}"
+
+# SSL verification (not needed for HTTP, but keep for backward compatibility)
+INSECURE="${OPENSEARCH_INSECURE:-true}"
+# Check if URL uses HTTPS
+if echo "$OPENSEARCH_URL" | grep -q "^https://"; then
+    CURL_OPTS="-k"  # -k flag skips SSL certificate verification (for demo certs)
+    if [ "$INSECURE" != "true" ]; then
+        CURL_OPTS=""
+    fi
+else
+    CURL_OPTS=""  # No SSL options needed for HTTP
+fi
+
 echo "=========================================="
 echo "OpenSearch Index Template Initialization"
 echo "=========================================="
@@ -19,17 +35,20 @@ echo ""
 
 # Wait for OpenSearch to be ready
 echo "Waiting for OpenSearch to be ready..."
-# Default admin credentials (for demo setup)
-ADMIN_USER="${OPENSEARCH_ADMIN_USER:-admin}"
-ADMIN_PASSWORD="${OPENSEARCH_ADMIN_PASSWORD:-admin}"
-
 for i in $(seq 1 $MAX_RETRIES); do
-    # Use -k flag to skip SSL verification (for demo certificates)
-    # Use -u flag for authentication when security is enabled
-    if curl -sfk -u "${ADMIN_USER}:${ADMIN_PASSWORD}" "$OPENSEARCH_URL/_cluster/health" > /dev/null 2>&1; then
+    # Try to connect to OpenSearch with basic auth (security enabled)
+    # Use appropriate curl options based on HTTP/HTTPS
+    if curl -sf $CURL_OPTS -u "${ADMIN_USER}:${ADMIN_PASSWORD}" "$OPENSEARCH_URL/_cluster/health" > /dev/null 2>&1; then
         echo "✅ OpenSearch is ready!"
         break
     fi
+    
+    # Also try without auth (in case security isn't fully initialized yet)
+    if curl -sf $CURL_OPTS "$OPENSEARCH_URL/_cluster/health" > /dev/null 2>&1; then
+        echo "✅ OpenSearch is ready (no auth required yet)"
+        break
+    fi
+    
     if [ $i -eq $MAX_RETRIES ]; then
         echo "❌ ERROR: OpenSearch did not become ready after $((MAX_RETRIES * RETRY_DELAY)) seconds"
         exit 1
@@ -51,10 +70,13 @@ echo ""
 
 # Apply the index template
 echo "Applying index template '$TEMPLATE_NAME'..."
-# Use -k flag to skip SSL verification (for demo certificates)
-# Use -u flag for authentication when security is enabled
-TEMPLATE_RESPONSE=$(curl -sk -w "\n%{http_code}" -X PUT "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME" \
+# Use appropriate curl options based on HTTP/HTTPS
+# Always use authentication when security is enabled
+TEMPLATE_RESPONSE=$(curl -s $CURL_OPTS -w "\n%{http_code}" -X PUT "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME" \
     -u "${ADMIN_USER}:${ADMIN_PASSWORD}" \
+    -H "Content-Type: application/json" \
+    -d @"$TEMPLATE_FILE" 2>/dev/null || \
+    curl -s $CURL_OPTS -w "\n%{http_code}" -X PUT "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME" \
     -H "Content-Type: application/json" \
     -d @"$TEMPLATE_FILE" 2>/dev/null)
 
@@ -69,8 +91,11 @@ if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
 elif [ "$HTTP_CODE" -eq 400 ]; then
     # Template might already exist with different content, try to update it
     echo "⚠️  Template exists, attempting to update..."
-    UPDATE_RESPONSE=$(curl -sk -w "\n%{http_code}" -X PUT "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME" \
+    UPDATE_RESPONSE=$(curl -s $CURL_OPTS -w "\n%{http_code}" -X PUT "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME" \
         -u "${ADMIN_USER}:${ADMIN_PASSWORD}" \
+        -H "Content-Type: application/json" \
+        -d @"$TEMPLATE_FILE" 2>/dev/null || \
+        curl -s $CURL_OPTS -w "\n%{http_code}" -X PUT "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME" \
         -H "Content-Type: application/json" \
         -d @"$TEMPLATE_FILE" 2>/dev/null)
     UPDATE_CODE=$(echo "$UPDATE_RESPONSE" | tail -n1)
@@ -91,7 +116,8 @@ echo ""
 
 # Verify the template was created
 echo "Verifying template exists..."
-VERIFY_RESPONSE=$(curl -sk -u "${ADMIN_USER}:${ADMIN_PASSWORD}" "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME" 2>/dev/null)
+VERIFY_RESPONSE=$(curl -s $CURL_OPTS -u "${ADMIN_USER}:${ADMIN_PASSWORD}" "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME" 2>/dev/null || \
+    curl -s $CURL_OPTS "$OPENSEARCH_URL/_index_template/$TEMPLATE_NAME" 2>/dev/null)
 if echo "$VERIFY_RESPONSE" | grep -q "\"$TEMPLATE_NAME\""; then
     echo "✅ Template verification successful!"
 else

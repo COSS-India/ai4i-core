@@ -1105,8 +1105,8 @@ services:
       - ./infrastructure/opensearch/init-opensearch.sh:/init-opensearch.sh:ro
       - ./infrastructure/opensearch/index-template.json:/index-template.json:ro
     environment:
-      # Use HTTPS with demo certificates (skip verification for local testing)
-      - OPENSEARCH_URL=https://opensearch:9200
+      # Use HTTP (SSL disabled for HTTP interface to allow Fluent Bit connection)
+      - OPENSEARCH_URL=http://opensearch:9200
       - OPENSEARCH_INSECURE=true
       - OPENSEARCH_USERNAME=admin
       - OPENSEARCH_PASSWORD=admin
