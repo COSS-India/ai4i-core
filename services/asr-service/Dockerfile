@@ -23,6 +23,7 @@ COPY services/constants /app/services/constants
 COPY services/asr-service/requirements.txt .
 
 RUN pip install --upgrade pip setuptools wheel
+RUN pip install --no-cache-dir --user packaging>=21.0
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Install AI4ICore plugins (editable) so logging, telemetry and observability are available
