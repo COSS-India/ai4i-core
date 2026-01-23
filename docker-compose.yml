@@ -1084,8 +1084,8 @@ services:
     networks:
       - microservices-network
     healthcheck:
-      # Use HTTPS with demo certificates (skip cert verification for healthcheck)
-      test: ["CMD-SHELL", "curl -k -f -u admin:admin https://localhost:9200/_cluster/health || exit 1"]
+      # Use HTTP (SSL disabled for HTTP interface to allow Fluent Bit connection)
+      test: ["CMD-SHELL", "curl -f -u admin:admin http://localhost:9200/_cluster/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -1134,12 +1134,12 @@ services:
     volumes:
       - ./infrastructure/opensearch/setup-rbac.sh:/setup-rbac.sh:ro
     environment:
-      # Use HTTPS with demo certificates
-      - OPENSEARCH_URL=https://opensearch:9200
-      # Default admin credentials (demo certificates use admin/admin)
+      # Use HTTP (SSL disabled for HTTP interface)
+      - OPENSEARCH_URL=http://opensearch:9200
+      # Default admin credentials
       - OPENSEARCH_ADMIN_USER=admin
       - OPENSEARCH_ADMIN_PASSWORD=admin
-      # Skip SSL verification for local testing
+      # SSL verification not needed for HTTP
       - OPENSEARCH_INSECURE=true
     command: ["sh", "/setup-rbac.sh"]
     restart: "no"
@@ -1154,15 +1154,14 @@ services:
     ports:
       - "5602:5601"
     environment:
-      # Use HTTPS with demo certificates
-      - OPENSEARCH_HOSTS=https://opensearch:9200
+      # Use HTTP (SSL disabled for HTTP interface to allow Fluent Bit connection)
+      - OPENSEARCH_HOSTS=http://opensearch:9200
       # Enable security plugin for RBAC testing
       - DISABLE_SECURITY_DASHBOARDS_PLUGIN=false
-      # Default credentials for Dashboards to connect to OpenSearch (demo certs use admin/admin)
+      # Default credentials for Dashboards to connect to OpenSearch
       - OPENSEARCH_USERNAME=admin
       - OPENSEARCH_PASSWORD=admin
-      # Skip SSL verification for local testing
-      - OPENSEARCH_SSL_VERIFICATION_MODE=none
+      # SSL verification not needed for HTTP
       - SERVER_BASEPATH=/opensearch
       - SERVER_REWRITEBASEPATH=true
     networks:

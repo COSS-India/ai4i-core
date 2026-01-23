@@ -36,10 +36,14 @@ plugins.security.ssl.transport.pemkey_filepath: certs/esnode-key.pem
 plugins.security.ssl.transport.pemtrustedcas_filepath: certs/root-ca.pem
 plugins.security.ssl.transport.enforce_hostname_verification: false
 
-plugins.security.ssl.http.enabled: true
-plugins.security.ssl.http.pemcert_filepath: certs/esnode.pem
-plugins.security.ssl.http.pemkey_filepath: certs/esnode-key.pem
-plugins.security.ssl.http.pemtrustedcas_filepath: certs/root-ca.pem
+# HTTP SSL Configuration
+# Disable SSL for HTTP to allow Fluent Bit to connect via HTTP
+# Transport layer still uses SSL for security
+plugins.security.ssl.http.enabled: false
+# Keep transport SSL enabled for node-to-node communication
+# plugins.security.ssl.http.pemcert_filepath: certs/esnode.pem
+# plugins.security.ssl.http.pemkey_filepath: certs/esnode-key.pem
+# plugins.security.ssl.http.pemtrustedcas_filepath: certs/root-ca.pem
 
 # Audit configuration
 plugins.security.audit.type: internal_opensearch

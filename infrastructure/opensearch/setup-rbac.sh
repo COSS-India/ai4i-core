@@ -14,8 +14,9 @@
 set -e
 
 # Configuration
-# Use HTTPS when security is enabled (with demo certificates)
-OPENSEARCH_URL="${OPENSEARCH_URL:-https://localhost:9200}"
+# Use HTTP (SSL disabled for HTTP interface to allow Fluent Bit connection)
+# Can be overridden via environment variable
+OPENSEARCH_URL="${OPENSEARCH_URL:-http://localhost:9200}"
 MAX_RETRIES=30
 RETRY_DELAY=2
 
@@ -23,11 +24,16 @@ RETRY_DELAY=2
 ADMIN_USER="${OPENSEARCH_ADMIN_USER:-admin}"
 ADMIN_PASSWORD="${OPENSEARCH_ADMIN_PASSWORD:-admin}"
 
-# SSL verification (skip for demo certificates in local testing)
+# SSL verification (not needed for HTTP, but keep for backward compatibility)
 INSECURE="${OPENSEARCH_INSECURE:-true}"
-CURL_OPTS="-k"  # -k flag skips SSL certificate verification (for demo certs)
-if [ "$INSECURE" != "true" ]; then
-    CURL_OPTS=""
+# Check if URL uses HTTPS
+if echo "$OPENSEARCH_URL" | grep -q "^https://"; then
+    CURL_OPTS="-k"  # -k flag skips SSL certificate verification (for demo certs)
+    if [ "$INSECURE" != "true" ]; then
+        CURL_OPTS=""
+    fi
+else
+    CURL_OPTS=""  # No SSL options needed for HTTP
 fi
 
 # Organizations (must match the organizations used in hash-based extraction)
@@ -50,15 +56,15 @@ echo ""
 wait_for_opensearch() {
     echo "Waiting for OpenSearch to be ready..."
     for i in $(seq 1 $MAX_RETRIES); do
-        # Try to connect to OpenSearch with HTTPS and basic auth (security enabled)
-        # Use -k flag to skip SSL verification for demo certificates
-        if curl -sfk -u "${ADMIN_USER}:${ADMIN_PASSWORD}" "${OPENSEARCH_URL}/_cluster/health" > /dev/null 2>&1; then
+        # Try to connect to OpenSearch with basic auth (security enabled)
+        # Use appropriate curl options based on HTTP/HTTPS
+        if curl -sf $CURL_OPTS -u "${ADMIN_USER}:${ADMIN_PASSWORD}" "${OPENSEARCH_URL}/_cluster/health" > /dev/null 2>&1; then
             echo -e "${GREEN}✅ OpenSearch is ready!${NC}"
             return 0
         fi
         
         # Also try without auth (in case security isn't fully initialized yet)
-        if curl -sfk "${OPENSEARCH_URL}/_cluster/health" > /dev/null 2>&1; then
+        if curl -sf $CURL_OPTS "${OPENSEARCH_URL}/_cluster/health" > /dev/null 2>&1; then
             echo -e "${GREEN}✅ OpenSearch is ready (no auth required yet)${NC}"
             return 0
         fi
@@ -83,20 +89,20 @@ opensearch_request() {
     local url="${OPENSEARCH_URL}${endpoint}"
     local response
     
-    # Use HTTPS with -k flag to skip SSL verification (for demo certificates)
+    # Use appropriate curl options based on HTTP/HTTPS
     # Always use authentication when security is enabled
     if [ -n "$data" ]; then
-        response=$(curl -sk -w "\n%{http_code}" -X "$method" "$url" \
+        response=$(curl -s $CURL_OPTS -w "\n%{http_code}" -X "$method" "$url" \
             -u "${ADMIN_USER}:${ADMIN_PASSWORD}" \
             -H "Content-Type: application/json" \
             -d "$data" 2>/dev/null || \
-        curl -sk -w "\n%{http_code}" -X "$method" "$url" \
+        curl -s $CURL_OPTS -w "\n%{http_code}" -X "$method" "$url" \
             -H "Content-Type: application/json" \
             -d "$data" 2>/dev/null)
     else
-        response=$(curl -sk -w "\n%{http_code}" -X "$method" "$url" \
+        response=$(curl -s $CURL_OPTS -w "\n%{http_code}" -X "$method" "$url" \
             -u "${ADMIN_USER}:${ADMIN_PASSWORD}" 2>/dev/null || \
-        curl -sk -w "\n%{http_code}" -X "$method" "$url" 2>/dev/null)
+        curl -s $CURL_OPTS -w "\n%{http_code}" -X "$method" "$url" 2>/dev/null)
     fi
     
     echo "$response"
