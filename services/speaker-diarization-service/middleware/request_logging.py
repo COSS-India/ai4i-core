@@ -5,12 +5,27 @@ Copied from OCR service to keep behavior and structure consistent.
 """
 
 import logging
+import sys
 import time
+import os
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from ai4icore_logging import JSONFormatter
 
 logger = logging.getLogger(__name__)
+# Disable propagation to prevent duplicate logs in root logger
+logger.propagate = False
+
+# Add a handler with JSONFormatter to this logger
+# This ensures logs are in JSON format even when propagation is disabled
+if not logger.handlers:  # Only add if no handlers exist to prevent duplicates on reload
+    handler = logging.StreamHandler(sys.stdout)
+    service_name = os.getenv("SERVICE_NAME", "speaker-diarization-service")
+    formatter = JSONFormatter(service_name=service_name)
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)  # Ensure INFO level logs are captured
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):

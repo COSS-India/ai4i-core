@@ -7,6 +7,8 @@ import logging
 import time
 
 logger = logging.getLogger(__name__)
+# Disable propagation to prevent duplicate logs in root logger
+logger.propagate = False
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):

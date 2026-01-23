@@ -23,6 +23,13 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_logging import (
+    get_logger,
+    CorrelationMiddleware,
+    configure_logging,
+)
+from ai4icore_telemetry import setup_tracing
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
 from routers import inference_router
@@ -32,11 +39,48 @@ from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+# Configure structured logging
+# This also configures uvicorn loggers to use our formatter and disables access logs
+# Set root_level=INFO to ensure successful 200 requests are logged to OpenSearch
+configure_logging(
+    service_name=os.getenv("SERVICE_NAME", "speaker-diarization-service"),
+    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
+    root_level=logging.INFO,  # Allow INFO level logs (including 200 status requests)
 )
-logger = logging.getLogger(__name__)
+
+# Aggressively disable uvicorn access logger BEFORE uvicorn starts
+# This must happen before uvicorn imports/creates its loggers
+uvicorn_access = logging.getLogger("uvicorn.access")
+uvicorn_access.handlers.clear()
+uvicorn_access.propagate = False
+uvicorn_access.disabled = True
+uvicorn_access.setLevel(logging.CRITICAL + 1)  # Set above CRITICAL to ensure nothing logs
+
+# Also disable at root level by filtering out uvicorn.access messages
+class UvicornAccessFilter(logging.Filter):
+    """Filter to block uvicorn.access log messages."""
+    def filter(self, record):
+        # Block uvicorn.access logger
+        if record.name == "uvicorn.access":
+            return False
+        # Also block messages that look like uvicorn access logs
+        # Format: "INFO: IP:PORT "METHOD PATH HTTP/1.1" STATUS"
+        message = str(record.getMessage())
+        if 'HTTP/1.1"' in message:
+            import re
+            # Match uvicorn access log pattern: INFO: IP:PORT "METHOD PATH HTTP/1.1" STATUS
+            if re.search(r'INFO:\s+\d+\.\d+\.\d+\.\d+:\d+\s+"(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+.*HTTP/1\.1"\s+\d+', message):
+                return False
+        return True
+
+# Add filter to root logger to catch any uvicorn.access messages
+root_logger = logging.getLogger()
+uvicorn_filter = UvicornAccessFilter()
+for handler in root_logger.handlers:
+    handler.addFilter(uvicorn_filter)
+
+# Get logger instance
+logger = get_logger(__name__)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
@@ -235,25 +279,48 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Observability
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Correlation middleware (MUST be before RequestLoggingMiddleware)
+# This extracts X-Correlation-ID from headers and sets it in logging context
+app.add_middleware(CorrelationMiddleware)
+
+# Request logging (added BEFORE ObservabilityMiddleware)
+# FastAPI middleware runs in REVERSE order, so this will run AFTER ObservabilityMiddleware
+# This ensures organization is set in context before logging
+app.add_middleware(RequestLoggingMiddleware)
+
+# Observability (MUST be added AFTER RequestLoggingMiddleware)
+# FastAPI middleware runs in REVERSE order, so this will run FIRST
+# This ensures organization is extracted and set in context before RequestLoggingMiddleware logs
 obs_config = PluginConfig.from_env()
-obs_config.enabled = True
+obs_config.enabled = True  # Enable plugin
+obs_config.debug = False  # Disable debug print statements - use structured logging instead
 if not obs_config.customers:
-    obs_config.customers = []
+    obs_config.customers = []  # Will be extracted from JWT/headers automatically
 if not obs_config.apps:
-    obs_config.apps = ["speaker-diarization"]
+    obs_config.apps = ["speaker-diarization"]  # Service name
 
 observability_plugin = ObservabilityPlugin(obs_config)
 observability_plugin.register_plugin(app)
-logger.info("AI4ICore Observability Plugin initialized for Speaker Diarization service")
+logger.info("✅ AI4ICore Observability Plugin initialized for Speaker Diarization service")
 
 # Model Management Plugin - single source of truth for Triton endpoint/model (no env fallback)
+# MUST be registered BEFORE app starts (before other middleware) to avoid "Cannot add middleware after application has started" error
 try:
     mm_config = ModelManagementConfig(
         model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
         model_management_api_key=os.getenv("MODEL_MANAGEMENT_SERVICE_API_KEY"),
         cache_ttl_seconds=300,
         triton_endpoint_cache_ttl=300,
+        # Explicitly disable default Triton fallback – Model Management must resolve everything
         default_triton_endpoint="",
         default_triton_api_key="",
         middleware_enabled=True,
@@ -266,29 +333,32 @@ try:
 except Exception as e:
     logger.warning(f"Failed to initialize Model Management Plugin: {e}")
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+tracer = setup_tracing("speaker-diarization-service")
+if tracer:
+    logger.info("✅ Distributed tracing initialized for Speaker Diarization service")
+    # Instrument FastAPI to automatically create spans for all requests
+    # Exclude health check endpoints to reduce span noise
+    FastAPIInstrumentor.instrument_app(
+        app,
+        excluded_urls="/health,/metrics,/enterprise/metrics,/docs,/redoc,/openapi.json"
+    )
+    logger.info("✅ FastAPI instrumentation enabled for tracing")
+else:
+    logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
 
-# Request logging
-app.add_middleware(RequestLoggingMiddleware)
-
-# Rate limiting (Redis client will be picked from app.state)
+# Add rate limiting middleware (will use app.state.redis_client when available)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
 app.add_middleware(
     RateLimitMiddleware,
-    redis_client=None,
+    redis_client=None,  # Will use app.state.redis_client as fallback
     requests_per_minute=rate_limit_per_minute,
     requests_per_hour=rate_limit_per_hour,
 )
 
-# Error handlers
+# Register error handlers
 add_error_handlers(app)
 
 # Routers
