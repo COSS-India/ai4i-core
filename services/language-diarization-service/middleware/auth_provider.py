@@ -23,12 +23,21 @@ AUTH_HTTP_TIMEOUT = float(os.getenv("AUTH_HTTP_TIMEOUT", "5.0"))
 
 
 def get_api_key_from_header(authorization: Optional[str]) -> Optional[str]:
+    """Extract API key from Authorization header.
+    
+    IMPORTANT: In API_KEY mode, Bearer tokens should NOT be treated as API keys.
+    Only extract API key if the header starts with 'ApiKey ' or is a plain API key.
+    """
     if not authorization:
         return None
-    if authorization.startswith("Bearer "):
-        return authorization[7:]
+    # Only extract API key if explicitly prefixed with "ApiKey "
     if authorization.startswith("ApiKey "):
         return authorization[7:]
+    # If it starts with "Bearer ", it's a JWT token, not an API key
+    # Don't extract it as an API key - return None
+    if authorization.startswith("Bearer "):
+        return None
+    # If it's a plain string without prefix, treat it as API key (for backward compatibility)
     return authorization
 
 
@@ -148,6 +157,17 @@ async def AuthProvider(
         return bearer_result
 
     # API_KEY mode (default) - require API key only
+    # IMPORTANT: In API_KEY mode, if Authorization header contains "Bearer " token,
+    # it should be rejected (not treated as API key) unless X-API-Key header is provided
+    if authorization and authorization.startswith("Bearer "):
+        # In API_KEY mode, Bearer tokens are not accepted
+        # User must provide X-API-Key header instead
+        if not api_key:
+            raise AuthenticationError(
+                "API key required. Bearer tokens are not accepted in API_KEY mode. "
+                "Please provide X-API-Key header or set X-Auth-Source to AUTH_TOKEN."
+            )
+    
     if not api_key:
         raise AuthenticationError("Missing API key")
 
