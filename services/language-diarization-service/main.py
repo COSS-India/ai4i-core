@@ -29,9 +29,21 @@ from ai4icore_model_management import ModelManagementPlugin, ModelManagementConf
 LOGGING_AVAILABLE = False
 configure_logging = None
 get_logger = None
+CorrelationMiddleware = None
 try:
-    from ai4icore_logging import configure_logging, get_logger
+    from ai4icore_logging import configure_logging, get_logger, CorrelationMiddleware
     LOGGING_AVAILABLE = True
+except ImportError:
+    pass
+
+# Tracing imports (OpenTelemetry for distributed tracing)
+TRACING_AVAILABLE = False
+setup_tracing = None
+FastAPIInstrumentor = None
+try:
+    from ai4icore_telemetry import setup_tracing
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    TRACING_AVAILABLE = True
 except ImportError:
     pass
 
@@ -272,6 +284,20 @@ if not obs_config.apps:
 observability_plugin = ObservabilityPlugin(obs_config)
 observability_plugin.register_plugin(app)
 logger.info("AI4ICore Observability Plugin initialized for Language Diarization service")
+
+# Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+if TRACING_AVAILABLE:
+    tracer = setup_tracing("language-diarization-service")
+    if tracer:
+        logger.info("✅ Distributed tracing initialized for Language Diarization service")
+        # Instrument FastAPI to automatically create spans for all requests
+        FastAPIInstrumentor.instrument_app(app)
+        logger.info("✅ FastAPI instrumentation enabled for tracing")
+    else:
+        logger.warning("⚠️ Tracing not available (OpenTelemetry setup failed)")
+else:
+    logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
 
 # Model Management Plugin - single source of truth for Triton endpoint/model (no env fallback)
 try:
