@@ -85,6 +85,7 @@ const ServicesManagementPage: React.FC = () => {
   const toast = useToast();
   const queryClient = useQueryClient();
   const {  user } = useAuth();
+
   const { checkSessionExpiry } = useSessionExpiry();
   const router = useRouter();
   
