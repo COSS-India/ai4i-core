@@ -73,9 +73,13 @@ from services.constants.error_messages import (
 # Import OpenTelemetry for manual span creation
 try:
     from opentelemetry import trace
+    from opentelemetry.trace import Status, StatusCode
     TRACING_AVAILABLE = True
 except ImportError:
     TRACING_AVAILABLE = False
+    trace = None
+    Status = None
+    StatusCode = None
 
 logger = logging.getLogger(__name__)
 
@@ -108,12 +112,48 @@ async def get_asr_service(
         service_id = getattr(request.state, "service_id", None)
         model_mgmt_error = getattr(request.state, "model_management_error", None)
         
+        # Extract context for logging
+        from ai4icore_logging import get_correlation_id
+        correlation_id = get_correlation_id(request) or getattr(request.state, "correlation_id", None)
+        user_id = getattr(request.state, "user_id", None)
+        api_key_id = getattr(request.state, "api_key_id", None)
+        
+        # Trace the error if we're in a span context
+        if TRACING_AVAILABLE and trace:
+            try:
+                current_span = trace.get_current_span()
+                if current_span and current_span.is_recording():
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "ModelUnavailableError")
+                    current_span.set_attribute("error.message", f"Model Management did not resolve serviceId: {service_id}")
+                    current_span.set_attribute("http.status_code", 500)
+                    current_span.set_status(Status(StatusCode.ERROR, f"Model Management did not resolve serviceId: {service_id}"))
+                    if service_id:
+                        current_span.set_attribute("asr.service_id", service_id)
+                    if correlation_id:
+                        current_span.set_attribute("correlation.id", correlation_id)
+            except Exception:
+                pass  # Don't fail if tracing fails
+        
         if service_id:
             # Model Management failed to resolve endpoint for a specific serviceId
             logger.error(
-                "Model Management did not resolve serviceId: %s and no default endpoint is allowed. Error: %s",
-                service_id,
-                model_mgmt_error,
+                f"Model Management did not resolve serviceId: {service_id} and no default endpoint is allowed. Error: {model_mgmt_error}",
+                extra={
+                    "context": {
+                        "error_type": "ModelUnavailableError",
+                        "error_message": f"Model Management did not resolve serviceId: {service_id}",
+                        "status_code": 500,
+                        "service_id": service_id,
+                        "model_management_error": model_mgmt_error,
+                        "user_id": user_id,
+                        "api_key_id": api_key_id,
+                        "correlation_id": correlation_id,
+                        "path": request.url.path,
+                        "method": request.method,
+                    }
+                },
+                exc_info=True
             )
             error_detail = ErrorDetail(
                 message=MODEL_UNAVAILABLE_MESSAGE,
@@ -139,11 +179,56 @@ async def get_asr_service(
     if not model_name or model_name == "unknown":
         service_id = getattr(request.state, "service_id", None)
         model_mgmt_error = getattr(request.state, "model_management_error", None)
+        
+        # Extract context for logging
+        from ai4icore_logging import get_correlation_id
+        correlation_id = get_correlation_id(request) or getattr(request.state, "correlation_id", None)
+        user_id = getattr(request.state, "user_id", None)
+        api_key_id = getattr(request.state, "api_key_id", None)
+        triton_endpoint = getattr(request.state, "triton_endpoint", None)
+        
+        # Trace the error if we're in a span context
+        if TRACING_AVAILABLE and trace:
+            try:
+                current_span = trace.get_current_span()
+                if current_span and current_span.is_recording():
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "ModelUnavailableError")
+                    current_span.set_attribute("error.message", f"Model Management failed to resolve Triton model name for serviceId: {service_id}")
+                    current_span.set_attribute("http.status_code", 500)
+                    current_span.set_status(Status(StatusCode.ERROR, f"Model Management failed to resolve Triton model name for serviceId: {service_id}"))
+                    if service_id:
+                        current_span.set_attribute("asr.service_id", service_id)
+                    if triton_endpoint:
+                        current_span.set_attribute("triton.endpoint", triton_endpoint)
+                    if correlation_id:
+                        current_span.set_attribute("correlation.id", correlation_id)
+            except Exception:
+                pass  # Don't fail if tracing fails
+        
         error_detail = ErrorDetail(
             message=MODEL_UNAVAILABLE_MESSAGE,
             code=MODEL_UNAVAILABLE
         )
-        logger.error(f"Model Management failed to resolve Triton model name for serviceId: {service_id}. Error: {model_mgmt_error}")
+        logger.error(
+            f"Model Management failed to resolve Triton model name for serviceId: {service_id}. Error: {model_mgmt_error}",
+            extra={
+                "context": {
+                    "error_type": "ModelUnavailableError",
+                    "error_message": f"Model Management failed to resolve Triton model name for serviceId: {service_id}",
+                    "status_code": 500,
+                    "service_id": service_id,
+                    "triton_endpoint": triton_endpoint,
+                    "model_management_error": model_mgmt_error,
+                    "user_id": user_id,
+                    "api_key_id": api_key_id,
+                    "correlation_id": correlation_id,
+                    "path": request.url.path,
+                    "method": request.method,
+                }
+            },
+            exc_info=True
+        )
         raise HTTPException(
             status_code=500,
             detail=error_detail.dict(),
@@ -183,21 +268,73 @@ async def run_inference(
     request_id = None
     
     # Create a descriptive span for ASR inference when tracing is enabled
-    if TRACING_AVAILABLE:
-        tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span("ASR Inference") as span:
+    # This will be a child of the FastAPI auto-instrumented span
+    if not TRACING_AVAILABLE:
+        # Fallback if tracing not available
+        return await _run_asr_inference_internal(request, http_request, asr_service, start_time)
+    
+    tracer = trace.get_tracer("asr-service")
+    with tracer.start_as_current_span("asr.inference") as span:
+        try:
+            # Extract auth context from request.state (if middleware is configured)
+            user_id = getattr(http_request.state, "user_id", None)
+            api_key_id = getattr(http_request.state, "api_key_id", None)
+            session_id = getattr(http_request.state, "session_id", None)
+            
+            # Get correlation ID for log/trace correlation
+            from ai4icore_logging import get_correlation_id
+            correlation_id = get_correlation_id(http_request) or getattr(http_request.state, "correlation_id", None)
+            if correlation_id:
+                span.set_attribute("correlation.id", correlation_id)
+            
+            # Add request metadata to span
             span.set_attribute("service.name", "asr")
             span.set_attribute("service.type", "asr")
             span.set_attribute("asr.audio_count", len(request.audio))
             try:
                 span.set_attribute("asr.service_id", request.config.serviceId)
                 span.set_attribute("asr.language", request.config.language.sourceLanguage)
+                if request.config.language.targetLanguage:
+                    span.set_attribute("asr.target_language", request.config.language.targetLanguage)
             except Exception:
                 # Config may be missing or malformed; don't fail tracing because of this
                 pass
+            
+            # Track request size (approximate)
+            try:
+                import json
+                request_size = len(json.dumps(request.dict()).encode('utf-8'))
+                span.set_attribute("http.request.size_bytes", request_size)
+            except Exception:
+                pass
+            
+            if user_id:
+                span.set_attribute("user.id", str(user_id))
+            if api_key_id:
+                span.set_attribute("api_key.id", str(api_key_id))
+            if session_id:
+                span.set_attribute("session.id", str(session_id))
+            
+            # Add span event for request start
+            span.add_event("asr.inference.started", {
+                "audio_count": len(request.audio),
+                "service_id": request.config.serviceId if request.config else "unknown"
+            })
+            
             return await _run_asr_inference_internal(request, http_request, asr_service, start_time)
-    else:
-        return await _run_asr_inference_internal(request, http_request, asr_service, start_time)
+            
+        except Exception as exc:
+            span.set_attribute("error", True)
+            span.set_attribute("error.type", type(exc).__name__)
+            span.set_attribute("error.message", str(exc))
+            span.set_attribute("http.status_code", 500)
+            span.add_event("asr.inference.failed", {
+                "error_type": type(exc).__name__,
+                "error_message": str(exc)
+            })
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
+            raise
 
 
 async def _run_asr_inference_internal(
@@ -213,9 +350,52 @@ async def _run_asr_inference_internal(
     
     if not triton_endpoint or not triton_model_name:
         service_id = getattr(http_request.state, "service_id", None)
+        
+        # Extract context for logging
+        from ai4icore_logging import get_correlation_id
+        correlation_id = get_correlation_id(http_request) or getattr(http_request.state, "correlation_id", None)
+        user_id = getattr(http_request.state, "user_id", None)
+        api_key_id = getattr(http_request.state, "api_key_id", None)
+        
+        # Trace the error if we're in a span context
+        if TRACING_AVAILABLE and trace:
+            try:
+                current_span = trace.get_current_span()
+                if current_span and current_span.is_recording():
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "ModelUnavailableError")
+                    current_span.set_attribute("error.message", f"Triton endpoint or model name not resolved for serviceId: {service_id}")
+                    current_span.set_attribute("http.status_code", 500)
+                    current_span.set_status(Status(StatusCode.ERROR, f"Triton endpoint or model name not resolved for serviceId: {service_id}"))
+                    if service_id:
+                        current_span.set_attribute("asr.service_id", service_id)
+                    if correlation_id:
+                        current_span.set_attribute("correlation.id", correlation_id)
+            except Exception:
+                pass  # Don't fail if tracing fails
+        
         error_detail = ErrorDetail(
             message=MODEL_UNAVAILABLE_MESSAGE,
             code=MODEL_UNAVAILABLE
+        )
+        logger.error(
+            f"Triton endpoint or model name not resolved for serviceId: {service_id}",
+            extra={
+                "context": {
+                    "error_type": "ModelUnavailableError",
+                    "error_message": f"Triton endpoint or model name not resolved for serviceId: {service_id}",
+                    "status_code": 500,
+                    "service_id": service_id,
+                    "triton_endpoint": triton_endpoint,
+                    "triton_model_name": triton_model_name,
+                    "user_id": user_id,
+                    "api_key_id": api_key_id,
+                    "correlation_id": correlation_id,
+                    "path": http_request.url.path,
+                    "method": http_request.method,
+                }
+            },
+            exc_info=True
         )
         raise HTTPException(
             status_code=500,
@@ -318,12 +498,55 @@ async def _run_asr_inference_internal(
             detail=ErrorDetail(code=INVALID_REQUEST, message=INVALID_REQUEST_MESSAGE).dict()
         )
     except Exception as e:
-        logger.error(f"ASR inference failed: {e}", exc_info=True)
-        
         # Extract context from request state for better error messages
         service_id = getattr(http_request.state, "service_id", None)
         triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
         model_name = getattr(http_request.state, "triton_model_name", None)
+        user_id = getattr(http_request.state, "user_id", None)
+        api_key_id = getattr(http_request.state, "api_key_id", None)
+        
+        # Get correlation ID for logging
+        from ai4icore_logging import get_correlation_id
+        correlation_id = get_correlation_id(http_request) or getattr(http_request.state, "correlation_id", None)
+        
+        # Trace the error if we're in a span context
+        if TRACING_AVAILABLE and trace:
+            try:
+                current_span = trace.get_current_span()
+                if current_span and current_span.is_recording():
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", type(e).__name__)
+                    current_span.set_attribute("error.message", str(e))
+                    current_span.set_attribute("http.status_code", 500)
+                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    current_span.record_exception(e)
+                    if service_id:
+                        current_span.set_attribute("asr.service_id", service_id)
+                    if triton_endpoint:
+                        current_span.set_attribute("triton.endpoint", triton_endpoint)
+                    if model_name:
+                        current_span.set_attribute("triton.model_name", model_name)
+            except Exception:
+                pass  # Don't fail if tracing fails
+        
+        # Log error with full context
+        logger.error(
+            f"ASR inference failed: {e}",
+            extra={
+                "context": {
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "service_id": service_id,
+                    "triton_endpoint": triton_endpoint,
+                    "model_name": model_name,
+                    "user_id": user_id,
+                    "api_key_id": api_key_id,
+                    "correlation_id": correlation_id,
+                    "audio_count": len(request.audio) if hasattr(request, 'audio') else None,
+                }
+            },
+            exc_info=True
+        )
         
         # Return appropriate error based on exception type
         if "Triton" in str(e) or "triton" in str(e).lower():

@@ -13,6 +13,8 @@ from services.tenant_service import (
     register_user,
     update_tenant_status,
     update_tenant_user_status,
+    view_tenant_details,
+    view_tenant_user_details,
 )
 
 from logger import logger
@@ -112,4 +114,50 @@ async def change_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
         raise HTTPException(status_code=400, detail=str(ve),)
     except Exception as exc:
         logger.exception(f"Unexpected error while updating tenant user status | tenant={payload.tenant_id} user_id={payload.user_id}: {exc}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/view/tenant", status_code=status.HTTP_200_OK)
+async def view_tenant(
+    tenant_id: str,
+    db: AsyncSession = Depends(get_tenant_db_session),
+):
+    """
+    View tenant details by tenant_id (human-readable tenant identifier).
+    """
+    try:
+        result = await view_tenant_details(tenant_id, db)
+
+        if not result:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(f"Error viewing tenant details | tenant_id={tenant_id}: {exc}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    
+
+
+@router.get("/view/user", status_code=status.HTTP_200_OK)
+async def view_tenant_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_tenant_db_session),
+):
+    """
+    View tenant user details by tenant_id and auth user_id.
+
+    """
+    try:
+        result = await view_tenant_user_details(user_id, db)
+
+        if not result:
+            raise HTTPException(status_code=404, detail="Tenant user not found")
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(f"Error viewing tenant user details | tenant_id={tenant_id} user_id={user_id}: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")

@@ -12,10 +12,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy AI4ICore Observability Plugin from monorepo
+# Copy AI4ICore plugins from monorepo
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
-
-# Copy AI4ICore Model Management Plugin from monorepo
+COPY libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
 # Copy service requirements
@@ -25,8 +25,11 @@ RUN pip install --upgrade pip setuptools wheel
 
 # Install Python deps
 RUN pip install --no-cache-dir --user -r requirements.txt
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
-RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
+# Install AI4ICore plugins (non-editable since we copy source to runtime)
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_logging
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_telemetry
+RUN pip install --no-cache-dir --user /app/libs/ai4icore_model_management
 
 
 # -----------------------------
@@ -48,10 +51,10 @@ RUN useradd --create-home --shell /bin/bash app
 COPY --from=builder /root/.local /home/app/.local
 ENV PATH=/home/app/.local/bin:$PATH
 
-# Copy AI4ICore Observability Plugin
+# Copy AI4ICore plugins into runtime image
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
-
-# Copy AI4ICore Model Management Plugin
+COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
 # Copy service code
@@ -64,7 +67,7 @@ RUN chown -R app:app /app /home/app/.local \
 USER app
 
 ENV PATH="/home/app/.local/bin:$PATH"
-ENV PYTHONPATH="/app"
+ENV PYTHONPATH="/app:/app/libs"
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 9001
