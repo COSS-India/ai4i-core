@@ -8,7 +8,7 @@
 --   docker compose exec postgres psql -U dhruva_user -d model_management_db -f /docker-entrypoint-initdb.d/13-model-management-audit-logs-migration.sql
 -- ============================================================================
 
-\c model_management_db;
+-- \c model_management_db;
 
 -- ============================================================================
 -- Add created_by and updated_by columns to models table
@@ -24,7 +24,7 @@ BEGIN
         AND column_name = 'created_by'
     ) THEN
         ALTER TABLE models ADD COLUMN created_by VARCHAR(255) DEFAULT NULL;
-        RAISE NOTICE 'Added created_by column to models table';
+        -- RAISE NOTICE 'Added created_by column to models table';
     END IF;
 
     -- Add updated_by column if it doesn't exist
@@ -36,7 +36,7 @@ BEGIN
         AND column_name = 'updated_by'
     ) THEN
         ALTER TABLE models ADD COLUMN updated_by VARCHAR(255) DEFAULT NULL;
-        RAISE NOTICE 'Added updated_by column to models table';
+        -- RAISE NOTICE 'Added updated_by column to models table';
     END IF;
 END $$;
 
@@ -61,7 +61,7 @@ BEGIN
         AND column_name = 'created_by'
     ) THEN
         ALTER TABLE services ADD COLUMN created_by VARCHAR(255) DEFAULT NULL;
-        RAISE NOTICE 'Added created_by column to services table';
+        -- RAISE NOTICE 'Added created_by column to services table';
     END IF;
 
     -- Add updated_by column if it doesn't exist
@@ -73,7 +73,7 @@ BEGIN
         AND column_name = 'updated_by'
     ) THEN
         ALTER TABLE services ADD COLUMN updated_by VARCHAR(255) DEFAULT NULL;
-        RAISE NOTICE 'Added updated_by column to services table';
+        -- RAISE NOTICE 'Added updated_by column to services table';
     END IF;
 END $$;
 
@@ -87,4 +87,4 @@ CREATE INDEX IF NOT EXISTS idx_services_created_by ON services(created_by);
 -- ============================================================================
 -- Migration complete
 -- ============================================================================
-RAISE NOTICE 'Migration 13-created-updated-by-migration completed successfully';
+-- RAISE NOTICE 'Migration 13-created-updated-by-migration completed successfully';
