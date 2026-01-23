@@ -17,6 +17,7 @@ import logging
 import uuid
 import time
 import json
+from contextlib import nullcontext
 from datetime import datetime, date
 from typing import Dict, Any, List, Optional, Tuple, Union
 from enum import Enum
@@ -25,7 +26,8 @@ from urllib.parse import urlencode, urlparse, parse_qs
 from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
-from pydantic import BaseModel, Field, EmailStr
+from starlette.middleware.base import BaseHTTPMiddleware
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -36,40 +38,58 @@ import httpx
 from auth_middleware import auth_middleware
 from decimal import Decimal
 
-# Import error messages using importlib (same approach as auth_middleware)
-import importlib.util
-import os
+# AI4ICore logging and telemetry
+from ai4icore_logging import (
+    get_logger,
+    CorrelationMiddleware,
+    configure_logging,
+)
+from ai4icore_telemetry import setup_tracing
+from middleware.request_logging import RequestLoggingMiddleware
+
+# OpenTelemetry for distributed tracing
 try:
-    from services.constants.error_messages import (
-        AUTH_FAILED,
-        AUTH_FAILED_MESSAGE
-    )
+    from opentelemetry import trace
+    from opentelemetry.propagate import inject
+    from opentelemetry.trace import Status, StatusCode
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    TRACING_AVAILABLE = True
 except ImportError:
-    # Fallback: direct file import using importlib
-    error_messages_path = "/app/services/constants/error_messages.py"
-    possible_paths = [
-        error_messages_path,
-        os.path.join(os.path.dirname(__file__), "..", "services", "constants", "error_messages.py"),
-        os.path.join("/app", "services", "constants", "error_messages.py")
-    ]
-    
-    error_messages = None
-    for path in possible_paths:
-        abs_path = os.path.abspath(path)
-        if os.path.exists(abs_path):
-            spec = importlib.util.spec_from_file_location("error_messages", abs_path)
-            if spec and spec.loader:
-                error_messages = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(error_messages)
-                break
-    
-    if error_messages:
-        AUTH_FAILED = error_messages.AUTH_FAILED
-        AUTH_FAILED_MESSAGE = error_messages.AUTH_FAILED_MESSAGE
-    else:
-        # Last resort: define constants directly
-        AUTH_FAILED = "AUTH_FAILED"
-        AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."
+    TRACING_AVAILABLE = False
+    trace = None
+    inject = None
+    Status = None
+    StatusCode = None
+    FastAPIInstrumentor = None
+    logging.warning("OpenTelemetry not available, tracing disabled")
+
+# Tracer will be initialized after setup_tracing is called
+# Helper function to get tracer dynamically (ensures it's available after setup_tracing)
+def get_tracer():
+    """Get tracer instance dynamically at runtime."""
+    if not TRACING_AVAILABLE or not trace:
+        return None
+    try:
+        return trace.get_tracer("api-gateway-service")
+    except Exception:
+        return None
+
+tracer = None  # Will be set after setup_tracing, but use get_tracer() for reliability
+
+# Configure AI4ICore logging
+configure_logging(
+    service_name=os.getenv("SERVICE_NAME", "api-gateway-service"),
+    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
+)
+
+logger = get_logger(__name__)
+
+# Define auth error constants (fallback if not available from services.constants)
+try:
+    from services.constants.error_messages import AUTH_FAILED, AUTH_FAILED_MESSAGE
+except ImportError:
+    AUTH_FAILED = "AUTH_FAILED"
+    AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."
 
 # Configure structured JSON logging
 try:
@@ -628,6 +648,11 @@ class AudioLangDetectionInferenceResponse(BaseModel):
     output: List[AudioLangDetectionOutput] = Field(..., description="List of audio language detection results (one per audio input)")
     config: Optional[AudioLangDetectionResponseConfig] = Field(None, description="Response configuration metadata")
 
+class TryItRequest(BaseModel):
+    """Try-It request wrapper for anonymous access."""
+    service_name: str = Field(..., description="Target service name for Try-It (e.g., 'nmt')")
+    payload: Dict[str, Any] = Field(..., description="Service request payload")
+
 class StreamingInfo(BaseModel):
     """Streaming service information."""
     endpoint: str = Field(..., description="WebSocket endpoint URL")
@@ -828,9 +853,61 @@ class VersionStatus(str, Enum):
     ACTIVE = "ACTIVE"
     DEPRECATED = "DEPRECATED"
 
+class LicenseEnum(str, Enum):
+    """Enumeration of valid license types for models."""
+    # Permissive Licenses
+    MIT = "MIT"
+    APACHE_2_0 = "Apache-2.0"
+    BSD_2_CLAUSE = "BSD-2-Clause"
+    BSD_3_CLAUSE = "BSD-3-Clause"
+    ISC = "ISC"
+    UNLICENSE = "Unlicense"
+    ZLIB = "Zlib"
+    
+    # Copyleft Licenses
+    GPL_2_0 = "GPL-2.0"
+    GPL_3_0 = "GPL-3.0"
+    LGPL_2_1 = "LGPL-2.1"
+    LGPL_3_0 = "LGPL-3.0"
+    AGPL_3_0 = "AGPL-3.0"
+    MPL_2_0 = "MPL-2.0"
+    EPL_2_0 = "EPL-2.0"
+    CDDL_1_0 = "CDDL-1.0"
+    
+    # Microsoft Licenses
+    MS_PL = "Ms-PL"
+    MS_RL = "Ms-RL"
+    
+    # Creative Commons Licenses
+    CC0_1_0 = "CC0-1.0"
+    CC_BY_4_0 = "CC-BY-4.0"
+    CC_BY_SA_4_0 = "CC-BY-SA-4.0"
+    CC_BY_NC_4_0 = "CC-BY-NC-4.0"
+    CC_BY_NC_SA_4_0 = "CC-BY-NC-SA-4.0"
+    CC_BY_ND_4_0 = "CC-BY-ND-4.0"
+    CC_BY_NC_ND_4_0 = "CC-BY-NC-ND-4.0"
+    
+    # AI/ML Specific Licenses
+    OPENRAIL_M = "OpenRAIL-M"
+    OPENRAIL_S = "OpenRAIL-S"
+    BIGSCIENCE_OPENRAIL_M = "BigScience-OpenRAIL-M"
+    CREATIVEML_OPENRAIL_M = "CreativeML-OpenRAIL-M"
+    APACHE_2_0_WITH_LLM_EXCEPTION = "Apache-2.0-with-LLM-exception"
+    
+    # Academic/Research Licenses
+    ACADEMIC_FREE_LICENSE_3_0 = "AFL-3.0"
+    
+    # Other Common Licenses
+    ARTISTIC_LICENSE_2_0 = "Artistic-2.0"
+    ECLIPSE_PUBLIC_LICENSE_1_0 = "EPL-1.0"
+    
+    # Special Categories
+    PROPRIETARY = "Proprietary"
+    CUSTOM = "Custom"
+    OTHER = "Other"
+
 class ModelCreateRequest(BaseModel):
-    """Request model for creating a new model."""
-    modelId: str = Field(..., description="Unique model identifier")
+    """Request model for creating a new model. Model ID is auto-generated as a hash of (name, version)."""
     version: str = Field(..., description="Model version")
     submittedOn: Optional[int] = Field(None, description="Submission timestamp (auto-generated by backend if not provided)")
     updatedOn: Optional[int] = Field(None, description="Last update timestamp")
@@ -844,6 +921,45 @@ class ModelCreateRequest(BaseModel):
     inferenceEndPoint: InferenceEndPoint = Field(..., description="Inference endpoint configuration")
     benchmarks: List[Benchmark] = Field(..., description="List of benchmarks")
     submitter: Submitter = Field(..., description="Submitter information")
+
+    @field_validator("name")
+    def validate_name(cls, v):
+        """Validate model name format: only alphanumeric, hyphen, and forward slash allowed."""
+        if not v:
+            raise ValueError("Model name is required")
+        
+        # Pattern: alphanumeric, hyphen, and forward slash only
+        import re
+        pattern = r'^[a-zA-Z0-9/-]+$'
+        if not re.match(pattern, v):
+            raise ValueError(
+                "Model name must contain only alphanumeric characters, hyphens (-), and forward slashes (/). "
+                f"Example: 'ai4bharath/indictrans-gpu'. Got: '{v}'"
+            )
+        return v
+
+    @field_validator("license", mode="before")
+    def validate_license(cls, v):
+        if not v:
+            raise ValueError("License field is required")
+        
+        if isinstance(v, str):
+            v_normalized = v.strip()
+            # Check if the license matches any enum value (case-insensitive)
+            for enum_member in LicenseEnum:
+                if enum_member.value.lower() == v_normalized.lower():
+                    return enum_member.value
+            
+            # If no match found, raise error with valid options
+            valid_licenses = [e.value for e in LicenseEnum]
+            raise ValueError(
+                f"Invalid license '{v}'. Valid licenses are: {', '.join(valid_licenses)}"
+            )
+        
+        if isinstance(v, LicenseEnum):
+            return v.value
+        
+        return v
 
 class ModelUpdateRequest(BaseModel):
     """Request model for updating an existing model."""
@@ -862,6 +978,47 @@ class ModelUpdateRequest(BaseModel):
     inferenceEndPoint: Optional[InferenceEndPoint] = Field(None, description="Inference endpoint configuration")
     benchmarks: Optional[List[Benchmark]] = Field(None, description="List of benchmarks")
     submitter: Optional[Submitter] = Field(None, description="Submitter information")
+
+    @field_validator("name")
+    def validate_name(cls, v):
+        """Validate model name format: only alphanumeric, hyphen, and forward slash allowed."""
+        # Allow None for optional field in updates
+        if v is None:
+            return v
+        
+        # Pattern: alphanumeric, hyphen, and forward slash only
+        import re
+        pattern = r'^[a-zA-Z0-9/-]+$'
+        if not re.match(pattern, v):
+            raise ValueError(
+                "Model name must contain only alphanumeric characters, hyphens (-), and forward slashes (/). "
+                f"Example: 'ai4bharath/indictrans-gpu'. Got: '{v}'"
+            )
+        return v
+
+    @field_validator("license", mode="before")
+    def validate_license(cls, v):
+        # Allow None for optional field in updates
+        if v is None:
+            return v
+        
+        if isinstance(v, str):
+            v_normalized = v.strip()
+            # Check if the license matches any enum value (case-insensitive)
+            for enum_member in LicenseEnum:
+                if enum_member.value.lower() == v_normalized.lower():
+                    return enum_member.value
+            
+            # If no match found, raise error with valid options
+            valid_licenses = [e.value for e in LicenseEnum]
+            raise ValueError(
+                f"Invalid license '{v}'. Valid licenses are: {', '.join(valid_licenses)}"
+            )
+        
+        if isinstance(v, LicenseEnum):
+            return v.value
+        
+        return v
 
 class ModelViewRequest(BaseModel):
     """Request model for viewing a model."""
@@ -919,8 +1076,8 @@ class ServiceStatus(BaseModel):
     lastUpdated: str = Field(..., description="Last update timestamp")
 
 class ModelManagementServiceCreateRequest(BaseModel):
-    """Request model for creating a new service in model management."""
-    serviceId: str = Field(..., description="Unique service identifier")
+    """Request model for creating a new service in model management.
+    Note: serviceId is auto-generated as hash of (model_name, model_version, service_name)."""
     name: str = Field(..., description="Service name")
     serviceDescription: str = Field(..., description="Service description")
     hardwareDescription: str = Field(..., description="Hardware description")
@@ -933,6 +1090,22 @@ class ModelManagementServiceCreateRequest(BaseModel):
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = Field(None, description="Benchmark data")
     isPublished: Optional[bool] = Field(False, description="Whether the service is published (defaults to false)")
 
+    @field_validator("name")
+    def validate_name(cls, v):
+        """Validate service name format: only alphanumeric, hyphen, and forward slash allowed."""
+        if not v:
+            raise ValueError("Service name is required")
+        
+        # Pattern: alphanumeric, hyphen, and forward slash only
+        import re
+        pattern = r'^[a-zA-Z0-9/-]+$'
+        if not re.match(pattern, v):
+            raise ValueError(
+                "Service name must contain only alphanumeric characters, hyphens (-), and forward slashes (/). "
+                f"Example: 'ai4bharath/indictrans-gpu'. Got: '{v}'"
+            )
+        return v
+
 class LanguagePair(BaseModel):
     """Language pair configuration."""
     sourceLanguage: Optional[str] = Field(None, description="Source language code")
@@ -941,14 +1114,13 @@ class LanguagePair(BaseModel):
     targetScriptCode: Optional[str] = Field("", description="Target script code")
 
 class ModelManagementServiceUpdateRequest(BaseModel):
-    """Request model for updating an existing service in model management. Only serviceId is required, all other fields are optional for partial updates."""
-    serviceId: str = Field(..., description="Unique service identifier")
-    name: Optional[str] = Field(None, description="Service name")
+    """Request model for updating an existing service in model management. 
+    Only serviceId is required for identification. name, modelId, and modelVersion are NOT updatable 
+    since service_id is derived from them."""
+    serviceId: str = Field(..., description="Unique service identifier (used for identification, not updatable)")
     serviceDescription: Optional[str] = Field(None, description="Service description")
     hardwareDescription: Optional[str] = Field(None, description="Hardware description")
     publishedOn: Optional[int] = Field(None, description="Publication timestamp")
-    modelId: Optional[str] = Field(None, description="Associated model identifier")
-    modelVersion: Optional[str] = Field(None, description="Model version")
     endpoint: Optional[str] = Field(None, description="Service endpoint URL")
     api_key: Optional[str] = Field(None, description="API key for the service")
     languagePair: Optional[LanguagePair] = Field(None, description="Language pair configuration")
@@ -1026,6 +1198,7 @@ class RegisterUser(BaseModel):
     phone_number: Optional[str] = Field(None, description="Phone number")
     timezone: Optional[str] = Field("UTC", description="Timezone")
     language: Optional[str] = Field("en", description="Language code")
+    is_tenant: Optional[bool] = Field(False, description="Whether the user is registering as a tenant")
 
 class LoginRequestBody(BaseModel):
     email: str = Field(..., description="Email address")
@@ -1155,7 +1328,7 @@ class UserRegisterRequest(BaseModel):
     tenant_id: str = Field(..., description="Tenant identifier", example="acme-corp-5d448a")
     email: EmailStr = Field(..., description="User email address")
     username: str = Field(..., min_length=3, max_length=100, description="Username")
-    password: Optional[str] = Field(None, min_length=8, description="User password (if not provided, a random password will be generated)")
+    full_name: str = Field(None, description="Full name of the user")
     services: List[str] = Field(..., description="List of services the user has access to", example=["tts", "asr"])
     is_approved: bool = Field(False, description="Indicates if the user is approved by tenant admin")
 
@@ -1262,6 +1435,36 @@ class ServiceUpdateResponse(BaseModel):
     message: str = Field(..., description="Update message")
     service: ServiceResponse = Field(..., description="Updated service information")
     changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
+
+
+class TenantViewResponse(BaseModel):
+    """Response model for viewing tenant information."""
+    id: UUID = Field(..., description="Tenant UUID")
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="User ID of the tenant owner")
+    organization_name: str = Field(..., description="Organization name")
+    email: EmailStr = Field(..., description="Contact email")
+    domain: str = Field(..., description="Tenant domain")
+    schema_name: str = Field(..., alias="schema")
+    subscriptions: list[str] = Field(..., description="List of subscriptions")
+    status: str = Field(..., description="Tenant status")
+    quotas: Dict[str , Any] = Field(..., description="Quotas for the tenant")
+    created_at: str = Field(..., description="Creation timestamp")
+    updated_at: str = Field(..., description="Update timestamp")
+
+
+class TenantUserViewResponse(BaseModel):
+    """Response model for viewing tenant user information."""
+    id: UUID = Field(..., description="Tenant user UUID")
+    user_id: int = Field(..., description="User ID")
+    tenant_id: str = Field(..., description="Tenant identifier")
+    username: str = Field(..., description="Username")
+    email: EmailStr = Field(..., description="User email")
+    subscriptions: list[str] = Field(..., description="List of subscriptions")
+    status: str = Field(..., description="User status")
+    created_at: str = Field(..., description="Creation timestamp")
+    updated_at: str = Field(..., description="Update timestamp")
+
 
 
 class ServiceRegistry:
@@ -1737,88 +1940,317 @@ def build_auth_headers(request: Request, credentials: Optional[HTTPAuthorization
     
     return headers
 
+def _get_try_it_key(request: Request) -> str:
+    session_id = request.headers.get("X-Anonymous-Session-Id") or request.headers.get("x-anonymous-session-id")
+    if session_id:
+        return f"tryit:nmt:session:{session_id}"
+    client_ip = request.client.host if request.client else "unknown"
+    return f"tryit:nmt:ip:{client_ip}"
+
+async def _increment_try_it_count(key: str) -> int:
+    # Prefer Redis if available
+    if redis_client:
+        count = await redis_client.incr(key)
+        if count == 1:
+            await redis_client.expire(key, TRY_IT_TTL_SECONDS)
+        return int(count)
+
+    # Fallback: in-memory counter with TTL
+    now = time.time()
+    entry = try_it_counters.get(key)
+    if not entry or (now - entry["started_at"] > TRY_IT_TTL_SECONDS):
+        entry = {"count": 0, "started_at": now}
+    entry["count"] += 1
+    try_it_counters[key] = entry
+    return entry["count"]
+
 async def ensure_authenticated_for_request(req: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> None:
     """Enforce authentication - require BOTH Bearer token AND API key for all services."""
-    requires_both = requires_both_auth_and_api_key(req)
-    
-    if requires_both:
-        # For ASR, NMT, TTS, Pipeline, LLM: require BOTH Bearer token AND API key
-        token = credentials.credentials if credentials else None
-        
-        # Check if Bearer token is missing
-        if not token:
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "code": AUTH_FAILED,
-                    "message": AUTH_FAILED_MESSAGE
-                },
-                headers={"WWW-Authenticate": "Bearer"}
-            )
-        
-        # Validate Bearer token
-        payload = await auth_middleware.verify_token(token)
-        if payload is None:
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "code": AUTH_FAILED,
-                    "message": AUTH_FAILED_MESSAGE
-                },
-                headers={"WWW-Authenticate": "Bearer"}
-            )
-        
-        # Check if API key is missing
-        if not api_key:
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "error": "API_KEY_MISSING",
-                    "message": "API key is required to access this service."
-                }
-            )
-        
-        # Validate API key permissions
-        service, action = determine_service_and_action(req)
+    # Get tracer for creating spans
+    tracer = None
+    if TRACING_AVAILABLE:
         try:
-            await validate_api_key_permissions(api_key, service, action)
-        except HTTPException as e:
-            # Re-raise with the specific error message from auth-service
-            raise
-    else:
-        # For other services: existing logic (either Bearer OR API key)
-        auth_source = (req.headers.get("x-auth-source") or "").upper()
-        use_api_key = api_key is not None and auth_source == "API_KEY"
-
-        if use_api_key:
-            # Validate API key permissions via auth-service
-            service, action = determine_service_and_action(req)
-            try:
-                await validate_api_key_permissions(api_key, service, action)
-            except HTTPException as e:
-                raise
-            return
-
-        # Default: require Bearer token
-        if not credentials or not credentials.credentials:
-            raise HTTPException(
-                status_code=401, 
-                detail="Not authenticated: Bearer access token required (Authorization header)",
-                headers={"WWW-Authenticate": "Bearer"}
-            )
+            tracer = trace.get_tracer("api-gateway-service")
+        except Exception:
+            pass
+    
+    # Create main authentication span
+    auth_span_context = tracer.start_as_current_span("gateway.authenticate") if tracer else nullcontext()
+    
+    with auth_span_context as auth_span:
+        if auth_span:
+            auth_span.set_attribute("gateway.operation", "authenticate_request")
+            auth_span.set_attribute("http.method", req.method)
+            auth_span.set_attribute("http.route", req.url.path)
         
-        token = credentials.credentials
-        payload = await auth_middleware.verify_token(token)
+        requires_both = requires_both_auth_and_api_key(req)
+        if auth_span:
+            auth_span.set_attribute("auth.requires_both", requires_both)
         
-        if payload is None:
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "code": AUTH_FAILED,
-                    "message": AUTH_FAILED_MESSAGE
-                },
-                headers={"WWW-Authenticate": "Bearer"}
-            )
+        if requires_both:
+            # For ASR, NMT, TTS, Pipeline, LLM: require BOTH Bearer token AND API key
+            token = credentials.credentials if credentials else None
+            
+            # Validate Bearer token with span
+            token_span_context = tracer.start_as_current_span("gateway.auth.validate_token") if tracer else nullcontext()
+            with token_span_context as token_span:
+                if token_span:
+                    token_span.set_attribute("auth.method", "Bearer")
+                    token_span.set_attribute("auth.token_present", bool(token))
+                
+                # Check if Bearer token is missing
+                if not token:
+                    if token_span:
+                        token_span.set_attribute("error", True)
+                        token_span.set_attribute("error.type", "MissingToken")
+                        token_span.set_attribute("error.message", "Bearer token is required")
+                        token_span.set_status(Status(StatusCode.ERROR, "Token missing"))
+                    if auth_span:
+                        auth_span.set_attribute("auth.authenticated", False)
+                        auth_span.set_attribute("error.type", "MissingToken")
+                        auth_span.set_status(Status(StatusCode.ERROR, "Token missing"))
+                    raise HTTPException(
+                        status_code=401,
+                        detail={
+                            "code": AUTH_FAILED,
+                            "message": AUTH_FAILED_MESSAGE
+                        },
+                        headers={"WWW-Authenticate": "Bearer"}
+                    )
+                
+                # Validate Bearer token
+                try:
+                    payload = await auth_middleware.verify_token(token)
+                    if token_span:
+                        token_span.set_attribute("auth.token_valid", payload is not None)
+                        if payload:
+                            token_span.set_attribute("user.id", str(payload.get("sub", "unknown")))
+                            token_span.set_attribute("user.username", payload.get("username", "unknown"))
+                            token_span.set_status(Status(StatusCode.OK))
+                        else:
+                            token_span.set_attribute("error", True)
+                            token_span.set_attribute("error.type", "InvalidToken")
+                            token_span.set_status(Status(StatusCode.ERROR, "Token validation failed"))
+                    
+                    if payload is None:
+                        if auth_span:
+                            auth_span.set_attribute("auth.authenticated", False)
+                            auth_span.set_attribute("error.type", "InvalidToken")
+                            auth_span.set_status(Status(StatusCode.ERROR, "Token validation failed"))
+                        raise HTTPException(
+                            status_code=401,
+                            detail={
+                                "code": AUTH_FAILED,
+                                "message": AUTH_FAILED_MESSAGE
+                            },
+                            headers={"WWW-Authenticate": "Bearer"}
+                        )
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    if token_span:
+                        token_span.set_attribute("error", True)
+                        token_span.set_attribute("error.type", type(e).__name__)
+                        token_span.set_attribute("error.message", str(e))
+                        token_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    raise
+            
+            # Validate API key with span
+            api_key_span_context = tracer.start_as_current_span("gateway.auth.validate_api_key") if tracer else nullcontext()
+            with api_key_span_context as api_key_span:
+                if api_key_span:
+                    api_key_span.set_attribute("auth.method", "API_KEY")
+                    api_key_span.set_attribute("auth.api_key_present", bool(api_key))
+                
+                # Check if API key is missing
+                if not api_key:
+                    if api_key_span:
+                        api_key_span.set_attribute("error", True)
+                        api_key_span.set_attribute("error.type", "MissingAPIKey")
+                        api_key_span.set_attribute("error.message", "API key is required")
+                        api_key_span.set_status(Status(StatusCode.ERROR, "API key missing"))
+                    if auth_span:
+                        auth_span.set_attribute("auth.authenticated", False)
+                        auth_span.set_attribute("error.type", "MissingAPIKey")
+                        auth_span.set_status(Status(StatusCode.ERROR, "API key missing"))
+                    raise HTTPException(
+                        status_code=401,
+                        detail={
+                            "error": "API_KEY_MISSING",
+                            "message": "API key is required to access this service."
+                        }
+                    )
+                
+                # Validate API key permissions
+                service, action = determine_service_and_action(req)
+                if api_key_span:
+                    api_key_span.set_attribute("auth.service", service)
+                    api_key_span.set_attribute("auth.action", action)
+                
+                # Create authorization span for permission check
+                authz_span_context = tracer.start_as_current_span("gateway.authorize") if tracer else nullcontext()
+                with authz_span_context as authz_span:
+                    if authz_span:
+                        authz_span.set_attribute("gateway.operation", "authorize_request")
+                        authz_span.set_attribute("auth.service", service)
+                        authz_span.set_attribute("auth.action", action)
+                        authz_span.set_attribute("auth.method", "API_KEY")
+                    
+                    try:
+                        await validate_api_key_permissions(api_key, service, action)
+                        if authz_span:
+                            authz_span.set_attribute("auth.authorized", True)
+                            authz_span.set_status(Status(StatusCode.OK))
+                        if api_key_span:
+                            api_key_span.set_attribute("auth.api_key_valid", True)
+                            api_key_span.set_status(Status(StatusCode.OK))
+                        if auth_span:
+                            auth_span.set_attribute("auth.authenticated", True)
+                            auth_span.set_attribute("auth.authorized", True)
+                            auth_span.set_status(Status(StatusCode.OK))
+                    except HTTPException as e:
+                        if authz_span:
+                            authz_span.set_attribute("auth.authorized", False)
+                            authz_span.set_attribute("error", True)
+                            authz_span.set_attribute("error.type", "AuthorizationFailed")
+                            authz_span.set_attribute("error.message", str(e.detail))
+                            authz_span.set_attribute("http.status_code", e.status_code)
+                            authz_span.set_status(Status(StatusCode.ERROR, str(e.detail)))
+                        if api_key_span:
+                            api_key_span.set_attribute("auth.api_key_valid", False)
+                            api_key_span.set_attribute("error", True)
+                            api_key_span.set_attribute("error.type", "AuthorizationFailed")
+                            api_key_span.set_status(Status(StatusCode.ERROR, str(e.detail)))
+                        if auth_span:
+                            auth_span.set_attribute("auth.authenticated", True)  # Token was valid
+                            auth_span.set_attribute("auth.authorized", False)
+                            auth_span.set_attribute("error.type", "AuthorizationFailed")
+                            auth_span.set_status(Status(StatusCode.ERROR, str(e.detail)))
+                        # Re-raise with the specific error message from auth-service
+                        raise
+        else:
+            # For other services: existing logic (either Bearer OR API key)
+            auth_source = (req.headers.get("x-auth-source") or "").upper()
+            use_api_key = api_key is not None and auth_source == "API_KEY"
+            if auth_span:
+                auth_span.set_attribute("auth.source", auth_source)
+                auth_span.set_attribute("auth.use_api_key", use_api_key)
+
+            if use_api_key:
+                # Validate API key permissions via auth-service
+                service, action = determine_service_and_action(req)
+                
+                # Validate API key with span
+                api_key_span_context = tracer.start_as_current_span("gateway.auth.validate_api_key") if tracer else nullcontext()
+                with api_key_span_context as api_key_span:
+                    if api_key_span:
+                        api_key_span.set_attribute("auth.method", "API_KEY")
+                        api_key_span.set_attribute("auth.service", service)
+                        api_key_span.set_attribute("auth.action", action)
+                    
+                    # Create authorization span for permission check
+                    authz_span_context = tracer.start_as_current_span("gateway.authorize") if tracer else nullcontext()
+                    with authz_span_context as authz_span:
+                        if authz_span:
+                            authz_span.set_attribute("gateway.operation", "authorize_request")
+                            authz_span.set_attribute("auth.service", service)
+                            authz_span.set_attribute("auth.action", action)
+                            authz_span.set_attribute("auth.method", "API_KEY")
+                        
+                        try:
+                            await validate_api_key_permissions(api_key, service, action)
+                            if authz_span:
+                                authz_span.set_attribute("auth.authorized", True)
+                                authz_span.set_status(Status(StatusCode.OK))
+                            if api_key_span:
+                                api_key_span.set_attribute("auth.api_key_valid", True)
+                                api_key_span.set_status(Status(StatusCode.OK))
+                            if auth_span:
+                                auth_span.set_attribute("auth.authenticated", True)
+                                auth_span.set_attribute("auth.authorized", True)
+                                auth_span.set_status(Status(StatusCode.OK))
+                        except HTTPException as e:
+                            if authz_span:
+                                authz_span.set_attribute("auth.authorized", False)
+                                authz_span.set_attribute("error", True)
+                                authz_span.set_attribute("error.type", "AuthorizationFailed")
+                                authz_span.set_attribute("error.message", str(e.detail))
+                                authz_span.set_status(Status(StatusCode.ERROR, str(e.detail)))
+                            if api_key_span:
+                                api_key_span.set_attribute("auth.api_key_valid", False)
+                                api_key_span.set_attribute("error", True)
+                                api_key_span.set_status(Status(StatusCode.ERROR, str(e.detail)))
+                            if auth_span:
+                                auth_span.set_attribute("auth.authenticated", False)
+                                auth_span.set_attribute("auth.authorized", False)
+                                auth_span.set_attribute("error.type", "AuthorizationFailed")
+                                auth_span.set_status(Status(StatusCode.ERROR, str(e.detail)))
+                            raise
+                return
+
+            # Default: require Bearer token
+            token_span_context = tracer.start_as_current_span("gateway.auth.validate_token") if tracer else nullcontext()
+            with token_span_context as token_span:
+                if token_span:
+                    token_span.set_attribute("auth.method", "Bearer")
+                    token_span.set_attribute("auth.token_present", bool(credentials and credentials.credentials))
+                
+                if not credentials or not credentials.credentials:
+                    if token_span:
+                        token_span.set_attribute("error", True)
+                        token_span.set_attribute("error.type", "MissingToken")
+                        token_span.set_attribute("error.message", "Bearer token is required")
+                        token_span.set_status(Status(StatusCode.ERROR, "Token missing"))
+                    if auth_span:
+                        auth_span.set_attribute("auth.authenticated", False)
+                        auth_span.set_attribute("error.type", "MissingToken")
+                        auth_span.set_status(Status(StatusCode.ERROR, "Token missing"))
+                    raise HTTPException(
+                        status_code=401, 
+                        detail="Not authenticated: Bearer access token required (Authorization header)",
+                        headers={"WWW-Authenticate": "Bearer"}
+                    )
+                
+                token = credentials.credentials
+                try:
+                    payload = await auth_middleware.verify_token(token)
+                    if token_span:
+                        token_span.set_attribute("auth.token_valid", payload is not None)
+                        if payload:
+                            token_span.set_attribute("user.id", str(payload.get("sub", "unknown")))
+                            token_span.set_attribute("user.username", payload.get("username", "unknown"))
+                            token_span.set_status(Status(StatusCode.OK))
+                        else:
+                            token_span.set_attribute("error", True)
+                            token_span.set_attribute("error.type", "InvalidToken")
+                            token_span.set_status(Status(StatusCode.ERROR, "Token validation failed"))
+                    
+                    if payload is None:
+                        if auth_span:
+                            auth_span.set_attribute("auth.authenticated", False)
+                            auth_span.set_attribute("error.type", "InvalidToken")
+                            auth_span.set_status(Status(StatusCode.ERROR, "Token validation failed"))
+                        raise HTTPException(
+                            status_code=401,
+                            detail={
+                                "code": AUTH_FAILED,
+                                "message": AUTH_FAILED_MESSAGE
+                            },
+                            headers={"WWW-Authenticate": "Bearer"}
+                        )
+                    if auth_span:
+                        auth_span.set_attribute("auth.authenticated", True)
+                        auth_span.set_attribute("auth.authorized", True)  # Bearer token implies authorization
+                        auth_span.set_status(Status(StatusCode.OK))
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    if token_span:
+                        token_span.set_attribute("error", True)
+                        token_span.set_attribute("error.type", type(e).__name__)
+                        token_span.set_attribute("error.message", str(e))
+                        token_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    raise
 
 # --- OpenAPI customization: add x-auth-source dropdown param globally ---
 def custom_openapi():
@@ -1929,6 +2361,11 @@ load_balancer = None
 route_manager = None
 health_monitor_task = None
 
+# Try-It anonymous access controls
+TRY_IT_LIMIT = int(os.environ["TRY_IT_LIMIT"])
+TRY_IT_TTL_SECONDS = int(os.environ["TRY_IT_TTL_SECONDS"])
+try_it_counters: Dict[str, Dict[str, Any]] = {}
+
 # Utility functions
 def generate_correlation_id() -> str:
     """Generate a new correlation ID"""
@@ -1959,10 +2396,23 @@ def prepare_forwarding_headers(request: Request, correlation_id: str, request_id
     headers['X-Request-ID'] = request_id
     headers['X-Gateway-Timestamp'] = str(int(time.time() * 1000))
     
+    # Inject OpenTelemetry trace context for distributed tracing
+    if TRACING_AVAILABLE and inject:
+        try:
+            current_span = trace.get_current_span()
+            if current_span and current_span.is_recording():
+                inject(headers)
+                logger.debug("✅ Trace context injected into request headers")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to inject trace context: {e}")
+    
     return headers
 
 def log_request(method: str, path: str, service: str, instance: str, duration: float, status_code: int) -> None:
     """Log request details for observability"""
+    # Skip logging 400-series errors - these are logged by RequestLoggingMiddleware to avoid duplicates
+    if 400 <= status_code < 500:
+        return
     logger.info(
         f"Request: {method} {path} -> {service}:{instance} "
         f"({duration:.3f}s, {status_code})"
@@ -2050,6 +2500,85 @@ async def health_monitor():
         except Exception as e:
             logger.error(f"Health monitor error: {e}")
             await asyncio.sleep(health_check_interval)
+
+# Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+if TRACING_AVAILABLE:
+    try:
+        # Setup tracing and get tracer instance
+        setup_tracing("api-gateway-service")
+        # Get the tracer instance (OpenTelemetry tracers are singletons per name)
+        tracer = trace.get_tracer("api-gateway-service")
+        if tracer:
+            logger.info("✅ Distributed tracing initialized for API Gateway service")
+            
+            # Instrument FastAPI with OpenTelemetry
+            # Exclude health check and metrics endpoints to reduce span noise
+            FastAPIInstrumentor.instrument_app(
+                app,
+                excluded_urls="/health,/metrics,/enterprise/metrics,/docs,/redoc,/openapi.json"
+            )
+            logger.info("✅ FastAPI instrumented for distributed tracing")
+        else:
+            logger.warning("⚠️ Tracing setup returned None")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to setup tracing: {e}")
+
+# Add correlation middleware (must be first to set correlation ID)
+app.add_middleware(CorrelationMiddleware)
+
+# Add authentication/authorization middleware (after correlation, before logging)
+from middleware.auth_middleware_gateway import AuthGatewayMiddleware
+app.add_middleware(AuthGatewayMiddleware)
+
+# Add request logging middleware (after correlation middleware)
+app.add_middleware(RequestLoggingMiddleware)
+
+# Add response interceptor middleware to mark errors on spans
+# This MUST be added first so it runs last (FastAPI middleware runs in reverse order)
+# This ensures it runs after all other middleware and can mark errors on the final response
+class ErrorMarkingMiddleware(BaseHTTPMiddleware):
+    """Middleware to mark spans as errors for 4xx/5xx responses."""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        # Mark span as error if status code indicates error
+        # This runs after all other middleware, so it can mark errors on responses from auth middleware
+        if TRACING_AVAILABLE and trace and response.status_code >= 400:
+            current_span = trace.get_current_span()
+            if current_span:
+                # Set error status - this is what makes it appear in red in Jaeger
+                current_span.set_status(Status(StatusCode.ERROR, f"HTTP {response.status_code}"))
+                current_span.set_attribute("http.status_code", response.status_code)
+                current_span.set_attribute("error", True)
+                
+                # Set specific error types
+                if response.status_code == 401:
+                    current_span.set_attribute("error.type", "authentication_error")
+                    # Try to extract error message from response body if available
+                    try:
+                        if hasattr(response, 'body'):
+                            body_str = response.body.decode('utf-8') if isinstance(response.body, bytes) else str(response.body)
+                            if 'AUTHENTICATION_REQUIRED' in body_str or 'Invalid or expired token' in body_str:
+                                current_span.set_attribute("error.message", "Authentication required or token invalid")
+                    except Exception:
+                        pass
+                elif response.status_code == 403:
+                    current_span.set_attribute("error.type", "authorization_error")
+                    try:
+                        if hasattr(response, 'body'):
+                            body_str = response.body.decode('utf-8') if isinstance(response.body, bytes) else str(response.body)
+                            if 'AUTHORIZATION_FAILED' in body_str:
+                                current_span.set_attribute("error.message", "Authorization failed")
+                    except Exception:
+                        pass
+                else:
+                    current_span.set_attribute("error.type", "http_error")
+        
+        return response
+
+# Add this FIRST so it runs LAST (after all other middleware)
+app.add_middleware(ErrorMarkingMiddleware)
 
 # Add CORS middleware
 app.add_middleware(
@@ -2721,7 +3250,7 @@ async def asr_inference(
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
-    # Use build_auth_headers to properly set X-Auth-Source header
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/asr/inference", "asr-service", method="POST", body=body, headers=headers)
 
@@ -2805,11 +3334,8 @@ async def tts_inference(
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers['Authorization'] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers['X-API-Key'] = api_key
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/tts/inference", "tts-service", method="POST", body=body, headers=headers)
 
 @app.get("/api/v1/tts/models", tags=["TTS"])
@@ -2946,7 +3472,19 @@ async def audio_lang_detection_inference(
     api_key: Optional[str] = Security(api_key_scheme),
 ):
     """Perform audio language detection inference on one or more audio files"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    # Log incoming request for debugging
+    logger.info(
+        f"Received audio-lang-detection inference request - has_token={credentials is not None and credentials.credentials is not None}, has_api_key={api_key is not None}, path={request.url.path}"
+    )
+    
+    try:
+        ensure_authenticated_for_request(request, credentials, api_key)
+    except HTTPException as e:
+        logger.warning(
+            f"Authentication failed for audio-lang-detection inference: status={e.status_code}, detail={e.detail}, path={request.url.path}"
+        )
+        raise
+    
     import json
 
     body = json.dumps(payload.dict()).encode()
@@ -2955,8 +3493,43 @@ async def audio_lang_detection_inference(
         headers["Authorization"] = f"Bearer {credentials.credentials}"
     if api_key:
         headers["X-API-Key"] = api_key
+    
+    logger.info(f"Proxying audio-lang-detection inference request to service")
     return await proxy_to_service(
         None, "/api/v1/audio-lang-detection/inference", "audio-lang-detection-service", method="POST", body=body, headers=headers
+    )
+
+# Try-It endpoint (anonymous access for NMT only)
+@app.post("/api/v1/try-it", response_model=Dict[str, Any], tags=["Try It"])
+async def try_it_inference(
+    payload: TryItRequest,
+    request: Request,
+):
+    """Anonymous Try-It access. Only NMT is allowed; others require login."""
+    service_name = payload.service_name.strip().lower()
+    if service_name not in {"nmt", "nmt-service"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Please login to access other services."
+        )
+
+    key = _get_try_it_key(request)
+    count = await _increment_try_it_count(key)
+    if count > TRY_IT_LIMIT:
+        raise HTTPException(
+            status_code=403,
+            detail="Please login to access other services."
+        )
+
+    import json
+    body = json.dumps(payload.payload).encode()
+    return await proxy_to_service(
+        None,
+        "/api/v1/nmt/inference",
+        "nmt-service",
+        method="POST",
+        body=body,
+        headers={"X-Try-It": "true"},
     )
 
 # NMT Service Endpoints (Proxy to NMT Service)
@@ -3134,7 +3707,7 @@ async def ner_inference(
 ):
     """Perform NER inference on one or more text inputs"""
     try:
-        await ensure_authenticated_for_request(request, credentials, api_key)
+        ensure_authenticated_for_request(request, credentials, api_key)
     except Exception as e:
         raise
 
@@ -3427,19 +4000,23 @@ async def list_models(
     request: Request,
     task_type: Union[ModelTaskTypeEnum,None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
     include_deprecated: bool = Query(True, description="Include deprecated versions. Set to false to show only ACTIVE versions."),
+    model_name: Optional[str] = Query(None, description="Filter by model name. Returns all versions of models matching this name."),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """List all registered models. Use include_deprecated=false to show only ACTIVE versions. Requires Bearer token authentication with 'model.read' permission."""
+    """List all registered models. Use include_deprecated=false to show only ACTIVE versions. Use model_name to filter by model name and get all versions. Requires Bearer token authentication with 'model.read' permission."""
     await check_permission("model.read", request, credentials)
     headers = build_auth_headers(request, credentials, None)
+    params = {
+        "task_type": task_type.value if task_type else None,
+        "include_deprecated": str(include_deprecated).lower()
+    }
+    if model_name:
+        params["model_name"] = model_name
     return await proxy_to_service_with_params(
         None, 
         "/services/details/list_models", 
         "model-management-service",
-        {
-            "task_type": task_type.value if task_type else None,
-            "include_deprecated": str(include_deprecated).lower()
-        }, 
+        params, 
         method="GET",
         headers=headers
         )
@@ -3976,7 +4553,6 @@ async def update_tenant_user_status(
         headers=headers
     )
 
-
 @app.get("/api/v1/multi-tenant/email/verify", tags=["Multi-Tenant"])
 async def verify_email(
     request: Request,
@@ -3989,12 +4565,63 @@ async def verify_email(
     headers = build_auth_headers(request, credentials, api_key)
     headers['Content-Type'] = 'application/json'
     query_string = f"?token={token}"
-    return await proxy_to_service(
+
+    
+    return await proxy_to_service_with_params(
         request,
-        f"/email/verify{query_string}",
+        "/email/verify",
         "multi-tenant-service",
+        {"token": token},
         method="GET",
         headers=headers
+    )
+
+
+@app.get("/api/v1/multi-tenant/view/tenant",response_model=TenantViewResponse, tags=["Multi-Tenant"])
+async def view_tenant(
+    tenant_id: str = Query(..., description="Tenant identifier (tenant_id)"),
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    View tenant details by tenant_id via API Gateway.
+    Proxies to multi-tenant-service /admin/view/tenant.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    return await proxy_to_service_with_params(
+        request,
+        "/admin/view/tenant",
+        "multi-tenant-service",
+        {"tenant_id": tenant_id},
+        method="GET",
+        headers=headers,
+    )
+
+
+@app.get("/api/v1/multi-tenant/view/user",response_model=TenantUserViewResponse, tags=["Multi-Tenant"])
+async def view_tenant_user(
+    user_id: int = Query(..., description="Auth user id for tenant user"),
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    View tenant user details by user_id via API Gateway.
+    Proxies to multi-tenant-service /admin/view/user.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    return await proxy_to_service_with_params(
+        request,
+        "/admin/view/user",
+        "multi-tenant-service",
+        {"user_id": user_id},
+        method="GET",
+        headers=headers,
     )
 
 @app.post("/api/v1/multi-tenant/email/resend", response_model=TenantResendEmailVerificationResponse, tags=["Multi-Tenant"], status_code=201)
@@ -4121,6 +4748,29 @@ async def list_services(
         headers=headers
     )
 
+@app.get("/api/v1/multi-tenant/resolve-tenant-from-user/{user_id}", tags=["Multi-Tenant"])
+async def resolve_tenant_from_user(
+    user_id: int,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Resolve tenant context from user_id.
+    Used by services to get tenant schema information for routing.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    return await proxy_to_service_with_params(
+        request,
+        f"/resolve/tenant/from/user",
+        "multi-tenant-service",
+        {"user_id": user_id},
+        method="GET",
+        headers=headers
+    )
+
 # Helper function to proxy requests to auth service
 async def proxy_to_auth_service(request: Request, path: str):
     """Proxy request to auth service"""
@@ -4160,7 +4810,7 @@ async def proxy_to_auth_service(request: Request, path: str):
 
 # Helper function to proxy requests to any service
 async def proxy_to_service(request: Optional[Request], path: str, service_name: str, method: str = "GET", body: Optional[bytes] = None, headers: Optional[Dict[str, str]] = None):
-    """Proxy request to any service using direct URLs (bypassing service registry)"""
+    """Proxy request to any service using direct URLs (bypassing service registry) with tracing"""
     global http_client
     
     # Direct service URL mapping (bypassing service registry)
@@ -4200,17 +4850,55 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
                 body = await request.body()
             headers = dict(request.headers)
             params = request.query_params
+            
+            # Inject trace context if not already present
+            if TRACING_AVAILABLE and inject:
+                try:
+                    inject(headers)
+                except Exception:
+                    pass
         else:
             # IMPORTANT: leave params as None so any querystring already present
             # in the URL (e.g. "/path?x=1") is not overwritten by an empty dict.
             params = None
             if headers is None:
                 headers = {}
+            
+            # Inject trace context
+            if TRACING_AVAILABLE and inject:
+                try:
+                    inject(headers)
+                except Exception:
+                    pass
         
-        # Forward request to service (5 minute timeout for LLM service, 300s for others)
-        timeout_value = 300.0 if service_name == 'llm-service' else 300.0
+        # Forward request to service
+        # Use longer timeout for LLM, shorter for other services to avoid long hangs
+        if service_name == 'llm-service':
+            timeout_value = 300.0
+        elif service_name == 'ner-service':
+            # NER needs time for Triton inference (default 30s) + processing overhead
+            # Set to 60s to allow for Triton timeout + NER processing time
+            timeout_value = float(os.getenv("NER_SERVICE_TIMEOUT_SECONDS", "60.0"))
+        else:
+            timeout_value = float(os.getenv("DEFAULT_SERVICE_TIMEOUT_SECONDS", "60.0"))
         final_url = f"{service_url}{path}"
         
+        # Log proxy request details for debugging
+        logger.info(
+            f"Proxying {method} request to {service_name}: {final_url}",
+            extra={
+                "context": {
+                    "method": method,
+                    "path": path,
+                    "service": service_name,
+                    "url": final_url,
+                    "has_body": body is not None,
+                    "body_size": len(body) if body else 0,
+                }
+            }
+        )
+        
+        start_time = time.time()
         try:
             response = await http_client.request(
                 method=method,
@@ -4221,14 +4909,48 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
                 follow_redirects=True,
                 timeout=timeout_value
             )
+            
+            response_time = time.time() - start_time
+            
+            # Log successful proxy response
+            logger.info(
+                f"Proxy response from {service_name}: {response.status_code} in {response_time:.3f}s",
+                extra={
+                    "context": {
+                        "method": method,
+                        "path": path,
+                        "service": service_name,
+                        "status_code": response.status_code,
+                        "response_time_ms": round(response_time * 1000, 2),
+                    }
+                }
+            )
+            
+            # Don't log 403 errors here - RequestLoggingMiddleware handles all 400-series errors to avoid duplicates
+            
         except Exception as e:
-            logger.error(f"Error proxying to {service_name}: {e}")
-            # Return error in the format expected by clients
-            error_detail = {
-                "code": "SERVICE_UNAVAILABLE",
-                "message": f"{service_name.replace('-', ' ').title()} is temporarily unavailable. Please try again in a few minutes."
-            }
-            raise HTTPException(status_code=503, detail=error_detail)
+            response_time = time.time() - start_time
+            # Mark span as error if tracing is available
+            if TRACING_AVAILABLE and trace:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.message", str(e))
+            logger.error(
+                f"Error proxying to {service_name}: {e}",
+                extra={
+                    "context": {
+                        "method": method,
+                        "path": path,
+                        "service": service_name,
+                        "error": "proxy_error",
+                        "response_time_ms": round(response_time * 1000, 2),
+                    }
+                },
+                exc_info=True
+            )
+            raise HTTPException(status_code=500, detail=f"{service_name} temporarily unavailable")
         
         # Return response
         return Response(
@@ -4238,14 +4960,33 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             media_type=response.headers.get('content-type')
         )
         
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+        
     except Exception as e:
-        logger.error(f"Error proxying to {service_name}: {e}")
-        # Return error in the format expected by clients
-        error_detail = {
-            "code": "SERVICE_UNAVAILABLE",
-            "message": f"{service_name.replace('-', ' ').title()} is temporarily unavailable. Please try again in a few minutes."
-        }
-        raise HTTPException(status_code=503, detail=error_detail)
+        response_time = time.time() - start_time
+        # Mark span as error if tracing is available
+        if TRACING_AVAILABLE and trace:
+            current_span = trace.get_current_span()
+            if current_span:
+                current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.message", str(e))
+        logger.error(
+            f"Error proxying to {service_name}: {e}",
+            extra={
+                "context": {
+                    "method": method,
+                    "path": path,
+                    "service": service_name,
+                    "error": "proxy_error",
+                    "response_time_ms": round(response_time * 1000, 2),
+                }
+            },
+            exc_info=True
+        )
+        raise HTTPException(status_code=500, detail=f"{service_name} temporarily unavailable")
 
 
 # Helper function to proxy requests with explicit query parameters
@@ -4327,7 +5068,7 @@ async def proxy_to_service_with_params(
 
 @app.api_route("/{path:path}", methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'])
 async def proxy_request(request: Request, path: str):
-    """Catch-all route handler for request forwarding"""
+    """Catch-all route handler for request forwarding with tracing"""
     global service_registry, load_balancer, route_manager, http_client
     
     start_time = time.time()
@@ -4335,95 +5076,365 @@ async def proxy_request(request: Request, path: str):
     request_id = generate_correlation_id()
     
     try:
-        # Determine target service
-        service_name = await route_manager.get_service_for_path(f"/{path}")
-        if not service_name:
-            raise HTTPException(status_code=404, detail=f"No service found for path: /{path}")
+        # Create main proxy span FIRST (as child of FastAPI auto-instrumented span)
+        # All other spans will be children of this
+        # Get tracer dynamically to ensure it's available
+        tracer_instance = get_tracer()
+        span_context = tracer_instance.start_as_current_span("gateway.proxy") if tracer_instance else nullcontext()
+        try:
+            with span_context as proxy_span:
+                if proxy_span:
+                    proxy_span.set_attribute("gateway.path", f"/{path}")
+                    proxy_span.set_attribute("gateway.method", request.method)
+                    proxy_span.set_attribute("gateway.correlation_id", correlation_id)
+                    proxy_span.set_attribute("gateway.request_id", request_id)
+                
+                # Create span for route resolution (child of proxy span)
+                route_span_context = tracer_instance.start_as_current_span("gateway.resolve_route") if tracer_instance else nullcontext()
+                with route_span_context as route_span:
+                    if route_span:
+                        route_span.set_attribute("gateway.path", f"/{path}")
+                        route_span.set_attribute("gateway.method", request.method)
+                    
+                    # Determine target service
+                    service_name = await route_manager.get_service_for_path(f"/{path}")
+                    
+                    if route_span:
+                        if service_name:
+                            route_span.set_attribute("gateway.service_resolved", service_name)
+                            route_span.set_attribute("gateway.resolution_result", "success")
+                            route_span.set_status(Status(StatusCode.OK))
+                        else:
+                            route_span.set_attribute("gateway.resolution_result", "not_found")
+                            route_span.set_status(Status(StatusCode.ERROR, "Service not found"))
+                    
+                    if not service_name:
+                        raise HTTPException(status_code=404, detail=f"No service found for path: /{path}")
+                
+                # Update proxy span with service name
+                if proxy_span:
+                    proxy_span.set_attribute("gateway.service", service_name)
+                    proxy_span.set_attribute("service.name", service_name)
+                
+                # Create span for service selection (child of proxy span)
+                select_span_context = tracer_instance.start_as_current_span("gateway.select_instance") if tracer_instance else nullcontext()
+                with select_span_context as select_span:
+                    if select_span:
+                        select_span.set_attribute("gateway.service", service_name)
+                        select_span.set_attribute("gateway.load_balancer_available", load_balancer is not None)
+
+                    # Fallback to direct service URLs if load_balancer is not available
+                    if load_balancer is None:
+                        if select_span:
+                            select_span.set_attribute("gateway.selection_method", "direct_fallback")
+                            select_span.set_status(Status(StatusCode.OK))
+                        logger.debug(f"Using direct service URL fallback for {service_name}")
+                        return await proxy_to_service(request, f"/{path}", service_name)
+
+                    # Select healthy instance
+                    instance_info = await load_balancer.select_instance(service_name)
+
+                    if not instance_info:
+                        if select_span:
+                            select_span.set_attribute("gateway.selection_result", "no_healthy_instances")
+                            select_span.set_status(Status(StatusCode.ERROR, "No healthy instances"))
+                        raise HTTPException(status_code=503, detail=f"No healthy instances available for service: {service_name}")
+                    
+                    instance_id, instance_url = instance_info
+                    
+                    if select_span:
+                        select_span.set_attribute("gateway.instance_id", instance_id)
+                        select_span.set_attribute("gateway.instance_url", instance_url)
+                        select_span.set_attribute("gateway.selection_result", "success")
+                        select_span.set_status(Status(StatusCode.OK))
+                
+                # Update proxy span with instance info
+                if proxy_span:
+                    proxy_span.set_attribute("gateway.instance_id", instance_id)
+                    proxy_span.set_attribute("gateway.instance_url", instance_url)
+                    proxy_span.set_attribute("service.instance", instance_id)
+                
+                # Prepare forwarding headers (includes trace context injection)
+                headers = prepare_forwarding_headers(request, correlation_id, request_id)
+                
+                # Prepare request body
+                body = None
+                if request.method in ['POST', 'PUT', 'PATCH']:
+                    body = await request.body()
+                
+                # Create child span for request preparation
+                prep_span_context = tracer_instance.start_as_current_span("gateway.prepare_request") if tracer_instance else nullcontext()
+                with prep_span_context as prep_span:
+                    if prep_span:
+                        prep_span.set_attribute("gateway.headers_prepared", len(headers))
+                        prep_span.set_attribute("gateway.body_size", len(body) if body else 0)
+                
+                # Create child span for HTTP request
+                http_span_context = tracer_instance.start_as_current_span("gateway.http_request") if tracer_instance else nullcontext()
+                http_start_time = time.time()
+                with http_span_context as http_span:
+                    if http_span:
+                        http_span.set_attribute("http.method", request.method)
+                        http_span.set_attribute("http.url", f"{instance_url}/{path}")
+                        http_span.set_attribute("http.target", f"/{path}")
+                        http_span.set_attribute("service.name", service_name)
+                        http_span.set_attribute("service.instance", instance_id)
+                    
+                    # Forward request
+                    response = await http_client.request(
+                        method=request.method,
+                        url=f"{instance_url}/{path}",
+                        headers=headers,
+                        params=request.query_params,
+                        content=body,
+                        timeout=30.0
+                    )
+                    
+                    # Update HTTP span with response info
+                    if http_span:
+                        http_time = (time.time() - http_start_time) * 1000
+                        http_span.set_attribute("http.status_code", response.status_code)
+                        http_span.set_attribute("http.response_time_ms", round(http_time, 2))
+                        http_span.set_attribute("http.response_size", len(response.content) if hasattr(response, 'content') else 0)
+                        if response.status_code >= 400:
+                            http_span.set_status(Status(StatusCode.ERROR, f"HTTP {response.status_code}"))
+                        else:
+                            http_span.set_status(Status(StatusCode.OK))
+                
+                # Calculate total response time
+                response_time = time.time() - start_time
+                
+                # Create child span for response processing
+                resp_span_context = tracer_instance.start_as_current_span("gateway.process_response") if tracer_instance else nullcontext()
+                with resp_span_context as resp_span:
+                    if resp_span:
+                        resp_span.set_attribute("http.status_code", response.status_code)
+                        resp_span.set_attribute("gateway.response_time_ms", round(response_time * 1000, 2))
+                
+                # Update proxy span with response info
+                if proxy_span:
+                    proxy_span.set_attribute("http.status_code", response.status_code)
+                    proxy_span.set_attribute("http.url", f"{instance_url}/{path}")
+                    proxy_span.set_attribute("response.time_ms", round(response_time * 1000, 2))
+                    proxy_span.set_attribute("gateway.total_time_ms", round(response_time * 1000, 2))
+                    
+                    # Add user context if available
+                    user_id = getattr(request.state, "user_id", None)
+                    if user_id:
+                        proxy_span.set_attribute("gateway.user_id", str(user_id))
+                    
+                    if response.status_code >= 400:
+                        proxy_span.set_status(Status(StatusCode.ERROR, f"HTTP {response.status_code}"))
+                    else:
+                        proxy_span.set_status(Status(StatusCode.OK))
+                
+                # Mark main FastAPI span as error if response status is error
+                if TRACING_AVAILABLE and trace and response.status_code >= 400:
+                    current_span = trace.get_current_span()
+                    if current_span:
+                        current_span.set_status(Status(StatusCode.ERROR, f"HTTP {response.status_code}"))
+                        current_span.set_attribute("http.status_code", response.status_code)
+                        current_span.set_attribute("error", True)
+                        current_span.set_attribute("error.message", f"Downstream service returned {response.status_code}")
+                
+                # Update load balancer metrics
+                await service_registry.update_health(service_name, instance_id, True, response_time)
+                
+                # Log request
+                log_request(request.method, f"/{path}", service_name, instance_id, response_time, response.status_code)
+                
+                # Mark that this response came from a downstream service (so RequestLoggingMiddleware knows not to log 500+)
+                # This prevents duplicate logging when service returns 500+ errors
+                request.state.downstream_response = True
+                request.state.downstream_status_code = response.status_code
+                
+                # Don't log 403 errors here - RequestLoggingMiddleware handles all 400-series errors to avoid duplicates
+                
+                # Prepare response headers
+                response_headers = {}
+                for header_name, header_value in response.headers.items():
+                    if not is_hop_by_hop_header(header_name):
+                        response_headers[header_name] = header_value
+                
+                # Add correlation headers to response
+                response_headers['X-Correlation-ID'] = correlation_id
+                response_headers['X-Request-ID'] = request_id
+                
+                # Return response
+                return Response(
+                    content=response.content,
+                    status_code=response.status_code,
+                    headers=response_headers,
+                    media_type=response.headers.get('content-type')
+                )
+                
+        except httpx.HTTPStatusError as e:
+            response_time = time.time() - start_time
+            
+            # Extract context for logging
+            user_id = getattr(request.state, "user_id", None)
+            
+            # Mark that this error came from a downstream service response (so RequestLoggingMiddleware knows not to log 500+)
+            # This prevents duplicate logging when service returns 500+ errors
+            request.state.downstream_response = True
+            request.state.downstream_status_code = e.response.status_code
+            
+            # Mark proxy span as error
+            if proxy_span:
+                proxy_span.set_status(Status(StatusCode.ERROR, str(e)))
+                proxy_span.set_attribute("http.status_code", e.response.status_code)
+                proxy_span.set_attribute("error", True)
+                proxy_span.set_attribute("error.type", "HTTPStatusError")
+                proxy_span.set_attribute("error.message", str(e))
+                if user_id:
+                    proxy_span.set_attribute("gateway.user_id", str(user_id))
+            
+            # Mark main FastAPI span as error
+            if TRACING_AVAILABLE and trace:
+                current_span = trace.get_current_span()
+                if current_span and current_span.is_recording():
+                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    current_span.set_attribute("http.status_code", e.response.status_code)
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", "HTTPStatusError")
+                    current_span.set_attribute("error.message", str(e))
+                    if service_name:
+                        current_span.set_attribute("gateway.service", service_name)
+                    if instance_id:
+                        current_span.set_attribute("gateway.instance_id", instance_id)
+                    if correlation_id:
+                        current_span.set_attribute("gateway.correlation_id", correlation_id)
+                    if user_id:
+                        current_span.set_attribute("gateway.user_id", str(user_id))
+            
+            # Don't log 500+ errors here - they are logged at service level to avoid duplicates
+            # The response will still be returned to the client with the correct status code
+            # For 400-series errors, RequestLoggingMiddleware will handle logging
+            if e.response.status_code < 500:
+                logger.error(
+                    f"HTTP error forwarding request to {service_name}: {e}",
+                    extra={
+                        "context": {
+                            "method": request.method,
+                            "path": path,
+                            "service": service_name,
+                            "status_code": e.response.status_code,
+                            "error": "http_error",
+                            "correlation_id": correlation_id,
+                            "response_time_ms": round(response_time * 1000, 2),
+                        }
+                    }
+                )
+            
+            # Update health status for the instance
+            if 'instance_id' in locals() and 'service_name' in locals():
+                await service_registry.update_health(service_name, instance_id, False, response_time)
+            
+            raise HTTPException(status_code=e.response.status_code, detail=str(e))
+            
+        except httpx.RequestError as e:
+            response_time = time.time() - start_time
+            
+            # Mark that this is a gateway-generated error (service unavailable)
+            # RequestLoggingMiddleware will log this since it's not a downstream response
+            # Store service info for better logging context
+            request.state.gateway_error_service = service_name
+            request.state.gateway_error_type = "service_unavailable"
+            
+            # Mark proxy span and main FastAPI span as error
+            if TRACING_AVAILABLE and trace:
+                current_span = trace.get_current_span()
+                if current_span and current_span.is_recording():
+                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.message", str(e))
+            
+            # Don't log here - RequestLoggingMiddleware will handle logging for gateway-generated errors
+            
+            # Update health status for the instance
+            if 'instance_id' in locals() and 'service_name' in locals():
+                await service_registry.update_health(service_name, instance_id, False, response_time)
+            
+            raise HTTPException(status_code=503, detail="Service temporarily unavailable")
         
-        # Fallback to direct service URLs if load_balancer is not available
-        if load_balancer is None:
-            logger.debug(f"Using direct service URL fallback for {service_name}")
-            return await proxy_to_service(request, f"/{path}", service_name)
-        
-        # Select healthy instance
-        instance_info = await load_balancer.select_instance(service_name)
-        if not instance_info:
-            raise HTTPException(status_code=503, detail=f"No healthy instances available for service: {service_name}")
-        
-        instance_id, instance_url = instance_info
-        
-        # Prepare forwarding headers
-        headers = prepare_forwarding_headers(request, correlation_id, request_id)
-        
-        # Prepare request body
-        body = None
-        if request.method in ['POST', 'PUT', 'PATCH']:
-            body = await request.body()
-        
-        # Forward request
-        response = await http_client.request(
-            method=request.method,
-            url=f"{instance_url}/{path}",
-            headers=headers,
-            params=request.query_params,
-            content=body,
-            timeout=30.0
-        )
-        
-        # Calculate response time
+    except HTTPException as e:
         response_time = time.time() - start_time
         
-        # Update load balancer metrics
-        await service_registry.update_health(service_name, instance_id, True, response_time)
+        # Extract context for logging
+        service_name = locals().get('service_name', None)
+        instance_id = locals().get('instance_id', None)
+        user_id = getattr(request.state, "user_id", None)
         
-        # Log request
-        log_request(request.method, f"/{path}", service_name, instance_id, response_time, response.status_code)
+        # Mark main FastAPI span as error for HTTP exceptions
+        if TRACING_AVAILABLE and trace:
+            current_span = trace.get_current_span()
+            if current_span and e.status_code >= 400:
+                current_span.set_status(Status(StatusCode.ERROR, f"HTTP {e.status_code}: {e.detail}"))
+                current_span.set_attribute("http.status_code", e.status_code)
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.type", "HTTPException")
+                current_span.set_attribute("error.message", str(e.detail))
+                if service_name:
+                    current_span.set_attribute("gateway.service", service_name)
+                if instance_id:
+                    current_span.set_attribute("gateway.instance_id", instance_id)
+                if correlation_id:
+                    current_span.set_attribute("gateway.correlation_id", correlation_id)
+                if user_id:
+                    current_span.set_attribute("gateway.user_id", str(user_id))
         
-        # Prepare response headers
-        response_headers = {}
-        for header_name, header_value in response.headers.items():
-            if not is_hop_by_hop_header(header_name):
-                response_headers[header_name] = header_value
+        # Don't log HTTP exceptions here - RequestLoggingMiddleware handles all logging
+        # This prevents duplicates and ensures consistent logging format
         
-        # Add correlation headers to response
-        response_headers['X-Correlation-ID'] = correlation_id
-        response_headers['X-Request-ID'] = request_id
-        
-        # Return response
-        return Response(
-            content=response.content,
-            status_code=response.status_code,
-            headers=response_headers,
-            media_type=response.headers.get('content-type')
-        )
-        
-    except httpx.HTTPStatusError as e:
-        response_time = time.time() - start_time
-        logger.error(f"HTTP error forwarding request: {e}")
-        
-        # Update health status for the instance
-        if 'instance_id' in locals() and 'service_name' in locals():
-            await service_registry.update_health(service_name, instance_id, False, response_time)
-        
-        raise HTTPException(status_code=e.response.status_code, detail=str(e))
-        
-    except httpx.RequestError as e:
-        response_time = time.time() - start_time
-        logger.error(f"Request error forwarding request: {e}")
-        
-        # Update health status for the instance
-        if 'instance_id' in locals() and 'service_name' in locals():
-            await service_registry.update_health(service_name, instance_id, False, response_time)
-        
-        error_detail = {
-            "code": "SERVICE_UNAVAILABLE",
-            "message": "Service is temporarily unavailable. Please try again in a few minutes."
-        }
-        raise HTTPException(status_code=503, detail=error_detail)
+        # Re-raise HTTP exceptions
+        raise
         
     except Exception as e:
         response_time = time.time() - start_time
-        logger.error(f"Unexpected error forwarding request: {e}")
+        
+        # Extract context for logging
+        service_name = locals().get('service_name', None)
+        instance_id = locals().get('instance_id', None)
+        user_id = getattr(request.state, "user_id", None)
+        
+        # Mark main FastAPI span as error
+        if TRACING_AVAILABLE and trace:
+            current_span = trace.get_current_span()
+            if current_span:
+                current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.type", type(e).__name__)
+                current_span.set_attribute("error.message", str(e))
+                current_span.set_attribute("http.status_code", 500)
+                current_span.record_exception(e)
+                if service_name:
+                    current_span.set_attribute("gateway.service", service_name)
+                if instance_id:
+                    current_span.set_attribute("gateway.instance_id", instance_id)
+                if correlation_id:
+                    current_span.set_attribute("gateway.correlation_id", correlation_id)
+                if user_id:
+                    current_span.set_attribute("gateway.user_id", str(user_id))
+        
+        logger.error(
+            f"Unexpected error in API Gateway forwarding request: {e}",
+            extra={
+                "context": {
+                    "error_type": type(e).__name__,
+                    "error_message": str(e),
+                    "status_code": 500,
+                    "method": request.method,
+                    "path": path,
+                    "service": service_name,
+                    "instance_id": instance_id,
+                    "user_id": user_id,
+                    "correlation_id": correlation_id,
+                    "request_id": request_id,
+                    "response_time_ms": round(response_time * 1000, 2),
+                }
+            },
+            exc_info=True
+        )
         raise HTTPException(status_code=500, detail="Internal server error")
 
 if __name__ == "__main__":
