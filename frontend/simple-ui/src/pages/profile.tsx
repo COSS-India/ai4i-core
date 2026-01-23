@@ -96,7 +96,6 @@ const ProfilePage: React.FC = () => {
   const [isLoadingRoles, setIsLoadingRoles] = useState(false);
   const [isLoadingUserRoles, setIsLoadingUserRoles] = useState(false);
   const [isAssigningRole, setIsAssigningRole] = useState(false);
-  const [isRemovingRole, setIsRemovingRole] = useState(false);
   
   // Permissions management state
   const [permissions, setPermissions] = useState<string[]>([]);
@@ -1396,42 +1395,6 @@ const ProfilePage: React.FC = () => {
                                       <Badge colorScheme="green" fontSize="sm" p={1}>
                                         {roleName}
                                       </Badge>
-                                      <Button
-                                        size="xs"
-                                        colorScheme="red"
-                                        variant="outline"
-                                        onClick={async () => {
-                                          setIsRemovingRole(true);
-                                          try {
-                                            await roleService.removeRole(selectedUser.id, roleName);
-                                            toast({
-                                              title: "Success",
-                                              description: `Role ${roleName} removed from user ${selectedUser.username}`,
-                                              status: "success",
-                                              duration: 3000,
-                                              isClosable: true,
-                                            });
-                                            // Refresh user roles
-                                            const userRolesData = await roleService.getUserRoles(selectedUser.id);
-                                            setSelectedUserRoles(userRolesData.roles);
-                                          } catch (error) {
-                                            toast({
-                                              title: "Error",
-                                              description: error instanceof Error ? error.message : "Failed to remove role",
-                                              status: "error",
-                                              duration: 5000,
-                                              isClosable: true,
-                                            });
-                                          } finally {
-                                            setIsRemovingRole(false);
-                                          }
-                                        }}
-                                        isLoading={isRemovingRole}
-                                        loadingText="Removing..."
-                                        isDisabled={user?.roles?.includes('MODERATOR') && !user?.roles?.includes('ADMIN') && !user?.is_superuser}
-                                      >
-                                        Remove
-                                      </Button>
                                     </HStack>
                                   ))}
                                 </VStack>
