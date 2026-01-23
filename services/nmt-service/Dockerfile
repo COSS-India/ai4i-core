@@ -22,13 +22,21 @@ COPY services/nmt-service/requirements.txt .
 RUN pip install --upgrade pip setuptools wheel
 
 # Install Python deps
+# CRITICAL: Install packaging FIRST (system-wide) before any opentelemetry packages
+# opentelemetry-instrumentation-fastapi imports packaging during installation
+# Install both system-wide AND user-wide to ensure it's available
+RUN pip install --no-cache-dir packaging>=21.0 && \
+    pip install --no-cache-dir --user packaging>=21.0
+ 
+# Install Python deps (packaging is already installed above)
 RUN pip install --no-cache-dir --user -r requirements.txt
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 # RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
-
+# Verify packaging is installed (for debugging)
+RUN python -c "import packaging; print(f'packaging version: {packaging.__version__}')" || (echo "ERROR: packaging not found!" && exit 1)
 
 # Stage 2: Runtime
 FROM python:3.11-slim
@@ -44,6 +52,14 @@ RUN useradd --create-home --shell /bin/bash app
 
 COPY --from=builder /root/.local /home/app/.local
 ENV PATH=/home/app/.local/bin:$PATH
+
+# Ensure packaging is available in runtime - install system-wide AND user-wide
+# This ensures it's available regardless of Python path resolution
+RUN pip install --no-cache-dir packaging>=21.0 && \
+    pip install --no-cache-dir --target=/home/app/.local/lib/python3.11/site-packages packaging>=21.0 && \
+    python -c "import sys; sys.path.insert(0, '/home/app/.local/lib/python3.11/site-packages'); import packaging; print(f'✓ packaging {packaging.__version__} verified')" || \
+    (echo "ERROR: packaging not available!" && exit 1)
+
 
 # Copy AI4ICore plugins
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
