@@ -1198,6 +1198,7 @@ class RegisterUser(BaseModel):
     phone_number: Optional[str] = Field(None, description="Phone number")
     timezone: Optional[str] = Field("UTC", description="Timezone")
     language: Optional[str] = Field("en", description="Language code")
+    is_tenant: Optional[bool] = Field(False, description="Whether the user is registering as a tenant")
 
 class LoginRequestBody(BaseModel):
     email: str = Field(..., description="Email address")
@@ -1327,6 +1328,7 @@ class UserRegisterRequest(BaseModel):
     tenant_id: str = Field(..., description="Tenant identifier", example="acme-corp-5d448a")
     email: EmailStr = Field(..., description="User email address")
     username: str = Field(..., min_length=3, max_length=100, description="Username")
+    full_name: str = Field(None, description="Full name of the user")
     services: List[str] = Field(..., description="List of services the user has access to", example=["tts", "asr"])
     is_approved: bool = Field(False, description="Indicates if the user is approved by tenant admin")
 
@@ -1433,6 +1435,36 @@ class ServiceUpdateResponse(BaseModel):
     message: str = Field(..., description="Update message")
     service: ServiceResponse = Field(..., description="Updated service information")
     changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
+
+
+class TenantViewResponse(BaseModel):
+    """Response model for viewing tenant information."""
+    id: UUID = Field(..., description="Tenant UUID")
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="User ID of the tenant owner")
+    organization_name: str = Field(..., description="Organization name")
+    email: EmailStr = Field(..., description="Contact email")
+    domain: str = Field(..., description="Tenant domain")
+    schema_name: str = Field(..., alias="schema")
+    subscriptions: list[str] = Field(..., description="List of subscriptions")
+    status: str = Field(..., description="Tenant status")
+    quotas: Dict[str , Any] = Field(..., description="Quotas for the tenant")
+    created_at: str = Field(..., description="Creation timestamp")
+    updated_at: str = Field(..., description="Update timestamp")
+
+
+class TenantUserViewResponse(BaseModel):
+    """Response model for viewing tenant user information."""
+    id: UUID = Field(..., description="Tenant user UUID")
+    user_id: int = Field(..., description="User ID")
+    tenant_id: str = Field(..., description="Tenant identifier")
+    username: str = Field(..., description="Username")
+    email: EmailStr = Field(..., description="User email")
+    subscriptions: list[str] = Field(..., description="List of subscriptions")
+    status: str = Field(..., description="User status")
+    created_at: str = Field(..., description="Creation timestamp")
+    updated_at: str = Field(..., description="Update timestamp")
+
 
 
 class ServiceRegistry:
@@ -4534,7 +4566,6 @@ async def update_tenant_user_status(
         headers=headers
     )
 
-
 @app.get("/api/v1/multi-tenant/email/verify", tags=["Multi-Tenant"])
 async def verify_email(
     request: Request,
@@ -4556,6 +4587,54 @@ async def verify_email(
         {"token": token},
         method="GET",
         headers=headers
+    )
+
+
+@app.get("/api/v1/multi-tenant/view/tenant",response_model=TenantViewResponse, tags=["Multi-Tenant"])
+async def view_tenant(
+    tenant_id: str = Query(..., description="Tenant identifier (tenant_id)"),
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    View tenant details by tenant_id via API Gateway.
+    Proxies to multi-tenant-service /admin/view/tenant.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    return await proxy_to_service_with_params(
+        request,
+        "/admin/view/tenant",
+        "multi-tenant-service",
+        {"tenant_id": tenant_id},
+        method="GET",
+        headers=headers,
+    )
+
+
+@app.get("/api/v1/multi-tenant/view/user",response_model=TenantUserViewResponse, tags=["Multi-Tenant"])
+async def view_tenant_user(
+    user_id: int = Query(..., description="Auth user id for tenant user"),
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    View tenant user details by user_id via API Gateway.
+    Proxies to multi-tenant-service /admin/view/user.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    return await proxy_to_service_with_params(
+        request,
+        "/admin/view/user",
+        "multi-tenant-service",
+        {"user_id": user_id},
+        method="GET",
+        headers=headers,
     )
 
 @app.post("/api/v1/multi-tenant/email/resend", response_model=TenantResendEmailVerificationResponse, tags=["Multi-Tenant"], status_code=201)
