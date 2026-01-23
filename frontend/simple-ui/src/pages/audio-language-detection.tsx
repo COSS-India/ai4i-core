@@ -133,11 +133,11 @@ const AudioLanguageDetectionPage: React.FC = () => {
       setFetched(true);
     } catch (err: any) {
       // Use centralized error handler
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err);
       
       setError(errorMessage);
       toast({
-        title: errorTitle,
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: "error",
         duration: 5000,
