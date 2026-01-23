@@ -5,10 +5,10 @@
 -- models and services.
 --
 -- Run this script using:
---   docker compose exec postgres psql -U dhruva_user -d config_db -f /docker-entrypoint-initdb.d/13-created-updated-by-migration.sql
+--   docker compose exec postgres psql -U dhruva_user -d model_management_db -f /docker-entrypoint-initdb.d/13-model-management-audit-logs-migration.sql
 -- ============================================================================
 
-\c config_db;
+\c model_management_db;
 
 -- ============================================================================
 -- Add created_by and updated_by columns to models table
