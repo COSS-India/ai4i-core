@@ -328,13 +328,13 @@ const OCRPage: React.FC = () => {
             </Text>
           </Box>
 
-          <Grid
-            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
-            gap={8}
-            w="full"
+        <Grid
+          templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
+          gap={8}
+          w="full"
             maxW="1200px"
-            mx="auto"
-          >
+          mx="auto"
+        >
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
@@ -515,27 +515,27 @@ const OCRPage: React.FC = () => {
                 </Tabs>
               </FormControl>
 
-                {previewUrl && (
-                  <Box>
-                    <Text fontSize="sm" fontWeight="semibold" mb={2}>
-                      Image Preview:
-                    </Text>
-                    <Box
-                      border="1px"
-                      borderColor="gray.300"
-                      borderRadius="md"
-                      overflow="hidden"
-                      bg="gray.50"
-                      p={2}
-                    >
-                      <img
-                        src={previewUrl}
-                        alt="Preview"
-                        style={{ maxWidth: "100%", height: "auto", display: "block" }}
-                      />
-                    </Box>
+              {previewUrl && (
+                <Box>
+                  <Text fontSize="sm" fontWeight="semibold" mb={2}>
+                    Image Preview:
+                  </Text>
+                  <Box
+                    border="1px"
+                    borderColor="gray.300"
+                    borderRadius="md"
+                    overflow="hidden"
+                    bg="gray.50"
+                    p={2}
+                  >
+                    <img
+                      src={previewUrl}
+                      alt="Preview"
+                      style={{ maxWidth: "100%", height: "auto", display: "block" }}
+                    />
                   </Box>
-                )}
+                </Box>
+              )}
 
                 <Button
                   colorScheme="orange"
@@ -555,29 +555,29 @@ const OCRPage: React.FC = () => {
             <GridItem>
               <VStack spacing={6} align="stretch">
                 {/* Progress Indicator */}
-                {fetching && (
-                  <Box>
-                    <Text mb={2} fontSize="sm" color="gray.600">
-                      Processing image...
-                    </Text>
+              {fetching && (
+                <Box>
+                  <Text mb={2} fontSize="sm" color="gray.600">
+                    Processing image...
+                  </Text>
                     <Progress size="xs" isIndeterminate colorScheme="orange" />
-                  </Box>
-                )}
+                </Box>
+              )}
 
                 {/* Error Display */}
-                {error && (
-                  <Box
-                    p={4}
-                    bg="red.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="red.200"
-                  >
-                    <Text color="red.600" fontSize="sm">
-                      {error}
-                    </Text>
-                  </Box>
-                )}
+              {error && (
+                <Box
+                  p={4}
+                  bg="red.50"
+                  borderRadius="md"
+                  border="1px"
+                  borderColor="red.200"
+                >
+                  <Text color="red.600" fontSize="sm">
+                    {error}
+                  </Text>
+                </Box>
+              )}
 
                 {/* Metrics Box */}
                 {fetched && (
@@ -610,40 +610,40 @@ const OCRPage: React.FC = () => {
                 )}
 
                 {/* OCR Results */}
-                {fetched && extractedText && (
+              {fetched && extractedText && (
                   <>
-                    <Box>
-                      <HStack justify="space-between" mb={2}>
-                        <Text fontSize="sm" fontWeight="semibold">
-                          Extracted Text:
-                        </Text>
-                        <IconButton
-                          aria-label="Copy text"
-                          icon={copied ? <CheckIcon /> : <CopyIcon />}
-                          size="sm"
-                          onClick={handleCopy}
-                          colorScheme={copied ? "green" : "gray"}
-                        />
-                      </HStack>
-                      <Box
-                        p={4}
-                        bg="white"
-                        borderRadius="md"
-                        border="1px"
-                        borderColor="gray.300"
-                        maxH="300px"
-                        overflowY="auto"
-                      >
-                        <Text fontSize="sm" whiteSpace="pre-wrap" wordBreak="break-word">
-                          {extractedText}
-                        </Text>
-                      </Box>
-                    </Box>
+                <Box>
+                  <HStack justify="space-between" mb={2}>
+                    <Text fontSize="sm" fontWeight="semibold">
+                      Extracted Text:
+                    </Text>
+                    <IconButton
+                      aria-label="Copy text"
+                      icon={copied ? <CheckIcon /> : <CopyIcon />}
+                      size="sm"
+                      onClick={handleCopy}
+                      colorScheme={copied ? "green" : "gray"}
+                    />
+                  </HStack>
+                  <Box
+                    p={4}
+                    bg="white"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="gray.300"
+                    maxH="300px"
+                    overflowY="auto"
+                  >
+                    <Text fontSize="sm" whiteSpace="pre-wrap" wordBreak="break-word">
+                      {extractedText}
+                    </Text>
+                  </Box>
+                </Box>
 
                     {/* Clear Results Button */}
                     <Box textAlign="center">
                       <button
-                        onClick={clearResults}
+                  onClick={clearResults}
                         style={{
                           padding: "8px 16px",
                           backgroundColor: "#f7fafc",
@@ -653,15 +653,15 @@ const OCRPage: React.FC = () => {
                           fontSize: "14px",
                           color: "#4a5568",
                         }}
-                      >
-                        Clear Results
+                >
+                  Clear Results
                       </button>
                     </Box>
                   </>
-                )}
-              </VStack>
-            </GridItem>
-          </Grid>
+              )}
+            </VStack>
+          </GridItem>
+        </Grid>
         </VStack>
       </ContentLayout>
     </>
