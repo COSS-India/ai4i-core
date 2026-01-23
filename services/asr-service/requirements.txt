@@ -46,3 +46,6 @@ python-jose[cryptography]>=3.3.0
 
 # WebSocket
 python-socketio>=5.10.0
+
+# (sandbox-build-failure-fix
+packaging>=21.0
