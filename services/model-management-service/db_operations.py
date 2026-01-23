@@ -424,7 +424,7 @@ async def update_model(payload: ModelUpdateRequest, updated_by: str = None):
         if existing_model.version_status == VersionStatus.DEPRECATED and not ALLOW_DEPRECATED_MODEL_CHANGES:
             logger.warning(
                 f"Cannot update model {payload.modelId} v{payload.version}: "
-                f"Model status is DEPRECATED and ALLOW_DEPRECATED_MODEL_CHANGES is false"
+                f"Model status is DEPRECATED"
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
