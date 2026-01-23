@@ -693,7 +693,8 @@ async def login(
 @app.post("/api/v1/auth/refresh", response_model=TokenRefreshResponse)
 async def refresh_token(
     refresh_data: TokenRefreshRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    multi_tenant_db: Optional[AsyncSession] = Depends(get_multi_tenant_db)
 ):
     """Refresh access token using refresh token"""
     payload = AuthUtils.verify_refresh_token(refresh_data.refresh_token)
@@ -755,13 +756,7 @@ async def refresh_token(
     user_roles = await AuthUtils.get_user_roles(db, user.id)
     
     # Get tenant information
-    # This function checks both tenants table (tenant admin) and tenant_users table (tenant user)
-    tenant_info = None
-    if not multi_tenant_db_session:
-        async with multi_tenant_db_session() as mt_db:
-            tenant_info = await get_tenant_info(user.id, mt_db)
-    else:
-        tenant_info = await get_tenant_info(user.id, multi_tenant_db_session, user.is_tenant)
+    tenant_info = await get_tenant_info(user.id, multi_tenant_db, user.is_tenant)
     
     # Build JWT payload with tenant info
     token_data = {
@@ -1426,7 +1421,8 @@ async def google_callback(
     request: Request,
     code: str = Query(..., description="Authorization code from Google"),
     state: str = Query(..., description="State token for CSRF protection"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    multi_tenant_db: Optional[AsyncSession] = Depends(get_multi_tenant_db)
 ):
     """Handle Google OAuth callback - exchange code for tokens and create/login user"""
     if not redis_client:
@@ -1486,11 +1482,7 @@ async def google_callback(
         user_roles = await AuthUtils.get_user_roles(db, user.id)
         
         # 6.5. Get tenant information
-        # This function checks both tenants table (tenant admin) and tenant_users table (tenant user)
-        tenant_info = None
-        if multi_tenant_db_session:
-            async with multi_tenant_db_session() as mt_db:
-                tenant_info = await get_tenant_info(user.id, mt_db)
+        tenant_info = await get_tenant_info(user.id, multi_tenant_db, user.is_tenant)
         
         # Build JWT payload with tenant info
         token_data = {

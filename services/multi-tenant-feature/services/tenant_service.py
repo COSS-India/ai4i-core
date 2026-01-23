@@ -41,6 +41,8 @@ from models.tenant_email import TenantResendEmailVerificationResponse
 from models.tenant_subscription import TenantSubscriptionResponse
 from models.tenant_status import TenantStatusUpdateRequest , TenantStatusUpdateResponse
 from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
+from models.tenant_view import TenantViewResponse
+from models.user_view import TenantUserViewResponse
 
 from services.email_service import send_welcome_email, send_verification_email , send_user_welcome_email
 
@@ -1362,7 +1364,7 @@ async def register_user(
                     "username": payload.username,
                     "password": plain_password,
                     "confirm_password": plain_password,
-                    "full_name": None,
+                    "full_name": payload.full_name,
                     "phone_number": None,
                     "timezone": "UTC",
                     "language": "en",
@@ -1394,6 +1396,9 @@ async def register_user(
             status_code=500,
             detail="Authentication service response missing user id for tenant user",
         )
+    
+    # TODO: Add logging for password generation , Remove once done testing
+    # logger.debug(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
     
     if payload.is_approved:
         #Create TenantUser entry only if user is approved
@@ -1671,6 +1676,71 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
 
     return response
 
+
+async def view_tenant_details(tenant_id: str, db: AsyncSession) -> TenantViewResponse:
+    """
+    View tenant details by tenant_id (human-readable tenant identifier).
+    
+    Args:
+        tenant_id: The tenant identifier
+        db: Database session
+    Returns:
+        TenantViewResponse: Details of the tenant
+    """
+
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    response = TenantViewResponse(
+        id=tenant.id,
+        tenant_id=tenant.tenant_id,
+        user_id=tenant.user_id,
+        organization_name=tenant.organization_name,
+        email=tenant.contact_email,
+        domain=tenant.domain,
+        schema=tenant.schema_name,
+        subscriptions=tenant.subscriptions or [],
+        status=tenant.status,
+        quotas=tenant.quotas or {},
+        created_at=tenant.created_at.isoformat(),
+        updated_at=tenant.updated_at.isoformat(),
+    )
+
+    return response
+
+
+async def view_tenant_user_details(user_id: str, db: AsyncSession) -> TenantUserViewResponse:
+    """
+    View tenant user details by tenant_id and user_id.
+    
+    Args:
+        tenant_id: The tenant identifier
+        user_id: The user identifier
+        db: Database session
+    Returns:
+        TenantUserViewResponse: Details of the tenant user
+    """
+    tenant_user = await db.scalar(select(TenantUser).where(TenantUser.user_id == user_id))
+
+    if not tenant_user:
+        raise HTTPException(status_code=404, detail="Tenant user not found")
+
+    response = TenantUserViewResponse(
+        id=tenant_user.id,
+        tenant_id=tenant_user.tenant_id,
+        user_id=tenant_user.user_id,
+        username=tenant_user.username,
+        email=tenant_user.email,
+        subscriptions=tenant_user.subscriptions or [],
+        status=tenant_user.status,
+        is_approved=tenant_user.is_approved,
+        created_at=tenant_user.created_at.isoformat(),
+        updated_at=tenant_user.updated_at.isoformat(),
+    )
+
+    return response
 
 async def update_billing_plan(db: AsyncSession,payload: BillingUpdateRequest) -> BillingUpdateResponse:
     """
