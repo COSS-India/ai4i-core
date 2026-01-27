@@ -20,5 +20,8 @@ python-json-logger>=2.0.7
 passlib[bcrypt]>=1.7.4
 python-jose[cryptography]>=3.3.0
 
+# Packaging (required by opentelemetry-instrumentation-fastapi)
+packaging>=21.0
+
 # AI4ICore libraries are installed in Dockerfile
 # (not in requirements.txt due to path issues during Docker build)

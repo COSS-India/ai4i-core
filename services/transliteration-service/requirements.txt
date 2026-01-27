@@ -43,6 +43,9 @@ opentelemetry-sdk==1.21.0
 opentelemetry-instrumentation-fastapi==0.42b0
 opentelemetry-exporter-jaeger==1.21.0
 
+# Packaging (required by opentelemetry-instrumentation-fastapi)
+packaging>=21.0
+
 # Optional (for development)
 # pytest>=7.4.0
 # pytest-asyncio>=0.21.0

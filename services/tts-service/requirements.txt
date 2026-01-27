@@ -63,6 +63,11 @@ passlib[bcrypt]==1.7.4
 python-jose[cryptography]==3.3.0
 
 # =========================================================
+# Packaging (required by opentelemetry-instrumentation-fastapi)
+# =========================================================
+packaging>=21.0
+
+# =========================================================
 # NOTE:
 # AI4ICore Observability Plugin is installed via Dockerfile:
 # pip install -e libs/ai4icore_observability
