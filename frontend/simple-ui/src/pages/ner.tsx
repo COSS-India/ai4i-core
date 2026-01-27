@@ -11,6 +11,7 @@ import {
   HStack,
   Progress,
   Select,
+  Spinner,
   Text,
   Textarea,
   useToast,
@@ -18,9 +19,10 @@ import {
   Badge,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
-import { performNERInference } from "../services/nerService";
+import { performNERInference, listNERServices } from "../services/nerService";
 import { extractErrorInfo } from "../utils/errorHandler";
 
 const NERPage: React.FC = () => {
@@ -32,12 +34,42 @@ const NERPage: React.FC = () => {
   const [result, setResult] = useState<any>(null);
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const [selectedServiceId, setSelectedServiceId] = useState<string>("");
+
+  // Fetch available NER services
+  const {
+    data: services = [],
+    isLoading: isLoadingServices,
+    error: servicesError,
+  } = useQuery({
+    queryKey: ["nerServices"],
+    queryFn: listNERServices,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+
+  // Auto-select first service when services are loaded
+  useEffect(() => {
+    if (services.length > 0 && !selectedServiceId) {
+      setSelectedServiceId(services[0].service_id);
+    }
+  }, [services, selectedServiceId]);
 
   const handleProcess = async () => {
     if (!inputText.trim()) {
       toast({
         title: "Input Required",
         description: "Please enter text to process.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (!selectedServiceId) {
+      toast({
+        title: "No Service Selected",
+        description: "Please select a NER service.",
         status: "warning",
         duration: 3000,
         isClosable: true,
@@ -52,7 +84,7 @@ const NERPage: React.FC = () => {
     try {
       const startTime = Date.now();
       const response = await performNERInference(inputText, {
-        serviceId: "dhruva-ner",
+        serviceId: selectedServiceId,
         language: {
           sourceLanguage,
         },
@@ -130,6 +162,70 @@ const NERPage: React.FC = () => {
             {/* Configuration Panel */}
           <GridItem>
             <VStack spacing={6} align="stretch">
+
+              {/* Service Selection */}
+              <FormControl>
+                <FormLabel fontSize="sm" fontWeight="semibold">
+                  NER Service:
+                </FormLabel>
+                {isLoadingServices ? (
+                  <HStack spacing={2} p={2}>
+                    <Spinner size="sm" color="orange.500" />
+                    <Text fontSize="sm" color="gray.600">
+                      Loading services...
+                    </Text>
+                  </HStack>
+                ) : servicesError ? (
+                  <Box p={3} bg="red.50" borderRadius="md" border="1px" borderColor="red.200">
+                    <Text fontSize="sm" color="red.700">
+                      Failed to load services. Please try refreshing the page.
+                    </Text>
+                  </Box>
+                ) : (
+                  <Select
+                    value={selectedServiceId}
+                    onChange={(e) => setSelectedServiceId(e.target.value)}
+                    placeholder="Select a service..."
+                    disabled={fetching}
+                    size="md"
+                    borderColor="gray.300"
+                    _focus={{
+                      borderColor: "orange.400",
+                      boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
+                    }}
+                  >
+                    {services.map((service) => (
+                      <option key={service.service_id} value={service.service_id}>
+                        {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+                {selectedServiceId && services.length > 0 && (
+                  <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                    {(() => {
+                      const selectedService = services.find((s) => s.service_id === selectedServiceId);
+                      return selectedService ? (
+                        <>
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Service ID:</strong> {selectedService.service_id}
+                          </Text>
+                          {selectedService.serviceDescription && (
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Description:</strong> {selectedService.serviceDescription}
+                            </Text>
+                          )}
+                          {selectedService.supported_languages.length > 0 && (
+                            <Text fontSize="sm" color="gray.700">
+                              <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
+                            </Text>
+                          )}
+                        </>
+                      ) : null;
+                    })()}
+                  </Box>
+                )}
+              </FormControl>
 
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">

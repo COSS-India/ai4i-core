@@ -8,15 +8,17 @@ import {
   Grid,
   GridItem,
   Heading,
+  HStack,
   Progress,
   Select,
+  Spinner,
   Text,
   useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { FaRegFileAudio } from "react-icons/fa";
 import ContentLayout from "../components/common/ContentLayout";
 import LoadingSpinner from "../components/common/LoadingSpinner";
@@ -24,7 +26,7 @@ import TextInput from "../components/tts/TextInput";
 import TTSResults from "../components/tts/TTSResults";
 import VoiceSelector from "../components/tts/VoiceSelector";
 import { useTTS } from "../hooks/useTTS";
-import { listVoices } from "../services/ttsService";
+import { listVoices, listTTSServices } from "../services/ttsService";
 
 const TTSPage: React.FC = () => {
   const toast = useToast();
@@ -49,7 +51,14 @@ const TTSPage: React.FC = () => {
     setAudioFormat,
     setSamplingRate,
     clearResults,
-  } = useTTS();
+  } = useTTS(serviceId);
+
+  // Fetch available TTS services
+  const { data: ttsServices, isLoading: servicesLoading } = useQuery({
+    queryKey: ["tts-services"],
+    queryFn: listTTSServices,
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
 
   // Fetch available voices
   const { data: voicesData, isLoading: voicesLoading } = useQuery({
@@ -57,6 +66,15 @@ const TTSPage: React.FC = () => {
     queryFn: () => listVoices({ language, gender }),
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
+
+  // Auto-select first available TTS service when list loads
+  useEffect(() => {
+    if (!ttsServices || ttsServices.length === 0) return;
+    if (!serviceId) {
+      // If no service selected, select first available
+      setServiceId(ttsServices[0].service_id);
+    }
+  }, [ttsServices, serviceId]);
 
   const handleGenerate = () => {
     if (!inputText.trim()) {
@@ -108,58 +126,61 @@ const TTSPage: React.FC = () => {
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
-                {/* Service Selection (fixed to Indo-Aryan model) */}
-                <Box>
-                  <FormControl>
-                    <FormLabel className="dview-service-try-option-title">
-                      Translation Service:
-                    </FormLabel>
+                {/* Service Selection */}
+                <FormControl>
+                  <FormLabel fontSize="sm" fontWeight="semibold">
+                    TTS Service:
+                  </FormLabel>
+                  {servicesLoading ? (
+                    <HStack spacing={2} p={2}>
+                      <Spinner size="sm" color="orange.500" />
+                      <Text fontSize="sm" color="gray.600">Loading services...</Text>
+                    </HStack>
+                  ) : (
                     <Select
-                      placeholder="Select a model"
                       value={serviceId}
                       onChange={(e) => setServiceId(e.target.value)}
+                      placeholder="Select a TTS service"
+                      disabled={fetching}
+                      size="md"
+                      borderColor="gray.300"
+                      _focus={{
+                        borderColor: "orange.400",
+                        boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
+                      }}
                     >
-                      <option value="indic-tts-coqui-indo_aryan">
-                        indic-tts-coqui-indo_aryan
-                      </option>
+                      {ttsServices?.map((service) => (
+                        <option key={service.service_id} value={service.service_id}>
+                          {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
+                        </option>
+                      ))}
                     </Select>
-                  </FormControl>
-
-                  <Text
-                    className="dview-service-try-option-title"
-                    mt={4}
-                    mb={2}
-                  >
-                    Language Configuration
-                  </Text>
-
-                  {!serviceId ? (
-                    <Box
-                      p={3}
-                      bg="gray.50"
-                      borderRadius="md"
-                      textAlign="center"
-                    >
-                      <Text fontSize="sm" color="gray.600">
-                        No model selected
-                      </Text>
-                    </Box>
-                  ) : (
-                    <Box p={3} bg="gray.50" borderRadius="md">
-                      <Text fontSize="sm" color="gray.600" mb={1}>
-                        <strong>Provider:</strong> AI4Bharat
-                      </Text>
-                      <Text fontSize="sm" color="gray.600" mb={1}>
-                        <strong>Supported Languages:</strong>{" "}
-                        {indoAryanLanguages.length}
-                      </Text>
-                      <Text fontSize="sm" color="gray.600" mb={1}>
-                        <strong>Service ID:</strong>{" "}
-                        ai4bharat/indic-tts-coqui-indo_aryan-gpu--t4
-                      </Text>
+                  )}
+                  {serviceId && ttsServices && (
+                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                      {(() => {
+                        const selectedService = ttsServices.find(s => s.service_id === serviceId);
+                        return selectedService ? (
+                          <>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Service ID:</strong> {selectedService.service_id}
+                            </Text>
+                            {selectedService.serviceDescription && (
+                              <Text fontSize="sm" color="gray.700" mb={1}>
+                                <strong>Description:</strong> {selectedService.serviceDescription}
+                              </Text>
+                            )}
+                            {selectedService.supported_languages.length > 0 && (
+                              <Text fontSize="sm" color="gray.700">
+                                <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
+                              </Text>
+                            )}
+                          </>
+                        ) : null;
+                      })()}
                     </Box>
                   )}
-                </Box>
+                </FormControl>
 
                 {/* Voice Selector */}
                 <Box>

@@ -27,7 +27,8 @@ router_restful = APIRouter(
 @router_restful.get("", response_model=List[ModelViewResponse])
 async def list_models_restful(
     task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
-    include_deprecated: bool = Query(True, description="Include deprecated versions. Set to false to show only ACTIVE versions.")
+    include_deprecated: bool = Query(True, description="Include deprecated versions. Set to false to show only ACTIVE versions."),
+    model_name: Optional[str] = Query(None, description="Filter by model name. Returns all versions of models matching this name.")
 ):
     """List all models - RESTful endpoint"""
     try:
@@ -36,7 +37,7 @@ async def list_models_restful(
         else:
             task_type_enum = TaskTypeEnum(task_type)
 
-        data = await list_all_models(task_type_enum, include_deprecated=include_deprecated)
+        data = await list_all_models(task_type_enum, include_deprecated=include_deprecated, model_name=model_name)
         if data is None:
             return []  # Return empty list instead of 404
 
@@ -73,9 +74,9 @@ async def get_model_by_id_restful(model_id: str, version: Optional[str] = Query(
 async def create_model_restful(payload: ModelCreateRequest):
     """Create a new model - RESTful endpoint"""
     try:
-        await save_model_to_db(payload)
+        model_id = await save_model_to_db(payload)
         logger.info(f"Model '{payload.name}' inserted successfully.")
-        return f"Model '{payload.name}' (ID: {payload.modelId}) created successfully."
+        return f"Model '{payload.name}' (ID: {model_id}) created successfully."
     except HTTPException:
         raise
     except Exception:
