@@ -9,8 +9,9 @@ import time
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from ai4icore_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -33,9 +34,32 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Extract auth context from request.state if available
         user_id = getattr(request.state, "user_id", None)
         api_key_id = getattr(request.state, "api_key_id", None)
+        
+        # Log incoming request immediately for debugging - use try/except to ensure it always logs
+        try:
+            logger.info(
+                f"Incoming {method} request to {path} from {client_ip}",
+                extra={
+                    "method": method,
+                    "path": path,
+                    "client_ip": client_ip,
+                    "user_id": user_id,
+                    "api_key_id": api_key_id,
+                }
+            )
+        except Exception as e:
+            # Fallback to basic logging if structured logging fails
+            import sys
+            print(f"ERROR: Failed to log incoming request: {e}", file=sys.stderr)
+            logger.error(f"Failed to log incoming request: {e}")
 
         # Process request
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception as e:
+            # Log the exception before re-raising
+            logger.error(f"Exception during request processing: {e}", exc_info=True)
+            raise
 
         # Calculate processing time
         processing_time = time.time() - start_time
