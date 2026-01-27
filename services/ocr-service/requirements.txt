@@ -36,4 +36,7 @@ python-jose[cryptography]==3.3.0
 # AI4ICore Observability Plugin is installed in Dockerfile (listed for reference)
 # -e ../../libs/ai4icore_observability
 
+# Packaging (required by opentelemetry-instrumentation-fastapi)
+packaging>=21.0
+
 

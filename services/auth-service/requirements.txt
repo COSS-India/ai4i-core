@@ -32,6 +32,9 @@ authlib>=1.2.0
 # Authorization engine (RBAC with domains, tenant-ready)
 casbin>=1.33.0
 
+# Packaging (required by opentelemetry-instrumentation-fastapi)
+packaging>=21.0
+
 # Development dependencies (commented out for production)
 # pytest>=7.4.0
 # pytest-asyncio>=0.21.0

@@ -16,6 +16,10 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Verify packaging is installed (for debugging)
+RUN python -c "import packaging; print(f'packaging version: {packaging.__version__}')" || (echo "ERROR: packaging not found!" && exit 1)
+
 # -----------------------------
 # STAGE 2 — RUNTIME
 # -----------------------------
@@ -33,6 +37,13 @@ RUN useradd --create-home --shell /bin/bash app
 
 # Copy Python site-packages
 COPY --from=builder /usr/local /usr/local
+
+# Ensure packaging is available in runtime - install system-wide AND user-wide
+# This ensures it's available regardless of Python path resolution
+RUN pip install --no-cache-dir packaging>=21.0 && \
+    pip install --no-cache-dir --target=/usr/local/lib/python3.11/site-packages packaging>=21.0 && \
+    python -c "import sys; sys.path.insert(0, '/usr/local/lib/python3.11/site-packages'); import packaging; print(f'✓ packaging {packaging.__version__} verified')" || \
+    (echo "ERROR: packaging not available!" && exit 1)
 
 COPY . .
 

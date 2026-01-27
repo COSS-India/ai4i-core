@@ -39,3 +39,6 @@ python-jose[cryptography]==3.3.0
 # System monitoring
 psutil>=5.9.0
 
+# Packaging (required by opentelemetry-instrumentation-fastapi)
+packaging>=21.0
+
