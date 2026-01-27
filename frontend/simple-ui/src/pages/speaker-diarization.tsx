@@ -3,31 +3,53 @@
 import {
   Box,
   Button,
+  FormControl,
+  FormLabel,
   Grid,
   GridItem,
   Heading,
   HStack,
   Progress,
+  Select,
+  Spinner,
   Text,
   useToast,
   VStack,
 } from "@chakra-ui/react";
+import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
-import { performSpeakerDiarizationInference } from "../services/speakerDiarizationService";
+import { performSpeakerDiarizationInference, listSpeakerDiarizationServices } from "../services/speakerDiarizationService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { extractErrorInfo } from "../utils/errorHandler";
 
 const SpeakerDiarizationPage: React.FC = () => {
   const toast = useToast();
+  const [serviceId, setServiceId] = useState<string>("");
   const [audioData, setAudioData] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+
+  // Fetch available Speaker Diarization services
+  const { data: speakerDiarizationServices, isLoading: servicesLoading } = useQuery({
+    queryKey: ["speaker-diarization-services"],
+    queryFn: listSpeakerDiarizationServices,
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
+
+  // Auto-select first available Speaker Diarization service when list loads
+  useEffect(() => {
+    if (!speakerDiarizationServices || speakerDiarizationServices.length === 0) return;
+    if (!serviceId) {
+      // If no service selected, select first available
+      setServiceId(speakerDiarizationServices[0].service_id);
+    }
+  }, [speakerDiarizationServices, serviceId]);
 
   const {
     isRecording,
@@ -80,6 +102,17 @@ const SpeakerDiarizationPage: React.FC = () => {
       return;
     }
 
+    if (!serviceId) {
+      toast({
+        title: "Service Required",
+        description: "Please select a Speaker Diarization service.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     setFetching(true);
     setError(null);
     setFetched(false);
@@ -88,7 +121,7 @@ const SpeakerDiarizationPage: React.FC = () => {
       const startTime = Date.now();
       const response = await performSpeakerDiarizationInference(
         audioData,
-        "ai4bharat/speaker-diarization"
+        serviceId
       );
       const endTime = Date.now();
       const calculatedTime = ((endTime - startTime) / 1000).toFixed(2);
@@ -152,6 +185,61 @@ const SpeakerDiarizationPage: React.FC = () => {
             {/* Configuration Panel */}
           <GridItem>
             <VStack spacing={6} align="stretch">
+              {/* Service Selection */}
+              <FormControl>
+                <FormLabel fontSize="sm" fontWeight="semibold">
+                  Speaker Diarization Service:
+                </FormLabel>
+                {servicesLoading ? (
+                  <HStack spacing={2} p={2}>
+                    <Spinner size="sm" color="orange.500" />
+                    <Text fontSize="sm" color="gray.600">Loading services...</Text>
+                  </HStack>
+                ) : (
+                  <Select
+                    value={serviceId}
+                    onChange={(e) => setServiceId(e.target.value)}
+                    placeholder="Select a Speaker Diarization service"
+                    disabled={fetching}
+                    size="md"
+                    borderColor="gray.300"
+                    _focus={{
+                      borderColor: "orange.400",
+                      boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
+                    }}
+                  >
+                    {speakerDiarizationServices?.map((service) => (
+                      <option key={service.service_id} value={service.service_id}>
+                        {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+                {serviceId && speakerDiarizationServices && (
+                  <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                    {(() => {
+                      const selectedService = speakerDiarizationServices.find(s => s.service_id === serviceId);
+                      return selectedService ? (
+                        <>
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Service ID:</strong> {selectedService.service_id}
+                          </Text>
+                          {selectedService.serviceDescription && (
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Description:</strong> {selectedService.serviceDescription}
+                            </Text>
+                          )}
+                          {selectedService.supported_languages.length > 0 && (
+                            <Text fontSize="sm" color="gray.700">
+                              <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
+                            </Text>
+                          )}
+                        </>
+                      ) : null;
+                    })()}
+                  </Box>
+                )}
+              </FormControl>
 
               <Box>
                 <Text mb={4} fontSize="sm" fontWeight="semibold">

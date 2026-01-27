@@ -110,8 +110,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         else:
             # For server errors (500+), only log if it's gateway-generated (service unavailable, etc.)
             # If it came from a downstream service, skip logging to avoid duplicates
+            downstream_response = getattr(request.state, "downstream_response", False)
             if gateway_error_service:
                 # Gateway-generated error (service down, connection error, etc.) - log it
+                logger.error(
+                    f"{method} {path} - {status_code} - {processing_time:.3f}s",
+                    extra={"context": log_context},
+                )
+            elif not downstream_response:
+                # Gateway-generated error (not from downstream) - log it
                 logger.error(
                     f"{method} {path} - {status_code} - {processing_time:.3f}s",
                     extra={"context": log_context},
