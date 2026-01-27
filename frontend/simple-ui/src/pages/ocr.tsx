@@ -22,18 +22,21 @@ import {
   VStack,
   IconButton,
   Icon,
+  Spinner,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { CopyIcon, CheckIcon, AttachmentIcon, DeleteIcon } from "@chakra-ui/icons";
+import { useQuery } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
-import { performOCRInference } from "../services/ocrService";
+import { performOCRInference, listOCRServices } from "../services/ocrService";
 
 const OCRPage: React.FC = () => {
   const toast = useToast();
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUri, setImageUri] = useState("");
   const [sourceLanguage, setSourceLanguage] = useState("en");
+  const [selectedServiceId, setSelectedServiceId] = useState("");
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -44,6 +47,22 @@ const OCRPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Fetch available OCR services
+  const { data: ocrServices, isLoading: servicesLoading } = useQuery({
+    queryKey: ["ocr-services"],
+    queryFn: listOCRServices,
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
+
+  // Auto-select first available OCR service when list loads
+  useEffect(() => {
+    if (!ocrServices || ocrServices.length === 0) return;
+    if (!selectedServiceId) {
+      // If no service selected, select first available
+      setSelectedServiceId(ocrServices[0].service_id);
+    }
+  }, [ocrServices, selectedServiceId]);
 
   /**
    * Validates if a URL is safe to use as an image source.
@@ -202,12 +221,24 @@ const OCRPage: React.FC = () => {
         imageUriValue = imageUri;
       }
 
+      if (!selectedServiceId) {
+        toast({
+          title: "Service Required",
+          description: "Please select an OCR service.",
+          status: "warning",
+          duration: 3000,
+          isClosable: true,
+        });
+        setFetching(false);
+        return;
+      }
+
       const startTime = Date.now();
       const response = await performOCRInference(
         imageContent,
         imageUriValue,
         {
-          serviceId: "ai4bharat/surya-ocr-v1--gpu--t4",
+          serviceId: selectedServiceId,
           language: {
             sourceLanguage,
             sourceScriptCode: "",
@@ -307,6 +338,61 @@ const OCRPage: React.FC = () => {
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
+                {/* Service Selection */}
+                <FormControl>
+                  <FormLabel fontSize="sm" fontWeight="semibold">
+                    OCR Service:
+                  </FormLabel>
+                  {servicesLoading ? (
+                    <HStack spacing={2} p={2}>
+                      <Spinner size="sm" color="orange.500" />
+                      <Text fontSize="sm" color="gray.600">Loading services...</Text>
+                    </HStack>
+                  ) : (
+                    <Select
+                      value={selectedServiceId}
+                      onChange={(e) => setSelectedServiceId(e.target.value)}
+                      placeholder="Select an OCR service"
+                      disabled={fetching}
+                      size="md"
+                      borderColor="gray.300"
+                      _focus={{
+                        borderColor: "orange.400",
+                        boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
+                      }}
+                    >
+                      {ocrServices?.map((service) => (
+                        <option key={service.service_id} value={service.service_id}>
+                          {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                  {selectedServiceId && ocrServices && (
+                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                      {(() => {
+                        const selectedService = ocrServices.find(s => s.service_id === selectedServiceId);
+                        return selectedService ? (
+                          <>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Service ID:</strong> {selectedService.service_id}
+                            </Text>
+                            {selectedService.serviceDescription && (
+                              <Text fontSize="sm" color="gray.700" mb={1}>
+                                <strong>Description:</strong> {selectedService.serviceDescription}
+                              </Text>
+                            )}
+                            {selectedService.supported_languages.length > 0 && (
+                              <Text fontSize="sm" color="gray.700">
+                                <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
+                              </Text>
+                            )}
+                          </>
+                        ) : null;
+                      })()}
+                    </Box>
+                  )}
+                </FormControl>
 
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">

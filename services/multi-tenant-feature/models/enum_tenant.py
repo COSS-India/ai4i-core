@@ -17,7 +17,7 @@ class SubscriptionType(str, Enum):
     ASR = "asr"
     NMT = "nmt"
     LLM = "llm"
-    PIPELINE = "speech_to_speech_pipeline"
+    PIPELINE = "pipeline"
     OCR = "ocr"
     NER = "ner"
 
