@@ -86,10 +86,12 @@ class JSONFormatter(logging.Formatter):
         if OPENTELEMETRY_AVAILABLE:
             try:
                 span = trace.get_current_span()
-                if span and span.get_span_context().is_valid:
-                    # Format trace ID as hex string (Jaeger format)
+                if span:
                     trace_context = span.get_span_context()
-                    opentelemetry_trace_id = format(trace_context.trace_id, "032x")
+                    # Check if trace_id is non-zero (valid)
+                    if trace_context.trace_id != 0:
+                        # Format trace ID as hex string (Jaeger format) - 32 hex chars
+                        opentelemetry_trace_id = format(trace_context.trace_id, "032x")
             except Exception:
                 # Silently fail if OpenTelemetry is not properly initialized
                 pass

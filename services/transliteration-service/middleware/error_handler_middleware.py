@@ -13,6 +13,14 @@ import logging
 import time
 import traceback
 
+# Import OpenTelemetry for tracing
+try:
+    from opentelemetry import trace
+    from opentelemetry.trace import Status, StatusCode
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,6 +100,23 @@ def add_error_handlers(app: FastAPI) -> None:
             return await authorization_error_handler(request, actual_exc)
         elif isinstance(actual_exc, HTTPException):
             return await http_exception_handler(request, actual_exc)
+        
+        # Capture full exception in trace span
+        if TRACING_AVAILABLE:
+            try:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.code", "INTERNAL_ERROR")
+                    current_span.set_attribute("error.message", str(exc))
+                    current_span.set_attribute("error.type", type(exc).__name__)
+                    current_span.set_attribute("http.status_code", 500)
+                    
+                    # Record full exception with traceback
+                    current_span.record_exception(exc)
+                    current_span.set_status(Status(StatusCode.ERROR, str(exc)))
+            except Exception:
+                pass  # Don't fail if tracing fails
         
         logger.error(f"Unexpected error: {exc}")
         logger.error(f"Traceback: {traceback.format_exc()}")
