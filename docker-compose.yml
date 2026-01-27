@@ -659,8 +659,8 @@ services:
 
   llm-service:
     build:
-      context: ./services/llm-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/llm-service/Dockerfile
     container_name: ai4v-llm-service
     ports:
       - "8093:8090"
