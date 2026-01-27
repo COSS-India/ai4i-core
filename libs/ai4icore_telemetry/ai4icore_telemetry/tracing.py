@@ -186,14 +186,22 @@ class FilteringSpanExporter(SpanExporter):
         # Filter out spans matching filtered patterns
         filtered_spans = []
         filtered_count = 0
+        # For API gateway, de‑duplicate http send/receive spans with the same name
+        seen_http_span_names = set()
         for span in spans:
             span_name = span.name.lower() if span.name else ""
             should_filter = False
             
             # Always include send/receive spans for API gateway
             if self.include_send_receive:
-                # For API gateway, enhance send/receive spans with more details
+                # For API gateway, enhance send/receive spans with more details,
+                # but only keep a single http send/receive span per unique span name
                 if any(filtered_name.strip() in span_name for filtered_name in self.FILTERED_SPAN_NAMES):
+                    original_name = span.name or span_name
+                    if original_name in seen_http_span_names:
+                        # Skip duplicate http send/receive span for the same operation
+                        continue
+                    seen_http_span_names.add(original_name)
                     self._enhance_api_gateway_span(span)
                 filtered_spans.append(span)
                 continue
