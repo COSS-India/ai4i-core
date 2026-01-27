@@ -2532,6 +2532,10 @@ if TRACING_AVAILABLE:
                 excluded_urls="/health,/metrics,/enterprise/metrics,/docs,/redoc,/openapi.json"
             )
             logger.info("✅ FastAPI instrumented for distributed tracing")
+            
+            # Instrument httpx client in auth_middleware for tracing HTTP calls to auth-service
+            # This must happen AFTER tracing is set up
+            auth_middleware.instrument_http_client()
         else:
             logger.warning("⚠️ Tracing setup returned None")
     except Exception as e:
@@ -3825,7 +3829,8 @@ async def language_detection_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Perform language detection inference"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    # Ensure authentication/authorization with tracing spans (gateway.authenticate, gateway.authorize, etc.)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     body = json.dumps(
@@ -3958,7 +3963,8 @@ async def language_detection_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Perform language detection inference"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    # Ensure authentication/authorization with tracing spans (gateway.authenticate, gateway.authorize, etc.)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     body = json.dumps(
