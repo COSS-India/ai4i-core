@@ -29,6 +29,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.requests_per_hour = requests_per_hour
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Skip rate limiting for health check endpoints
+        if request.url.path in ["/health", "/metrics", "/"]:
+            return await call_next(request)
+        
         # If Redis is not available, skip rate limiting
         redis_client = getattr(request.app.state, "redis_client", None) or self.redis_client
         if not redis_client:
