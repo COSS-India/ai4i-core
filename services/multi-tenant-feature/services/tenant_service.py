@@ -546,12 +546,13 @@ async def send_verification_link(
 
     # verification_link = f"https://{subdomain}/tenant/verify/email?token={token}" TODO : add subdomain if required
 
-    verification_link = f"{EMAIL_VERIFICATION_LINK}/email/verify?token={token}"
+    verification_link = f"{EMAIL_VERIFICATION_LINK}/api/v1/multi-tenant/email/verify?token={token}"
 
     background_tasks.add_task(
         send_verification_email,
         payload.contact_email,
-        verification_link
+        verification_link,
+        tenant_id=created.tenant_id,  # Pass tenant_id for resend reference
     )
     return token
 
@@ -585,7 +586,7 @@ async def create_new_tenant(
             # Check status
             if existing.status == TenantStatus.PENDING:
                 resend = await resend_verification_email(
-                    tenant_id=existing.id,
+                    tenant_id=existing.tenant_id,  # Use string tenant_id, not UUID
                     db=db,
                     background_tasks=background_tasks,
                 )
@@ -864,23 +865,27 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
 
 
 async def resend_verification_email(
-        tenant_id: UUID,
+        tenant_id: str,
         db: AsyncSession, 
         background_tasks: BackgroundTasks
         ) -> TenantResendEmailVerificationResponse:
     """
-    Resend email verification link to a tenant with PENDING or IN_PROGRESS status.
+    Resend email verification link to a tenant with PENDING status.
     
     Args:
-        tenant_id: The UUID of the tenant
+        tenant_id: The tenant identifier string (e.g., 'acme-corp')
         db: Database session
         background_tasks: BackgroundTasks to send email asynchronously
     """
 
-    tenant = await db.get(Tenant, tenant_id)
+    # Look up tenant by string tenant_id
+    result = await db.execute(
+        select(Tenant).where(Tenant.tenant_id == tenant_id)
+    )
+    tenant = result.scalar_one_or_none()
 
     if not tenant:
-        raise ValueError("Tenant not found")
+        raise ValueError(f"Tenant not found with ID: {tenant_id}")
 
     # Check tenant status - only allow resend if pending or in_progress
     if tenant.status == TenantStatus.ACTIVE:
@@ -915,15 +920,17 @@ async def resend_verification_email(
 
     # verification_link = f"https://{tenant.subdomain}/verify-email?token={token}" # TODO : add subdomain if required
 
-    verification_link = f"{EMAIL_VERIFICATION_LINK}/email/verify?token={token}"
-
-    # Extract email before adding background task to avoid detached object issues
+    verification_link = f"{EMAIL_VERIFICATION_LINK}/api/v1/multi-tenant/email/verify?token={token}"
+   
+    # Extract values before adding background task to avoid detached object issues
     contact_email_str = str(tenant.contact_email)
+    tenant_id_str = str(tenant.tenant_id)
 
     background_tasks.add_task(
         send_verification_email,
         contact_email_str,
         verification_link,
+        tenant_id=tenant_id_str,  # Pass tenant_id for resend reference
     )
 
     logger.info(f"Verification email resent for tenant {tenant.tenant_id} (status: {tenant.status.value})")
