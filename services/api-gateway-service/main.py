@@ -2409,11 +2409,24 @@ def prepare_forwarding_headers(request: Request, correlation_id: str, request_id
     return headers
 
 def log_request(method: str, path: str, service: str, instance: str, duration: float, status_code: int) -> None:
-    """Log request details for observability"""
-    # Skip logging 400-series errors - these are logged by RequestLoggingMiddleware to avoid duplicates
+    """Log downstream service requests for observability.
+
+    Successful 2xx responses are already logged at the service level, so we
+    skip them here to avoid duplicate 200 logs in OpenSearch. 4xx client
+    errors are handled by the API gateway's RequestLoggingMiddleware.
+    This helper is therefore reserved for server-side failures (5xx) so that
+    only one error log is emitted per failing call.
+    """
+    # Skip 2xx/3xx responses – these are logged by downstream services
+    if 200 <= status_code < 400:
+        return
+
+    # Skip 4xx client errors – these are logged by RequestLoggingMiddleware
     if 400 <= status_code < 500:
         return
-    logger.info(
+
+    # Log 5xx errors that originate from downstream services
+    logger.error(
         f"Request: {method} {path} -> {service}:{instance} "
         f"({duration:.3f}s, {status_code})"
     )
@@ -2519,6 +2532,10 @@ if TRACING_AVAILABLE:
                 excluded_urls="/health,/metrics,/enterprise/metrics,/docs,/redoc,/openapi.json"
             )
             logger.info("✅ FastAPI instrumented for distributed tracing")
+            
+            # Instrument httpx client in auth_middleware for tracing HTTP calls to auth-service
+            # This must happen AFTER tracing is set up
+            auth_middleware.instrument_http_client()
         else:
             logger.warning("⚠️ Tracing setup returned None")
     except Exception as e:
@@ -3812,7 +3829,8 @@ async def language_detection_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Perform language detection inference"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    # Ensure authentication/authorization with tracing spans (gateway.authenticate, gateway.authorize, etc.)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     body = json.dumps(
@@ -3945,7 +3963,8 @@ async def language_detection_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Perform language detection inference"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    # Ensure authentication/authorization with tracing spans (gateway.authenticate, gateway.authorize, etc.)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     body = json.dumps(
@@ -4883,20 +4902,8 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             timeout_value = float(os.getenv("DEFAULT_SERVICE_TIMEOUT_SECONDS", "60.0"))
         final_url = f"{service_url}{path}"
         
-        # Log proxy request details for debugging
-        logger.info(
-            f"Proxying {method} request to {service_name}: {final_url}",
-            extra={
-                "context": {
-                    "method": method,
-                    "path": path,
-                    "service": service_name,
-                    "url": final_url,
-                    "has_body": body is not None,
-                    "body_size": len(body) if body else 0,
-                }
-            }
-        )
+        # Don't log proxy request details for successful requests - service-level logging handles this
+        # Only log proxy details for errors (handled below after response)
         
         start_time = time.time()
         try:
@@ -4912,19 +4919,22 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             
             response_time = time.time() - start_time
             
-            # Log successful proxy response
-            logger.info(
-                f"Proxy response from {service_name}: {response.status_code} in {response_time:.3f}s",
-                extra={
-                    "context": {
-                        "method": method,
-                        "path": path,
-                        "service": service_name,
-                        "status_code": response.status_code,
-                        "response_time_ms": round(response_time * 1000, 2),
+            # Only log non-2xx responses here – successful 2xx responses are
+            # already logged at the service level, so logging them again at the
+            # gateway would create duplicate 200 entries in OpenSearch.
+            if not (200 <= response.status_code < 300):
+                logger.warning(
+                    f"Proxy response from {service_name}: {response.status_code} in {response_time:.3f}s",
+                    extra={
+                        "context": {
+                            "method": method,
+                            "path": path,
+                            "service": service_name,
+                            "status_code": response.status_code,
+                            "response_time_ms": round(response_time * 1000, 2),
+                        }
                     }
-                }
-            )
+                )
             
             # Don't log 403 errors here - RequestLoggingMiddleware handles all 400-series errors to avoid duplicates
             
