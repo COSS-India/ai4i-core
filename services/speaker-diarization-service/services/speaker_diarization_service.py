@@ -12,6 +12,8 @@ from typing import List, Optional
 from uuid import UUID
 
 import requests
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from models.speaker_diarization_request import (
     AudioInput,
@@ -27,6 +29,8 @@ from repositories.speaker_diarization_repository import SpeakerDiarizationReposi
 from utils.triton_client import TritonClient, TritonInferenceError
 
 logger = logging.getLogger(__name__)
+# Use service name to get the same tracer instance as main.py
+tracer = trace.get_tracer("speaker-diarization-service")
 
 
 class SpeakerDiarizationService:
@@ -46,29 +50,74 @@ class SpeakerDiarizationService:
         self.triton_client = triton_client
         self.repository = repository
 
-    def _resolve_audio_base64(self, audio: AudioInput) -> Optional[str]:
+    def _resolve_audio_base64(self, audio: AudioInput, audio_idx: int = 0) -> Optional[str]:
         """
-        Resolve an audio into base64:
+        Resolve an audio into base64 with detailed tracing:
 
         - If audioContent is provided, use it directly
         - Else, download from audioUri and base64-encode it
         """
-        if audio.audioContent:
-            return audio.audioContent
+        try:
+            with tracer.start_as_current_span("speaker_diarization.resolve_audio") as span:
+                span.set_attribute("audio.index", audio_idx)
+                
+                if audio.audioContent:
+                    span.set_attribute("audio.source", "direct_content")
+                    span.set_attribute("audio.size_bytes", len(audio.audioContent))
+                    span.add_event("audio.resolved_from_content")
+                    return audio.audioContent
 
-        if audio.audioUri:
-            try:
-                resp = requests.get(str(audio.audioUri), timeout=300)
-                resp.raise_for_status()
-                return base64.b64encode(resp.content).decode("utf-8")
-            except Exception as exc:
-                logger.error(
-                    "Failed to download audio from %s: %s", audio.audioUri, exc
-                )
+                if audio.audioUri:
+                    span.set_attribute("audio.source", "uri")
+                    span.set_attribute("audio.uri", str(audio.audioUri))
+                    span.add_event("audio.download_start", {"uri": str(audio.audioUri)})
+                    
+                    try:
+                        resp = requests.get(str(audio.audioUri), timeout=300)
+                        resp.raise_for_status()
+                        
+                        audio_content = resp.content
+                        span.set_attribute("audio.downloaded_bytes", len(audio_content))
+                        span.add_event("audio.download_complete", {"size_bytes": len(audio_content)})
+                        
+                        encoded = base64.b64encode(audio_content).decode("utf-8")
+                        span.set_attribute("audio.encoded_size_bytes", len(encoded))
+                        span.add_event("audio.base64_encoded")
+                        return encoded
+                        
+                    except Exception as exc:
+                        span.set_attribute("error", True)
+                        span.set_attribute("error.type", type(exc).__name__)
+                        span.set_attribute("error.message", str(exc))
+                        span.set_status(Status(StatusCode.ERROR))
+                        span.record_exception(exc)
+                        logger.error(
+                            "Failed to download audio from %s: %s", audio.audioUri, exc
+                        )
+                        return None
+
+                # No content and no URI
+                span.set_attribute("audio.source", "none")
+                span.add_event("audio.no_source_provided")
                 return None
+                
+        except AttributeError:
+            # Tracer not available, use simple implementation
+            if audio.audioContent:
+                return audio.audioContent
 
-        # No content and no URI
-        return None
+            if audio.audioUri:
+                try:
+                    resp = requests.get(str(audio.audioUri), timeout=300)
+                    resp.raise_for_status()
+                    return base64.b64encode(resp.content).decode("utf-8")
+                except Exception as exc:
+                    logger.error(
+                        "Failed to download audio from %s: %s", audio.audioUri, exc
+                    )
+                    return None
+
+            return None
 
     async def run_inference(
         self, 
@@ -113,9 +162,9 @@ class SpeakerDiarizationService:
         output_list: List[SpeakerDiarizationOutput] = []
 
         # Process each audio input
-        for audio_item in request.audio:
+        for audio_idx, audio_item in enumerate(request.audio):
             # Resolve audio to base64
-            audio_base64 = self._resolve_audio_base64(audio_item)
+            audio_base64 = self._resolve_audio_base64(audio_item, audio_idx)
 
             if not audio_base64:
                 # Skip if no audio data
@@ -150,45 +199,121 @@ class SpeakerDiarizationService:
                     )
                     continue
 
-                # Map the response to output format
-                segments_list: List[Segment] = []
-                speakers_set = set()
+                # Map the response to output format with detailed tracing
+                try:
+                    with tracer.start_as_current_span("speaker_diarization.process_results") as result_span:
+                        result_span.set_attribute("audio.index", audio_idx)
+                        result_span.add_event("processing.start")
+                        
+                        segments_list: List[Segment] = []
+                        speakers_set = set()
 
-                # Extract segments
-                raw_segments = diarization_data.get("segments", [])
-                for seg in raw_segments:
-                    speaker = seg.get("speaker", "")
-                    start_time = float(seg.get("start_time", 0.0))
-                    end_time = float(seg.get("end_time", 0.0))
-                    duration = end_time - start_time
+                        # Extract segments
+                        raw_segments = diarization_data.get("segments", [])
+                        result_span.set_attribute("raw.num_segments", len(raw_segments))
+                        
+                        for seg_idx, seg in enumerate(raw_segments):
+                            speaker = seg.get("speaker", "")
+                            start_time = float(seg.get("start_time", 0.0))
+                            end_time = float(seg.get("end_time", 0.0))
+                            duration = end_time - start_time
 
-                    if speaker:
-                        speakers_set.add(speaker)
+                            if speaker:
+                                speakers_set.add(speaker)
 
-                    segments_list.append(
-                        Segment(
-                            start_time=start_time,
-                            end_time=end_time,
-                            duration=duration,
-                            speaker=speaker,
+                            segments_list.append(
+                                Segment(
+                                    start_time=start_time,
+                                    end_time=end_time,
+                                    duration=duration,
+                                    speaker=speaker,
+                                )
+                            )
+
+                        # Sort segments by start_time
+                        segments_list.sort(key=lambda x: x.start_time)
+
+                        result_span.set_attribute("processed.num_segments", len(segments_list))
+                        result_span.set_attribute("processed.num_speakers", len(speakers_set))
+                        result_span.set_attribute("processed.speakers", ",".join(sorted(speakers_set)))
+                        result_span.add_event("processing.complete", {
+                            "segments": len(segments_list),
+                            "speakers": len(speakers_set)
+                        })
+
+                        output = SpeakerDiarizationOutput(
+                            total_segments=len(segments_list),
+                            num_speakers=len(speakers_set),
+                            speakers=sorted(list(speakers_set)),
+                            segments=segments_list,
                         )
+                        output_list.append(output)
+                        
+                except AttributeError:
+                    # Tracer not available, use simple implementation
+                    segments_list: List[Segment] = []
+                    speakers_set = set()
+
+                    # Extract segments
+                    raw_segments = diarization_data.get("segments", [])
+                    for seg in raw_segments:
+                        speaker = seg.get("speaker", "")
+                        start_time = float(seg.get("start_time", 0.0))
+                        end_time = float(seg.get("end_time", 0.0))
+                        duration = end_time - start_time
+
+                        if speaker:
+                            speakers_set.add(speaker)
+
+                        segments_list.append(
+                            Segment(
+                                start_time=start_time,
+                                end_time=end_time,
+                                duration=duration,
+                                speaker=speaker,
+                            )
+                        )
+
+                    # Sort segments by start_time
+                    segments_list.sort(key=lambda x: x.start_time)
+
+                    output = SpeakerDiarizationOutput(
+                        total_segments=len(segments_list),
+                        num_speakers=len(speakers_set),
+                        speakers=sorted(list(speakers_set)),
+                        segments=segments_list,
                     )
-
-                # Sort segments by start_time
-                segments_list.sort(key=lambda x: x.start_time)
-
-                output = SpeakerDiarizationOutput(
-                    total_segments=len(segments_list),
-                    num_speakers=len(speakers_set),
-                    speakers=sorted(list(speakers_set)),
-                    segments=segments_list,
-                )
-                output_list.append(output)
+                    output_list.append(output)
                 
                 # Persist result if repository is available
                 if self.repository and request_id:
                     try:
-                        # Convert segments to dict format for JSONB storage
+                        with tracer.start_as_current_span("speaker_diarization.store_result") as store_span:
+                            store_span.set_attribute("audio.index", audio_idx)
+                            store_span.set_attribute("request_id", str(request_id))
+                            store_span.set_attribute("num_segments", len(segments_list))
+                            store_span.set_attribute("num_speakers", len(speakers_set))
+                            
+                            # Convert segments to dict format for JSONB storage
+                            segments_dict = [
+                                {
+                                    "start_time": seg.start_time,
+                                    "end_time": seg.end_time,
+                                    "duration": seg.duration,
+                                    "speaker": seg.speaker
+                                }
+                                for seg in segments_list
+                            ]
+                            await self.repository.create_result(
+                                request_id=request_id,
+                                total_segments=len(segments_list),
+                                num_speakers=len(speakers_set),
+                                speakers=sorted(list(speakers_set)),
+                                segments=segments_dict
+                            )
+                            store_span.add_event("result.stored", {"status": "success"})
+                    except AttributeError:
+                        # Tracer not available, use simple implementation
                         segments_dict = [
                             {
                                 "start_time": seg.start_time,
