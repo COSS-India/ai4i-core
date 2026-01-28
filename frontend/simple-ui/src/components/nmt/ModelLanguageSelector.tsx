@@ -139,11 +139,15 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                 placeholder="Select a model"
                 disabled={servicesLoading}
               >
-                {services?.map((service) => (
-                  <option key={service.service_id} value={service.service_id}>
-                    {service.name || service.service_id}
-                  </option>
-                ))}
+                {services?.map((service) => {
+                  const version = service.modelVersion || service.model_version;
+                  const displayText = version ? `${service.name || service.service_id} (${version})` : (service.name || service.service_id);
+                  return (
+                    <option key={service.service_id} value={service.service_id}>
+                      {displayText}
+                    </option>
+                  );
+                })}
               </Select>
             </FormControl>
             
