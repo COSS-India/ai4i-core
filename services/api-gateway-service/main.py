@@ -1369,7 +1369,7 @@ class TenantUserStatusUpdateResponse(BaseModel):
 
 class TenantResendEmailVerificationRequest(BaseModel):
     """Request model for resending email verification."""
-    tenant_id: UUID = Field(..., description="Tenant UUID")
+    tenant_id: str = Field(..., description="Tenant identifier (e.g., 'acme-corp')")
 
 class TenantResendEmailVerificationResponse(BaseModel):
     """Response model for resending email verification."""
@@ -4576,23 +4576,19 @@ async def update_tenant_user_status(
 async def verify_email(
     request: Request,
     token: str = Query(..., description="Email verification token"),
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Verify tenant email"""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    headers['Content-Type'] = 'application/json'
-    query_string = f"?token={token}"
-
+    """
+    Verify tenant email.
     
+    This endpoint is PUBLIC (no authentication required) since users
+    click the verification link from their email client before logging in.
+    """
     return await proxy_to_service_with_params(
         request,
         "/email/verify",
         "multi-tenant-service",
         {"token": token},
         method="GET",
-        headers=headers
     )
 
 
@@ -4647,13 +4643,14 @@ async def view_tenant_user(
 async def resend_verification_email(
     payload: TenantResendEmailVerificationRequest,
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Resend email verification"""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    headers['Content-Type'] = 'application/json'
+    """
+    Resend email verification (POST version).
+    
+    This endpoint is PUBLIC (no authentication required) since users
+    need to resend verification before they can log in.
+    """
+    headers = {'Content-Type': 'application/json'}
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
