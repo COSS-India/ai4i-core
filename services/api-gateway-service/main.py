@@ -3729,11 +3729,8 @@ async def ner_inference(
 
     body = json.dumps(payload.dict()).encode()
 
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
 
     result = await proxy_to_service(
         None, "/api/v1/ner/inference", "ner-service", method="POST", body=body, headers=headers
