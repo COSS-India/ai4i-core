@@ -90,6 +90,8 @@ const ServicesManagementPage: React.FC = () => {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
+  // Model fetched by ID when navigating from a deprecated model's "Create Service" (not in active list)
+  const [preselectedModelFromQuery, setPreselectedModelFromQuery] = useState<any | null>(null);
 
   // Fetch services on component mount
   useEffect(() => {
@@ -146,21 +148,42 @@ const ServicesManagementPage: React.FC = () => {
   // Handle query parameters for pre-selecting model from model-management page
   useEffect(() => {
     const { modelId, tab } = router.query;
-    
-    if (modelId && typeof modelId === 'string' && models.length > 0) {
+    if (!modelId || typeof modelId !== "string") return;
+
+    const runPreselect = async () => {
       // Switch to Create Service tab if specified
-      if (tab === 'create') {
-        setActiveTab(1); // Create Service tab index
+      if (tab === "create") {
+        setActiveTab(1);
       }
-      
-      // Pre-select the model once models are loaded
-      const modelToSelect = models.find(m => m.modelId === modelId);
-      if (modelToSelect && formData.modelId !== modelId) {
+
+      const inActiveList = models.some(
+        (m) => (m.modelId || m.model_id) === modelId
+      );
+      if (inActiveList && formData.modelId !== modelId) {
         handleModelNameChange(modelId);
+        router.replace("/services-management", undefined, { shallow: true });
+        return;
       }
-      
-      // Clean up query parameters from URL
-      router.replace('/services-management', undefined, { shallow: true });
+
+      // Model not in active list (e.g. DEPRECATED) - fetch by ID and add to dropdown
+      if (!inActiveList) {
+        try {
+          const modelDetails = await getModelById(modelId);
+          if (modelDetails) {
+            setPreselectedModelFromQuery(modelDetails);
+            if (formData.modelId !== modelId) {
+              handleModelNameChange(modelId);
+            }
+          }
+        } catch (e) {
+          console.error("Failed to load preselected model:", e);
+        }
+        router.replace("/services-management", undefined, { shallow: true });
+      }
+    };
+
+    if (models.length > 0) {
+      runPreselect();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.query, models]);
@@ -170,6 +193,17 @@ const ServicesManagementPage: React.FC = () => {
   const tableBg = useColorModeValue("white", "gray.800");
   const tableHeaderBg = useColorModeValue("gray.50", "gray.700");
   const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
+
+  // Dropdown options: active models + preselected model from query (e.g. deprecated) if not already in list
+  const modelsForDropdown =
+    preselectedModelFromQuery &&
+    !models.some(
+      (m) =>
+        (m.modelId || m.model_id) ===
+        (preselectedModelFromQuery.modelId || preselectedModelFromQuery.model_id)
+    )
+      ? [preselectedModelFromQuery, ...models]
+      : models;
 
   const getTaskColor = (taskType?: string) => {
     if (!taskType) return "gray";
@@ -317,6 +351,7 @@ const ServicesManagementPage: React.FC = () => {
         task_type: "",
         modelVersion: "1.0",
       });
+      setPreselectedModelFromQuery(null);
 
       // Refresh services list
       const fetchedServices = await listServices();
@@ -851,7 +886,7 @@ const ServicesManagementPage: React.FC = () => {
                                   bg="white"
                                   isDisabled={isLoadingModels}
                                 >
-                                  {models.map((model) => (
+                                  {modelsForDropdown.map((model) => (
                                     <option key={model.modelId || model.model_id} value={model.modelId || model.model_id}>
                                       {model.name || model.modelId || model.model_id}
                                     </option>
@@ -916,6 +951,7 @@ const ServicesManagementPage: React.FC = () => {
                                     task_type: "",
                                     modelVersion: "1.0",
                                   });
+                                  setPreselectedModelFromQuery(null);
                                 }}
                               >
                                 Reset
