@@ -33,6 +33,11 @@ python-dotenv==1.0.1
 passlib[bcrypt]==1.7.4
 python-jose[cryptography]==3.3.0
 
+# OpenTelemetry / ai4icore_telemetry dependency
+# Required because ai4icore_telemetry uses opentelemetry-instrumentation-fastapi,
+# which imports `packaging.requirements`.
+packaging>=21.0
+
 # AI4ICore Observability Plugin is installed in Dockerfile (listed for reference)
 # -e ../../libs/ai4icore_observability
 
