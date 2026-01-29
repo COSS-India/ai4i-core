@@ -145,7 +145,7 @@ const LLMPage: React.FC = () => {
                     <Select
                       value={serviceId}
                       onChange={(e) => setServiceId(e.target.value)}
-                      placeholder="Select an LLM service"
+                      placeholder="Select a LLM service"
                       disabled={fetching}
                       size="md"
                       borderColor="gray.300"

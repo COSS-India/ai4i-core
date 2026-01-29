@@ -41,6 +41,7 @@ import {
 } from "@chakra-ui/react";
 import Head from "next/head";
 import { useRouter } from "next/router";
+import { useQueryClient } from "@tanstack/react-query";
 import React, { useState, useEffect, useRef } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import {
@@ -83,6 +84,7 @@ const ServicesManagementPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
   const toast = useToast();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { accessToken } = useAuth();
   const { checkSessionExpiry } = useSessionExpiry();
   const { isOpen, onOpen, onClose } = useDisclosure();
@@ -283,6 +285,19 @@ const ServicesManagementPage: React.FC = () => {
 
       const createdService = await createService(serviceData);
 
+      // Invalidate all service-related queries to refresh service lists across all pages
+      queryClient.invalidateQueries({ queryKey: ["asr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["tts-services"] });
+      queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nerServices"] });
+      queryClient.invalidateQueries({ queryKey: ["llm-services"] });
+      queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
+      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+
       toast({
         title: "Service Created",
         description: "Service has been created successfully",
@@ -371,6 +386,19 @@ const ServicesManagementPage: React.FC = () => {
         uuid: selectedService.uuid,
       });
 
+      // Invalidate all service-related queries to refresh service lists across all pages
+      queryClient.invalidateQueries({ queryKey: ["asr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["tts-services"] });
+      queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nerServices"] });
+      queryClient.invalidateQueries({ queryKey: ["llm-services"] });
+      queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
+      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+
       toast({
         title: "Service Updated",
         description: "Service has been updated successfully",
@@ -429,6 +457,19 @@ const ServicesManagementPage: React.FC = () => {
         isClosable: true,
       });
 
+      // Invalidate all service-related queries to refresh service lists across all pages
+      queryClient.invalidateQueries({ queryKey: ["asr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["tts-services"] });
+      queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nerServices"] });
+      queryClient.invalidateQueries({ queryKey: ["llm-services"] });
+      queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
+      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+
       // Refresh services list
       const fetchedServices = await listServices();
       setServices(fetchedServices);
@@ -480,6 +521,19 @@ const ServicesManagementPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
+
+      // Invalidate all service-related queries to refresh service lists across all pages
+      queryClient.invalidateQueries({ queryKey: ["asr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["tts-services"] });
+      queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nerServices"] });
+      queryClient.invalidateQueries({ queryKey: ["llm-services"] });
+      queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
+      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
 
       // Refresh services list
       const fetchedServices = await listServices();
@@ -537,6 +591,19 @@ const ServicesManagementPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
+
+      // Invalidate all service-related queries to refresh service lists across all pages
+      queryClient.invalidateQueries({ queryKey: ["asr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["tts-services"] });
+      queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nerServices"] });
+      queryClient.invalidateQueries({ queryKey: ["llm-services"] });
+      queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
+      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
 
       // Refresh services list
       const fetchedServices = await listServices();
