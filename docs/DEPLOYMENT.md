@@ -76,6 +76,10 @@ cp services/metrics-service/env.template services/metrics-service/.env
 cp services/pipeline-service/env.template services/pipeline-service/.env
 
 cp services/telemetry-service/env.template services/telemetry-service/.env
+
+cp services/audio-lang-detection-service/env.template services/audio-lang-detection-service/.env
+
+cp services/ner-service/env.template services/ner-service/.env
 ```
 
 ### Step 4: Start Infrastructure Services
