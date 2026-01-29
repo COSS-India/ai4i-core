@@ -10,6 +10,13 @@ from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import httpx
 
+# OpenTelemetry instrumentation for httpx
+try:
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    HTTPX_INSTRUMENTATION_AVAILABLE = True
+except ImportError:
+    HTTPX_INSTRUMENTATION_AVAILABLE = False
+
 # Import ai4icore logging for structured JSON logs
 try:
     from ai4icore_logging import get_logger
@@ -78,6 +85,20 @@ class AuthMiddleware:
     
     def __init__(self):
         self.http_client = httpx.AsyncClient(timeout=10.0)
+        self._instrumented = False
+    
+    def instrument_http_client(self):
+        """Instrument httpx client for OpenTelemetry tracing after tracing is set up."""
+        if self._instrumented:
+            return  # Already instrumented
+        
+        if HTTPX_INSTRUMENTATION_AVAILABLE:
+            try:
+                HTTPXClientInstrumentor().instrument_client(self.http_client)
+                self._instrumented = True
+                logger.info("✅ HTTPX client instrumented for distributed tracing (auth service calls)")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to instrument httpx client: {e}")
     
     async def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
         """Verify JWT token with auth service (authentication happens at auth-service level)"""
