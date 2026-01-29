@@ -3458,11 +3458,8 @@ async def language_diarization_inference(
     import json
 
     body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(
         None, "/api/v1/language-diarization/inference", "language-diarization-service", method="POST", body=body, headers=headers
     )

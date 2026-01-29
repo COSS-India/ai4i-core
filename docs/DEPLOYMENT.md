@@ -80,6 +80,8 @@ cp services/telemetry-service/env.template services/telemetry-service/.env
 cp services/audio-lang-detection-service/env.template services/audio-lang-detection-service/.env
 
 cp services/ner-service/env.template services/ner-service/.env
+
+cp services/language-diarization-service/env.template services/language-diarization-service/.env
 ```
 
 ### Step 4: Start Infrastructure Services
