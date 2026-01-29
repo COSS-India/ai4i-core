@@ -210,7 +210,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
                   <Select
                     value={selectedServiceId}
                     onChange={(e) => setSelectedServiceId(e.target.value)}
-                    placeholder="Select a service..."
+                    placeholder="Select a Audio Language Detection service"
                     disabled={fetching}
                     size="md"
                     borderColor="gray.300"

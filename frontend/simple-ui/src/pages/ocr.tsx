@@ -352,7 +352,7 @@ const OCRPage: React.FC = () => {
                     <Select
                       value={selectedServiceId}
                       onChange={(e) => setSelectedServiceId(e.target.value)}
-                      placeholder="Select an OCR service"
+                      placeholder="Select a OCR service"
                       disabled={fetching}
                       size="md"
                       borderColor="gray.300"

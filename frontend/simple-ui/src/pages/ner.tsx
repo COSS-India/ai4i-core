@@ -185,7 +185,7 @@ const NERPage: React.FC = () => {
                   <Select
                     value={selectedServiceId}
                     onChange={(e) => setSelectedServiceId(e.target.value)}
-                    placeholder="Select a service..."
+                    placeholder="Select a NER service"
                     disabled={fetching}
                     size="md"
                     borderColor="gray.300"

@@ -143,11 +143,11 @@ const ASRPage: React.FC = () => {
                     value={serviceId}
                     onChange={(e) => setServiceId(e.target.value)}
                     isDisabled={fetching || servicesLoading}
-                    placeholder={servicesLoading ? "Loading services..." : "Select an ASR service"}
+                    placeholder={servicesLoading ? "Loading services..." : "Select a ASR service"}
                   >
                     {asrServices?.map((service) => (
                       <option key={service.service_id} value={service.service_id}>
-                        {service.service_id}
+                        {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
                       </option>
                     ))}
                   </Select>
