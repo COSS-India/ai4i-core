@@ -37,3 +37,5 @@ python-jose[cryptography]==3.3.0
 # -e ../../libs/ai4icore_observability
 
 
+# Packaging (required by opentelemetry-instrumentation-fastapi)
+packaging>=21.0
