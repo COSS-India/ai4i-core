@@ -15,8 +15,10 @@ from ai4icore_logging import get_correlation_id
 from models.ner_request import NerInferenceRequest
 from models.ner_response import NerInferenceResponse
 from services.ner_service import NerService, TritonInferenceError
+from repositories.ner_repository import NERRepository, get_db_session
 from utils.triton_client import TritonClient
 from middleware.auth_provider import AuthProvider
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 # Use service name to get the same tracer instance as main.py
@@ -29,13 +31,18 @@ inference_router = APIRouter(
 )
 
 
-def get_ner_service(request: Request) -> NerService:
+async def get_ner_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db_session)
+) -> NerService:
     """
-    Dependency to construct NerService with configured Triton client.
+    Dependency to construct NerService with configured Triton client and repository.
 
     REQUIRES Model Management database resolution - no environment variable fallback.
     Request must include config.serviceId for Model Management to resolve endpoint and model.
     """
+    repository = NERRepository(db)
+    
     # Get middleware-resolved endpoint from Model Management database
     triton_endpoint = getattr(request.state, "triton_endpoint", None)
     triton_api_key = getattr(request.app.state, "triton_api_key", "")
@@ -83,7 +90,7 @@ def get_ner_service(request: Request) -> NerService:
     
     # Create NER-specific TritonClient (has NER-specific methods like get_ner_io_for_triton)
     triton_client = TritonClient(triton_endpoint, triton_api_key or None)
-    return NerService(triton_client=triton_client, model_name=model_name)
+    return NerService(repository=repository, triton_client=triton_client, model_name=model_name)
 
 
 @inference_router.post(
@@ -176,7 +183,7 @@ async def run_inference(
                 session_id,
             )
 
-            response = ner_service.run_inference(
+            response = await ner_service.run_inference(
                 request_body,
                 user_id=user_id,
                 api_key_id=api_key_id,
@@ -326,7 +333,7 @@ async def _run_ner_inference_impl(
         session_id,
     )
 
-    response = ner_service.run_inference(
+    response = await ner_service.run_inference(
         request_body,
         user_id=user_id,
         api_key_id=api_key_id,
