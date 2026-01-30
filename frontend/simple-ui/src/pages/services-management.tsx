@@ -40,6 +40,7 @@ import {
   useDisclosure,
 } from "@chakra-ui/react";
 import Head from "next/head";
+import { useRouter } from "next/router";
 import React, { useState, useEffect, useRef } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import {
@@ -80,8 +81,23 @@ const ServicesManagementPage: React.FC = () => {
   const [deletingServiceUuid, setDeletingServiceUuid] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
   const toast = useToast();
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const { checkSessionExpiry } = useSessionExpiry();
+  const router = useRouter();
+  
+  // Check if user is GUEST and redirect if so
+  useEffect(() => {
+    if (user?.roles?.includes('GUEST')) {
+      toast({
+        title: "Access Denied",
+        description: "Guest users do not have access to Services Management.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      router.push('/');
+    }
+  }, [user, router, toast]);
   const { isOpen, onOpen, onClose } = useDisclosure();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
