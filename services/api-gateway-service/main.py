@@ -3424,7 +3424,7 @@ async def speaker_diarization_inference(
 
     body = json.dumps(payload.dict()).encode()
     headers: Dict[str, str] = {}
-   # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(
         None, "/api/v1/speaker-diarization/inference", "speaker-diarization-service", method="POST", body=body, headers=headers
