@@ -20,11 +20,16 @@ from middleware.exceptions import (
 )
 import httpx
 import os
+from jose import JWTError, jwt
 
 logger = logging.getLogger(__name__)
 
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
 AUTH_HTTP_TIMEOUT = float(os.getenv("AUTH_HTTP_TIMEOUT", "5.0"))
+
+# JWT Configuration for local verification (same as nmt-service)
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 
 
 def get_api_key_from_header(authorization: Optional[str] = Header(None)) -> Optional[str]:
@@ -57,6 +62,59 @@ def determine_service_and_action(request: Request) -> Tuple[str, str]:
     else:
         action = "read"
     return service, action
+
+
+async def authenticate_bearer_token(request: Request, authorization: Optional[str]) -> Dict[str, Any]:
+    """
+    Validate JWT access token locally (signature + expiry check).
+    Same pattern as nmt-service - sets request.state.jwt_payload for tenant resolution.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise AuthenticationError("Missing bearer token")
+
+    token = authorization.split(" ", 1)[1]
+
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM],
+            options={"verify_signature": True, "verify_exp": True}
+        )
+        
+        user_id = payload.get("sub") or payload.get("user_id")
+        email = payload.get("email", "")
+        username = payload.get("username") or payload.get("email", "")
+        roles = payload.get("roles", [])
+        token_type = payload.get("type", "")
+        
+        if token_type != "access":
+            raise AuthenticationError("Invalid token type")
+        
+        if not user_id:
+            raise AuthenticationError("User ID not found in token")
+
+        # Populate request state (same as nmt-service)
+        request.state.user_id = int(user_id) if isinstance(user_id, (str, int)) else user_id
+        request.state.api_key_id = None
+        request.state.api_key_name = None
+        request.state.user_email = email
+        request.state.is_authenticated = True
+        request.state.jwt_payload = payload  # For tenant resolution in tenant_context
+
+        return {
+            "user_id": int(user_id) if isinstance(user_id, (str, int)) else user_id,
+            "api_key_id": None,
+            "user": {"username": username, "email": email, "roles": roles},
+            "api_key": None,
+        }
+        
+    except JWTError as e:
+        logger.warning(f"JWT verification failed: {e}")
+        raise AuthenticationError("Invalid or expired token")
+    except Exception as e:
+        logger.error(f"Unexpected error during JWT verification: {e}")
+        raise AuthenticationError("Failed to verify token")
 
 
 async def validate_api_key_permissions(api_key: str, service: str, action: str) -> None:
@@ -170,13 +228,23 @@ async def AuthProvider(
     try:
         auth_source = (x_auth_source or "API_KEY").upper()
 
-        # AUTH_TOKEN flow: JWT only
+        # AUTH_TOKEN flow: JWT only (decodes JWT and sets request.state.jwt_payload)
         if auth_source == "AUTH_TOKEN":
-            # No permission check for bearer-only flow per pattern
-            raise AuthenticationError("Missing API key")  # enforce API key for transliteration
+            return await authenticate_bearer_token(request, authorization)
 
         # Resolve API key
         api_key = x_api_key or get_api_key_from_header(authorization)
+        
+        # BOTH flow: JWT + API key (decodes JWT and sets request.state.jwt_payload)
+        if auth_source == "BOTH":
+            bearer_result = await authenticate_bearer_token(request, authorization)
+            if not api_key:
+                raise AuthenticationError("Missing API key")
+            service, action = determine_service_and_action(request)
+            await validate_api_key_permissions(api_key, service, action)
+            return bearer_result
+
+        # API_KEY flow: API key only
         if not api_key:
             raise AuthenticationError("Missing API key")
 
@@ -184,7 +252,6 @@ async def AuthProvider(
         service, action = determine_service_and_action(request)
         
         # Validate API key and permissions via auth-service (skip local DB validation)
-        # This ensures consistent error messages and avoids DB schema issues
         await validate_api_key_permissions(api_key, service, action)
 
         # Populate request state (minimal info since we're not querying DB)
