@@ -83,13 +83,10 @@ const ServicesManagementPage: React.FC = () => {
   const [unpublishingServiceUuid, setUnpublishingServiceUuid] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
   const toast = useToast();
-  const { user } = useAuth();
-
+  const { accessToken, user } = useAuth();
   const router = useRouter();
   const queryClient = useQueryClient();
-
   const { checkSessionExpiry } = useSessionExpiry();
-
   
   // Check if user is GUEST and redirect if so
   useEffect(() => {
