@@ -160,15 +160,15 @@ class OCRService:
                 
                 # Resolve all images to base64 first
                 with tracer.start_as_current_span("ocr.resolve_images") as resolve_span:
-                images_b64: List[str] = []
-                resolved_count = 0
-                for idx, img in enumerate(request.image):
-                    resolved = self._resolve_image_base64(img)
-                    if not resolved:
-                        images_b64.append("")
-                    else:
-                        images_b64.append(resolved)
-                        resolved_count += 1
+                    images_b64: List[str] = []
+                    resolved_count = 0
+                    for idx, img in enumerate(request.image):
+                        resolved = self._resolve_image_base64(img)
+                        if not resolved:
+                            images_b64.append("")
+                        else:
+                            images_b64.append(resolved)
+                            resolved_count += 1
                     resolve_span.set_attribute("ocr.resolved_count", resolved_count)
                     resolve_span.set_attribute("ocr.failed_count", len(request.image) - resolved_count)
 
@@ -302,72 +302,73 @@ class OCRService:
             )
             
             logger.info(f"Created OCR request {db_request.id} for {len(request.image)} image(s)")
-        # Resolve all images to base64 first
-        images_b64: List[str] = []
-        for img in request.image:
-            resolved = self._resolve_image_base64_impl(img)
-            if not resolved:
-                images_b64.append("")
-            else:
-                images_b64.append(resolved)
+            
+            # Resolve all images to base64 first
+            images_b64: List[str] = []
+            for img in request.image:
+                resolved = self._resolve_image_base64_impl(img)
+                if not resolved:
+                    images_b64.append("")
+                else:
+                    images_b64.append(resolved)
 
-        # Call Triton in a single batch for all non-empty images
-        outputs: List[TextOutput] = []
-        try:
-            # For empty entries, we'll skip Triton and just return empty text
-            non_empty_indices = [i for i, v in enumerate(images_b64) if v]
-            non_empty_images = [images_b64[i] for i in non_empty_indices]
+            # Call Triton in a single batch for all non-empty images
+            outputs: List[TextOutput] = []
+            try:
+                # For empty entries, we'll skip Triton and just return empty text
+                non_empty_indices = [i for i, v in enumerate(images_b64) if v]
+                non_empty_images = [images_b64[i] for i in non_empty_indices]
 
-            ocr_results: List[dict] = []
-            if non_empty_images:
-                batch_results = self.triton_client.run_ocr_batch(non_empty_images)
-                ocr_results = batch_results
+                ocr_results: List[dict] = []
+                if non_empty_images:
+                    batch_results = self.triton_client.run_ocr_batch(non_empty_images)
+                    ocr_results = batch_results
 
-            # Map back to original indices
-            result_map = {idx: {} for idx in range(len(images_b64))}
-            for local_idx, global_idx in enumerate(non_empty_indices):
-                if local_idx < len(ocr_results):
-                    result_map[global_idx] = ocr_results[local_idx] or {}
-        except TritonInferenceError as exc:
-            logger.error("OCR Triton inference failed: %s", exc)
-            # In case of a global Triton failure, return empty outputs
-            for _ in request.image:
-                outputs.append(TextOutput(source="", target=""))
-            return OCRInferenceResponse(output=outputs, config=request.config.dict())
+                # Map back to original indices
+                result_map = {idx: {} for idx in range(len(images_b64))}
+                for local_idx, global_idx in enumerate(non_empty_indices):
+                    if local_idx < len(ocr_results):
+                        result_map[global_idx] = ocr_results[local_idx] or {}
+            except TritonInferenceError as exc:
+                logger.error("OCR Triton inference failed: %s", exc)
+                # In case of a global Triton failure, return empty outputs
+                for _ in request.image:
+                    outputs.append(TextOutput(source="", target=""))
+                return OCRInferenceResponse(output=outputs, config=request.config.dict())
 
-        # Build TextOutput list
-        for idx in range(len(request.image)):
-            ocr_result = result_map.get(idx, {})  # type: ignore[name-defined]
-            if not images_b64[idx] or not ocr_result or not ocr_result.get(
-                "success", False
-            ):
-                outputs.append(TextOutput(source="", target=""))
-                continue
+            # Build TextOutput list
+            for idx in range(len(request.image)):
+                ocr_result = result_map.get(idx, {})  # type: ignore[name-defined]
+                if not images_b64[idx] or not ocr_result or not ocr_result.get(
+                    "success", False
+                ):
+                    outputs.append(TextOutput(source="", target=""))
+                    continue
 
-            full_text = ocr_result.get("full_text", "") or ""
-            outputs.append(TextOutput(source=full_text, target=""))
+                full_text = ocr_result.get("full_text", "") or ""
+                outputs.append(TextOutput(source=full_text, target=""))
 
-        # Create response
-        response = OCRInferenceResponse(output=outputs, config=request.config.dict())
-        
-        # Log results to database
-        for output in outputs:
-            if output.source:  # Only log non-empty results
-                await self.repository.create_result(
-                    request_id=db_request.id,
-                    extracted_text=output.source,
-                    page_count=1  # Each output represents one page/image
-                )
-        
-        # Update request status
-        processing_time = time.time() - start_time
-        await self.repository.update_request_status(
-            db_request.id, "completed", processing_time
-        )
-        
-        logger.info(f"OCR inference completed in {processing_time:.2f}s")
-        return response
-        
+            # Create response
+            response = OCRInferenceResponse(output=outputs, config=request.config.dict())
+            
+            # Log results to database
+            for output in outputs:
+                if output.source:  # Only log non-empty results
+                    await self.repository.create_result(
+                        request_id=db_request.id,
+                        extracted_text=output.source,
+                        page_count=1  # Each output represents one page/image
+                    )
+            
+            # Update request status
+            processing_time = time.time() - start_time
+            await self.repository.update_request_status(
+                db_request.id, "completed", processing_time
+            )
+            
+            logger.info(f"OCR inference completed in {processing_time:.2f}s")
+            return response
+            
         except Exception as e:
             logger.error(f"OCR inference failed: {e}")
             
