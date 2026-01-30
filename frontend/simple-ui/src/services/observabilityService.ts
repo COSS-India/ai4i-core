@@ -302,11 +302,20 @@ export const getTraceById = async (traceId: string): Promise<Trace> => {
  */
 export const getServicesWithTraces = async (): Promise<string[]> => {
   try {
-    const response = await observabilityClient.get<string[]>(
+    const response = await observabilityClient.get<{services: string[]} | string[]>(
       '/api/v1/observability/traces/services'
     );
 
-    return response.data;
+    // Handle both response formats: {"services": [...]} or [...]
+    const data = response.data;
+    if (Array.isArray(data)) {
+      return data;
+    } else if (data && typeof data === 'object' && 'services' in data && Array.isArray(data.services)) {
+      return data.services;
+    } else {
+      console.warn('Unexpected services response format:', data);
+      return [];
+    }
   } catch (error: any) {
     console.error('Failed to get services with traces:', error);
     throw new Error(error.response?.data?.detail || 'Failed to get services with traces');

@@ -31,11 +31,16 @@ class JaegerQueryClient:
             url: Jaeger Query API URL (defaults to JAEGER_QUERY_URL env var)
             timeout: Request timeout in seconds
         """
-        self.url = (url or os.getenv("JAEGER_QUERY_URL", "http://jaeger:16686")).rstrip("/")
+        base_url = (url or os.getenv("JAEGER_QUERY_URL", "http://jaeger:16686")).rstrip("/")
+        # Jaeger may have a base path (e.g., /jaeger) configured via QUERY_BASE_PATH
+        # Check environment variable or default to /jaeger if QUERY_BASE_PATH is set
+        query_base_path = os.getenv("JAEGER_QUERY_BASE_PATH", "/jaeger")
+        self.url = base_url
+        self.base_path = query_base_path if query_base_path else ""
         self.timeout = timeout
         self.client = httpx.AsyncClient(timeout=timeout)
         
-        logger.info(f"JaegerQueryClient initialized for {self.url}")
+        logger.info(f"JaegerQueryClient initialized for {self.url} with base_path={self.base_path}")
     
     async def close(self):
         """Close the HTTP client connection."""
@@ -83,7 +88,7 @@ class JaegerQueryClient:
         
         Args:
             organization_filter: Organization ID to filter by (None = admin, sees all)
-            service: Service name to filter by
+            service: Service name to filter by (required by Jaeger API)
             operation: Operation name to filter by
             time_range: Dict with 'start_time' and 'end_time' (microseconds since epoch)
             tags: Additional tags to filter by
@@ -93,14 +98,70 @@ class JaegerQueryClient:
             List of trace objects
         """
         try:
+            # Jaeger API requires a service parameter
+            # If no service is provided, we need to query all services and aggregate results
+            if not service:
+                # Get all services first
+                all_services = await self.get_services_with_traces(organization_filter=organization_filter)
+                if not all_services:
+                    return []
+                
+                # Query each service and aggregate results
+                all_traces = []
+                for svc in all_services:
+                    try:
+                        traces = await self._search_traces_for_service(
+                            organization_filter=organization_filter,
+                            service=svc,
+                            operation=operation,
+                            time_range=time_range,
+                            tags=tags,
+                            limit=limit
+                        )
+                        all_traces.extend(traces)
+                    except Exception as e:
+                        logger.warning(f"Error querying traces for service {svc}: {e}")
+                        continue
+                
+                # Sort by start time (newest first) and limit results
+                all_traces.sort(key=lambda t: t.get("startTime", 0), reverse=True)
+                return all_traces[:limit]
+            
+            # Single service query
+            return await self._search_traces_for_service(
+                organization_filter=organization_filter,
+                service=service,
+                operation=operation,
+                time_range=time_range,
+                tags=tags,
+                limit=limit
+            )
+            
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error searching traces: {e}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Error searching traces: {e}", exc_info=True)
+            raise
+    
+    async def _search_traces_for_service(
+        self,
+        organization_filter: Optional[str] = None,
+        service: str = None,
+        operation: Optional[str] = None,
+        time_range: Optional[Dict[str, Any]] = None,
+        tags: Optional[Dict[str, str]] = None,
+        limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """
+        Internal method to search traces for a specific service.
+        """
+        try:
             # Build query parameters
             params = {
-                "limit": limit
+                "limit": limit,
+                "service": service  # Required by Jaeger
             }
-            
-            # Service filter
-            if service:
-                params["service"] = service
             
             # Operation filter
             if operation:
@@ -129,13 +190,38 @@ class JaegerQueryClient:
                 params["tags"] = tag_string
             
             # Call Jaeger Query API
+            # Set Accept header to ensure JSON response (not HTML)
+            headers = {"Accept": "application/json"}
+            # Use base_path if configured (e.g., /jaeger/api/traces)
+            api_path = f"{self.base_path}/api/traces" if self.base_path else "/api/traces"
             response = await self.client.get(
-                f"{self.url}/api/traces",
-                params=params
+                f"{self.url}{api_path}",
+                params=params,
+                headers=headers
             )
             response.raise_for_status()
             
-            data = response.json()
+            # Check if response has content
+            if not response.content or len(response.content) == 0:
+                logger.warning("Jaeger API returned empty response")
+                return []
+            
+            # Check content type
+            content_type = response.headers.get("content-type", "").lower()
+            if "text/html" in content_type:
+                logger.error(f"Jaeger API returned HTML instead of JSON. URL: {self.url}{api_path}")
+                logger.error(f"Response (first 200 chars): {response.text[:200]}")
+                return []
+            
+            # Try to parse JSON
+            try:
+                data = response.json()
+            except Exception as e:
+                logger.error(f"Failed to parse Jaeger response as JSON: {e}")
+                logger.error(f"Content-Type: {content_type}")
+                logger.error(f"Response content (first 500 chars): {response.text[:500]}")
+                return []
+            
             traces = data.get("data", [])
             
             # Filter traces by organization if needed (client-side filtering as fallback)
@@ -160,6 +246,16 @@ class JaegerQueryClient:
                 return filtered_traces
             
             return traces
+                
+        except httpx.HTTPStatusError as e:
+            # Handle 400 Bad Request (e.g., missing service parameter)
+            if e.response.status_code == 400:
+                error_body = e.response.text
+                logger.warning(f"Jaeger API returned 400 Bad Request for service {service}: {error_body}")
+                # Return empty list instead of raising error
+                return []
+            logger.error(f"HTTP error searching traces for service {service}: {e}", exc_info=True)
+            raise
             
         except httpx.HTTPError as e:
             logger.error(f"HTTP error searching traces: {e}", exc_info=True)
@@ -185,12 +281,31 @@ class JaegerQueryClient:
         """
         try:
             # Call Jaeger Query API
+            # Set Accept header to ensure JSON response
+            headers = {"Accept": "application/json"}
+            # Use base_path if configured (e.g., /jaeger/api/traces/{trace_id})
+            api_path = f"{self.base_path}/api/traces/{trace_id}" if self.base_path else f"/api/traces/{trace_id}"
             response = await self.client.get(
-                f"{self.url}/api/traces/{trace_id}"
+                f"{self.url}{api_path}",
+                headers=headers
             )
             response.raise_for_status()
             
-            data = response.json()
+            # Check content type
+            content_type = response.headers.get("content-type", "").lower()
+            if "text/html" in content_type:
+                logger.error(f"Jaeger API returned HTML instead of JSON. URL: {self.url}/api/traces/{trace_id}")
+                return None
+            
+            # Try to parse JSON
+            try:
+                data = response.json()
+            except Exception as e:
+                logger.error(f"Failed to parse Jaeger trace response as JSON: {e}")
+                logger.error(f"Content-Type: {content_type}")
+                logger.error(f"Response (first 200 chars): {response.text[:200]}")
+                return None
+            
             traces = data.get("data", [])
             
             if not traces:
@@ -253,12 +368,31 @@ class JaegerQueryClient:
         """
         try:
             # Call Jaeger Query API
+            # Set Accept header to ensure JSON response
+            headers = {"Accept": "application/json"}
+            # Use base_path if configured (e.g., /jaeger/api/services)
+            api_path = f"{self.base_path}/api/services" if self.base_path else "/api/services"
             response = await self.client.get(
-                f"{self.url}/api/services"
+                f"{self.url}{api_path}",
+                headers=headers
             )
             response.raise_for_status()
             
-            data = response.json()
+            # Check content type
+            content_type = response.headers.get("content-type", "").lower()
+            if "text/html" in content_type:
+                logger.error(f"Jaeger API returned HTML instead of JSON. URL: {self.url}/api/services")
+                return []
+            
+            # Try to parse JSON
+            try:
+                data = response.json()
+            except Exception as e:
+                logger.error(f"Failed to parse Jaeger services response as JSON: {e}")
+                logger.error(f"Content-Type: {content_type}")
+                logger.error(f"Response (first 200 chars): {response.text[:200]}")
+                return []
+            
             services = data.get("data", [])
             
             # Note: Jaeger doesn't support organization filtering at service list level
@@ -267,6 +401,15 @@ class JaegerQueryClient:
             
             return services
             
+        except httpx.HTTPStatusError as e:
+            # Handle 400 Bad Request
+            if e.response.status_code == 400:
+                error_body = e.response.text
+                logger.warning(f"Jaeger API returned 400 Bad Request for services: {error_body}")
+                # Return empty list instead of raising error
+                return []
+            logger.error(f"HTTP error getting services: {e}", exc_info=True)
+            raise
         except httpx.HTTPError as e:
             logger.error(f"HTTP error getting services: {e}", exc_info=True)
             raise
@@ -291,14 +434,33 @@ class JaegerQueryClient:
         """
         try:
             # Call Jaeger Query API
+            # Set Accept header to ensure JSON response
+            headers = {"Accept": "application/json"}
             params = {}
+            # Use base_path if configured (e.g., /jaeger/api/services/{service}/operations)
+            api_path = f"{self.base_path}/api/services/{service}/operations" if self.base_path else f"/api/services/{service}/operations"
             response = await self.client.get(
-                f"{self.url}/api/services/{service}/operations",
-                params=params
+                f"{self.url}{api_path}",
+                params=params,
+                headers=headers
             )
             response.raise_for_status()
             
-            data = response.json()
+            # Check content type
+            content_type = response.headers.get("content-type", "").lower()
+            if "text/html" in content_type:
+                logger.error(f"Jaeger API returned HTML instead of JSON. URL: {self.url}/api/services/{service}/operations")
+                return []
+            
+            # Try to parse JSON
+            try:
+                data = response.json()
+            except Exception as e:
+                logger.error(f"Failed to parse Jaeger operations response as JSON: {e}")
+                logger.error(f"Content-Type: {content_type}")
+                logger.error(f"Response (first 200 chars): {response.text[:200]}")
+                return []
+            
             operations = data.get("data", [])
             
             return operations
