@@ -83,10 +83,24 @@ const ServicesManagementPage: React.FC = () => {
   const [unpublishingServiceUuid, setUnpublishingServiceUuid] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
   const toast = useToast();
-  const router = useRouter();
   const queryClient = useQueryClient();
-  const { accessToken } = useAuth();
+  const {  user } = useAuth();
   const { checkSessionExpiry } = useSessionExpiry();
+  const router = useRouter();
+  
+  // Check if user is GUEST and redirect if so
+  useEffect(() => {
+    if (user?.roles?.includes('GUEST')) {
+      toast({
+        title: "Access Denied",
+        description: "Guest users do not have access to Services Management.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      router.push('/');
+    }
+  }, [user, router, toast]);
   const { isOpen, onOpen, onClose } = useDisclosure();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
