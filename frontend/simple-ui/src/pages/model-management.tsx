@@ -33,6 +33,7 @@ import {
   Grid
 } from "@chakra-ui/react";
 import Head from "next/head";
+import { useRouter } from "next/router";
 import React, { useState, useEffect } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import { unpublishModel, getAllModels, createModel, getModelById, updateModel, publishModel } from "../services/modelManagementService";
@@ -371,8 +372,23 @@ const ModelManagementPage: React.FC = () => {
   const [publishingModelId, setPublishingModelId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
   const toast = useToast();
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const { checkSessionExpiry } = useSessionExpiry();
+  const router = useRouter();
+  
+  // Check if user is GUEST and redirect if so
+  useEffect(() => {
+    if (user?.roles?.includes('GUEST')) {
+      toast({
+        title: "Access Denied",
+        description: "Guest users do not have access to Model Management.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      router.push('/');
+    }
+  }, [user, router, toast]);
 
   // Fetch models on component mount
   useEffect(() => {
