@@ -20,6 +20,8 @@ CREATE DATABASE auth_db;
 CREATE DATABASE config_db;
 CREATE DATABASE model_management_db;
 
+CREATE DATABASE multi_tenant_db;
+
 -- Feature flag management
 CREATE DATABASE unleash
     WITH ENCODING = 'UTF8'

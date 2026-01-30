@@ -145,11 +145,15 @@ const ASRPage: React.FC = () => {
                     isDisabled={fetching || servicesLoading}
                     placeholder={servicesLoading ? "Loading services..." : "Select an ASR service"}
                   >
-                    {asrServices?.map((service) => (
-                      <option key={service.service_id} value={service.service_id}>
-                        {service.service_id}
-                      </option>
-                    ))}
+                    {asrServices?.map((service) => {
+                      const version = service.modelVersion || service.model_version;
+                      const displayText = version ? `${service.service_id} (${version})` : service.service_id;
+                      return (
+                        <option key={service.service_id} value={service.service_id}>
+                          {displayText}
+                        </option>
+                      );
+                    })}
                   </Select>
                 </FormControl>
 

@@ -19,6 +19,8 @@ export interface ASRServiceDetails {
   description: string;
   endpoint: string;
   languages?: string[];
+  modelVersion?: string;
+  model_version?: string;
 }
 
 /**
@@ -164,6 +166,8 @@ export const listASRServices = async (): Promise<ASRServiceDetails[]> => {
         description: service.serviceDescription || service.description || '',
         endpoint: endpoint,
         languages: Array.from(new Set(supportedLanguages)), // Remove duplicates
+        modelVersion: service.modelVersion || service.model_version,
+        model_version: service.modelVersion || service.model_version,
       } as ASRServiceDetails;
     });
 

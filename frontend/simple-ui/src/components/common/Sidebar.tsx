@@ -307,11 +307,14 @@ const baseNavItems: NavItem[] = [
 
 const Sidebar: React.FC = () => {
   const router = useRouter();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const { checkSessionExpiry } = useSessionExpiry();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
   const [isMobile] = useMediaQuery("(max-width: 1080px)");
+  
+  // Check if user is GUEST
+  const isGuest = user?.roles?.includes('GUEST') || false;
 
   // Feature flags for each service
   const asrEnabled = useFeatureFlag({ flagName: "asr-enabled" });
@@ -350,6 +353,10 @@ const Sidebar: React.FC = () => {
   // Filter top nav items (Home and Model Management)
   const topItems = topNavItems.filter((item) => {
     if (item.id === "home") return true;
+    // Hide Model Management and Services Management for GUEST users
+    if (isGuest && (item.id === "model-management" || item.id === "services-management")) {
+      return false;
+    }
     if (item.featureFlag) {
       return featureFlagMap[item.featureFlag] ?? true;
     }
