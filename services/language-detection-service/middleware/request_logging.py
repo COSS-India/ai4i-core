@@ -3,10 +3,10 @@ Request/response logging middleware for tracking API usage.
 """
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request, Response
-import logging
 import time
+from ai4icore_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -38,21 +38,48 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         
         # Determine log level based on status code
         status_code = response.status_code
+        
+        # Get correlation ID if available
+        try:
+            from ai4icore_logging import get_correlation_id
+            correlation_id = get_correlation_id(request)
+        except Exception:
+            correlation_id = None
+        
+        # Build context for structured logging
+        log_context = {
+            "method": method,
+            "path": path,
+            "status_code": status_code,
+            "duration_ms": round(processing_time * 1000, 2),
+            "client_ip": client_ip,
+            "user_agent": user_agent,
+        }
+        
+        if user_id:
+            log_context["user_id"] = user_id
+        if api_key_id:
+            log_context["api_key_id"] = api_key_id
+        if correlation_id:
+            log_context["correlation_id"] = correlation_id
+        
+        # Logging strategy to avoid duplicates:
+        # - 200-299: Log here (successful requests - service level)
+        # - 400-499: Do NOT log (handled by API Gateway)
+        # - 500-599: Log here (service errors - service level)
         if 200 <= status_code < 300:
-            log_level = logging.INFO
-        elif 400 <= status_code < 500:
-            log_level = logging.WARNING
-        else:
-            log_level = logging.ERROR
-        
-        # Log request/response
-        log_message = (
-            f"{method} {path} - {status_code} - {processing_time:.3f}s - "
-            f"user_id={user_id} api_key_id={api_key_id} - "
-            f"client_ip={client_ip}"
-        )
-        
-        logger.log(log_level, log_message)
+            # Success - log at INFO level
+            logger.info(
+                f"{method} {path} - {status_code} - {processing_time:.3f}s",
+                extra={"context": log_context}
+            )
+        elif 500 <= status_code < 600:
+            # Server error - log at ERROR level
+            logger.error(
+                f"{method} {path} - {status_code} - {processing_time:.3f}s",
+                extra={"context": log_context}
+            )
+        # Do NOT log 400-499 errors - they are logged at API Gateway level
         
         # Add processing time header
         response.headers["X-Process-Time"] = f"{processing_time:.3f}"

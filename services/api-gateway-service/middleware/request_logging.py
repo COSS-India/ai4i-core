@@ -18,13 +18,32 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     def __init__(self, app):
         super().__init__(app)
-
+    
     async def dispatch(self, request: Request, call_next):
         """Log request and response information with structured logging."""
-        # Capture start time
+        # Import tracing utilities (best-effort – middleware must not fail if tracing is unavailable)
+        try:
+            from opentelemetry import trace  # type: ignore
+            tracer = trace.get_tracer("api-gateway-service")
+        except Exception:  # pragma: no cover - tracing is optional
+            trace = None  # type: ignore
+            tracer = None
+
+        # ---- PRE-SPAN: very small span just for middleware pre-processing ----
+        if tracer:
+            try:
+                with tracer.start_as_current_span("middleware.request_logging.pre") as span:
+                    span.set_attribute("middleware.type", "request_logging")
+                    span.set_attribute("http.method", request.method)
+                    span.set_attribute("http.route", request.url.path)
+            except Exception:
+                # Never break request flow if tracing fails
+                pass
+
+        # Capture start time for total request duration (including downstream services)
         start_time = time.time()
 
-        # Extract request info
+        # Extract request info that we also use later for logging
         method = request.method
         path = request.url.path
         client_ip = request.client.host if request.client else "unknown"
@@ -37,24 +56,31 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Get correlation ID (set by CorrelationMiddleware)
         correlation_id = get_correlation_id(request)
 
-        # Process request first (this will trigger ObservabilityMiddleware which sets organization)
-        # Note: FastAPI exception handlers (like RequestValidationError) will catch
-        # exceptions and return responses, which will still come back through this middleware
-        # We don't catch exceptions here - let FastAPI's exception handlers handle them
-        # The response from exception handlers will still come back through this middleware
+        # Process request (this includes auth, routing and downstream services)
         response: Response
         try:
             response = await call_next(request)
         except Exception:
-            # If an exception occurs, FastAPI's exception handlers will catch it
-            # and return a response. That response will come back through this middleware.
+            # Let FastAPI's exception handlers deal with this – we only observe
             raise
 
-        # Calculate processing time
+        # Calculate total processing time
         processing_time = time.time() - start_time
 
         # Determine log level based on status code
         status_code = response.status_code
+
+        # ---- POST-SPAN: tiny span for logging & response enrichment ----
+        if tracer:
+            try:
+                with tracer.start_as_current_span("middleware.request_logging.post") as span:
+                    span.set_attribute("middleware.type", "request_logging")
+                    span.set_attribute("http.method", method)
+                    span.set_attribute("http.route", path)
+                    span.set_attribute("http.status_code", status_code)
+                    span.set_attribute("processing_time_ms", round(processing_time * 1000, 2))
+            except Exception:
+                pass
 
         # Get organization from request.state first (set by ObservabilityMiddleware)
         # This is more reliable than contextvars in async middleware
@@ -110,8 +136,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         else:
             # For server errors (500+), only log if it's gateway-generated (service unavailable, etc.)
             # If it came from a downstream service, skip logging to avoid duplicates
+            downstream_response = getattr(request.state, "downstream_response", False)
             if gateway_error_service:
                 # Gateway-generated error (service down, connection error, etc.) - log it
+                logger.error(
+                    f"{method} {path} - {status_code} - {processing_time:.3f}s",
+                    extra={"context": log_context},
+                )
+            elif not downstream_response:
+                # Gateway-generated error (not from downstream) - log it
                 logger.error(
                     f"{method} {path} - {status_code} - {processing_time:.3f}s",
                     extra={"context": log_context},

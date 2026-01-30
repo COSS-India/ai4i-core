@@ -1,6 +1,7 @@
 from typing import Dict, List, Optional
-from pydantic import BaseModel , Field
+from pydantic import BaseModel , Field, field_validator
 from datetime import datetime
+import re
 
 
 class BenchmarkEntry(BaseModel):
@@ -24,7 +25,7 @@ class ServiceStatus(BaseModel):
     lastUpdated: str = None
 
 class ServiceCreateRequest(BaseModel):
-    serviceId: str
+    # Note: serviceId is auto-generated as hash of (model_name, model_version, service_name)
     name: str
     serviceDescription: str
     hardwareDescription: str
@@ -36,3 +37,18 @@ class ServiceCreateRequest(BaseModel):
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
     isPublished: Optional[bool] = False
+
+    @field_validator("name")
+    def validate_name(cls, v):
+        """Validate service name format: only alphanumeric, hyphen, and forward slash allowed."""
+        if not v:
+            raise ValueError("Service name is required")
+        
+        # Pattern: alphanumeric, hyphen, and forward slash only
+        pattern = r'^[a-zA-Z0-9/-]+$'
+        if not re.match(pattern, v):
+            raise ValueError(
+                "Service name must contain only alphanumeric characters, hyphens (-), and forward slashes (/). "
+                f"Example: 'ai4bharath/indictrans-gpu'. Got: '{v}'"
+            )
+        return v

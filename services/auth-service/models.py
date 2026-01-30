@@ -22,6 +22,7 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
     is_superuser = Column(Boolean, default=False)
+    is_tenant = Column(Boolean, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     last_login = Column(DateTime(timezone=True), nullable=True)
@@ -42,8 +43,8 @@ class UserSession(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, nullable=False, index=True)
-    session_token = Column(String(255), unique=True, index=True, nullable=False)
-    refresh_token = Column(String(255), unique=True, index=True, nullable=True)
+    session_token = Column(Text, unique=True, index=True, nullable=False)
+    refresh_token = Column(Text, unique=True, index=True, nullable=True)
     device_info = Column(JSON, nullable=True)
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
@@ -154,6 +155,11 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str = Field(..., min_length=8, max_length=100)
     confirm_password: str = Field(..., min_length=8, max_length=100)
+    # Indicates whether this user is a tenant admin (owns a tenant) or a regular user.
+    # This is used by multi-tenant service when creating tenant admins and tenant users.
+    is_tenant: Optional[bool] = Field(None,
+        description="True for tenant admin users created during tenant onboarding; False for regular tenant users.and None for non-tenant users.",
+    )
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = Field(None, max_length=255)
@@ -187,7 +193,6 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
     expires_in: int
     user: Optional[UserResponse] = None
-    roles: Optional[List[str]] = None
 
 class TokenRefreshRequest(BaseModel):
     refresh_token: str
