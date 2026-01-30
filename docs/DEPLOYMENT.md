@@ -84,6 +84,8 @@ cp services/ner-service/env.template services/ner-service/.env
 cp services/language-diarization-service/env.template services/language-diarization-service/.env
 
 cp services/speaker-diarization-service/env.template services/speaker-diarization-service/.env
+
+cp services/language-detection-service/env.template services/language-detection-service/.env
 ```
 
 ### Step 4: Start Infrastructure Services
