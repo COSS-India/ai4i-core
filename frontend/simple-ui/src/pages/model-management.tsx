@@ -128,9 +128,23 @@ const ModelManagementPage: React.FC = () => {
   const [updatingModelId, setUpdatingModelId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
-  const router = useRouter();
-  const { accessToken } = useAuth();
+  const {  user } = useAuth();
   const { checkSessionExpiry } = useSessionExpiry();
+  const router = useRouter();
+  
+  // Check if user is GUEST and redirect if so
+  useEffect(() => {
+    if (user?.roles?.includes('GUEST')) {
+      toast({
+        title: "Access Denied",
+        description: "Guest users do not have access to Model Management.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      router.push('/');
+    }
+  }, [user, router, toast]);
 
   // Fetch models on component mount
   useEffect(() => {
