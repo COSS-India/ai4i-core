@@ -270,7 +270,7 @@ asrApiClient.interceptors.response.use(
 );
 
 // Get JWT token from auth service
-const getJwtToken = (): string | null => {
+export const getJwtToken = (): string | null => {
   if (typeof window === 'undefined') return null;
   // Check both localStorage and sessionStorage for token (same logic as authService)
   const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
@@ -317,6 +317,7 @@ apiClient.interceptors.request.use(
     const isSpeakerDiarizationEndpoint = url.includes('/api/v1/speaker-diarization');
     const isLanguageDiarizationEndpoint = url.includes('/api/v1/language-diarization');
     const isAudioLangDetectionEndpoint = url.includes('/api/v1/audio-lang-detection');
+    const isObservabilityEndpoint = url.includes('/api/v1/observability');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
     
@@ -325,7 +326,8 @@ apiClient.interceptors.request.use(
                         isTTSEndpoint || isLLMEndpoint || isPipelineEndpoint ||
                         isAudioLangDetectionEndpoint || isLanguageDetectionEndpoint ||
                         isLanguageDiarizationEndpoint || isSpeakerDiarizationEndpoint ||
-                        isNEREndpoint || isOCREndpoint || isTransliterationEndpoint;
+                        isNEREndpoint || isOCREndpoint || isTransliterationEndpoint ||
+                        isObservabilityEndpoint;
     
     // Proactively refresh token if it's expiring soon (skip for refresh and login endpoints)
     if ((requiresJWT || (isAuthEndpoint && !isAuthRefreshEndpoint)) && !isAuthRefreshEndpoint) {
@@ -347,6 +349,11 @@ apiClient.interceptors.request.use(
         config.headers['Authorization'] = `Bearer ${jwtToken}`;
         if (isModelManagementEndpoint) {
           config.headers['x-auth-source'] = 'AUTH_TOKEN';
+        }
+        // Observability endpoints use JWT token with x-auth-source: BOTH
+        if (isObservabilityEndpoint) {
+          config.headers['x-auth-source'] = 'BOTH';
+          config.headers['X-Auth-Source'] = 'BOTH';
         }
       } 
       
@@ -429,6 +436,7 @@ apiClient.interceptors.response.use(
                                      url.includes('/api/v1/speaker-diarization') ||
                                      url.includes('/api/v1/language-diarization') ||
                                      url.includes('/api/v1/audio-lang-detection') ||
+                                     url.includes('/api/v1/observability') ||
                                      isModelManagementEndpoint;
             
             if (isServiceEndpoint || isModelManagementEndpoint) {
