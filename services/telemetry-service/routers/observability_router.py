@@ -242,7 +242,7 @@ async def search_traces(
             limit=limit
         )
         
-        return {"traces": traces, "count": len(traces)}
+        return {"data": traces, "total": len(traces), "limit": limit, "offset": 0}
         
     except HTTPException:
         raise
