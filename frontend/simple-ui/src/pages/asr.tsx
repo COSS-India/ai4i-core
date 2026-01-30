@@ -143,7 +143,7 @@ const ASRPage: React.FC = () => {
                     value={serviceId}
                     onChange={(e) => setServiceId(e.target.value)}
                     isDisabled={fetching || servicesLoading}
-                    placeholder={servicesLoading ? "Loading services..." : "Select an ASR service"}
+                    placeholder={servicesLoading ? "Loading services..." : "Select a ASR service"}
                   >
                     {asrServices?.map((service) => {
                       const version = service.modelVersion || service.model_version;

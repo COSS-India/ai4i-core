@@ -73,12 +73,12 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
       console.error('LLM inference error:', error);
       
       // Use centralized error handler
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(error);
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
       
       setError(errorMessage);
       setFetching(false);
       toast({
-        title: errorTitle,
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: 'error',
         duration: 7000,

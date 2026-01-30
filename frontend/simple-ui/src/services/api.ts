@@ -112,6 +112,7 @@ const apiClient: AxiosInstance = axios.create({
   timeout: 300000, // 5 minutes (300 seconds) for most requests
   headers: {
     'Content-Type': 'application/json',
+    'Accept': 'application/json',
   },
 });
 
@@ -343,35 +344,57 @@ apiClient.interceptors.request.use(
     if (requiresJWT && !isAuthEndpoint) {
       // For services that require JWT tokens, use JWT token
       const jwtToken = getJwtToken();
-      if (jwtToken) {
-        config.headers['Authorization'] = `Bearer ${jwtToken}`;
-        if (isModelManagementEndpoint) {
-          config.headers['x-auth-source'] = 'AUTH_TOKEN';
-        }
-      } 
+      const apiKey = getApiKey();
       
-      // All services require BOTH JWT token AND API key
-      if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint || isNEREndpoint ||
-          isOCREndpoint || isTransliterationEndpoint || isLanguageDetectionEndpoint || 
-          isSpeakerDiarizationEndpoint || isLanguageDiarizationEndpoint || isAudioLangDetectionEndpoint) {
-        const apiKey = getApiKey();
-        if (apiKey) {
+      // Model management endpoints support both JWT and API key authentication
+      if (isModelManagementEndpoint) {
+        if (jwtToken && apiKey) {
+          // Both JWT and API key present - use BOTH
+          config.headers['Authorization'] = `Bearer ${jwtToken}`;
           config.headers['X-API-Key'] = apiKey;
-          // Set X-Auth-Source to BOTH when both JWT and API key are present
-          // Use lowercase to match the model-management endpoint format
-          if (jwtToken) {
-            config.headers['x-auth-source'] = 'BOTH';
-            // Also set uppercase version for consistency
-            config.headers['X-Auth-Source'] = 'BOTH';
-          } else {
-            // If only API key is present (shouldn't happen for these endpoints, but handle it)
-            console.warn('API key present but JWT token missing for service endpoint:', config.url);
-          }
+          config.headers['x-auth-source'] = 'BOTH';
+          config.headers['X-Auth-Source'] = 'BOTH';
+        } else if (jwtToken) {
+          // Only JWT token present - use AUTH_TOKEN
+          config.headers['Authorization'] = `Bearer ${jwtToken}`;
+          config.headers['x-auth-source'] = 'AUTH_TOKEN';
+        } else if (apiKey) {
+          // Only API key present - send as Bearer token with API_KEY auth source
+          // Some APIs expect API key as Bearer token when x-auth-source is API_KEY
+          config.headers['Authorization'] = `Bearer ${apiKey}`;
+          config.headers['X-API-Key'] = apiKey;
+          config.headers['x-auth-source'] = 'API_KEY';
         } else {
-          // Log warning if API key is missing
-          console.warn('API key is missing for service endpoint:', config.url);
+          // No authentication - will likely fail, but let API handle it
+          console.warn('No authentication token or API key found for model-management endpoint:', config.url);
+        }
+      } else {
+        // For other service endpoints, require JWT token
+        if (jwtToken) {
+          config.headers['Authorization'] = `Bearer ${jwtToken}`;
         }
         
+        // All services require BOTH JWT token AND API key
+        if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint || isNEREndpoint ||
+            isOCREndpoint || isTransliterationEndpoint || isLanguageDetectionEndpoint || 
+            isSpeakerDiarizationEndpoint || isLanguageDiarizationEndpoint || isAudioLangDetectionEndpoint) {
+          if (apiKey) {
+            config.headers['X-API-Key'] = apiKey;
+            // Set X-Auth-Source to BOTH when both JWT and API key are present
+            // Use lowercase to match the model-management endpoint format
+            if (jwtToken) {
+              config.headers['x-auth-source'] = 'BOTH';
+              // Also set uppercase version for consistency
+              config.headers['X-Auth-Source'] = 'BOTH';
+            } else {
+              // If only API key is present (shouldn't happen for these endpoints, but handle it)
+              console.warn('API key present but JWT token missing for service endpoint:', config.url);
+            }
+          } else {
+            // Log warning if API key is missing
+            console.warn('API key is missing for service endpoint:', config.url);
+          }
+        }
       }
     } else if (!isAuthEndpoint) {
       // For other endpoints (legacy), use API key if available

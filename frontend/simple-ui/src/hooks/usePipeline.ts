@@ -529,10 +529,10 @@ export const usePipeline = () => {
       console.error('Pipeline error:', error);
       
       // Use centralized error handler
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(error);
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
       
       toast({
-        title: errorTitle,
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: 'error',
         duration: 5000,
