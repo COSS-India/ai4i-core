@@ -51,8 +51,9 @@ except ImportError:
 LOGGING_AVAILABLE = False
 configure_logging = None
 get_logger = None
+CorrelationMiddleware = None
 try:
-    from ai4icore_logging import configure_logging, get_logger
+    from ai4icore_logging import configure_logging, get_logger, CorrelationMiddleware
     LOGGING_AVAILABLE = True
 except ImportError:
     pass
@@ -317,9 +318,10 @@ if TELEMETRY_AVAILABLE and setup_tracing:
                 )
                 logger.info("✅ FastAPI instrumentation enabled for tracing")
         else:
-            logger.warning("⚠️ Tracing setup returned None")
+            logger.warning("⚠️ Tracing setup returned None - traces may not be exported to Jaeger")
     except Exception as e:
         logger.warning(f"⚠️ Failed to setup tracing: {e}")
+        logger.warning("⚠️ Traces will not be exported to Jaeger - check OpenTelemetry installation and Jaeger endpoint")
 else:
     logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
 
@@ -376,6 +378,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Correlation middleware (MUST be before RequestLoggingMiddleware)
+# This extracts X-Correlation-ID from headers and sets it in logging context
+if CorrelationMiddleware:
+    app.add_middleware(CorrelationMiddleware)
 
 # Request logging
 app.add_middleware(RequestLoggingMiddleware)
