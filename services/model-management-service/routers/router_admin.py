@@ -28,10 +28,10 @@ router_admin = APIRouter(
 @router_admin.post("/create/model", response_model=str)
 async def create_model_request(payload: ModelCreateRequest):
     try:
-        await save_model_to_db(payload)
+        model_id = await save_model_to_db(payload)
 
         logger.info(f"Model '{payload.name}' inserted successfully.")
-        return f"Model '{payload.name}' (ID: {payload.modelId}) created successfully."
+        return f"Model '{payload.name}' (ID: {model_id}) created successfully."
 
     except HTTPException:
         raise
@@ -100,10 +100,11 @@ async def delete_model_request(id: str):
 async def create_service_request(payload: ServiceCreateRequest):
 
     try:
-        await save_service_to_db(payload)
+        # service_id is now auto-generated from hash of (model_name, model_version, service_name)
+        service_id = await save_service_to_db(payload)
 
         logger.info(f"Service '{payload.name}' inserted successfully.")
-        return f"Service '{payload.name}' (ID: {payload.serviceId}) created successfully."
+        return f"Service '{payload.name}' (ID: {service_id}) created successfully."
 
     except HTTPException:
         raise
@@ -132,7 +133,7 @@ async def update_service_request(payload: ServiceUpdateRequest):
             logger.warning(f"No valid update fields provided for service {payload.serviceId}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No valid update fields provided. Valid fields: name, serviceDescription, hardwareDescription, endpoint, modelId, modelVersion, healthStatus, benchmarks, isPublished"
+                detail="No valid update fields provided. Valid fields: serviceDescription, hardwareDescription, endpoint, api_key, healthStatus, benchmarks, isPublished. Note: name, modelId, modelVersion are not updatable."
             )
 
         return f"Service '{payload.serviceId}' updated successfully."

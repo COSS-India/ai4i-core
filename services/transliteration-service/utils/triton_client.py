@@ -11,6 +11,16 @@ import tritonclient.http as http_client
 from tritonclient.utils import np_to_triton_dtype
 from tritonclient.http import InferInput, InferRequestedOutput
 
+# OpenTelemetry imports
+try:
+    from opentelemetry import trace
+    from opentelemetry.trace import Status, StatusCode
+    tracer = trace.get_tracer("transliteration-service")
+    TRACING_AVAILABLE = True
+except ImportError:
+    tracer = None
+    TRACING_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -120,6 +130,62 @@ class TritonClient:
         headers: Optional[Dict[str, str]] = None
     ):
         """Send inference request to Triton server"""
+        if not tracer:
+            # Fallback if tracing not available
+            return self._send_triton_request_impl(model_name, inputs, outputs, headers)
+        
+        with tracer.start_as_current_span("triton.inference") as span:
+            try:
+                span.set_attribute("triton.model_name", model_name)
+                span.set_attribute("triton.endpoint", self.triton_url)
+                span.set_attribute("triton.has_auth", bool(self.api_key))
+                span.set_attribute("triton.input_count", len(inputs))
+                span.set_attribute("triton.output_count", len(outputs))
+                
+                # Calculate input size (approximate)
+                try:
+                    total_size = sum(
+                        len(inp.get_data()) if hasattr(inp, 'get_data') else 0
+                        for inp in inputs
+                    )
+                    span.set_attribute("triton.input_size_bytes", total_size)
+                except Exception:
+                    pass
+                
+                # Add span event for Triton call start
+                span.add_event("triton.inference.start", {
+                    "model": model_name,
+                    "endpoint": self.triton_url
+                })
+                
+                result = self._send_triton_request_impl(model_name, inputs, outputs, headers)
+                
+                # Add span event for Triton call completion
+                span.add_event("triton.inference.complete", {
+                    "model": model_name
+                })
+                span.set_status(Status(StatusCode.OK))
+                
+                logger.debug(f"Triton inference completed for model {model_name}")
+                return result
+                
+            except Exception as e:
+                error_msg = str(e)
+                span.set_attribute("error", True)
+                span.set_attribute("error.type", type(e).__name__)
+                span.set_attribute("error.message", error_msg)
+                span.set_status(Status(StatusCode.ERROR, error_msg))
+                span.record_exception(e)
+                raise
+    
+    def _send_triton_request_impl(
+        self,
+        model_name: str,
+        inputs: List[InferInput],
+        outputs: List[InferRequestedOutput],
+        headers: Optional[Dict[str, str]] = None
+    ):
+        """Implementation of send_triton_request without tracing"""
         try:
             # Check server health (non-blocking - log warning but try anyway)
             if not self.is_server_ready():
