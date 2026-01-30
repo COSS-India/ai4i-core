@@ -128,8 +128,7 @@ const ModelManagementPage: React.FC = () => {
   const [updatingModelId, setUpdatingModelId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
-  const {  user } = useAuth();
-
+  const { accessToken, user } = useAuth();
   const { checkSessionExpiry } = useSessionExpiry();
   const router = useRouter();
   
