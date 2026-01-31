@@ -245,55 +245,57 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     def _extract_customer_app(self, request: Request) -> tuple:
         """Extract organization and app from request headers and JWT token.
 
-        For consistency, whenever an API key or Authorization token is present,
-        we always derive the organization using `_get_organization_from_api_key`
-        (hash-based mapping). JWT claims and `X-Customer-ID` are only used as
-        fallbacks when no key is available.
+        Priority order:
+        1. X-Customer-ID header (explicit organization identifier - highest priority)
+        2. X-API-Key header (hash-based mapping)
+        3. Authorization header (treated as API key for hash-based mapping)
+        4. JWT token claims
+        5. "unknown" as fallback
         """
         organization: Optional[str] = None
 
-        # Determine API key source: prefer X-API-Key over Authorization header
-        # X-API-Key is the actual API key for organization mapping
-        # Authorization header may contain JWT token which is not suitable for hashing
-        auth_header = request.headers.get("authorization", "")
-        api_key_header = request.headers.get("X-API-Key")
-
-        if self.config.debug:
-            logger.debug(f"Organization extraction - auth_header present: {bool(auth_header)}, X-API-Key present: {bool(api_key_header)}")
-
-        api_key: Optional[str] = None
-        # Prefer X-API-Key header for organization mapping (it's the actual API key)
-        if api_key_header:
-            api_key = api_key_header
+        # PRIORITY 1: Check X-Customer-ID first (explicit organization identifier)
+        customer_id_header = request.headers.get("X-Customer-ID")
+        if customer_id_header:
+            organization = customer_id_header
             if self.config.debug:
-                logger.debug(f"Extracted API key from X-API-Key header (length: {len(api_key)})")
-        elif auth_header:
-            # Only use Authorization header if X-API-Key is not present
-            # Extract the API key (remove "Bearer " prefix if present)
-            api_key = auth_header
-            if auth_header.startswith("Bearer "):
-                api_key = auth_header[7:]
-            if self.config.debug:
-                logger.debug(f"Extracted API key from Authorization header (length: {len(api_key)})")
-
-        if api_key:
-            # Always map API key to organization using consistent hashing
-            organization = self._get_organization_from_api_key(api_key)
-
-            if self.config.debug:
-                logger.debug(f"Mapped API key to organization using hash: {organization}")
+                logger.debug(f"Found organization from X-Customer-ID header: {organization}")
         else:
-            # No API key found; fall back to token claim or header if available
+            # PRIORITY 2 & 3: Use API key hashing if X-Customer-ID is not present
+            auth_header = request.headers.get("authorization", "")
+            api_key_header = request.headers.get("X-API-Key")
+
             if self.config.debug:
-                logger.debug("No API key found, trying JWT token extraction...")
-            organization = self._extract_customer_from_token(request)
+                logger.debug(f"Organization extraction - auth_header present: {bool(auth_header)}, X-API-Key present: {bool(api_key_header)}")
 
-            if organization is None:
-                organization = request.headers.get("X-Customer-ID")
-                if organization and self.config.debug:
-                    logger.debug(f"Found organization from X-Customer-ID header: {organization}")
+            api_key: Optional[str] = None
+            # Prefer X-API-Key header for organization mapping (it's the actual API key)
+            if api_key_header:
+                api_key = api_key_header
+                if self.config.debug:
+                    logger.debug(f"Extracted API key from X-API-Key header (length: {len(api_key)})")
+            elif auth_header:
+                # Only use Authorization header if X-API-Key is not present
+                # Extract the API key (remove "Bearer " prefix if present)
+                api_key = auth_header
+                if auth_header.startswith("Bearer "):
+                    api_key = auth_header[7:]
+                if self.config.debug:
+                    logger.debug(f"Extracted API key from Authorization header (length: {len(api_key)})")
 
-        # If still no organization, use "unknown"
+            if api_key:
+                # Map API key to organization using consistent hashing
+                organization = self._get_organization_from_api_key(api_key)
+
+                if self.config.debug:
+                    logger.debug(f"Mapped API key to organization using hash: {organization}")
+            else:
+                # PRIORITY 4: No API key found; fall back to token claim
+                if self.config.debug:
+                    logger.debug("No API key found, trying JWT token extraction...")
+                organization = self._extract_customer_from_token(request)
+
+        # PRIORITY 5: If still no organization, use "unknown"
         if organization is None:
             organization = "unknown"
             if self.config.debug:
