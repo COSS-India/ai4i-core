@@ -46,6 +46,8 @@ redis_client = None
 db_engine = None
 db_session = None
 es_client = None
+multi_tenant_db_engine = None
+multi_tenant_db_session = None
 
 # Observability clients (for querying logs and traces)
 opensearch_query_client = None
@@ -56,6 +58,7 @@ rbac_enforcer = None
 async def startup_event():
     """Initialize connections on startup"""
     global redis_client, db_engine, db_session, es_client
+    global multi_tenant_db_engine, multi_tenant_db_session
     global opensearch_query_client, jaeger_query_client, rbac_enforcer
     
     try:
@@ -84,6 +87,24 @@ async def startup_event():
             expire_on_commit=False
         )
         logger.info("Connected to PostgreSQL")
+        
+        # Initialize Multi-tenant PostgreSQL connection
+        multi_tenant_db_url = os.getenv(
+            'MULTI_TENANT_DATABASE_URL',
+            'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/multi_tenant_db'
+        )
+        multi_tenant_db_engine = create_async_engine(
+            multi_tenant_db_url,
+            pool_size=10,
+            max_overflow=5,
+            echo=False
+        )
+        multi_tenant_db_session = sessionmaker(
+            multi_tenant_db_engine,
+            class_=AsyncSession,
+            expire_on_commit=False
+        )
+        logger.info("Connected to Multi-tenant PostgreSQL")
         
         # Initialize Elasticsearch client
         es_url = os.getenv('ELASTICSEARCH_URL', 'http://elasticsearch:9200')
@@ -201,6 +222,7 @@ async def startup_event():
         
         # Set global in router module
         observability_router.rbac_enforcer = rbac_enforcer
+        observability_router.multi_tenant_db_session = multi_tenant_db_session
         
     except Exception as e:
         logger.error(f"Failed to initialize connections: {e}")
@@ -210,6 +232,7 @@ async def startup_event():
 async def shutdown_event():
     """Clean up connections on shutdown"""
     global redis_client, db_engine, es_client
+    global multi_tenant_db_engine
     global opensearch_query_client, jaeger_query_client
     
     if redis_client:
@@ -219,6 +242,10 @@ async def shutdown_event():
     if db_engine:
         await db_engine.dispose()
         logger.info("PostgreSQL connection closed")
+    
+    if multi_tenant_db_engine:
+        await multi_tenant_db_engine.dispose()
+        logger.info("Multi-tenant PostgreSQL connection closed")
     
     if es_client:
         await es_client.close()

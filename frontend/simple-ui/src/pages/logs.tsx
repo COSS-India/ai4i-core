@@ -181,7 +181,8 @@ const LogsPage: React.FC = () => {
         url: error?.config?.url,
       });
       
-      if (error?.response?.status === 401 || error?.response?.status === 403) {
+      if (error?.response?.status === 401) {
+        // 401 Unauthorized - redirect to login
         toast({
           title: "Authentication Required",
           description: error?.response?.data?.detail || "Please log in to view logs.",
@@ -190,9 +191,42 @@ const LogsPage: React.FC = () => {
           isClosable: true,
         });
         router.push("/auth");
+      } else if (error?.response?.status === 403) {
+        // 403 Forbidden - show error message (user is authenticated but lacks permission)
+        let errorMessage = 'Access denied. You must be registered to a tenant to view logs.';
+        if (error?.response?.data?.detail) {
+          const detail = error.response.data.detail;
+          if (typeof detail === 'string') {
+            errorMessage = detail;
+          } else if (typeof detail === 'object') {
+            errorMessage = detail.message || detail.detail || JSON.stringify(detail);
+          } else {
+            errorMessage = String(detail);
+          }
+        }
+        toast({
+          title: "Access Denied",
+          description: errorMessage,
+          status: "error",
+          duration: 8000,
+          isClosable: true,
+        });
       } else {
         // Show other errors as toast
-        const errorMessage = error?.response?.data?.detail || error?.message || 'Failed to load logs';
+        let errorMessage = 'Failed to load logs';
+        if (error?.response?.data?.detail) {
+          const detail = error.response.data.detail;
+          if (typeof detail === 'string') {
+            errorMessage = detail;
+          } else if (typeof detail === 'object') {
+            // Handle structured error response
+            errorMessage = detail.message || detail.detail || JSON.stringify(detail);
+          } else {
+            errorMessage = String(detail);
+          }
+        } else if (error?.message) {
+          errorMessage = error.message;
+        }
         toast({
           title: "Error Loading Logs",
           description: errorMessage,
@@ -356,7 +390,7 @@ const LogsPage: React.FC = () => {
               <AlertDescription>
                 {(() => {
                   const error = logsError as any;
-                  if (error?.response?.status === 401 || error?.response?.status === 403) {
+                  if (error?.response?.status === 401) {
                     return (
                       <>
                         Authentication failed. Please log in again.
@@ -370,8 +404,35 @@ const LogsPage: React.FC = () => {
                         </Button>
                       </>
                     );
+                  } else if (error?.response?.status === 403) {
+                    // 403 Forbidden - show permission error
+                    let errorMsg = 'Access denied. You must be registered to a tenant to view logs.';
+                    if (error?.response?.data?.detail) {
+                      const detail = error.response.data.detail;
+                      if (typeof detail === 'string') {
+                        errorMsg = detail;
+                      } else if (typeof detail === 'object') {
+                        errorMsg = detail.message || detail.detail || JSON.stringify(detail);
+                      } else {
+                        errorMsg = String(detail);
+                      }
+                    }
+                    return errorMsg;
                   }
-                  return `Error loading logs: ${error?.response?.data?.detail || error?.message || 'Unknown error'}`;
+                  let errorMsg = 'Unknown error';
+                  if (error?.response?.data?.detail) {
+                    const detail = error.response.data.detail;
+                    if (typeof detail === 'string') {
+                      errorMsg = detail;
+                    } else if (typeof detail === 'object') {
+                      errorMsg = detail.message || detail.detail || JSON.stringify(detail);
+                    } else {
+                      errorMsg = String(detail);
+                    }
+                  } else if (error?.message) {
+                    errorMsg = error.message;
+                  }
+                  return `Error loading logs: ${errorMsg}`;
                 })()}
               </AlertDescription>
             </Alert>
@@ -381,7 +442,16 @@ const LogsPage: React.FC = () => {
             <Alert status="warning">
               <AlertIcon />
               <AlertDescription>
-                Failed to load services: {(servicesError as any)?.response?.data?.detail || (servicesError as any)?.message || 'Unknown error'}
+                Failed to load services: {(() => {
+                  const error = servicesError as any;
+                  if (error?.response?.data?.detail) {
+                    const detail = error.response.data.detail;
+                    if (typeof detail === 'string') return detail;
+                    if (typeof detail === 'object') return detail.message || detail.detail || JSON.stringify(detail);
+                    return String(detail);
+                  }
+                  return error?.message || 'Unknown error';
+                })()}
               </AlertDescription>
             </Alert>
           )}
@@ -390,7 +460,16 @@ const LogsPage: React.FC = () => {
             <Alert status="warning">
               <AlertIcon />
               <AlertDescription>
-                Failed to load aggregations: {(aggregationsError as any)?.response?.data?.detail || (aggregationsError as any)?.message || 'Unknown error'}
+                Failed to load aggregations: {(() => {
+                  const error = aggregationsError as any;
+                  if (error?.response?.data?.detail) {
+                    const detail = error.response.data.detail;
+                    if (typeof detail === 'string') return detail;
+                    if (typeof detail === 'object') return detail.message || detail.detail || JSON.stringify(detail);
+                    return String(detail);
+                  }
+                  return error?.message || 'Unknown error';
+                })()}
               </AlertDescription>
             </Alert>
           )}
@@ -606,7 +685,16 @@ const LogsPage: React.FC = () => {
                     Error Loading Logs
                   </Text>
                   <Text textAlign="center" color="red.400" fontSize="sm">
-                    {(logsError as any)?.response?.data?.detail || (logsError as any)?.message || 'Unknown error'}
+                    {(() => {
+                      const error = logsError as any;
+                      if (error?.response?.data?.detail) {
+                        const detail = error.response.data.detail;
+                        if (typeof detail === 'string') return detail;
+                        if (typeof detail === 'object') return detail.message || detail.detail || JSON.stringify(detail);
+                        return String(detail);
+                      }
+                      return error?.message || 'Unknown error';
+                    })()}
                   </Text>
                   <Button
                     size="sm"

@@ -18,7 +18,7 @@ class OpenSearchQueryClient:
     """
     Client for querying logs from OpenSearch with RBAC support.
     
-    Supports organization-based filtering for multi-tenant RBAC.
+    Supports tenant_id-based filtering for multi-tenant RBAC.
     """
     
     def __init__(
@@ -115,7 +115,9 @@ class OpenSearchQueryClient:
         Search logs with filters and pagination.
         
         Args:
-            organization_filter: Organization ID to filter by (None = admin, sees all)
+            organization_filter: Tenant ID to filter by (None = admin, sees all)
+                                Note: This parameter name is kept for backward compatibility,
+                                but it now filters by tenant_id field
             time_range: Dict with 'start_time' and 'end_time' (ISO format or timestamp)
             service: Service name to filter by
             level: Log level to filter by (INFO, WARN, ERROR, DEBUG)
@@ -130,10 +132,10 @@ class OpenSearchQueryClient:
             # Build query
             must_clauses = []
             
-            # Organization filter (RBAC)
+            # Tenant ID filter (RBAC) - filters by tenant_id field
             if organization_filter:
                 must_clauses.append({
-                    "term": {"organization": organization_filter}
+                    "term": {"tenant_id.keyword": organization_filter}
                 })
             
             # Time range filter
@@ -226,7 +228,9 @@ class OpenSearchQueryClient:
         Get log aggregations and statistics.
         
         Args:
-            organization_filter: Organization ID to filter by (None = admin)
+            organization_filter: Tenant ID to filter by (None = admin)
+                                Note: This parameter name is kept for backward compatibility,
+                                but it now filters by tenant_id field
             time_range: Dict with 'start_time' and 'end_time'
         
         Returns:
@@ -236,9 +240,10 @@ class OpenSearchQueryClient:
             # Build base query (same as search_logs)
             must_clauses = []
             
+            # Tenant ID filter (RBAC) - filters by tenant_id field
             if organization_filter:
                 must_clauses.append({
-                    "term": {"organization": organization_filter}
+                    "term": {"tenant_id.keyword": organization_filter}
                 })
             
             if time_range:
@@ -336,7 +341,9 @@ class OpenSearchQueryClient:
         Get list of services that have logs.
         
         Args:
-            organization_filter: Organization ID to filter by (None = admin)
+            organization_filter: Tenant ID to filter by (None = admin)
+                                Note: This parameter name is kept for backward compatibility,
+                                but it now filters by tenant_id field
             time_range: Dict with 'start_time' and 'end_time'
         
         Returns:
@@ -346,9 +353,10 @@ class OpenSearchQueryClient:
             # Build base query
             must_clauses = []
             
+            # Tenant ID filter (RBAC) - filters by tenant_id field
             if organization_filter:
                 must_clauses.append({
-                    "term": {"organization": organization_filter}
+                    "term": {"tenant_id.keyword": organization_filter}
                 })
             
             if time_range:

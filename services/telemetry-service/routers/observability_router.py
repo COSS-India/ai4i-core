@@ -14,6 +14,7 @@ from ai4icore_telemetry import (
     JaegerQueryClient,
     get_organization_filter
 )
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ router = APIRouter()
 opensearch_client: Optional[OpenSearchQueryClient] = None
 jaeger_client: Optional[JaegerQueryClient] = None
 rbac_enforcer = None  # Casbin enforcer (will be set in main.py)
+multi_tenant_db_session = None  # Multi-tenant database session (will be set in main.py)
 
 
 def get_opensearch_client() -> OpenSearchQueryClient:
@@ -55,6 +57,51 @@ def get_rbac_enforcer():
     return rbac_enforcer
 
 
+async def query_tenant_id_from_db(user_id: str) -> Optional[str]:
+    """
+    Query tenant_id from multi_tenant_db for a user.
+    This is a fallback when tenant_id is missing from JWT token.
+    """
+    if multi_tenant_db_session is None:
+        logger.warning("multi_tenant_db_session is None, cannot query tenant_id")
+        return None
+    
+    try:
+        logger.info(f"Querying tenant_id from database for user_id: {user_id} (type: {type(user_id)})")
+        logger.info(f"multi_tenant_db_session type: {type(multi_tenant_db_session)}")
+        
+        async with multi_tenant_db_session() as session:
+            logger.info(f"Session created, executing query for user_id: {int(user_id)}")
+            # Query tenant_users table for the user
+            result = await session.execute(
+                text("""
+                    SELECT tu.tenant_id
+                    FROM tenant_users tu
+                    JOIN tenants t ON tu.tenant_uuid = t.id
+                    WHERE tu.user_id = :user_id
+                    AND t.status = 'ACTIVE'
+                    AND tu.status = 'ACTIVE'
+                    LIMIT 1
+                """),
+                {"user_id": int(user_id)}
+            )
+            logger.info(f"Query executed, fetching result for user_id: {user_id}")
+            row = result.fetchone()
+            logger.info(f"Query result for user_id {user_id}: row={row}, type={type(row)}")
+            if row:
+                tenant_id = row[0]
+                logger.info(f"Found tenant_id '{tenant_id}' for user {user_id} from database")
+                return tenant_id
+            else:
+                logger.warning(f"No tenant_id found in database for user {user_id} (row is None or empty)")
+                return None
+    except Exception as e:
+        logger.error(f"Error querying tenant_id from database for user {user_id}: {e}", exc_info=True)
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        return None
+
+
 # ==================== Logs Endpoints ====================
 
 @router.get("/logs/search")
@@ -74,11 +121,16 @@ async def search_logs(
     Search logs with filters and pagination.
     
     Requires 'logs.read' permission.
-    Admin users see all logs, normal users see only their organization's logs.
+    Admin users see all logs, normal users see only their tenant's logs.
+    Non-tenant users are denied access.
     """
     try:
-        # Get organization filter (handles RBAC)
-        org_filter = get_organization_filter(request, enforcer, "logs.read")
+        # Get tenant_id filter (handles RBAC)
+        # Returns None for admin (sees all), tenant_id for users, or raises 403 for non-tenant users
+        org_filter = await get_organization_filter(
+            request, enforcer, "logs.read",
+            tenant_id_fallback=query_tenant_id_from_db
+        )
         
         # Build time range
         time_range = None
@@ -124,11 +176,17 @@ async def get_log_aggregations(
     Get log aggregations and statistics.
     
     Requires 'logs.read' permission.
+    Admin users see all logs, normal users see only their tenant's logs.
+    Non-tenant users are denied access.
     Returns total logs, error count, warning count, breakdown by level and service.
     """
     try:
-        # Get organization filter (handles RBAC)
-        org_filter = get_organization_filter(request, enforcer, "logs.read")
+        # Get tenant_id filter (handles RBAC)
+        # Returns None for admin (sees all), tenant_id for users, or raises 403 for non-tenant users
+        org_filter = await get_organization_filter(
+            request, enforcer, "logs.read",
+            tenant_id_fallback=query_tenant_id_from_db
+        )
         
         # Build time range
         time_range = None
@@ -169,10 +227,16 @@ async def get_log_services(
     Get list of services that have logs.
     
     Requires 'logs.read' permission.
+    Admin users see all services, normal users see only services from their tenant.
+    Non-tenant users are denied access.
     """
     try:
-        # Get organization filter (handles RBAC)
-        org_filter = get_organization_filter(request, enforcer, "logs.read")
+        # Get tenant_id filter (handles RBAC)
+        # Returns None for admin (sees all), tenant_id for users, or raises 403 for non-tenant users
+        org_filter = await get_organization_filter(
+            request, enforcer, "logs.read",
+            tenant_id_fallback=query_tenant_id_from_db
+        )
         
         # Build time range
         time_range = None
@@ -222,7 +286,10 @@ async def search_traces(
     """
     try:
         # Get organization filter (handles RBAC)
-        org_filter = get_organization_filter(request, enforcer, "traces.read")
+        org_filter = await get_organization_filter(
+            request, enforcer, "traces.read",
+            tenant_id_fallback=query_tenant_id_from_db
+        )
         
         # Build time range
         time_range = None
@@ -269,7 +336,10 @@ async def get_trace_by_id(
     """
     try:
         # Get organization filter (handles RBAC)
-        org_filter = get_organization_filter(request, enforcer, "traces.read")
+        org_filter = await get_organization_filter(
+            request, enforcer, "traces.read",
+            tenant_id_fallback=query_tenant_id_from_db
+        )
         
         # Get trace
         trace = await jaeger.get_trace_by_id(trace_id, organization_filter=org_filter)
@@ -305,7 +375,10 @@ async def get_trace_services(
     """
     try:
         # Get organization filter (handles RBAC)
-        org_filter = get_organization_filter(request, enforcer, "traces.read")
+        org_filter = await get_organization_filter(
+            request, enforcer, "traces.read",
+            tenant_id_fallback=query_tenant_id_from_db
+        )
         
         # Get services
         services = await jaeger.get_services_with_traces(organization_filter=org_filter)
@@ -336,7 +409,10 @@ async def get_trace_operations(
     """
     try:
         # Get organization filter (handles RBAC)
-        org_filter = get_organization_filter(request, enforcer, "traces.read")
+        org_filter = await get_organization_filter(
+            request, enforcer, "traces.read",
+            tenant_id_fallback=query_tenant_id_from_db
+        )
         
         # Get operations
         operations = await jaeger.get_operations_for_service(service, organization_filter=org_filter)
