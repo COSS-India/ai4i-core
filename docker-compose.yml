@@ -308,6 +308,9 @@ services:
       # Prod: point Swagger to public API Gateway URL
       - TRY_IT_LIMIT=5
       - TRY_IT_TTL_SECONDS=3600
+      # Auth bypass for testing (set to false in production)
+      - AUTH_ENABLED=false
+      - ALLOW_ANONYMOUS_ACCESS=true
     env_file:
       - ./services/api-gateway-service/.env
     depends_on:
@@ -939,7 +942,7 @@ services:
       dockerfile: Dockerfile
       args:
         # Browser talks directly to the API Gateway on host port 8080
-        NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
+        NEXT_PUBLIC_API_URL: http://localhost:8080
         # Service-specific API keys from .env file (no hardcoding)
         NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
         NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
@@ -954,7 +957,7 @@ services:
       # HOSTNAME=0.0.0.0 tells Next.js standalone server to listen on all interfaces
       - HOSTNAME=0.0.0.0
       # Route all frontend API calls through the API Gateway on host
-      - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
       - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
       # Service-specific API keys for API Gateway authentication / RBAC
       - NEXT_PUBLIC_ASR_API_KEY=${ASR_API_KEY}
@@ -1174,7 +1177,28 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
       interval: 30s
       timeout: 5s
-      retries: 3
+
+  smart-router:
+    build:
+      context: ./services/smart-router
+      dockerfile: Dockerfile
+    container_name: ai4v-smart-router
+    ports:
+      - "8096:8096"
+    environment:
+      - SERVICE_PORT=8096
+      - POLICY_ENGINE_URL=http://policy-engine:8095
+      - ASR_SERVICE_URL=http://asr-service:8087
+      - NMT_SERVICE_URL=http://nmt-service:8089
+      - TTS_SERVICE_URL=http://tts-service:8088
+      - LLM_SERVICE_URL=http://llm-service:8090
+      - PIPELINE_SERVICE_URL=http://pipeline-service:8090
+      - LOG_LEVEL=INFO
+    depends_on:
+      - policy-engine
+    networks:
+      - microservices-network
+    restart: unless-stopped
 
 
 

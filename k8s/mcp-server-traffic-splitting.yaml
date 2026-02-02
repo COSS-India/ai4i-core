@@ -1,0 +1,60 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: mcp-server
+  namespace: default
+spec:
+  hosts:
+  - mcp-server
+  - mcp-server.default.svc.cluster.local
+  http:
+  # Route canary traffic (via header)
+  - match:
+    - headers:
+        x-canary:
+          exact: "true"
+    route:
+    - destination:
+        host: mcp-server
+        subset: canary
+      weight: 100
+  # Default traffic splitting
+  - route:
+    - destination:
+        host: mcp-server
+        subset: stable
+      weight: 90
+    - destination:
+        host: mcp-server
+        subset: canary
+      weight: 10
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: mcp-server
+  namespace: default
+spec:
+  host: mcp-server
+  subsets:
+  - name: stable
+    labels:
+      version: stable
+  - name: canary
+    labels:
+      version: canary
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 10
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+    outlierDetection:
+      consecutiveErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50

@@ -119,7 +119,7 @@ class LanguageConfig(BaseModel):
 
 class ASRInferenceConfig(BaseModel):
     """Configuration for ASR inference."""
-    serviceId: str = Field(..., description="ASR service/model ID")
+    serviceId: Optional[str] = Field(None, description="ASR service/model ID (optional)")
     language: LanguageConfig = Field(..., description="Language configuration")
     audioFormat: str = Field(default="wav", description="Audio format")
     samplingRate: int = Field(default=16000, description="Audio sampling rate")
@@ -155,7 +155,7 @@ class NMTTextInput(BaseModel):
 
 class NMTInferenceConfig(BaseModel):
     """Configuration for NMT inference."""
-    serviceId: str = Field(..., description="Identifier for NMT service/model")
+    serviceId: Optional[str] = Field(None, description="Identifier for NMT service/model (optional)")
     language: NMTLanguagePair = Field(..., description="Language pair configuration")
 
 class NMTInferenceRequest(BaseModel):
@@ -198,7 +198,7 @@ class TTSTextInput(BaseModel):
 
 class TTSInferenceConfig(BaseModel):
     """Configuration for TTS inference."""
-    serviceId: str = Field(..., description="TTS service/model ID")
+    serviceId: Optional[str] = Field(None, description="TTS service/model ID (optional)")
     language: TTSLanguageConfig = Field(..., description="Language configuration")
     gender: Gender = Field(default=Gender.FEMALE, description="Voice gender")
     audioFormat: AudioFormat = Field(default=AudioFormat.WAV, description="Output audio format")
@@ -211,6 +211,7 @@ class TTSInferenceRequest(BaseModel):
     input: List[TTSTextInput] = Field(..., description="List of text inputs", min_items=1)
     config: TTSInferenceConfig = Field(..., description="Inference configuration")
     controlConfig: Optional[Dict[str, Any]] = Field(None, description="Additional control parameters")
+    routing_service: Optional[str] = Field(None, description="Routing service type: Free, Paid, Enterprise (defaults to Free if invalid)")
 
 class AudioOutput(BaseModel):
     """Audio output containing synthesized speech."""
@@ -1966,6 +1967,15 @@ async def _increment_try_it_count(key: str) -> int:
 
 async def ensure_authenticated_for_request(req: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> None:
     """Enforce authentication - require BOTH Bearer token AND API key for all services."""
+    # Check if auth is disabled
+    auth_enabled = os.getenv("AUTH_ENABLED", "true").lower() == "true"
+    allow_anonymous = os.getenv("ALLOW_ANONYMOUS_ACCESS", "false").lower() == "true"
+    
+    # Bypass authentication if disabled or anonymous access is allowed
+    if not auth_enabled or allow_anonymous:
+        logger.debug(f"Authentication bypassed for {req.url.path} (AUTH_ENABLED={auth_enabled}, ALLOW_ANONYMOUS={allow_anonymous})")
+        return
+    
     # Get tracer for creating spans
     tracer = None
     if TRACING_AVAILABLE:
@@ -3245,14 +3255,15 @@ async def asr_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Perform batch ASR inference on audio inputs"""
+    """Perform batch ASR inference on audio inputs - routes through smart-router"""
     await ensure_authenticated_for_request(request, credentials, api_key)
     import json
-    # Convert Pydantic model to JSON for proxy
+    # Convert Pydantic model to JSON for proxy to smart-router
     body = json.dumps(payload.dict()).encode()
     # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
     headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/asr/inference", "asr-service", method="POST", body=body, headers=headers)
+    # Route through smart-router instead of directly to asr-service
+    return await proxy_to_service(None, "/api/v1/smart-router/route/asr", "smart-router", method="POST", body=body, headers=headers)
 
 @app.get("/api/v1/asr/streaming/info", response_model=StreamingInfo, tags=["ASR"])
 async def get_streaming_info(
@@ -3329,14 +3340,16 @@ async def tts_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Perform batch TTS inference on text inputs"""
+    """Perform batch TTS inference on text inputs - routes through smart-router"""
     await ensure_authenticated_for_request(request, credentials, api_key)
     import json
-    # Convert Pydantic model to JSON for proxy
+    # Convert Pydantic model to JSON for proxy to smart-router
     body = json.dumps(payload.dict()).encode()
     # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
     headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/tts/inference", "tts-service", method="POST", body=body, headers=headers)
+    # Route through smart-router instead of directly to tts-service
+    smart_router_url = os.getenv('SMART_ROUTER_URL', 'http://smart-router:8096')
+    return await proxy_to_service(None, "/api/v1/smart-router/route/tts", "smart-router", method="POST", body=body, headers=headers)
 
 @app.get("/api/v1/tts/models", tags=["TTS"])
 async def get_tts_models(
@@ -3541,14 +3554,15 @@ async def nmt_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Perform NMT inference"""
+    """Perform NMT inference - routes through smart-router"""
     ensure_authenticated_for_request(request, credentials, api_key)
     import json
-    # Convert Pydantic model to JSON for proxy
+    # Convert Pydantic model to JSON for proxy to smart-router
     body = json.dumps(payload.dict()).encode()
     # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
     headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/nmt/inference", "nmt-service", method="POST", body=body, headers=headers)
+    # Route through smart-router instead of directly to nmt-service
+    return await proxy_to_service(None, "/api/v1/smart-router/route/nmt", "smart-router", method="POST", body=body, headers=headers)
 
 @app.post("/api/v1/nmt/batch-translate", tags=["NMT"])
 async def batch_translate(
@@ -4834,7 +4848,8 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
         'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090'),
-        'multi-tenant-service': os.getenv('MULTI_TENANT_SERVICE_URL', 'http://multi-tenant-service:8001')
+        'multi-tenant-service': os.getenv('MULTI_TENANT_SERVICE_URL', 'http://multi-tenant-service:8001'),
+        'smart-router': os.getenv('SMART_ROUTER_URL', 'http://smart-router:8096')
     }
     
     try:
