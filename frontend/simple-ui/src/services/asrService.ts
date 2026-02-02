@@ -15,6 +15,7 @@ import { listServices } from './modelManagementService';
 export interface ASRServiceDetails {
   service_id: string;
   model_id: string;
+  model_version?: string;
   name: string;
   description: string;
   endpoint: string;
@@ -162,6 +163,7 @@ export const listASRServices = async (): Promise<ASRServiceDetails[]> => {
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id,
+        model_version: service.modelVersion || service.model_version || '',
         name: service.name || service.serviceId || service.service_id || '',
         description: service.serviceDescription || service.description || '',
         endpoint: endpoint,
