@@ -2,7 +2,7 @@
 RESTful API router for Model Management Service
 Provides RESTful endpoints that match frontend expectations
 """
-from fastapi import HTTPException, status, APIRouter, Depends, Query
+from fastapi import HTTPException, status, APIRouter, Depends, Query, Request
 from middleware.auth_provider import AuthProvider
 from models.model_view import ModelViewRequest, ModelViewResponse
 from models.model_create import ModelCreateRequest
@@ -17,6 +17,13 @@ from logger import logger
 from typing import List, Union, Optional
 from models.type_enum import TaskTypeEnum
 
+
+def get_user_id_from_request(request: Request) -> Optional[str]:
+    """Extract user_id from request state (set by AuthProvider or Kong) as string."""
+    user_id = getattr(request.state, 'user_id', None)
+    return str(user_id) if user_id is not None else None
+
+
 router_restful = APIRouter(
     prefix="/models",
     tags=["Model Management RESTful"],
@@ -28,7 +35,8 @@ router_restful = APIRouter(
 async def list_models_restful(
     task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
     include_deprecated: bool = Query(True, description="Include deprecated versions. Set to false to show only ACTIVE versions."),
-    model_name: Optional[str] = Query(None, description="Filter by model name. Returns all versions of models matching this name.")
+    model_name: Optional[str] = Query(None, description="Filter by model name. Returns all versions of models matching this name."),
+    created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the model.")
 ):
     """List all models - RESTful endpoint"""
     try:
@@ -37,7 +45,7 @@ async def list_models_restful(
         else:
             task_type_enum = TaskTypeEnum(task_type)
 
-        data = await list_all_models(task_type_enum, include_deprecated=include_deprecated, model_name=model_name)
+        data = await list_all_models(task_type_enum, include_deprecated=include_deprecated, model_name=model_name, created_by=created_by)
         if data is None:
             return []  # Return empty list instead of 404
 
@@ -71,11 +79,12 @@ async def get_model_by_id_restful(model_id: str, version: Optional[str] = Query(
 
 
 @router_restful.post("", response_model=str)
-async def create_model_restful(payload: ModelCreateRequest):
+async def create_model_restful(payload: ModelCreateRequest, request: Request):
     """Create a new model - RESTful endpoint"""
     try:
-        model_id = await save_model_to_db(payload)
-        logger.info(f"Model '{payload.name}' inserted successfully.")
+        user_id = get_user_id_from_request(request)
+        model_id = await save_model_to_db(payload, created_by=user_id)
+        logger.info(f"Model '{payload.name}' inserted successfully by user {user_id}.")
         return f"Model '{payload.name}' (ID: {model_id}) created successfully."
     except HTTPException:
         raise
@@ -88,11 +97,12 @@ async def create_model_restful(payload: ModelCreateRequest):
 
 
 @router_restful.patch("", response_model=str)
-async def update_model_restful(payload: ModelUpdateRequest):
+async def update_model_restful(payload: ModelUpdateRequest, request: Request):
     """Update a model - RESTful endpoint"""
     try:
-        await update_model(payload)
-        logger.info(f"Model '{payload.modelId}' updated successfully.")
+        user_id = get_user_id_from_request(request)
+        await update_model(payload, updated_by=user_id)
+        logger.info(f"Model '{payload.modelId}' updated successfully by user {user_id}.")
         return f"Model '{payload.modelId}' updated successfully."
     except HTTPException:
         raise
