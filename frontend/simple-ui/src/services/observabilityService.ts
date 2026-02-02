@@ -177,7 +177,21 @@ export const searchLogs = async (
       url: error?.config?.url,
       headers: error?.config?.headers,
     });
-    throw new Error(error.response?.data?.detail || error.message || 'Failed to search logs');
+    // Extract error message from detail object
+    let errorMessage = 'Failed to search logs';
+    if (error?.response?.data?.detail) {
+      const detail = error.response.data.detail;
+      if (typeof detail === 'string') {
+        errorMessage = detail;
+      } else if (typeof detail === 'object' && detail.message) {
+        errorMessage = detail.message;
+      } else if (typeof detail === 'object') {
+        errorMessage = JSON.stringify(detail);
+      }
+    } else if (error?.message) {
+      errorMessage = error.message;
+    }
+    throw new Error(errorMessage);
   }
 };
 
@@ -201,7 +215,21 @@ export const getLogAggregations = async (
     return response.data;
   } catch (error: any) {
     console.error('Failed to get log aggregations:', error);
-    throw new Error(error.response?.data?.detail || 'Failed to get log aggregations');
+    // Extract error message from detail object
+    let errorMessage = 'Failed to get log aggregations';
+    if (error?.response?.data?.detail) {
+      const detail = error.response.data.detail;
+      if (typeof detail === 'string') {
+        errorMessage = detail;
+      } else if (typeof detail === 'object' && detail.message) {
+        errorMessage = detail.message;
+      } else if (typeof detail === 'object') {
+        errorMessage = JSON.stringify(detail);
+      }
+    } else if (error?.message) {
+      errorMessage = error.message;
+    }
+    throw new Error(errorMessage);
   }
 };
 
@@ -240,7 +268,21 @@ export const getServicesWithLogs = async (): Promise<string[]> => {
       statusText: error?.response?.statusText,
       data: error?.response?.data,
     });
-    throw new Error(error.response?.data?.detail || 'Failed to get services with logs');
+    // Extract error message from detail object
+    let errorMessage = 'Failed to get services with logs';
+    if (error?.response?.data?.detail) {
+      const detail = error.response.data.detail;
+      if (typeof detail === 'string') {
+        errorMessage = detail;
+      } else if (typeof detail === 'object' && detail.message) {
+        errorMessage = detail.message;
+      } else if (typeof detail === 'object') {
+        errorMessage = JSON.stringify(detail);
+      }
+    } else if (error?.message) {
+      errorMessage = error.message;
+    }
+    throw new Error(errorMessage);
   }
 };
 
@@ -277,7 +319,21 @@ export const searchTraces = async (
     return response.data;
   } catch (error: any) {
     console.error('Failed to search traces:', error);
-    throw new Error(error.response?.data?.detail || 'Failed to search traces');
+    // Extract error message from detail object
+    let errorMessage = 'Failed to search traces';
+    if (error?.response?.data?.detail) {
+      const detail = error.response.data.detail;
+      if (typeof detail === 'string') {
+        errorMessage = detail;
+      } else if (typeof detail === 'object' && detail.message) {
+        errorMessage = detail.message;
+      } else if (typeof detail === 'object') {
+        errorMessage = JSON.stringify(detail);
+      }
+    } else if (error?.message) {
+      errorMessage = error.message;
+    }
+    throw new Error(errorMessage);
   }
 };
 
@@ -293,7 +349,21 @@ export const getTraceById = async (traceId: string): Promise<Trace> => {
     return response.data;
   } catch (error: any) {
     console.error('Failed to get trace:', error);
-    throw new Error(error.response?.data?.detail || 'Failed to get trace');
+    // Extract error message from detail object
+    let errorMessage = 'Failed to get trace';
+    if (error?.response?.data?.detail) {
+      const detail = error.response.data.detail;
+      if (typeof detail === 'string') {
+        errorMessage = detail;
+      } else if (typeof detail === 'object' && detail.message) {
+        errorMessage = detail.message;
+      } else if (typeof detail === 'object') {
+        errorMessage = JSON.stringify(detail);
+      }
+    } else if (error?.message) {
+      errorMessage = error.message;
+    }
+    throw new Error(errorMessage);
   }
 };
 
@@ -318,7 +388,21 @@ export const getServicesWithTraces = async (): Promise<string[]> => {
     }
   } catch (error: any) {
     console.error('Failed to get services with traces:', error);
-    throw new Error(error.response?.data?.detail || 'Failed to get services with traces');
+    // Extract error message from detail object
+    let errorMessage = 'Failed to get services with traces';
+    if (error?.response?.data?.detail) {
+      const detail = error.response.data.detail;
+      if (typeof detail === 'string') {
+        errorMessage = detail;
+      } else if (typeof detail === 'object' && detail.message) {
+        errorMessage = detail.message;
+      } else if (typeof detail === 'object') {
+        errorMessage = JSON.stringify(detail);
+      }
+    } else if (error?.message) {
+      errorMessage = error.message;
+    }
+    throw new Error(errorMessage);
   }
 };
 
@@ -334,7 +418,21 @@ export const getOperationsForService = async (serviceName: string): Promise<stri
     return response.data;
   } catch (error: any) {
     console.error('Failed to get operations:', error);
-    throw new Error(error.response?.data?.detail || 'Failed to get operations');
+    // Extract error message from detail object
+    let errorMessage = 'Failed to get operations';
+    if (error?.response?.data?.detail) {
+      const detail = error.response.data.detail;
+      if (typeof detail === 'string') {
+        errorMessage = detail;
+      } else if (typeof detail === 'object' && detail.message) {
+        errorMessage = detail.message;
+      } else if (typeof detail === 'object') {
+        errorMessage = JSON.stringify(detail);
+      }
+    } else if (error?.message) {
+      errorMessage = error.message;
+    }
+    throw new Error(errorMessage);
   }
 };
 

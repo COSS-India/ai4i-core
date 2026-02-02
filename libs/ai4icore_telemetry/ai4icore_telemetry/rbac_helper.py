@@ -18,21 +18,22 @@ except ImportError:
     logger.warning("python-jose not available, JWT decoding will fail")
 
 
-def get_organization_filter(
+async def get_organization_filter(
     request: Request,
     rbac_enforcer: Any,
     permission: str,
     jwt_secret_key: Optional[str] = None,
-    jwt_algorithm: str = "HS256"
+    jwt_algorithm: str = "HS256",
+    tenant_id_fallback: Optional[Any] = None
 ) -> Optional[str]:
     """
-    Extract organization filter from request based on RBAC.
+    Extract tenant_id filter from request based on RBAC.
     
     This function:
     1. Extracts JWT token from request
     2. Decodes JWT to get user_id, tenant_id, and roles
     3. Checks Casbin permissions
-    4. Returns organization filter (None for admin, tenant_id for users)
+    4. Returns tenant_id filter (None for admin, tenant_id for users)
     
     Args:
         request: FastAPI request object
@@ -42,10 +43,10 @@ def get_organization_filter(
         jwt_algorithm: JWT algorithm (default: HS256)
     
     Returns:
-        None if user is admin (no filter), tenant_id if normal user, or raises HTTPException
+        None if user is admin (no filter), tenant_id if normal user
     
     Raises:
-        HTTPException: 401 if no token, 403 if no permission
+        HTTPException: 401 if no token, 403 if no permission or no tenant_id (for non-admin users)
     """
     if not JWT_AVAILABLE:
         raise HTTPException(
@@ -119,25 +120,63 @@ def get_organization_filter(
                 detail=f"Permission denied: {permission}"
             )
         
-        # Determine organization filter based on role
+        # Determine tenant_id filter based on role
         # ADMIN role can see all (no filter)
-        # Other roles see only their organization
+        # Other roles see only their tenant's logs
         is_admin = "ADMIN" in roles or any(role.upper() == "ADMIN" for role in roles)
         
         if is_admin:
-            # Admin sees all - no organization filter
+            # Admin sees all - no tenant_id filter
+            logger.debug(f"Admin user {user_id} - returning None (no filter, sees all logs)")
             return None
         else:
-            # Normal user - filter by their organization
+            # Normal user - must have tenant_id to filter by their tenant
             if not tenant_id:
-                logger.warning(f"User {user_id} has no tenant_id in token. Allowing access without organization filter (for testing).")
-                # For testing: if tenant_id is missing, allow access but return None (no filter)
-                # In production, you may want to deny access or use a default organization
-                # TODO: In production, either:
-                #   1. Ensure all tokens include tenant_id
-                #   2. Deny access: raise HTTPException(status_code=403, detail="Organization not found in token")
-                #   3. Use a default organization: return "default_org_id"
-                return None  # No filter - see all logs (for testing only)
+                # Try fallback: query database for tenant_id if callback provided
+                if tenant_id_fallback:
+                    try:
+                        logger.info(f"User {user_id} has no tenant_id in token. Attempting database lookup...")
+                        # Call the fallback function (should be async)
+                        if callable(tenant_id_fallback):
+                            tenant_id = await tenant_id_fallback(user_id)
+                        else:
+                            tenant_id = None
+                        
+                        if tenant_id:
+                            logger.info(f"Found tenant_id {tenant_id} for user {user_id} from database")
+                        else:
+                            logger.warning(f"User {user_id} has no tenant_id in token or database. Denying access.")
+                            raise HTTPException(
+                                status_code=status.HTTP_403_FORBIDDEN,
+                                detail={
+                                    "message": "Access denied. You must be registered to a tenant to view logs.",
+                                    "code": "TENANT_REQUIRED",
+                                    "hint": "Please register to a tenant to access logs and traces. If you recently registered, please log out and log back in to refresh your token."
+                                }
+                            )
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        logger.error(f"Error querying tenant_id from database for user {user_id}: {e}", exc_info=True)
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail={
+                                "message": "Access denied. You must be registered to a tenant to view logs.",
+                                "code": "TENANT_REQUIRED",
+                                "hint": "Please register to a tenant to access logs and traces. If you recently registered, please log out and log back in to refresh your token."
+                            }
+                        )
+                else:
+                    logger.warning(f"User {user_id} has no tenant_id in token. Denying access.")
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "message": "Access denied. You must be registered to a tenant to view logs.",
+                            "code": "TENANT_REQUIRED",
+                            "hint": "Please register to a tenant to access logs and traces. If you recently registered, please log out and log back in to refresh your token."
+                        }
+                    )
+            logger.debug(f"User {user_id} with tenant_id {tenant_id} - filtering by tenant")
             return tenant_id
         
     except JWTError as e:
