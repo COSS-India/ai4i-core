@@ -477,12 +477,12 @@ const ProfilePage: React.FC = () => {
       });
     } else {
       // Clear error for other fields when user starts typing
-      if (errors[field]) {
-        setErrors((prev) => {
-          const newErrors = { ...prev };
-          delete newErrors[field];
-          return newErrors;
-        });
+    if (errors[field]) {
+      setErrors((prev) => {
+        const newErrors = { ...prev };
+        delete newErrors[field];
+        return newErrors;
+      });
       }
     }
   };

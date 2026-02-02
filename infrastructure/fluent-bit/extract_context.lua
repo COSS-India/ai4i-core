@@ -51,6 +51,10 @@ function extract_context_fields(tag, timestamp, record)
         if context["correlation_id"] ~= nil then
             record["correlationId"] = context["correlation_id"]
         end
+        -- Extract jaeger_trace_url from context if it exists
+        if context["jaeger_trace_url"] ~= nil then
+            record["jaeger_trace_url"] = context["jaeger_trace_url"]
+        end
     end
     
     -- Flatten nested req.* fields if they exist
@@ -87,13 +91,25 @@ end
 
 -- Function to add Jaeger trace URL to logs
 function add_jaeger_url(tag, timestamp, record)
-    -- Check if trace_id exists
-    if record["trace_id"] ~= nil and type(record["trace_id"]) == "string" and record["trace_id"] ~= "" then
-        local trace_id = record["trace_id"]
-        -- Store only the trace_id in jaeger_trace_url field
-        -- OpenSearch Dashboards will use URL template to construct: http://localhost:16686/trace/{trace_id}
-        -- This ensures the URL is treated as external absolute URL, not relative path
-        record["jaeger_trace_url"] = trace_id
+    -- First, check if jaeger_trace_url exists in context and extract it
+    if record["context"] ~= nil and type(record["context"]) == "table" then
+        local context = record["context"]
+        if context["jaeger_trace_url"] ~= nil and context["jaeger_trace_url"] ~= "" then
+            record["jaeger_trace_url"] = context["jaeger_trace_url"]
+            return 1, timestamp, record
+        end
+    end
+    
+    -- Only add jaeger_trace_url if it doesn't already exist (from context extraction or nest filter)
+    if record["jaeger_trace_url"] == nil or record["jaeger_trace_url"] == "" then
+        -- Check if trace_id exists
+        if record["trace_id"] ~= nil and type(record["trace_id"]) == "string" and record["trace_id"] ~= "" then
+            local trace_id = record["trace_id"]
+            -- Store only the trace_id in jaeger_trace_url field
+            -- OpenSearch Dashboards will use URL template to construct: http://localhost:16686/trace/{trace_id}
+            -- This ensures the URL is treated as external absolute URL, not relative path
+            record["jaeger_trace_url"] = trace_id
+        end
     end
     
     return 1, timestamp, record

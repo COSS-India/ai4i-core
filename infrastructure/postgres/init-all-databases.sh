@@ -12,6 +12,25 @@
 #   docker compose exec postgres psql -U dhruva_user -d dhruva_platform -f /docker-entrypoint-initdb.d/init-all-databases.sql
 # ============================================================================
 
+
+# auth_db
+# -----------------------
+# ALTER TABLE users
+# ADD COLUMN is_tenant BOOLEAN;
+
+# ALTER TABLE user_sessions
+#     ALTER COLUMN refresh_token TYPE TEXT,
+#     ALTER COLUMN session_token TYPE TEXT;
+
+
+# multi tenant db
+# ----------------------
+# ALTER TABLE tenants
+# ADD COLUMN user_id INTEGER;
+
+# CREATE INDEX idx_tenants_user_id
+# ON tenants (user_id);
+
 set -e
 
 # Get database connection parameters from environment or use defaults

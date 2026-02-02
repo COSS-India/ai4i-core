@@ -36,6 +36,8 @@ class Model(AppDBBase):
     inference_endpoint = Column(JSONB, nullable=False)
     benchmarks = Column(JSONB)
     submitter = Column(JSONB, nullable=False)
+    created_by = Column(String(255), nullable=True) 
+    updated_by = Column(String(255), nullable=True)  
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
@@ -68,12 +70,13 @@ class Service(AppDBBase):
     is_published = Column(Boolean, nullable=False, default=False)
     published_at = Column(BigInteger, default=None)
     unpublished_at = Column(BigInteger, default=None)
+    created_by = Column(String(255), nullable=True)  
+    updated_by = Column(String(255), nullable=True) 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
     # Note: Foreign key constraint on composite (model_id, version) will be handled at application level
-    # since SQLAlchemy doesn't easily support composite foreign keys to composite unique constraints
     model = relationship(
         "Model",
         back_populates="services",
