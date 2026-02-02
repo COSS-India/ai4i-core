@@ -143,6 +143,30 @@ class JSONFormatter(logging.Formatter):
             # Add organization field with "unknown" to indicate it was checked but not found
             log_data["organization"] = "unknown"
         
+        # Get tenant_id from context (if available)
+        # Also check log record's extra context (set by RequestLoggingMiddleware)
+        tenant_id = None
+        try:
+            from .context import get_tenant_id
+            tenant_id = get_tenant_id()
+        except Exception:
+            pass
+        
+        # Fallback: check if tenant_id is in the log record's extra context
+        if not tenant_id:
+            context = getattr(record, "context", None)
+            if context and isinstance(context, dict):
+                tenant_id = context.get("tenant_id")
+        
+        # Always add tenant_id field
+        # If not found, use temporary default value (temporary fix)
+        if tenant_id:
+            log_data["tenant_id"] = tenant_id
+        else:
+            # Temporary fix: use default tenant_id if not found
+            # TODO: Remove this temporary fix once all users are registered to tenants
+            log_data["tenant_id"] = "new-organization-487578"
+        
         # Add service metadata
         log_data["service_version"] = self.service_version
         log_data["environment"] = self.environment

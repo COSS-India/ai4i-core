@@ -437,6 +437,56 @@ async def readiness_check():
         logger.error(f"Readiness check failed: {e}")
         raise HTTPException(status_code=503, detail="Service not ready")
 
+@app.get("/api/v1/auth/debug/token-info")
+async def debug_token_info(
+    current_user: User = Depends(get_current_user),
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """
+    Debug endpoint to inspect JWT token contents.
+    Shows all fields in the token including tenant information.
+    """
+    token = credentials.credentials
+    payload = AuthUtils.verify_access_token(token)
+    
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+    
+    # Get tenant info from database
+    multi_tenant_db = None
+    try:
+        multi_tenant_db_session = globals().get('multi_tenant_db_session')
+        if multi_tenant_db_session:
+            async with multi_tenant_db_session() as session:
+                tenant_info = await get_tenant_info(current_user.id, session, current_user.is_tenant)
+        else:
+            tenant_info = None
+    except Exception as e:
+        logger.warning(f"Could not fetch tenant info: {e}")
+        tenant_info = None
+    
+    return {
+        "token_payload": payload,
+        "user_info": {
+            "id": current_user.id,
+            "email": current_user.email,
+            "username": current_user.username,
+            "is_tenant": current_user.is_tenant,
+            "is_active": current_user.is_active,
+            "is_verified": current_user.is_verified,
+        },
+        "tenant_info_from_db": tenant_info,
+        "has_tenant_in_token": "tenant_id" in payload,
+        "tenant_fields_in_token": {
+            field: payload.get(field) 
+            for field in ["tenant_id", "tenant_uuid", "schema_name", "subscriptions", "user_subscriptions"]
+            if field in payload
+        }
+    }
+
 @app.get("/api/v1/auth/status")
 async def auth_status():
     """Authentication service status"""

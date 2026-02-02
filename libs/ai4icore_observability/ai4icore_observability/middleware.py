@@ -46,20 +46,25 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # Extract organization and app (including from JWT token)
         organization, app = self._extract_customer_app(request)
         
-        # Store organization in request.state for other middlewares to access
+        # Extract tenant_id from JWT token
+        tenant_id = self._extract_tenant_id_from_jwt(request)
+        
+        # Store organization and tenant_id in request.state for other middlewares to access
         # IMPORTANT: Set this BEFORE await call_next() so it's available to inner middlewares
         request.state.organization = organization
+        request.state.tenant_id = tenant_id
         
         # Set organization in logging context for log formatter
         try:
-            from ai4icore_logging.context import set_organization
+            from ai4icore_logging.context import set_organization, set_tenant_id
             set_organization(organization)
+            set_tenant_id(tenant_id)
             if self.config.debug:
-                logger.debug(f"Set organization in logging context: {organization}")
+                logger.debug(f"Set organization in logging context: {organization}, tenant_id: {tenant_id}")
         except Exception as e:
             # Log error for debugging
             if self.config.debug:
-                logger.debug(f"Failed to set organization in context: {e}", exc_info=True)
+                logger.debug(f"Failed to set organization/tenant_id in context: {e}", exc_info=True)
             pass
         
         # Initialize body_bytes variable for potential reuse
@@ -241,6 +246,33 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     return sub
         
         return None
+    
+    def _extract_tenant_id_from_jwt(self, request: Request) -> str:
+        """
+        Extract tenant_id from JWT token in authorization header.
+        If tenant_id is not found in JWT, returns a temporary default value.
+        
+        Returns:
+            tenant_id from JWT if present, otherwise "new-organization-487578" (temporary fix)
+        """
+        auth_header = request.headers.get("authorization", "")
+        
+        if auth_header:
+            decoded_token = self._decode_jwt_token(auth_header)
+            if decoded_token:
+                # Extract tenant_id from JWT token
+                tenant_id = decoded_token.get("tenant_id")
+                if tenant_id:
+                    if self.config.debug:
+                        logger.debug(f"Extracted tenant_id from JWT: {tenant_id}")
+                    return tenant_id
+        
+        # Temporary fix: if tenant_id is missing, use default value
+        # TODO: Remove this temporary fix once all users are registered to tenants
+        default_tenant_id = "new-organization-487578"
+        if self.config.debug:
+            logger.debug(f"tenant_id not found in JWT, using temporary default: {default_tenant_id}")
+        return default_tenant_id
     
     def _extract_customer_app(self, request: Request) -> tuple:
         """Extract organization and app from request headers and JWT token.
