@@ -5,12 +5,19 @@ Uses structured JSON logging with trace correlation, compatible with OpenSearch 
 """
 
 import time
+import os
+import json
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import UploadFile
 from ai4icore_logging import get_logger, get_correlation_id, get_organization
 
 logger = get_logger(__name__)
+
+# Environment variable to enable request body logging
+LOG_REQUEST_BODY = os.getenv("LOG_REQUEST_BODY", "false").lower() == "true"
+MAX_BODY_LOG_SIZE = int(os.getenv("MAX_BODY_LOG_SIZE", "10000"))  # Max 10KB by default
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -27,6 +34,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Extract request info
         method = request.method
         path = request.url.path
+        query_params = str(request.url.query) if request.url.query else ""
         client_ip = request.client.host if request.client else "unknown"
         user_agent = request.headers.get("user-agent", "unknown")
 
@@ -36,6 +44,75 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # Get correlation ID (set by CorrelationMiddleware)
         correlation_id = get_correlation_id(request)
+        
+        # Print incoming request details
+        print("=" * 80)
+        print(f"📥 INCOMING REQUEST - API Gateway")
+        print(f"   Method: {method}")
+        print(f"   Path: {path}")
+        if query_params:
+            print(f"   Query: {query_params}")
+        print(f"   Client IP: {client_ip}")
+        print(f"   User Agent: {user_agent}")
+        print(f"   Correlation ID: {correlation_id}")
+        if user_id:
+            print(f"   User ID: {user_id}")
+        if api_key_id:
+            print(f"   API Key ID: {api_key_id}")
+        
+        # Print headers (excluding sensitive ones)
+        print(f"   Headers:")
+        for header_name, header_value in request.headers.items():
+            if header_name.lower() in ['authorization', 'x-api-key', 'cookie']:
+                # Mask sensitive headers
+                if header_name.lower() == 'authorization':
+                    masked = f"{header_value[:20]}..." if len(header_value) > 20 else "***"
+                    print(f"      {header_name}: {masked}")
+                else:
+                    print(f"      {header_name}: ***")
+            else:
+                print(f"      {header_name}: {header_value}")
+        
+        # Log request body if enabled (optional, as it consumes the body stream)
+        if method in ['POST', 'PUT', 'PATCH']:
+            content_type = request.headers.get('content-type', '')
+            content_length = request.headers.get('content-length', 'unknown')
+            
+            if LOG_REQUEST_BODY:
+                try:
+                    # Read body for logging
+                    body_bytes = await request.body()
+                    
+                    # Recreate request stream so downstream handlers can read it
+                    async def receive():
+                        return {"type": "http.request", "body": body_bytes}
+                    request._receive = receive
+                    
+                    if body_bytes and len(body_bytes) <= MAX_BODY_LOG_SIZE:
+                        # Try to parse as JSON
+                        try:
+                            body_json = json.loads(body_bytes.decode('utf-8'))
+                            print(f"   Request Body (JSON):")
+                            body_str = json.dumps(body_json, indent=6)
+                            for line in body_str.split('\n'):
+                                print(f"      {line}")
+                        except:
+                            # If not JSON, show as string
+                            body_str = body_bytes.decode('utf-8', errors='ignore')
+                            if len(body_str) > 500:
+                                print(f"   Request Body (first 500 chars): {body_str[:500]}...")
+                            else:
+                                print(f"   Request Body: {body_str}")
+                    elif body_bytes:
+                        print(f"   Request Body: [Too large to log: {len(body_bytes)} bytes, max: {MAX_BODY_LOG_SIZE}]")
+                    else:
+                        print(f"   Request Body: [Empty]")
+                except Exception as e:
+                    print(f"   Request Body: [Error reading: {e}]")
+            else:
+                print(f"   Request Body: [Content-Type: {content_type}, Length: {content_length} bytes] (body logging disabled)")
+        
+        print("=" * 80)
 
         # Process request first (this will trigger ObservabilityMiddleware which sets organization)
         # Note: FastAPI exception handlers (like RequestValidationError) will catch
@@ -92,6 +169,16 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_context["gateway_error_service"] = gateway_error_service
             log_context["gateway_error_type"] = getattr(request.state, "gateway_error_type", "unknown")
 
+        # Print response details
+        print("=" * 80)
+        print(f"📤 OUTGOING RESPONSE - API Gateway")
+        print(f"   Method: {method}")
+        print(f"   Path: {path}")
+        print(f"   Status Code: {status_code}")
+        print(f"   Processing Time: {processing_time:.3f}s")
+        print(f"   Correlation ID: {correlation_id}")
+        print("=" * 80)
+        
         # Log with appropriate level using structured logging
         # Skip logging successful requests (200-299) - these are logged at service level
         # Skip logging server errors (500+) from downstream services - these are logged at service level to avoid duplicates

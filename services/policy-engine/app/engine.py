@@ -29,7 +29,27 @@ def evaluate_rules(
             max_cost_usd=0.00 # Zero cost
         )
 
-    # 2. Accuracy Check (Highest Precedence)
+    # 2. Enterprise Tier: tier_3 + standard accuracy -> state_of_art
+    if cost == CostPolicy.TIER_3 and accuracy == AccuracyPolicy.STANDARD:
+        return "pol_enterprise_tier", RoutingFlags(
+            model_family="state_of_art",
+            model_variant="teacher",
+            priority=9,
+            routing_strategy="quality_first",
+            max_cost_usd=0.10
+        )
+
+    # 3. Paid Tier: tier_2 + sensitive accuracy -> balanced
+    if cost == CostPolicy.TIER_2 and accuracy == AccuracyPolicy.SENSITIVE:
+        return "pol_paid_tier", RoutingFlags(
+            model_family="balanced",
+            model_variant="standard",
+            priority=5,
+            routing_strategy="balanced",
+            max_cost_usd=0.05
+        )
+
+    # 4. Accuracy Check (Highest Precedence for other cases)
     # If user needs "Sensitive" accuracy, we try to give Teacher models
     # UNLESS Cost is Tier 1 (Strict Limits)
     if accuracy == AccuracyPolicy.SENSITIVE:
@@ -52,7 +72,7 @@ def evaluate_rules(
                 max_cost_usd=0.10
             )
 
-    # 3. Latency Check
+    # 5. Latency Check
     if latency == LatencyPolicy.LOW:
         # Wants Speed (Turbo)
         return "pol_low_latency", RoutingFlags(
@@ -63,5 +83,5 @@ def evaluate_rules(
             max_cost_usd=0.05
         )
 
-    # 4. Default / Balanced
+    # 6. Default / Balanced
     return "pol_standard_balanced", FALLBACK_FLAGS

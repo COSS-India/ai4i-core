@@ -1,0 +1,127 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server-canary
+  labels:
+    app: mcp-server
+    version: canary
+    component: mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-server
+      version: canary
+  template:
+    metadata:
+      labels:
+        app: mcp-server
+        version: canary
+        component: mcp
+    spec:
+      containers:
+      - name: mcp-server
+        image: ai4i-core/mcp-server:canary
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8094
+          name: http
+        env:
+        - name: SERVICE_NAME
+          value: "ai4i-mcp-server"
+        - name: SERVICE_VERSION
+          value: "canary"
+        - name: ENVIRONMENT
+          value: "production"
+        - name: DEBUG
+          value: "false"
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: "8094"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: LOG_FORMAT
+          value: "json"
+        # Service URLs
+        - name: ASR_SERVICE_URL
+          value: "http://asr-service:8087"
+        - name: NMT_SERVICE_URL
+          value: "http://nmt-service:8089"
+        - name: TTS_SERVICE_URL
+          value: "http://tts-service:8088"
+        - name: PIPELINE_SERVICE_URL
+          value: "http://pipeline-service:8090"
+        - name: METRICS_SERVICE_URL
+          value: "http://metrics-service:8083"
+        # Feature flags (default OFF for canary)
+        - name: MCP_ENABLED
+          value: "false"
+        - name: LLM_USE_MCP_CLIENT
+          value: "false"
+        # JWT Configuration
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: mcp-server-secrets
+              key: jwt-secret-key
+        - name: JWT_ALGORITHM
+          value: "HS256"
+        # Kafka Configuration
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          value: "kafka:9092"
+        - name: KAFKA_TOOL_INVOCATIONS_TOPIC
+          value: "tool_invocations"
+        - name: KAFKA_ENABLED
+          value: "true"
+        # Redis Configuration
+        - name: REDIS_HOST
+          value: "redis"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mcp-server-secrets
+              key: redis-password
+              optional: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8094
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8094
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server-canary
+  labels:
+    app: mcp-server
+    version: canary
+spec:
+  selector:
+    app: mcp-server
+    version: canary
+  ports:
+  - port: 8094
+    targetPort: 8094
+    name: http
+  type: ClusterIP

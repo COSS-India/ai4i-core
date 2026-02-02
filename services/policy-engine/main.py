@@ -49,6 +49,20 @@ async def evaluate_policy(request: PolicyRequest):
             if request.latency_policy: lat = request.latency_policy
             if request.cost_policy: cost = request.cost_policy
             if request.accuracy_policy: acc = request.accuracy_policy
+        else:
+            # No tenant_id, but check if explicit policies are provided
+            # If explicit policies are provided, use them
+            if request.latency_policy: lat = request.latency_policy
+            if request.cost_policy: cost = request.cost_policy
+            if request.accuracy_policy: acc = request.accuracy_policy
+            
+            # Check if this matches Free tier pattern (high/tier_1/sensitive)
+            # If so, keep is_free_user = True to return distilled
+            # Otherwise, treat as non-free user
+            if (lat == LatencyPolicy.HIGH and cost == CostPolicy.TIER_1 and acc == AccuracyPolicy.SENSITIVE):
+                is_free_user = True
+            else:
+                is_free_user = False
 
         # 3. Evaluate Logic
         pid, flags = evaluate_rules(is_free_user, lat, cost, acc)

@@ -116,3 +116,11 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Docker volumes (created by containers)
+volumes/
+
+# Database backups (contain sensitive data)
+postgres_backup_*/
+postgres_backup_*.zip
+*.sql
