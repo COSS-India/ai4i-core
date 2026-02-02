@@ -91,10 +91,10 @@ const Header: React.FC = () => {
         setTitle("Sign In");
         break;
       case "/":
-        setTitle("AI4Inclusion Console");
+        setTitle("");
         break;
       default:
-        setTitle("AI4Inclusion Console");
+        setTitle("");
     }
   }, [router.pathname]);
 
