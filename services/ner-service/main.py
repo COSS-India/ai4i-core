@@ -23,8 +23,39 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from ai4icore_observability import ObservabilityPlugin, PluginConfig
+# Observability imports (optional)
+OBSERVABILITY_AVAILABLE = False
+ObservabilityPlugin = None
+PluginConfig = None
+try:
+    from ai4icore_observability import ObservabilityPlugin, PluginConfig
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    pass
+
+# Model Management imports (required)
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
+
+# Telemetry imports (optional)
+TELEMETRY_AVAILABLE = False
+setup_tracing = None
+FastAPIInstrumentor = None
+try:
+    from ai4icore_telemetry import setup_tracing
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    TELEMETRY_AVAILABLE = True
+except ImportError:
+    pass  # Will be handled below
+
+# Logging imports
+LOGGING_AVAILABLE = False
+configure_logging = None
+get_logger = None
+try:
+    from ai4icore_logging import configure_logging, get_logger
+    LOGGING_AVAILABLE = True
+except ImportError:
+    pass
 
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
@@ -34,19 +65,28 @@ from middleware.error_handler_middleware import add_error_handlers
 from models import database_models
 from models import auth_models  # Import to ensure auth tables are created
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
-
-# Observability plugin (optional)
-try:
-    from ai4icore_observability import ObservabilityPlugin, PluginConfig
-    OBSERVABILITY_AVAILABLE = True
-except ImportError:
-    OBSERVABILITY_AVAILABLE = False
-    logger.warning("AI4ICore Observability Plugin not available - continuing without it")
+# Configure structured logging (to OpenSearch, with correlation IDs)
+if LOGGING_AVAILABLE:
+    configure_logging(
+        service_name=os.getenv("SERVICE_NAME", "ner-service"),
+        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
+    )
+    logger = get_logger(__name__)
+    
+    # Aggressively disable uvicorn access logger BEFORE uvicorn starts
+    # This must happen before uvicorn imports/creates its loggers
+    uvicorn_access = logging.getLogger("uvicorn.access")
+    uvicorn_access.handlers.clear()
+    uvicorn_access.propagate = False
+    uvicorn_access.disabled = True
+    uvicorn_access.setLevel(logging.CRITICAL + 1)  # Set above CRITICAL to ensure nothing logs
+else:
+    # Fallback to standard logging if ai4icore_logging is not available
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO"),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+    logger = logging.getLogger(__name__)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
@@ -246,7 +286,7 @@ app = FastAPI(
 )
 
 # Observability (optional)
-if OBSERVABILITY_AVAILABLE:
+if OBSERVABILITY_AVAILABLE and ObservabilityPlugin:
     try:
         config = PluginConfig.from_env()
         config.enabled = True
@@ -260,6 +300,28 @@ if OBSERVABILITY_AVAILABLE:
         logger.info("AI4ICore Observability Plugin initialized for NER service")
     except Exception as e:
         logger.warning(f"Failed to initialize Observability Plugin: {e}")
+
+# Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+if TELEMETRY_AVAILABLE and setup_tracing:
+    try:
+        tracer = setup_tracing("ner-service")
+        if tracer:
+            logger.info("✅ Distributed tracing initialized for NER service")
+            # Instrument FastAPI to automatically create spans for all requests
+            # Exclude health check endpoints to reduce span noise
+            if FastAPIInstrumentor:
+                FastAPIInstrumentor.instrument_app(
+                    app,
+                    excluded_urls="/health,/metrics,/enterprise/metrics,/docs,/redoc,/openapi.json"
+                )
+                logger.info("✅ FastAPI instrumentation enabled for tracing")
+        else:
+            logger.warning("⚠️ Tracing setup returned None")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to setup tracing: {e}")
+else:
+    logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
 
 # Initialize Redis client early for middleware (synchronous for Model Management Plugin)
 redis_client_sync = None

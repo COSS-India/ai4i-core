@@ -110,6 +110,19 @@ export interface APIKeyResponse {
   last_used?: string;
 }
 
+export interface AdminAPIKeyWithUserResponse extends APIKeyResponse {
+  user_id: number;
+  user_email: string;
+  username: string;
+}
+
+export interface APIKeyUpdate {
+  key_name?: string;
+  permissions?: string[];
+  is_active?: boolean;
+  expires_days?: number;
+}
+
 export interface OAuth2Provider {
   provider: string;
   client_id: string;

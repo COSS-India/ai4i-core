@@ -224,6 +224,8 @@ class AudioService:
     
     async def download_audio(self, url: str) -> bytes:
         """Download audio from URL or read from local file path."""
+        from utils.validation_utils import UploadFailedError, UploadTimeoutError
+        
         try:
             # Check if it's a local file path (doesn't start with http:// or https://)
             if not url.startswith(('http://', 'https://')):
@@ -233,16 +235,29 @@ class AudioService:
                     with open(url, 'rb') as f:
                         return f.read()
                 else:
-                    raise FileNotFoundError(f"Audio file not found: {url}")
+                    raise UploadFailedError(f"Audio file not found: {url}")
             
             # Download from URL
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                return response.content
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    return response.content
+            except httpx.TimeoutException:
+                logger.error(f"Timeout downloading audio from {url}")
+                raise UploadTimeoutError("Upload timed out. Please check your internet connection and try again.")
+            except httpx.HTTPStatusError as e:
+                logger.error(f"HTTP error downloading audio from {url}: {e}")
+                raise UploadFailedError("File upload failed. Please check your internet connection and try again.")
+            except httpx.RequestError as e:
+                logger.error(f"Request error downloading audio from {url}: {e}")
+                raise UploadFailedError("File upload failed. Please check your internet connection and try again.")
+        except (UploadFailedError, UploadTimeoutError):
+            raise  # Re-raise these specific errors
         except Exception as e:
             logger.error(f"Failed to download audio from {url}: {e}")
-            raise
+            from utils.validation_utils import UploadFailedError
+            raise UploadFailedError("File upload failed. Please check your internet connection and try again.")
     
     def stretch_audio(self, input_audio: np.ndarray, speed_factor: float, sample_rate: int) -> np.ndarray:
         """Stretch audio by speed factor using torchaudio."""

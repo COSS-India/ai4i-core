@@ -11,6 +11,7 @@ import {
   HStack,
   Progress,
   Select,
+  Spinner,
   Text,
   Textarea,
   useToast,
@@ -18,9 +19,11 @@ import {
   Badge,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
-import { performNERInference } from "../services/nerService";
+import { performNERInference, listNERServices } from "../services/nerService";
+import { extractErrorInfo } from "../utils/errorHandler";
 
 const NERPage: React.FC = () => {
   const toast = useToast();
@@ -31,12 +34,42 @@ const NERPage: React.FC = () => {
   const [result, setResult] = useState<any>(null);
   const [responseTime, setResponseTime] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const [selectedServiceId, setSelectedServiceId] = useState<string>("");
+
+  // Fetch available NER services
+  const {
+    data: services = [],
+    isLoading: isLoadingServices,
+    error: servicesError,
+  } = useQuery({
+    queryKey: ["nerServices"],
+    queryFn: listNERServices,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+  });
+
+  // Auto-select first service when services are loaded
+  useEffect(() => {
+    if (services.length > 0 && !selectedServiceId) {
+      setSelectedServiceId(services[0].service_id);
+    }
+  }, [services, selectedServiceId]);
 
   const handleProcess = async () => {
     if (!inputText.trim()) {
       toast({
         title: "Input Required",
         description: "Please enter text to process.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (!selectedServiceId) {
+      toast({
+        title: "No Service Selected",
+        description: "Please select a NER service.",
         status: "warning",
         duration: 3000,
         isClosable: true,
@@ -51,7 +84,7 @@ const NERPage: React.FC = () => {
     try {
       const startTime = Date.now();
       const response = await performNERInference(inputText, {
-        serviceId: "dhruva-ner",
+        serviceId: selectedServiceId,
         language: {
           sourceLanguage,
         },
@@ -63,24 +96,12 @@ const NERPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Prioritize API error message from response
-      let errorMessage = "Failed to perform NER inference";
-      
-      if (err?.response?.data?.detail?.message) {
-        errorMessage = err.response.data.detail.message;
-      } else if (err?.response?.data?.message) {
-        errorMessage = err.response.data.message;
-      } else if (err?.response?.data?.detail) {
-        if (typeof err.response.data.detail === 'string') {
-          errorMessage = err.response.data.detail;
-        }
-      } else if (err?.message) {
-        errorMessage = err.message;
-      }
+      // Use centralized error handler
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err);
       
       setError(errorMessage);
       toast({
-        title: "Error",
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: "error",
         duration: 5000,
@@ -131,16 +152,80 @@ const NERPage: React.FC = () => {
             </Text>
           </Box>
 
-          <Grid
-            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
-            gap={8}
-            w="full"
+        <Grid
+          templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
+          gap={8}
+          w="full"
             maxW="1200px"
-            mx="auto"
-          >
+          mx="auto"
+        >
             {/* Configuration Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+          <GridItem>
+            <VStack spacing={6} align="stretch">
+
+              {/* Service Selection */}
+              <FormControl>
+                <FormLabel fontSize="sm" fontWeight="semibold">
+                  NER Service:
+                </FormLabel>
+                {isLoadingServices ? (
+                  <HStack spacing={2} p={2}>
+                    <Spinner size="sm" color="orange.500" />
+                    <Text fontSize="sm" color="gray.600">
+                      Loading services...
+                    </Text>
+                  </HStack>
+                ) : servicesError ? (
+                  <Box p={3} bg="red.50" borderRadius="md" border="1px" borderColor="red.200">
+                    <Text fontSize="sm" color="red.700">
+                      Failed to load services. Please try refreshing the page.
+                    </Text>
+                  </Box>
+                ) : (
+                  <Select
+                    value={selectedServiceId}
+                    onChange={(e) => setSelectedServiceId(e.target.value)}
+                    placeholder="Select a NER service"
+                    disabled={fetching}
+                    size="md"
+                    borderColor="gray.300"
+                    _focus={{
+                      borderColor: "orange.400",
+                      boxShadow: "0 0 0 1px var(--chakra-colors-orange-400)",
+                    }}
+                  >
+                    {services.map((service) => (
+                      <option key={service.service_id} value={service.service_id}>
+                        {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+                {selectedServiceId && services.length > 0 && (
+                  <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                    {(() => {
+                      const selectedService = services.find((s) => s.service_id === selectedServiceId);
+                      return selectedService ? (
+                        <>
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Service ID:</strong> {selectedService.service_id}
+                          </Text>
+                          {selectedService.serviceDescription && (
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Description:</strong> {selectedService.serviceDescription}
+                            </Text>
+                          )}
+                          {selectedService.supported_languages.length > 0 && (
+                            <Text fontSize="sm" color="gray.700">
+                              <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
+                            </Text>
+                          )}
+                        </>
+                      ) : null;
+                    })()}
+                  </Box>
+                )}
+              </FormControl>
 
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
@@ -167,20 +252,20 @@ const NERPage: React.FC = () => {
                 </Select>
               </FormControl>
 
-                <FormControl>
-                  <FormLabel fontSize="sm" fontWeight="semibold">
-                    Enter text to identify entities:
-                  </FormLabel>
-                  <Textarea
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    placeholder="Enter text to identify entities..."
-                    rows={6}
-                    isDisabled={fetching}
-                    bg="white"
-                    borderColor="gray.300"
-                  />
-                </FormControl>
+              <FormControl>
+                <FormLabel fontSize="sm" fontWeight="semibold">
+                  Enter text to identify entities:
+                </FormLabel>
+                <Textarea
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  placeholder="Enter text to identify entities..."
+                  rows={6}
+                  isDisabled={fetching}
+                  bg="white"
+                  borderColor="gray.300"
+                />
+              </FormControl>
 
                 <Button
                   colorScheme="orange"
@@ -199,29 +284,29 @@ const NERPage: React.FC = () => {
             <GridItem>
               <VStack spacing={6} align="stretch">
                 {/* Progress Indicator */}
-                {fetching && (
-                  <Box>
-                    <Text mb={2} fontSize="sm" color="gray.600">
-                      Processing text...
-                    </Text>
-                    <Progress size="xs" isIndeterminate colorScheme="orange" />
-                  </Box>
-                )}
+              {fetching && (
+                <Box>
+                  <Text mb={2} fontSize="sm" color="gray.600">
+                    Processing text...
+                  </Text>
+                  <Progress size="xs" isIndeterminate colorScheme="orange" />
+                </Box>
+              )}
 
                 {/* Error Display */}
-                {error && (
-                  <Box
-                    p={4}
-                    bg="red.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="red.200"
-                  >
-                    <Text color="red.600" fontSize="sm">
-                      {error}
-                    </Text>
-                  </Box>
-                )}
+              {error && (
+                <Box
+                  p={4}
+                  bg="red.50"
+                  borderRadius="md"
+                  border="1px"
+                  borderColor="red.200"
+                >
+                  <Text color="red.600" fontSize="sm">
+                    {error}
+                  </Text>
+                </Box>
+              )}
 
                 {/* Metrics Box */}
                 {fetched && (
@@ -246,72 +331,72 @@ const NERPage: React.FC = () => {
                 )}
 
                 {/* NER Results */}
-                {fetched && result && result.output && result.output.length > 0 && (
+              {fetched && result && result.output && result.output.length > 0 && (
                   <>
-                    <Box
-                      p={4}
-                      bg="gray.50"
-                      borderRadius="md"
-                      border="1px"
-                      borderColor="gray.200"
-                    >
-                      <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
-                        Identified Entities:
-                      </Text>
-                      <VStack align="stretch" spacing={2}>
-                        {(() => {
-                          // Handle both response formats:
-                          // 1. New format: nerPrediction array with token/tag
-                          // 2. Old format: entities array with text/label
-                          const firstOutput = result.output[0];
-                          let entities: any[] = [];
-                          
-                          if (firstOutput?.nerPrediction) {
-                            // Transform nerPrediction to entities format
-                            entities = firstOutput.nerPrediction
-                              .filter((pred: any) => pred.tag) // Only filter out entries without tags
-                              .map((pred: any) => ({
-                                text: pred.token,
-                                label: pred.tag,
-                                start: pred.tokenStartIndex || 0,
-                                end: pred.tokenEndIndex || 0,
-                              }));
-                          } else if (firstOutput?.entities) {
-                            entities = firstOutput.entities;
-                          }
-                          
-                          if (entities.length === 0) {
-                            return (
-                              <Text fontSize="sm" color="gray.500" fontStyle="italic">
-                                No entities found in the text.
-                              </Text>
-                            );
-                          }
-                          
-                          return entities.map((entity: any, index: number) => (
-                            <HStack key={index} spacing={2}>
-                              <Badge
-                                colorScheme={getEntityColor(entity.label)}
-                                fontSize="xs"
-                                px={2}
-                                py={1}
-                                borderRadius="full"
-                              >
-                                {entity.label}
-                              </Badge>
-                              <Text fontSize="sm" color="gray.700">
-                                {entity.text}
-                              </Text>
-                            </HStack>
-                          ));
-                        })()}
-                      </VStack>
-                    </Box>
+                <Box
+                  p={4}
+                  bg="gray.50"
+                  borderRadius="md"
+                  border="1px"
+                  borderColor="gray.200"
+                >
+                  <Text fontSize="sm" fontWeight="semibold" mb={3} color="gray.700">
+                    Identified Entities:
+                  </Text>
+                  <VStack align="stretch" spacing={2}>
+                    {(() => {
+                      // Handle both response formats:
+                      // 1. New format: nerPrediction array with token/tag
+                      // 2. Old format: entities array with text/label
+                      const firstOutput = result.output[0];
+                      let entities: any[] = [];
+                      
+                      if (firstOutput?.nerPrediction) {
+                        // Transform nerPrediction to entities format
+                        entities = firstOutput.nerPrediction
+                          .filter((pred: any) => pred.tag) // Only filter out entries without tags
+                          .map((pred: any) => ({
+                            text: pred.token,
+                            label: pred.tag,
+                            start: pred.tokenStartIndex || 0,
+                            end: pred.tokenEndIndex || 0,
+                          }));
+                      } else if (firstOutput?.entities) {
+                        entities = firstOutput.entities;
+                      }
+                      
+                      if (entities.length === 0) {
+                        return (
+                          <Text fontSize="sm" color="gray.500" fontStyle="italic">
+                            No entities found in the text.
+                          </Text>
+                        );
+                      }
+                      
+                      return entities.map((entity: any, index: number) => (
+                        <HStack key={index} spacing={2}>
+                          <Badge
+                            colorScheme={getEntityColor(entity.label)}
+                            fontSize="xs"
+                            px={2}
+                            py={1}
+                            borderRadius="full"
+                          >
+                            {entity.label}
+                          </Badge>
+                          <Text fontSize="sm" color="gray.700">
+                            {entity.text}
+                          </Text>
+                        </HStack>
+                      ));
+                    })()}
+                  </VStack>
+                </Box>
 
                     {/* Clear Results Button */}
                     <Box textAlign="center">
                       <button
-                        onClick={clearResults}
+                  onClick={clearResults}
                         style={{
                           padding: "8px 16px",
                           backgroundColor: "#f7fafc",
@@ -321,15 +406,15 @@ const NERPage: React.FC = () => {
                           fontSize: "14px",
                           color: "#4a5568",
                         }}
-                      >
-                        Clear Results
+                >
+                  Clear Results
                       </button>
                     </Box>
                   </>
-                )}
-              </VStack>
-            </GridItem>
-          </Grid>
+              )}
+            </VStack>
+          </GridItem>
+        </Grid>
         </VStack>
       </ContentLayout>
     </>

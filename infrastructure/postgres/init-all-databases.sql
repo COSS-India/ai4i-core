@@ -32,6 +32,14 @@ CREATE DATABASE auth_db;
 -- (Error can be ignored if database already exists)
 CREATE DATABASE config_db;
 
+-- Create model_management_db
+-- (Error can be ignored if database already exists)
+CREATE DATABASE model_management_db;
+
+-- Create multi_tenant_db
+-- (Error can be ignored if database already exists)
+CREATE DATABASE multi_tenant_db;
+
 -- Create unleash database
 -- (Error can be ignored if database already exists)
 CREATE DATABASE unleash
@@ -44,11 +52,13 @@ CREATE DATABASE unleash
 -- Grant all privileges on each database to the configured PostgreSQL user
 GRANT ALL PRIVILEGES ON DATABASE auth_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE config_db TO dhruva_user;
+GRANT ALL PRIVILEGES ON DATABASE model_management_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE unleash TO dhruva_user;
 
 -- Add comments documenting which service uses each database
 COMMENT ON DATABASE auth_db IS 'Authentication & Authorization Service database';
 COMMENT ON DATABASE config_db IS 'Configuration Management Service database';
+COMMENT ON DATABASE model_management_db IS 'Model Management Service database - stores AI models and services registry';
 COMMENT ON DATABASE unleash IS 'Unleash feature flag management database';
 
 -- Re-enable error stopping for schema creation (we want to catch real errors)
@@ -78,6 +88,7 @@ CREATE TABLE IF NOT EXISTS users (
     phone_number VARCHAR(20),
     timezone VARCHAR(50) DEFAULT 'UTC',
     language VARCHAR(10) DEFAULT 'en'
+    is_tenant BOOLEAN DEFAULT NULL
 );
 
 -- Roles table
@@ -133,12 +144,12 @@ CREATE SEQUENCE IF NOT EXISTS sessions_id_seq;
 CREATE TABLE IF NOT EXISTS user_sessions (
     id INTEGER DEFAULT nextval('sessions_id_seq') NOT NULL,
     user_id INTEGER,
-    session_token VARCHAR(255) NOT NULL,
+    session_token TEXT NOT NULL,
     ip_address VARCHAR(45),
     user_agent TEXT,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    refresh_token VARCHAR(255),
+    refresh_token TEXT,
     device_info JSONB,
     is_active BOOLEAN DEFAULT true,
     last_accessed TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -709,7 +720,791 @@ CREATE TRIGGER update_service_registry_updated_at BEFORE UPDATE ON service_regis
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================================================
--- STEP 4: Seed Data
+-- STEP 4: Model Management Service Schema (model_management_db)
+-- ============================================================================
+
+\c model_management_db;
+
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- Create updated_at trigger function (needed in model_management_db)
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Create version_status enum type for model versioning
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'version_status') THEN
+        CREATE TYPE version_status AS ENUM ('ACTIVE', 'DEPRECATED');
+    END IF;
+END $$;
+
+-- Models table
+-- Stores AI model definitions with versioning support
+-- model_id is a hash of (name, version), unique constraint on (name, version)
+CREATE TABLE IF NOT EXISTS models (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    model_id VARCHAR(255) NOT NULL,
+    version VARCHAR(100) NOT NULL,
+    version_status version_status NOT NULL DEFAULT 'ACTIVE',
+    version_status_updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    submitted_on BIGINT NOT NULL,
+    updated_on BIGINT,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    ref_url VARCHAR(500),
+    task JSONB NOT NULL,
+    languages JSONB NOT NULL DEFAULT '[]'::jsonb,
+    license VARCHAR(255),
+    domain JSONB NOT NULL DEFAULT '[]'::jsonb,
+    inference_endpoint JSONB NOT NULL,
+    benchmarks JSONB,
+    submitter JSONB NOT NULL,
+    created_by VARCHAR(255) DEFAULT NULL,  -- User ID (string) who created this model
+    updated_by VARCHAR(255) DEFAULT NULL,  -- User ID (string) who last updated this model
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    -- Unique constraint on (name, version) for versioning support
+    CONSTRAINT uq_name_version UNIQUE (name, version)
+);
+
+-- Services table
+-- Stores service deployments linked to specific model versions
+-- service_id is a hash of (model_name, model_version, service_name)
+CREATE TABLE IF NOT EXISTS services (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    service_id VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    service_description TEXT,
+    hardware_description TEXT,
+    published_on BIGINT NOT NULL,
+    model_id VARCHAR(255) NOT NULL,
+    model_version VARCHAR(100) NOT NULL,
+    endpoint VARCHAR(500) NOT NULL,
+    api_key VARCHAR(255),
+    health_status JSONB,
+    benchmarks JSONB,
+    is_published BOOLEAN NOT NULL DEFAULT FALSE,
+    published_at BIGINT DEFAULT NULL,
+    unpublished_at BIGINT DEFAULT NULL,
+    created_by VARCHAR(255) DEFAULT NULL,  -- User ID (string) who created this service
+    updated_by VARCHAR(255) DEFAULT NULL,  -- User ID (string) who last updated this service
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    -- Unique constraint on (model_id, model_version, name)
+    CONSTRAINT uq_model_id_version_service_name UNIQUE (model_id, model_version, name)
+);
+
+-- Create indexes for models table
+CREATE INDEX IF NOT EXISTS idx_models_model_id ON models(model_id);
+CREATE INDEX IF NOT EXISTS idx_models_name ON models(name);
+CREATE INDEX IF NOT EXISTS idx_models_version ON models(version);
+CREATE INDEX IF NOT EXISTS idx_models_model_id_version ON models(model_id, version);
+CREATE INDEX IF NOT EXISTS idx_models_version_status ON models(version_status);
+CREATE INDEX IF NOT EXISTS idx_models_task ON models USING GIN (task);
+CREATE INDEX IF NOT EXISTS idx_models_languages ON models USING GIN (languages);
+CREATE INDEX IF NOT EXISTS idx_models_domain ON models USING GIN (domain);
+CREATE INDEX IF NOT EXISTS idx_models_created_at ON models(created_at);
+CREATE INDEX IF NOT EXISTS idx_models_created_by ON models(created_by);
+
+-- Create indexes for services table
+CREATE INDEX IF NOT EXISTS idx_services_service_id ON services(service_id);
+CREATE INDEX IF NOT EXISTS idx_services_name ON services(name);
+CREATE INDEX IF NOT EXISTS idx_services_model_id ON services(model_id);
+CREATE INDEX IF NOT EXISTS idx_services_model_id_version ON services(model_id, model_version);
+CREATE INDEX IF NOT EXISTS idx_services_is_published ON services(is_published);
+CREATE INDEX IF NOT EXISTS idx_services_created_at ON services(created_at);
+CREATE INDEX IF NOT EXISTS idx_services_health_status ON services USING GIN (health_status);
+CREATE INDEX IF NOT EXISTS idx_services_created_by ON services(created_by);
+
+-- Create trigger for version_status_updated_at
+CREATE OR REPLACE FUNCTION update_version_status_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.version_status IS DISTINCT FROM OLD.version_status THEN
+        NEW.version_status_updated_at = CURRENT_TIMESTAMP;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS update_models_version_status_updated_at ON models;
+CREATE TRIGGER update_models_version_status_updated_at
+    BEFORE UPDATE ON models
+    FOR EACH ROW
+    WHEN (NEW.version_status IS DISTINCT FROM OLD.version_status)
+    EXECUTE FUNCTION update_version_status_updated_at();
+
+-- Create triggers for updated_at columns
+DROP TRIGGER IF EXISTS update_models_updated_at ON models;
+CREATE TRIGGER update_models_updated_at BEFORE UPDATE ON models
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_services_updated_at ON services;
+CREATE TRIGGER update_services_updated_at BEFORE UPDATE ON services
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Add comments for documentation
+COMMENT ON TABLE models IS 'AI model registry with versioning support';
+COMMENT ON COLUMN models.model_id IS 'Hash-based unique identifier derived from (name, version)';
+COMMENT ON COLUMN models.version_status IS 'Status of the model version: ACTIVE or DEPRECATED';
+COMMENT ON COLUMN models.version_status_updated_at IS 'Timestamp when the version status was last updated';
+COMMENT ON COLUMN models.task IS 'JSONB containing task type and configuration';
+COMMENT ON COLUMN models.languages IS 'JSONB array of supported language codes';
+COMMENT ON COLUMN models.domain IS 'JSONB array of domain tags';
+COMMENT ON COLUMN models.inference_endpoint IS 'JSONB containing endpoint configuration';
+COMMENT ON COLUMN models.submitter IS 'JSONB containing submitter information';
+
+COMMENT ON TABLE services IS 'Service deployments linked to specific model versions';
+COMMENT ON COLUMN services.service_id IS 'Hash-based unique identifier derived from (model_name, model_version, service_name)';
+COMMENT ON COLUMN services.model_version IS 'Version of the model associated with this service';
+COMMENT ON COLUMN services.is_published IS 'Whether the service is published and publicly available';
+COMMENT ON COLUMN services.published_at IS 'Unix timestamp when the service was published';
+COMMENT ON COLUMN services.unpublished_at IS 'Unix timestamp when the service was unpublished';
+
+
+
+-- ============================================================================
+-- STEP 5: Multi Tenant Feature Schema (multi_tenant_db)
+-- ============================================================================
+
+
+\c multi_tenant_db;
+
+-- ----------------------------------------------------------------------------
+-- Table: tenants
+-- Description: Master tenants table (stored in public schema)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tenants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id VARCHAR(255) UNIQUE NOT NULL,
+    organization_name VARCHAR(255) NOT NULL,
+    contact_email VARCHAR(320) NOT NULL,
+    domain VARCHAR(255) UNIQUE NOT NULL,
+    schema_name VARCHAR(255) UNIQUE NOT NULL,
+    user_id INTEGER NULL,
+    subscriptions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+    quotas JSONB NOT NULL DEFAULT '{}'::jsonb,
+    usage JSONB NOT NULL DEFAULT '{}'::jsonb,
+    temp_admin_username VARCHAR(128) NULL,
+    temp_admin_password_hash VARCHAR(512) NULL,
+    expiry_date TIMESTAMP NULL DEFAULT (NOW() + INTERVAL '365 days'),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+-- Indexes for tenants table
+CREATE INDEX IF NOT EXISTS idx_tenants_contact_email ON tenants(contact_email);
+CREATE INDEX IF NOT EXISTS idx_tenants_user_id ON tenants(user_id);
+
+-- ----------------------------------------------------------------------------
+-- Table: tenant_billing_records
+-- Description: Billing records for tenants
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tenant_billing_records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    billing_customer_id VARCHAR(255) NULL,
+    cost NUMERIC(20, 10) NOT NULL DEFAULT 0.00,
+    billing_status VARCHAR(50) NOT NULL DEFAULT 'UNPAID',
+    suspension_reason VARCHAR(512) NULL,
+    suspended_until TIMESTAMP NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_tenant_billing_records_tenant_id 
+        FOREIGN KEY (tenant_id) 
+        REFERENCES tenants(id) 
+        ON DELETE CASCADE
+);
+
+-- ----------------------------------------------------------------------------
+-- Table: tenant_audit_logs
+-- Description: Audit logs for tenant actions
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tenant_audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    actor VARCHAR(50) NOT NULL DEFAULT 'system',
+    details JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_tenant_audit_logs_tenant_id 
+        FOREIGN KEY (tenant_id) 
+        REFERENCES tenants(id) 
+        ON DELETE CASCADE
+);
+
+-- Indexes for tenant_audit_logs table
+CREATE INDEX IF NOT EXISTS idx_tenant_audit_logs_tenant_id ON tenant_audit_logs(tenant_id);
+
+-- ----------------------------------------------------------------------------
+-- Table: tenant_email_verifications
+-- Description: Email verification tokens for tenants
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tenant_email_verifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    token VARCHAR(512) UNIQUE NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    verified_at TIMESTAMP WITH TIME ZONE NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_tenant_email_verifications_tenant_id 
+        FOREIGN KEY (tenant_id) 
+        REFERENCES tenants(id) 
+        ON DELETE CASCADE
+);
+
+-- ----------------------------------------------------------------------------
+-- Table: service_config
+-- Description: Service configuration and pricing
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS service_config (
+    id BIGSERIAL PRIMARY KEY,
+    service_name VARCHAR(50) UNIQUE NOT NULL,
+    unit_type VARCHAR(50) NOT NULL,
+    price_per_unit NUMERIC(10, 6) NOT NULL,
+    currency VARCHAR(10) NOT NULL DEFAULT 'INR',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+-- ----------------------------------------------------------------------------
+-- Table: tenant_users
+-- Description: Users associated with tenants
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tenant_users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER NOT NULL,
+    tenant_uuid UUID NOT NULL,
+    tenant_id VARCHAR(255) NOT NULL,
+    username VARCHAR(255) NOT NULL,
+    email VARCHAR(320) NOT NULL,
+    subscriptions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    is_approved BOOLEAN NOT NULL DEFAULT FALSE,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_tenant_users_tenant_uuid 
+        FOREIGN KEY (tenant_uuid) 
+        REFERENCES tenants(id) 
+        ON DELETE CASCADE,
+    CONSTRAINT fk_tenant_users_tenant_id 
+        FOREIGN KEY (tenant_id) 
+        REFERENCES tenants(tenant_id) 
+        ON DELETE CASCADE
+);
+
+-- Indexes for tenant_users table
+CREATE INDEX IF NOT EXISTS idx_tenant_users_user_id ON tenant_users(user_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_users_tenant_id ON tenant_users(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_users_email ON tenant_users(email);
+
+-- ----------------------------------------------------------------------------
+-- Table: user_billing_records
+-- Description: Billing records for individual tenant users
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_billing_records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    tenant_id VARCHAR(255) NOT NULL,
+    service_name VARCHAR(50) NOT NULL,
+    service_id BIGINT NOT NULL,
+    cost NUMERIC(20, 10) NOT NULL DEFAULT 0.00,
+    billing_period DATE NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_user_billing_records_user_id 
+        FOREIGN KEY (user_id) 
+        REFERENCES tenant_users(id) 
+        ON DELETE CASCADE,
+    CONSTRAINT fk_user_billing_records_tenant_id 
+        FOREIGN KEY (tenant_id) 
+        REFERENCES tenants(tenant_id) 
+        ON DELETE CASCADE,
+    CONSTRAINT fk_user_billing_records_service_id 
+        FOREIGN KEY (service_id) 
+        REFERENCES service_config(id)
+);
+
+-- ============================================================================
+-- Create Triggers for updated_at Timestamps
+-- ============================================================================
+
+-- Function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Apply trigger to all tables with updated_at column
+CREATE TRIGGER update_tenants_updated_at
+    BEFORE UPDATE ON tenants
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_tenant_billing_records_updated_at
+    BEFORE UPDATE ON tenant_billing_records
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_tenant_audit_logs_updated_at
+    BEFORE UPDATE ON tenant_audit_logs
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_service_config_updated_at
+    BEFORE UPDATE ON service_config
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_tenant_users_updated_at
+    BEFORE UPDATE ON tenant_users
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_user_billing_records_updated_at
+    BEFORE UPDATE ON user_billing_records
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================================
+-- Add Comments for Documentation
+-- ============================================================================
+
+COMMENT ON TABLE tenants IS 'Master tenants table storing tenant information in public schema';
+COMMENT ON COLUMN tenants.tenant_id IS 'User-provided unique tenant identifier';
+COMMENT ON COLUMN tenants.schema_name IS 'Generated database schema name for tenant-specific tables';
+COMMENT ON COLUMN tenants.subscriptions IS 'Array of service names the tenant is subscribed to (e.g., ["tts", "asr", "nmt"])';
+COMMENT ON COLUMN tenants.quotas IS 'JSON object with quota limits (e.g., {"api_calls_per_day": 10000, "storage_gb": 10})';
+COMMENT ON COLUMN tenants.usage IS 'JSON object with current usage metrics (e.g., {"api_calls_today": 500, "storage_used_gb": 2.5})';
+
+COMMENT ON TABLE tenant_billing_records IS 'Billing records for tenant-level billing';
+COMMENT ON TABLE tenant_audit_logs IS 'Audit trail of all tenant-related actions';
+COMMENT ON TABLE tenant_email_verifications IS 'Email verification tokens for tenant registration';
+COMMENT ON TABLE service_config IS 'Service configuration and pricing information';
+COMMENT ON TABLE tenant_users IS 'Users associated with tenants (many-to-one relationship)';
+COMMENT ON TABLE user_billing_records IS 'Billing records for individual tenant users';
+
+-- ============================================================================
+-- Verification
+-- ============================================================================
+
+DO $$
+BEGIN
+    RAISE NOTICE 'Multi-tenant database schema initialization completed successfully';
+    RAISE NOTICE 'Created tables: tenants, tenant_billing_records, tenant_audit_logs, tenant_email_verifications, service_config, tenant_users, user_billing_records';
+    RAISE NOTICE 'All tables are in the public schema of multi_tenant_db database';
+END $$;
+
+
+-- ============================================================================
+-- Seed Data: Sample Models and Services for Each Task Type
+-- ============================================================================
+-- These are placeholder models and services for testing purposes.
+-- Users should UPDATE the endpoint URLs to point to their actual services.
+-- 
+-- Task Types: asr, tts, nmt, llm, transliteration, language-detection,
+--             speaker-diarization, audio-lang-detection, language-diarization,
+--             ocr, ner
+-- ============================================================================
+
+-- Helper function to generate model_id hash (matches Python implementation)
+CREATE OR REPLACE FUNCTION generate_model_id(model_name TEXT, version TEXT) 
+RETURNS VARCHAR(32) AS $$
+BEGIN
+    RETURN SUBSTRING(encode(sha256((LOWER(TRIM(model_name)) || ':' || LOWER(TRIM(version)))::bytea), 'hex'), 1, 32);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Helper function to generate service_id hash (matches Python implementation)
+CREATE OR REPLACE FUNCTION generate_service_id(model_name TEXT, model_version TEXT, service_name TEXT) 
+RETURNS VARCHAR(32) AS $$
+BEGIN
+    RETURN SUBSTRING(encode(sha256((LOWER(TRIM(model_name)) || ':' || LOWER(TRIM(model_version)) || ':' || LOWER(TRIM(service_name)))::bytea), 'hex'), 1, 32);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Current timestamp in epoch milliseconds
+DO $$
+DECLARE
+    current_epoch BIGINT := EXTRACT(EPOCH FROM NOW()) * 1000;
+BEGIN
+    -- ========================================================================
+    -- ASR (Automatic Speech Recognition) Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('ASR-Conformer-Hindi', '1.0.0'),
+        '1.0.0',
+        'ASR-Conformer-Hindi',
+        'Automatic Speech Recognition model for Hindi language using Conformer architecture. UPDATE ENDPOINT before use.',
+        '{"type": "asr"}'::jsonb,
+        '["hi", "en"]'::jsonb,
+        '["general", "conversational"]'::jsonb,
+        'Apache-2.0',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8001/asr/v1/recognize"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('ASR-Conformer-Hindi', '1.0.0', 'asr-hindi-prod'),
+        'asr-hindi-prod',
+        generate_model_id('ASR-Conformer-Hindi', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8001/asr/v1/recognize',
+        'Production ASR service for Hindi. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA T4, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- TTS (Text-to-Speech) Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('TTS-FastPitch-Hindi', '1.0.0'),
+        '1.0.0',
+        'TTS-FastPitch-Hindi',
+        'Text-to-Speech model for Hindi language using FastPitch architecture. UPDATE ENDPOINT before use.',
+        '{"type": "tts"}'::jsonb,
+        '["hi"]'::jsonb,
+        '["general"]'::jsonb,
+        'MIT',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8002/tts/v1/synthesize"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('TTS-FastPitch-Hindi', '1.0.0', 'tts-hindi-prod'),
+        'tts-hindi-prod',
+        generate_model_id('TTS-FastPitch-Hindi', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8002/tts/v1/synthesize',
+        'Production TTS service for Hindi. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA T4, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- NMT (Neural Machine Translation) Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('NMT-IndicTrans2-En-Hi', '1.0.0'),
+        '1.0.0',
+        'NMT-IndicTrans2-En-Hi',
+        'Neural Machine Translation model for English to Hindi using IndicTrans2. UPDATE ENDPOINT before use.',
+        '{"type": "nmt"}'::jsonb,
+        '["en", "hi"]'::jsonb,
+        '["general", "news", "conversational"]'::jsonb,
+        'MIT',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8003/nmt/v1/translate"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('NMT-IndicTrans2-En-Hi', '1.0.0', 'nmt-en-hi-prod'),
+        'nmt-en-hi-prod',
+        generate_model_id('NMT-IndicTrans2-En-Hi', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8003/nmt/v1/translate',
+        'Production NMT service for English-Hindi translation. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA A10, RAM: 32GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- LLM (Large Language Model) Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('LLM-Indic-Chat', '1.0.0'),
+        '1.0.0',
+        'LLM-Indic-Chat',
+        'Large Language Model for Indic languages chat/completion. UPDATE ENDPOINT before use.',
+        '{"type": "llm"}'::jsonb,
+        '["hi", "en", "ta", "te", "bn", "mr", "gu", "kn", "ml", "pa", "or"]'::jsonb,
+        '["general", "conversational", "qa"]'::jsonb,
+        'Apache-2.0',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8004/llm/v1/completions"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('LLM-Indic-Chat', '1.0.0', 'llm-indic-prod'),
+        'llm-indic-prod',
+        generate_model_id('LLM-Indic-Chat', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8004/llm/v1/completions',
+        'Production LLM service for Indic languages. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA A100, RAM: 80GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- Transliteration Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('Transliteration-IndicXlit', '1.0.0'),
+        '1.0.0',
+        'Transliteration-IndicXlit',
+        'Transliteration model for Indic scripts using IndicXlit. UPDATE ENDPOINT before use.',
+        '{"type": "transliteration"}'::jsonb,
+        '["hi", "ta", "te", "bn", "mr", "gu", "kn", "ml", "pa", "or"]'::jsonb,
+        '["general"]'::jsonb,
+        'MIT',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8005/transliteration/v1/transliterate"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('Transliteration-IndicXlit', '1.0.0', 'xlit-indic-prod'),
+        'xlit-indic-prod',
+        generate_model_id('Transliteration-IndicXlit', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8005/transliteration/v1/transliterate',
+        'Production Transliteration service. UPDATE ENDPOINT to your actual service URL.',
+        'CPU: 8 cores, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- Language Detection Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('LangDetect-IndicLID', '1.0.0'),
+        '1.0.0',
+        'LangDetect-IndicLID',
+        'Text language detection model for Indic languages. UPDATE ENDPOINT before use.',
+        '{"type": "language-detection"}'::jsonb,
+        '["hi", "en", "ta", "te", "bn", "mr", "gu", "kn", "ml", "pa", "or"]'::jsonb,
+        '["general"]'::jsonb,
+        'MIT',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8006/langdetect/v1/detect"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('LangDetect-IndicLID', '1.0.0', 'langdetect-prod'),
+        'langdetect-prod',
+        generate_model_id('LangDetect-IndicLID', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8006/langdetect/v1/detect',
+        'Production Language Detection service. UPDATE ENDPOINT to your actual service URL.',
+        'CPU: 4 cores, RAM: 8GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- Speaker Diarization Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('SpeakerDiarization-Pyannote', '1.0.0'),
+        '1.0.0',
+        'SpeakerDiarization-Pyannote',
+        'Speaker diarization model using Pyannote. UPDATE ENDPOINT before use.',
+        '{"type": "speaker-diarization"}'::jsonb,
+        '["*"]'::jsonb,
+        '["general", "meetings", "podcasts"]'::jsonb,
+        'MIT',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8007/speaker-diarization/v1/diarize"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('SpeakerDiarization-Pyannote', '1.0.0', 'speaker-diarize-prod'),
+        'speaker-diarize-prod',
+        generate_model_id('SpeakerDiarization-Pyannote', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8007/speaker-diarization/v1/diarize',
+        'Production Speaker Diarization service. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA T4, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- Audio Language Detection Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('AudioLangDetect-Whisper', '1.0.0'),
+        '1.0.0',
+        'AudioLangDetect-Whisper',
+        'Audio language detection model using Whisper. UPDATE ENDPOINT before use.',
+        '{"type": "audio-lang-detection"}'::jsonb,
+        '["hi", "en", "ta", "te", "bn", "mr"]'::jsonb,
+        '["general"]'::jsonb,
+        'MIT',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8008/audio-langdetect/v1/detect"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('AudioLangDetect-Whisper', '1.0.0', 'audio-langdetect-prod'),
+        'audio-langdetect-prod',
+        generate_model_id('AudioLangDetect-Whisper', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8008/audio-langdetect/v1/detect',
+        'Production Audio Language Detection service. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA T4, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- Language Diarization Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('LangDiarization-MultiLang', '1.0.0'),
+        '1.0.0',
+        'LangDiarization-MultiLang',
+        'Language diarization model for multi-language audio. UPDATE ENDPOINT before use.',
+        '{"type": "language-diarization"}'::jsonb,
+        '["hi", "en", "ta", "te"]'::jsonb,
+        '["code-switching", "multilingual"]'::jsonb,
+        'Apache-2.0',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8009/lang-diarization/v1/diarize"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('LangDiarization-MultiLang', '1.0.0', 'lang-diarize-prod'),
+        'lang-diarize-prod',
+        generate_model_id('LangDiarization-MultiLang', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8009/lang-diarization/v1/diarize',
+        'Production Language Diarization service. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA T4, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- OCR (Optical Character Recognition) Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('OCR-IndicOCR', '1.0.0'),
+        '1.0.0',
+        'OCR-IndicOCR',
+        'Optical Character Recognition model for Indic scripts. UPDATE ENDPOINT before use.',
+        '{"type": "ocr"}'::jsonb,
+        '["hi", "ta", "te", "bn", "mr", "gu", "kn", "ml"]'::jsonb,
+        '["documents", "handwritten", "printed"]'::jsonb,
+        'Apache-2.0',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8010/ocr/v1/recognize"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('OCR-IndicOCR', '1.0.0', 'ocr-indic-prod'),
+        'ocr-indic-prod',
+        generate_model_id('OCR-IndicOCR', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8010/ocr/v1/recognize',
+        'Production OCR service for Indic scripts. UPDATE ENDPOINT to your actual service URL.',
+        'GPU: NVIDIA T4, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+    -- ========================================================================
+    -- NER (Named Entity Recognition) Model and Service
+    -- ========================================================================
+    INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+    VALUES (
+        generate_model_id('NER-IndicNER', '1.0.0'),
+        '1.0.0',
+        'NER-IndicNER',
+        'Named Entity Recognition model for Indic languages. UPDATE ENDPOINT before use.',
+        '{"type": "ner"}'::jsonb,
+        '["hi", "en", "ta", "te", "bn", "mr"]'::jsonb,
+        '["general", "news", "legal"]'::jsonb,
+        'MIT',
+        '{"schema": {"request": {}, "response": {}}, "callbackUrl": "http://localhost:8011/ner/v1/extract"}'::jsonb,
+        '{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{"name": "Admin", "role": "Maintainer"}]}'::jsonb,
+        current_epoch,
+        'ACTIVE'
+    ) ON CONFLICT (name, version) DO NOTHING;
+
+    INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+    VALUES (
+        generate_service_id('NER-IndicNER', '1.0.0', 'ner-indic-prod'),
+        'ner-indic-prod',
+        generate_model_id('NER-IndicNER', '1.0.0'),
+        '1.0.0',
+        'http://localhost:8011/ner/v1/extract',
+        'Production NER service for Indic languages. UPDATE ENDPOINT to your actual service URL.',
+        'CPU: 8 cores, RAM: 16GB',
+        current_epoch,
+        false
+    ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+
+END $$;
+
+-- Log seed data completion
+DO $$
+BEGIN
+    RAISE NOTICE 'Model Management seed data inserted: 11 models and 11 services for all task types';
+    RAISE NOTICE 'IMPORTANT: Update the endpoint URLs to point to your actual services before publishing';
+END $$;
+
+-- ============================================================================
+-- STEP 5: Auth Service Seed Data (auth_db)
 -- ============================================================================
 
 \c auth_db;
@@ -747,7 +1542,21 @@ INSERT INTO permissions (name, resource, action) VALUES
 ('tts.inference', 'tts', 'inference'),
 ('tts.read', 'tts', 'read'),
 ('nmt.inference', 'nmt', 'inference'),
-('nmt.read', 'nmt', 'read')
+('nmt.read', 'nmt', 'read'),
+-- Model Management permissions
+('model.create', 'models', 'create'),
+('model.read', 'models', 'read'),
+('model.update', 'models', 'update'),
+('model.delete', 'models', 'delete'),
+('model.deprecate', 'models', 'deprecate'),
+('model.activate', 'models', 'activate'),
+-- Service Management permissions
+('service.create', 'services', 'create'),
+('service.read', 'services', 'read'),
+('service.update', 'services', 'update'),
+('service.delete', 'services', 'delete'),
+('service.publish', 'services', 'publish'),
+('service.unpublish', 'services', 'unpublish')
 ON CONFLICT (name) DO NOTHING;
 
 -- Assign permissions to ADMIN role
@@ -757,40 +1566,63 @@ FROM roles r, permissions p
 WHERE r.name = 'ADMIN'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- Assign permissions to USER role
+-- Assign permissions to USER role + model/service read permissions
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'USER' 
-AND p.name IN ('users.read', 'users.update', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read')
+AND p.name IN ('users.read', 'users.update', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read', 'model.read', 'service.read')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- Assign permissions to GUEST role
+-- Assign permissions to GUEST role + model/service read permissions
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'GUEST' 
-AND p.name IN ('users.read', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.read')
+AND p.name IN ('users.read', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.read', 'model.read', 'service.read')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- Assign permissions to MODERATOR role
+-- Assign permissions to MODERATOR role + all model/service permissions
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'MODERATOR' 
-AND p.name IN ('users.read', 'users.update', 'configs.read', 'configs.update', 'metrics.read', 'alerts.read', 'alerts.update', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read')
+AND p.name IN ('users.read', 'users.update', 'configs.read', 'configs.update', 'metrics.read', 'alerts.read', 'alerts.update', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read', 'model.create', 'model.read', 'model.update', 'model.delete', 'model.publish', 'model.unpublish', 'service.create', 'service.read', 'service.update', 'service.delete')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- Create default admin user (password: admin123)
-INSERT INTO users (email, username, hashed_password, is_active, is_verified) VALUES
-('admin@ai4i.com', 'admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj4J/9QZQK2O', true, true)
-ON CONFLICT (email) DO NOTHING;
+-- ============================================================================
+-- Create Default Admin User
+-- ============================================================================
+-- Standard default admin user created during installation/initialization
+-- This user has ADMIN role with all permissions
+-- 
+-- Credentials:
+--   Username: admin
+--   Email:    admin@ai4i.org
+--   Password: Admin@123
+--   Role:     ADMIN (all permissions)
+--   Status:   ACTIVE
+-- ============================================================================
 
--- Assign ADMIN role to default admin user
+-- Create the default admin user
+-- Password hash for "Admin@123" (bcrypt)
+INSERT INTO users (email, username, hashed_password, is_active, is_verified, full_name, is_superuser) VALUES
+('admin@ai4i.org', 'admin', '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW', true, true, 'System Administrator', true)
+ON CONFLICT (email) DO UPDATE
+SET 
+    username = EXCLUDED.username,
+    hashed_password = EXCLUDED.hashed_password,
+    is_active = EXCLUDED.is_active,
+    is_verified = EXCLUDED.is_verified,
+    full_name = EXCLUDED.full_name,
+    is_superuser = EXCLUDED.is_superuser;
+
+-- Assign ADMIN role to the default admin user
+-- This ensures the admin user has all permissions through the ADMIN role
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'admin@ai4i.com' AND r.name = 'ADMIN'
+WHERE u.email = 'admin@ai4i.org' AND u.username = 'admin' AND r.name = 'ADMIN'
 ON CONFLICT (user_id, role_id) DO NOTHING;
 
 \c config_db;
@@ -831,7 +1663,7 @@ ON CONFLICT (user_id, role_id) DO NOTHING;
 -- ============================================================================
 
 -- ============================================================================
--- STEP 4: Metrics Service Schema (metrics_db)
+-- STEP 6: Metrics Service Schema (metrics_db) - FUTURE IMPLEMENTATION
 -- ============================================================================
 
 -- \c metrics_db;
@@ -890,7 +1722,7 @@ ON CONFLICT (user_id, role_id) DO NOTHING;
 -- CREATE INDEX IF NOT EXISTS idx_metric_aggregations_metric_name ON metric_aggregations(metric_name);
 
 -- -- ============================================================================
--- -- STEP 5: Telemetry Service Schema (telemetry_db)
+-- -- STEP 7: Telemetry Service Schema (telemetry_db) - FUTURE IMPLEMENTATION
 -- -- ============================================================================
 
 -- \c telemetry_db;
@@ -948,7 +1780,7 @@ ON CONFLICT (user_id, role_id) DO NOTHING;
 -- CREATE INDEX IF NOT EXISTS idx_event_correlations_correlation_id ON event_correlations(correlation_id);
 
 -- -- ============================================================================
--- -- STEP 6: Alerting Service Schema (alerting_db)
+-- -- STEP 8: Alerting Service Schema (alerting_db) - FUTURE IMPLEMENTATION
 -- -- ============================================================================
 
 -- \c alerting_db;
@@ -1031,7 +1863,7 @@ ON CONFLICT (user_id, role_id) DO NOTHING;
 --     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- -- ============================================================================
--- -- STEP 7: Dashboard Service Schema (dashboard_db)
+-- -- STEP 9: Dashboard Service Schema (dashboard_db) - FUTURE IMPLEMENTATION
 -- -- ============================================================================
 
 -- \c dashboard_db;

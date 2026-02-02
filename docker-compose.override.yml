@@ -76,9 +76,13 @@ services:
 
   # Pipeline Service - Development overrides
   pipeline-service:
-    volumes:
-      - ./services/pipeline-service:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8090 --reload
+    # volumes:
+    #   - ./services/pipeline-service:/app
+    # Note: Volume mount commented out to preserve libs installed during Docker build
+    # For code changes, rebuild the container: docker compose build pipeline-service
+    # command: uvicorn main:app --host 0.0.0.0 --port 8090 --reload
+    # Note: Using Dockerfile ENTRYPOINT instead. To add --reload, uncomment line below:
+    # command: ["--reload"]
     environment:
       - DEBUG=true
       - LOG_LEVEL=DEBUG

@@ -23,6 +23,7 @@ import { NMTServiceDetailsResponse, NMTLanguagesResponse } from '../../types/nmt
 interface ModelLanguageSelectorProps extends LanguageSelectorProps {
   selectedServiceId?: string;
   onServiceChange?: (serviceId: string) => void;
+  hideServiceSelector?: boolean;
 }
 
 const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
@@ -32,6 +33,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   loading = false,
   selectedServiceId,
   onServiceChange,
+  hideServiceSelector = false,
 }) => {
   const [currentServiceId, setCurrentServiceId] = useState<string>(selectedServiceId || '');
   const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
@@ -123,42 +125,50 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
 
   return (
     <Stack spacing={6}>
-      {/* Service Selection */}
-      <Box>
-        <FormControl>
-          <FormLabel className="dview-service-try-option-title">
-            Translation Service:
-          </FormLabel>
-          <Select
-            value={currentServiceId}
-            onChange={handleServiceChange}
-            placeholder="Select a model"
-            disabled={servicesLoading}
-          >
-            {services?.map((service) => (
-              <option key={service.service_id} value={service.service_id}>
-                {service.name || service.service_id}
-              </option>
-            ))}
-          </Select>
-        </FormControl>
-        
-        {selectedService && (
-          <Box mt={2} p={3} bg="gray.50" borderRadius="md">
-            <Text fontSize="sm" color="gray.600" mb={1}>
-              <strong>Service ID:</strong> {selectedService.service_id}
-            </Text>
-            <Text fontSize="sm" color="gray.600" mb={1}>
-              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
-            </Text>
-            <Text fontSize="sm" color="gray.600" mb={1}>
-              <strong>Description:</strong> {selectedService.serviceDescription || selectedService.description || 'No description available'}
-            </Text>
+      {/* Service Selection - Hidden for anonymous users */}
+      {!hideServiceSelector && (
+        <>
+          <Box>
+            <FormControl>
+              <FormLabel className="dview-service-try-option-title">
+                Translation Service:
+              </FormLabel>
+              <Select
+                value={currentServiceId}
+                onChange={handleServiceChange}
+                placeholder="Select a model"
+                disabled={servicesLoading}
+              >
+                {services?.map((service) => {
+                  const version = service.modelVersion || service.model_version;
+                  const displayText = version ? `${service.name || service.service_id} (${version})` : (service.name || service.service_id);
+                  return (
+                    <option key={service.service_id} value={service.service_id}>
+                      {displayText}
+                    </option>
+                  );
+                })}
+              </Select>
+            </FormControl>
+            
+            {selectedService && (
+              <Box mt={2} p={3} bg="gray.50" borderRadius="md">
+                <Text fontSize="sm" color="gray.600" mb={1}>
+                  <strong>Service ID:</strong> {selectedService.service_id}
+                </Text>
+                <Text fontSize="sm" color="gray.600" mb={1}>
+                  <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                </Text>
+                <Text fontSize="sm" color="gray.600" mb={1}>
+                  <strong>Description:</strong> {selectedService.serviceDescription || selectedService.description || 'No description available'}
+                </Text>
+              </Box>
+            )}
           </Box>
-        )}
-      </Box>
 
-      <Divider />
+          <Divider />
+        </>
+      )}
 
       {/* Language Selection */}
       <Box>

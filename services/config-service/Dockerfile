@@ -33,6 +33,10 @@ RUN useradd --create-home --shell /bin/bash app
 
 # Copy installed Python packages
 COPY --from=builder /usr/local /usr/local
+# Copy Python packages from builder
+# COPY --from=builder /root/.local /home/app/.local
+
+# ENV PATH=/home/app/.local/bin:$PATH
 
 # Copy application code
 COPY services/config-service/ .

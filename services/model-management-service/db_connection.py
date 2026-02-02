@@ -17,7 +17,6 @@ DB_HOST     = str(os.getenv("APP_DB_HOST", "localhost"))
 DB_PORT     = int(os.getenv("APP_DB_PORT",5434))
 DB_NAME     = str(os.getenv("APP_DB_NAME", "model_management_db"))
 
-
 AUTH_DB_USER     = os.getenv("AUTH_DB_USER", "auth_user")
 AUTH_DB_PASSWORD = os.getenv("AUTH_DB_PASSWORD", "auth_pass")
 AUTH_DB_HOST     = os.getenv("AUTH_DB_HOST", "localhost")

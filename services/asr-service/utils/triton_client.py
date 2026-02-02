@@ -12,12 +12,32 @@ import tritonclient.http as http_client
 from tritonclient.utils import np_to_triton_dtype
 import gevent.ssl
 
+from middleware.exceptions import (
+    TritonInferenceError,
+    ModelNotFoundError,
+    ServiceUnavailableError
+)
+
+# OpenTelemetry for tracing
+try:
+    from opentelemetry import trace
+    from opentelemetry.trace import Status, StatusCode
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
+    trace = None
+    Status = None
+    StatusCode = None
+
 logger = logging.getLogger(__name__)
 
-
-class TritonInferenceError(Exception):
-    """Custom exception for Triton inference errors."""
-    pass
+# Get tracer for manual span creation
+tracer = None
+if TRACING_AVAILABLE and trace:
+    try:
+        tracer = trace.get_tracer("asr-service")
+    except Exception:
+        tracer = None
 
 
 class TritonClient:
@@ -223,39 +243,90 @@ class TritonClient:
         headers: Optional[Dict[str, str]] = None
     ) -> http_client.InferResult:
         """Send inference request to Triton server."""
-        try:
-            client = self._get_client()
+        if not tracer:
+            # Fallback if tracing not available
+            return self._send_triton_request_impl(model_name, input_list, output_list, headers)
+        
+        with tracer.start_as_current_span("triton.inference") as span:
+            try:
+                span.set_attribute("triton.model_name", model_name)
+                span.set_attribute("triton.endpoint", self.triton_url)
+                span.set_attribute("triton.has_auth", bool(self.api_key))
+                span.set_attribute("triton.input_count", len(input_list))
+                span.set_attribute("triton.output_count", len(output_list))
+                
+                # Calculate input size (approximate)
+                try:
+                    total_size = sum(
+                        len(inp.get_data()) if hasattr(inp, 'get_data') else 0
+                        for inp in input_list
+                    )
+                    span.set_attribute("triton.input_size_bytes", total_size)
+                except Exception:
+                    pass
+                
+                # Add span event for Triton call start
+                span.add_event("triton.inference.start", {
+                    "model": model_name,
+                    "endpoint": self.triton_url
+                })
+                
+                result = self._send_triton_request_impl(model_name, input_list, output_list, headers)
+                
+                # Add span event for Triton call completion
+                span.add_event("triton.inference.complete", {
+                    "model": model_name
+                })
+                span.set_status(Status(StatusCode.OK))
+                
+                logger.debug(f"Triton inference completed for model {model_name}")
+                return result
+                
+            except Exception as e:
+                error_msg = str(e)
+                span.set_attribute("error", True)
+                span.set_attribute("error.type", type(e).__name__)
+                span.set_attribute("error.message", error_msg)
+                span.set_status(Status(StatusCode.ERROR, error_msg))
+                span.record_exception(e)
+                raise
+    
+    def _send_triton_request_impl(
+        self,
+        model_name: str,
+        input_list: List[http_client.InferInput],
+        output_list: List[http_client.InferRequestedOutput],
+        headers: Optional[Dict[str, str]] = None
+    ) -> http_client.InferResult:
+        """Internal implementation of Triton request (without tracing)."""
+        client = self._get_client()
+        
+        # Check server health
+        if not client.is_server_ready():
+            raise TritonInferenceError("Triton server is not ready")
+        
+        # Prepare headers
+        request_headers = {}
+        if self.api_key:
+            request_headers["Authorization"] = f"Bearer {self.api_key}"
+        if headers:
+            request_headers.update(headers)
+        
+        # Send async inference request
+        response = client.async_infer(
+            model_name=model_name,
+            inputs=input_list,
+            model_version="1",
+            outputs=output_list,
+            headers=request_headers
+        )
+        
+        # Get result with timeout
+        timeout = int(os.getenv("TRITON_TIMEOUT", "20"))
+        result = response.get_result(block=True, timeout=timeout)
+        
+        return result
             
-            # Check server health
-            if not client.is_server_ready():
-                raise TritonInferenceError("Triton server is not ready")
-            
-            # Prepare headers
-            request_headers = {}
-            if self.api_key:
-                request_headers["Authorization"] = f"Bearer {self.api_key}"
-            if headers:
-                request_headers.update(headers)
-            
-            # Send async inference request
-            response = client.async_infer(
-                model_name=model_name,
-                inputs=input_list,
-                model_version="1",
-                outputs=output_list,
-                headers=request_headers
-            )
-            
-            # Get result with timeout
-            timeout = int(os.getenv("TRITON_TIMEOUT", "20"))
-            result = response.get_result(block=True, timeout=timeout)
-            
-            logger.debug(f"Triton inference completed for model {model_name}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Triton inference failed for model {model_name}: {e}")
-            raise TritonInferenceError(f"Triton inference failed: {e}")
     
     def _pad_batch(self, batch_data: List[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
         """Pad batch data to same length."""

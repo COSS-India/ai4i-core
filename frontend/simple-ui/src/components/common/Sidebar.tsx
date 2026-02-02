@@ -34,6 +34,7 @@ import {
   IoChevronDownOutline,
 } from "react-icons/io5";
 import { useAuth } from "../../hooks/useAuth";
+import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { useFeatureFlag } from "../../hooks/useFeatureFlag";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
@@ -209,7 +210,7 @@ const baseNavItems: NavItem[] = [
     icon: IoLanguageOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
-    requiresAuth: true,
+    requiresAuth: false, // Allow anonymous access with rate limiting
     featureFlag: "nmt-enabled",
   },
   {
@@ -306,10 +307,14 @@ const baseNavItems: NavItem[] = [
 
 const Sidebar: React.FC = () => {
   const router = useRouter();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
+  const { checkSessionExpiry } = useSessionExpiry();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
   const [isMobile] = useMediaQuery("(max-width: 1080px)");
+  
+  // Check if user is GUEST
+  const isGuest = user?.roles?.includes('GUEST') || false;
 
   // Feature flags for each service
   const asrEnabled = useFeatureFlag({ flagName: "asr-enabled" });
@@ -348,6 +353,10 @@ const Sidebar: React.FC = () => {
   // Filter top nav items (Home and Model Management)
   const topItems = topNavItems.filter((item) => {
     if (item.id === "home") return true;
+    // Hide Model Management and Services Management for GUEST users
+    if (isGuest && (item.id === "model-management" || item.id === "services-management")) {
+      return false;
+    }
     if (item.featureFlag) {
       return featureFlagMap[item.featureFlag] ?? true;
     }
@@ -431,12 +440,9 @@ const Sidebar: React.FC = () => {
                 router.push("/");
                 return;
               }
-              if (requiresAuth && !isAuthenticated) {
-                if (typeof window !== 'undefined') {
-                  sessionStorage.setItem('redirectAfterAuth', item.path);
-                }
-                router.push("/auth");
-                return;
+              // Check session expiry before navigation for authenticated routes
+              if (requiresAuth) {
+                if (!checkSessionExpiry()) return;
               }
               router.push(item.path);
             };
@@ -556,12 +562,9 @@ const Sidebar: React.FC = () => {
                 const handleClick = async (e: React.MouseEvent) => {
                   e.preventDefault();
                   if (isLoading) return;
-                  if (requiresAuth && !isAuthenticated) {
-                    if (typeof window !== 'undefined') {
-                      sessionStorage.setItem('redirectAfterAuth', item.path);
-                    }
-                    router.push("/auth");
-                    return;
+                  // Check session expiry before navigation for authenticated routes
+                  if (requiresAuth) {
+                    if (!checkSessionExpiry()) return;
                   }
                   router.push(item.path);
                 };

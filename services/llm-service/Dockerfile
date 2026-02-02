@@ -1,9 +1,10 @@
-# Multi-stage Dockerfile for LLM Service
+# -----------------------------
+# STAGE 1 — BUILDER
+# -----------------------------
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -11,39 +12,67 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements from build context
-COPY requirements.txt .
+# Copy AI4ICore plugins from monorepo
+COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
+COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
-# Install Python dependencies (NO --user)
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy service requirements
+COPY services/llm-service/requirements.txt .
 
-# ---------------- Final stage ----------------
+RUN pip install --upgrade pip setuptools wheel
+
+# Install Python deps
+RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
+# Install packaging explicitly with --user --force-reinstall to ensure it's in user site-packages
+RUN pip install --no-cache-dir --user --force-reinstall packaging
+# -----------------------------
+# STAGE 2 — RUNTIME
+# -----------------------------
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y \    
     curl \
     libpq5 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
 RUN useradd --create-home --shell /bin/bash app
 
-# Copy installed Python packages
-COPY --from=builder /usr/local /usr/local
+# Copy Python site-packages
+COPY --from=builder /root/.local /home/app/.local
+
+ENV PATH="/home/app/.local/bin:$PATH"
+ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
+
+# Copy AI4ICore plugins
+COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
+COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
 # Copy application code
-COPY . .
+COPY services/llm-service .
 
-# Fix ownership ONLY for app files
-RUN chown -R app:app /app
+# Adjust ownership and permissions
+RUN chown -R app:app /app /home/app/.local \
+    && chmod +x /home/app/.local/bin/* || true
+
 USER app
 
 EXPOSE 8090
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD curl -f http://localhost:8090/api/v1/llm/health || exit 1
+  CMD curl -f http://localhost:8090/health || exit 1
 
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8090"]
+# Run the application
+# Disable uvicorn access logs since we use RequestLoggingMiddleware with trace_id
+ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8090", "--no-access-log"]

@@ -206,7 +206,7 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
         Sign Up
       </Heading>
 
-      <form onSubmit={handleSubmit}>
+      <form onSubmit={handleSubmit} autoComplete="off">
         <VStack spacing={4}>
           <FormControl isRequired isInvalid={!!validationErrors.email}>
             <FormLabel>Email</FormLabel>
@@ -217,6 +217,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
               onChange={handleChange}
               placeholder="Enter your email"
               size="md"
+              autoComplete="off"
+              data-form-type="other"
             />
             {validationErrors.email && (
               <FormErrorMessage>{validationErrors.email}</FormErrorMessage>
@@ -232,6 +234,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
               onChange={handleChange}
               placeholder="Choose a username"
               size="md"
+              autoComplete="off"
+              data-form-type="other"
             />
             {validationErrors.username && (
               <FormErrorMessage>{validationErrors.username}</FormErrorMessage>
@@ -249,6 +253,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
                 placeholder="Create a password (min 8 characters)"
                 size="md"
                 pr="4.5rem"
+                autoComplete="new-password"
+                data-form-type="other"
               />
               <InputRightElement width="4.5rem">
                 <IconButton
@@ -277,6 +283,8 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
                 placeholder="Confirm your password"
                 size="md"
                 pr="4.5rem"
+                autoComplete="new-password"
+                data-form-type="other"
               />
               <InputRightElement width="4.5rem">
                 <IconButton
