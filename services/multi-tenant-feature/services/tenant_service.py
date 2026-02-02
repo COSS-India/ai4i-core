@@ -31,7 +31,7 @@ from models.db_models import (
     UserBillingRecord,
 )
 from models.auth_models import UserDB
-from models.enum_tenant import  TenantStatus, AuditAction , BillingStatus , AuditActorType , TenantUserStatus
+from models.enum_tenant import  SubscriptionType, TenantStatus, AuditAction , BillingStatus , AuditActorType , TenantUserStatus
 from models.tenant_create import TenantRegisterRequest, TenantRegisterResponse
 from models.service_create import ServiceCreateRequest , ServiceResponse , ListServicesResponse
 from models.user_create import UserRegisterRequest, UserRegisterResponse
@@ -43,6 +43,7 @@ from models.tenant_status import TenantStatusUpdateRequest , TenantStatusUpdateR
 from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
 from models.tenant_view import TenantViewResponse
 from models.user_view import TenantUserViewResponse
+from models.user_subscription import UserSubscriptionResponse
 
 from services.email_service import send_welcome_email, send_verification_email , send_user_welcome_email
 
@@ -1748,6 +1749,187 @@ async def view_tenant_user_details(user_id: str, db: AsyncSession) -> TenantUser
     )
 
     return response
+
+
+async def add_user_subscriptions(
+    tenant_id: str,
+    user_id: int,
+    subscriptions: list[SubscriptionType],
+    db: AsyncSession,
+) -> UserSubscriptionResponse:
+    """
+    Add subscriptions to a tenant user.
+    Validates tenant, tenant user, and that requested services are enabled and active.
+    """
+
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    if tenant.status != TenantStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail="Tenant is not active")
+
+    tenant_user = await db.scalar(
+        select(TenantUser).where(
+            TenantUser.tenant_id == tenant_id,
+            TenantUser.user_id == user_id,
+        )
+    )
+
+    if not tenant_user:
+        raise HTTPException(status_code=404, detail="Tenant user not found")
+
+    # Tenant must have the services enabled
+    tenant_services = set(tenant.subscriptions or [])
+    requested_services = set(subscriptions)
+    missing_for_tenant = requested_services - tenant_services
+    if missing_for_tenant:
+        raise HTTPException(
+            status_code=400,
+            detail=f"One or more services are not enabled for this tenant: {list(missing_for_tenant)}",
+        )
+
+    # Validate services are active
+    services = await db.scalars(
+        select(ServiceConfig).where(
+            ServiceConfig.service_name.in_(requested_services),
+            ServiceConfig.is_active.is_(True),
+        )
+    )
+    services = services.all()
+    active_service_names = {service.service_name for service in services}
+
+    invalid_or_inactive = requested_services - active_service_names
+    if invalid_or_inactive:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "One or more services are invalid or inactive",
+                "invalid_services": list(invalid_or_inactive),
+            },
+        )
+
+    current = set(tenant_user.subscriptions or [])
+    duplicates = current & requested_services
+    if duplicates:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Subscription(s) already exist for user: {list(duplicates)}",
+        )
+
+    updated = list(current | requested_services)
+    tenant_user.subscriptions = updated
+
+    # Audit log for user subscription add
+    db.add(
+        AuditLog(
+            tenant_id=tenant.id,
+            action=AuditAction.user_updated,
+            actor=AuditActorType.ADMIN,
+            details={
+                "user_id": user_id,
+                "added_subscriptions": list(requested_services),
+            },
+        )
+    )
+
+    try:
+        await db.commit()
+        await db.refresh(tenant_user)
+    except IntegrityError as e:
+        logger.error(
+            f"Integrity error while adding user subscriptions | tenant={tenant_id} user_id={user_id}: {e}"
+        )
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Failed to add user subscriptions")
+    except Exception as e:
+        logger.exception(
+            f"Error committing user subscription changes to database | tenant={tenant_id} user_id={user_id}: {e}"
+        )
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to add user subscriptions")
+
+    return UserSubscriptionResponse(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        subscriptions=tenant_user.subscriptions or [],
+    )
+
+
+async def remove_user_subscriptions(
+    tenant_id: str,
+    user_id: int,
+    subscriptions: list[SubscriptionType],
+    db: AsyncSession,
+) -> UserSubscriptionResponse:
+    """
+    Remove subscriptions from a tenant user.
+    Validates that subscriptions exist for the user.
+    """
+
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    tenant_user = await db.scalar(
+        select(TenantUser).where(
+            TenantUser.tenant_id == tenant_id,
+            TenantUser.user_id == user_id,
+        )
+    )
+
+    if not tenant_user:
+        raise HTTPException(status_code=404, detail="Tenant user not found")
+    
+    current = set(tenant_user.subscriptions or [])
+    to_remove = set(subscriptions)
+
+    missing = to_remove - current
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Subscriptions not present for user: {list(missing)}",
+        )
+
+    updated = list(current - to_remove)
+    tenant_user.subscriptions = updated
+
+    # Audit log for user subscription removal
+    db.add(
+        AuditLog(
+            tenant_id=tenant.id,
+            action=AuditAction.user_updated,
+            actor=AuditActorType.ADMIN,
+            details={
+                "user_id": user_id,
+                "removed_subscriptions": list(to_remove),
+            },
+        )
+    )
+
+    try:
+        await db.commit()
+        await db.refresh(tenant_user)
+    except IntegrityError as e:
+        logger.error(
+            f"Integrity error while removing user subscriptions | tenant={tenant_id} user_id={user_id}: {e}"
+        )
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Failed to remove user subscriptions")
+    except Exception as e:
+        logger.exception(
+            f"Error committing user subscription removal to database | tenant={tenant_id} user_id={user_id}: {e}"
+        )
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to remove user subscriptions")
+
+    return UserSubscriptionResponse(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        subscriptions=tenant_user.subscriptions or [],
+    )
 
 async def update_billing_plan(db: AsyncSession,payload: BillingUpdateRequest) -> BillingUpdateResponse:
     """
