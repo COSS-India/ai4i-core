@@ -193,7 +193,7 @@ const LogsPage: React.FC = () => {
         router.push("/auth");
       } else if (error?.response?.status === 403) {
         // 403 Forbidden - show error message (user is authenticated but lacks permission)
-        let errorMessage = 'Access denied. You must be registered to a tenant to view logs.';
+        let errorMessage = 'Access denied. You must be associated with a tenant to access logs.';
         if (error?.response?.data?.detail) {
           const detail = error.response.data.detail;
           if (typeof detail === 'string') {
@@ -406,7 +406,7 @@ const LogsPage: React.FC = () => {
                     );
                   } else if (error?.response?.status === 403) {
                     // 403 Forbidden - show permission error
-                    let errorMsg = 'Access denied. You must be registered to a tenant to view logs.';
+                    let errorMsg = 'Access denied. You must be associated with a tenant to access logs.';
                     if (error?.response?.data?.detail) {
                       const detail = error.response.data.detail;
                       if (typeof detail === 'string') {
