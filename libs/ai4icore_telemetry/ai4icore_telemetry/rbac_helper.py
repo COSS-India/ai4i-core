@@ -149,7 +149,7 @@ async def get_organization_filter(
                             raise HTTPException(
                                 status_code=status.HTTP_403_FORBIDDEN,
                                 detail={
-                                    "message": "Access denied. You must be registered to a tenant to view logs.",
+                                    "message": "Access denied. You must be associated with a tenant to access logs.",
                                     "code": "TENANT_REQUIRED",
                                     "hint": "Please register to a tenant to access logs and traces. If you recently registered, please log out and log back in to refresh your token."
                                 }
@@ -161,7 +161,7 @@ async def get_organization_filter(
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail={
-                                "message": "Access denied. You must be registered to a tenant to view logs.",
+                                "message": "Access denied. You must be associated with a tenant to access logs.",
                                 "code": "TENANT_REQUIRED",
                                 "hint": "Please register to a tenant to access logs and traces. If you recently registered, please log out and log back in to refresh your token."
                             }
@@ -171,7 +171,7 @@ async def get_organization_filter(
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail={
-                            "message": "Access denied. You must be registered to a tenant to view logs.",
+                            "message": "Access denied. You must be associated with a tenant to access logs.",
                             "code": "TENANT_REQUIRED",
                             "hint": "Please register to a tenant to access logs and traces. If you recently registered, please log out and log back in to refresh your token."
                         }
