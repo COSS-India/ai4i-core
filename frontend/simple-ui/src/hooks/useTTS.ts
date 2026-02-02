@@ -7,6 +7,7 @@ import { performTTSInference } from '../services/ttsService';
 import { getWordCount } from '../utils/helpers';
 import { UseTTSReturn, TTSInferenceRequest, Gender, AudioFormat, SampleRate } from '../types/tts';
 import { DEFAULT_TTS_CONFIG, MAX_TEXT_LENGTH } from '../config/constants';
+import { extractErrorInfo } from '../utils/errorHandler';
 
 // Helper function to get the correct service ID based on language
 const getServiceIdForLanguage = (language: string): string => {
@@ -22,7 +23,7 @@ const getServiceIdForLanguage = (language: string): string => {
   return 'indic-tts-coqui-misc';
 };
 
-export const useTTS = (): UseTTSReturn => {
+export const useTTS = (serviceId?: string): UseTTSReturn => {
   // State
   const [language, setLanguage] = useState<string>(DEFAULT_TTS_CONFIG.language);
   const [gender, setGender] = useState<Gender>(DEFAULT_TTS_CONFIG.gender);
@@ -47,9 +48,12 @@ export const useTTS = (): UseTTSReturn => {
   // TTS inference mutation
   const ttsMutation = useMutation({
     mutationFn: async (text: string) => {
+      // Use the provided serviceId if available, otherwise fall back to language-based service ID
+      const effectiveServiceId = serviceId || getServiceIdForLanguage(language);
+      
       const config: TTSInferenceRequest['config'] = {
         language: { sourceLanguage: language },
-        serviceId: getServiceIdForLanguage(language),
+        serviceId: effectiveServiceId,
         gender,
         samplingRate,
         audioFormat,
@@ -88,44 +92,13 @@ export const useTTS = (): UseTTSReturn => {
     onError: (error: any) => {
       console.error('TTS inference error:', error);
       
-      // Prioritize API error message from response
-      let errorMessage = 'Failed to generate speech. Please try again.';
-      let errorTitle = 'TTS Error';
-      
-      // Check for API error message first (from detail.message or detail.error)
-      if (error?.response?.data?.detail?.message) {
-        errorMessage = error.response.data.detail.message;
-        // Use error code for title if available
-        if (error.response.data.detail.error) {
-          errorTitle = error.response.data.detail.error;
-        } else if (error.response.data.detail.code) {
-          errorTitle = error.response.data.detail.code;
-        }
-      } else if (error?.response?.data?.message) {
-        errorMessage = error.response.data.message;
-      } else if (error?.response?.data?.detail) {
-        // Handle case where detail is a string
-        if (typeof error.response.data.detail === 'string') {
-          errorMessage = error.response.data.detail;
-        }
-      } else if (error?.response?.status === 401 || error?.status === 401 || error?.message?.includes('401')) {
-        errorTitle = 'Authentication Failed';
-        // Check if it's an API key issue
-        if (error?.message?.includes('API key') || error?.message?.includes('api key')) {
-          errorMessage = 'API key is missing or invalid. Please set a valid API key in your profile.';
-        } else if (error?.message?.includes('token') || error?.message?.includes('Token')) {
-          errorMessage = 'Your session has expired. Please sign in again.';
-        } else {
-          errorMessage = 'Authentication failed. Please check your API key and login status, then try again.';
-        }
-      } else if (error?.message) {
-        errorMessage = error.message;
-      }
+      // Use centralized error handler
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
       
       setError(errorMessage);
       setFetching(false);
       toast({
-        title: errorTitle,
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: 'error',
         duration: 7000,
@@ -158,6 +131,19 @@ export const useTTS = (): UseTTSReturn => {
       return;
     }
 
+    // Validate that a service is selected
+    const effectiveServiceId = serviceId || getServiceIdForLanguage(language);
+    if (!effectiveServiceId) {
+      toast({
+        title: 'Service Required',
+        description: 'Please select a TTS service.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     try {
       setFetching(true);
       setError(null);
@@ -166,7 +152,7 @@ export const useTTS = (): UseTTSReturn => {
     } catch (err) {
       console.error('Inference error:', err);
     }
-  }, [ttsMutation, toast]);
+  }, [ttsMutation, toast, serviceId, language]);
 
   // Set input text with validation
   const setInputTextWithValidation = useCallback((text: string) => {

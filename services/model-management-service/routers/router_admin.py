@@ -1,4 +1,5 @@
-from fastapi import HTTPException, status , APIRouter
+from fastapi import HTTPException, status, APIRouter, Depends, Request
+from typing import Optional, Dict, Any
 from models.model_create import ModelCreateRequest
 from models.model_update import ModelUpdateRequest
 from models.service_create import ServiceCreateRequest
@@ -13,12 +14,20 @@ from db_operations import (
     delete_service_by_uuid,
     update_service_health
     )
+from middleware.auth_provider import AuthProvider
 from logger import logger
 
-# Authentication is handled by Kong + Auth Service, no need for AuthProvider here
+
+def get_user_id_from_request(request: Request) -> Optional[str]:
+    """Extract user_id from request state (set by AuthProvider or Kong) as string."""
+    user_id = getattr(request.state, 'user_id', None)
+    return str(user_id) if user_id is not None else None
+
+
 router_admin = APIRouter(
     prefix="/services/admin", 
-    tags=["Model Management"]
+    tags=["Model Management"],
+    dependencies=[Depends(AuthProvider)]
 )
 
 
@@ -26,12 +35,13 @@ router_admin = APIRouter(
 
 
 @router_admin.post("/create/model", response_model=str)
-async def create_model_request(payload: ModelCreateRequest):
+async def create_model_request(payload: ModelCreateRequest, request: Request):
     try:
-        await save_model_to_db(payload)
+        user_id = get_user_id_from_request(request)
+        model_id = await save_model_to_db(payload, created_by=user_id)
 
-        logger.info(f"Model '{payload.name}' inserted successfully.")
-        return f"Model '{payload.name}' (ID: {payload.modelId}) created successfully."
+        logger.info(f"Model '{payload.name}' inserted successfully by user {user_id}.")
+        return f"Model '{payload.name}' (ID: {model_id}) created successfully."
 
     except HTTPException:
         raise
@@ -45,11 +55,12 @@ async def create_model_request(payload: ModelCreateRequest):
 
 
 @router_admin.patch("/update/model", response_model=str)
-async def update_model_request(payload: ModelUpdateRequest):
+async def update_model_request(payload: ModelUpdateRequest, request: Request):
     try:
+        user_id = get_user_id_from_request(request)
         # Log the incoming payload to debug
-        logger.info(f"Received update request - modelId: {payload.modelId}, version: {payload.version}, versionStatus: {payload.versionStatus}")
-        result = await update_model(payload)
+        logger.info(f"Received update request - modelId: {payload.modelId}, version: {payload.version}, versionStatus: {payload.versionStatus}, by user {user_id}")
+        result = await update_model(payload, updated_by=user_id)
 
         if result == 0:
             logger.warning(f"No DB record found for model {payload.modelId}")
@@ -97,13 +108,14 @@ async def delete_model_request(id: str):
 
 
 @router_admin.post("/create/service")
-async def create_service_request(payload: ServiceCreateRequest):
-
+async def create_service_request(payload: ServiceCreateRequest, request: Request):
     try:
-        await save_service_to_db(payload)
+        user_id = get_user_id_from_request(request)
+        # service_id is now auto-generated from hash of (model_name, model_version, service_name)
+        service_id = await save_service_to_db(payload, created_by=user_id)
 
-        logger.info(f"Service '{payload.name}' inserted successfully.")
-        return f"Service '{payload.name}' (ID: {payload.serviceId}) created successfully."
+        logger.info(f"Service '{payload.name}' inserted successfully by user {user_id}.")
+        return f"Service '{payload.name}' (ID: {service_id}) created successfully."
 
     except HTTPException:
         raise
@@ -116,10 +128,10 @@ async def create_service_request(payload: ServiceCreateRequest):
 
 
 @router_admin.patch("/update/service")
-async def update_service_request(payload: ServiceUpdateRequest):
-    
+async def update_service_request(payload: ServiceUpdateRequest, request: Request):
     try:
-        result = await update_service(payload)
+        user_id = get_user_id_from_request(request)
+        result = await update_service(payload, updated_by=user_id)
 
         if result == 0:
             logger.warning(f"No DB record found for service {payload.serviceId}")
@@ -132,7 +144,7 @@ async def update_service_request(payload: ServiceUpdateRequest):
             logger.warning(f"No valid update fields provided for service {payload.serviceId}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No valid update fields provided. Valid fields: name, serviceDescription, hardwareDescription, endpoint, modelId, modelVersion, healthStatus, benchmarks, isPublished"
+                detail="No valid update fields provided. Valid fields: serviceDescription, hardwareDescription, endpoint, api_key, healthStatus, benchmarks, isPublished. Note: name, modelId, modelVersion are not updatable."
             )
 
         return f"Service '{payload.serviceId}' updated successfully."

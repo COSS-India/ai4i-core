@@ -40,7 +40,7 @@ import {
 import { usePipeline } from "../hooks/usePipeline";
 import { listASRServices, ASRServiceDetails } from "../services/asrService";
 import { listNMTServices } from "../services/nmtService";
-import { listVoices } from "../services/ttsService";
+import { listTTSServices, TTSServiceDetailsResponse } from "../services/ttsService";
 
 const PipelinePage: React.FC = () => {
   const toast = useToast();
@@ -49,9 +49,7 @@ const PipelinePage: React.FC = () => {
   const [targetLanguage, setTargetLanguage] = useState("mr");
   const [asrServiceId, setAsrServiceId] = useState<string>("");
   const [nmtServiceId, setNmtServiceId] = useState<string>("");
-  const [ttsServiceId, setTtsServiceId] = useState(
-    "indic-tts-coqui-indo_aryan"
-  );
+  const [ttsServiceId, setTtsServiceId] = useState<string>("");
 
   const {
     isLoading,
@@ -78,6 +76,12 @@ const PipelinePage: React.FC = () => {
     staleTime: 5 * 60 * 1000,
   });
 
+  const { data: ttsServices } = useQuery<TTSServiceDetailsResponse[]>({
+    queryKey: ["tts-services"],
+    queryFn: listTTSServices,
+    staleTime: 5 * 60 * 1000,
+  });
+
   // Auto-select first available ASR service when list loads
   React.useEffect(() => {
     if (!asrServices || asrServices.length === 0) return;
@@ -94,11 +98,13 @@ const PipelinePage: React.FC = () => {
     }
   }, [nmtServices, nmtServiceId]);
 
-  const { data: ttsVoices } = useQuery({
-    queryKey: ["tts-voices"],
-    queryFn: () => listVoices(),
-    staleTime: 5 * 60 * 1000,
-  });
+  // Auto-select first available TTS service when list loads
+  React.useEffect(() => {
+    if (!ttsServices || ttsServices.length === 0) return;
+    if (!ttsServiceId) {
+      setTtsServiceId(ttsServices[0].service_id);
+    }
+  }, [ttsServices, ttsServiceId]);
 
   const handleRecordClick = async () => {
     if (isRecording) {
@@ -248,11 +254,11 @@ const PipelinePage: React.FC = () => {
                   <Select
                     value={asrServiceId}
                     onChange={(e) => setAsrServiceId(e.target.value)}
-                    placeholder="Select an ASR service"
+                    placeholder="Select a ASR service"
                   >
                     {asrServices?.map((service) => (
                       <option key={service.service_id} value={service.service_id}>
-                        {service.service_id}
+                        {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
                       </option>
                     ))}
                   </Select>
@@ -266,6 +272,7 @@ const PipelinePage: React.FC = () => {
                   <Select
                     value={nmtServiceId}
                     onChange={(e) => setNmtServiceId(e.target.value)}
+                    placeholder="Select a NMT service"
                   >
                     {nmtServices
                       ?.filter(
@@ -277,7 +284,7 @@ const PipelinePage: React.FC = () => {
                           key={service.service_id}
                           value={service.service_id}
                         >
-                          {service.service_id}
+                          {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
                         </option>
                       ))}
                   </Select>
@@ -291,10 +298,13 @@ const PipelinePage: React.FC = () => {
                   <Select
                     value={ttsServiceId}
                     onChange={(e) => setTtsServiceId(e.target.value)}
+                    placeholder="Select a TTS service"
                   >
-                    <option value="indic-tts-coqui-indo_aryan">
-                      indic-tts-coqui-indo_aryan
-                    </option>
+                    {ttsServices?.map((service) => (
+                      <option key={service.service_id} value={service.service_id}>
+                        {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
+                      </option>
+                    ))}
                   </Select>
                 </FormControl>
 

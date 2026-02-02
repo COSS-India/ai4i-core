@@ -1,0 +1,199 @@
+{
+  "index_patterns": ["logs-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.refresh_interval": "5s"
+    },
+    "mappings": {
+      "properties": {
+        "@timestamp": {
+          "type": "date"
+        },
+        "timestamp": {
+          "type": "date",
+          "format": "strict_date_optional_time||epoch_millis"
+        },
+        "time": {
+          "type": "date",
+          "format": "strict_date_optional_time||epoch_millis"
+        },
+        "service": {
+          "type": "keyword"
+        },
+        "level": {
+          "type": "keyword"
+        },
+        "message": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "logger": {
+          "type": "keyword"
+        },
+        "trace_id": {
+          "type": "keyword"
+        },
+        "service_version": {
+          "type": "keyword"
+        },
+        "environment": {
+          "type": "keyword"
+        },
+        "hostname": {
+          "type": "keyword"
+        },
+        "collector": {
+          "type": "keyword"
+        },
+        "stream": {
+          "type": "keyword"
+        },
+        "method": {
+          "type": "keyword"
+        },
+        "path": {
+          "type": "keyword"
+        },
+        "status_code": {
+          "type": "integer"
+        },
+        "statusCode": {
+          "type": "integer"
+        },
+        "duration_ms": {
+          "type": "float"
+        },
+        "client_ip": {
+          "type": "ip"
+        },
+        "user_agent": {
+          "type": "text"
+        },
+        "jaeger_trace_url": {
+          "type": "keyword"
+        },
+        "jaeger_trace_id": {
+          "type": "keyword"
+        },
+        "jaeger_url": {
+          "type": "keyword"
+        },
+        "jaeger_host": {
+          "type": "keyword"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "req": {
+          "properties": {
+            "method": {
+              "type": "keyword"
+            },
+            "url": {
+              "type": "keyword"
+            },
+            "remoteAddress": {
+              "type": "ip"
+            },
+            "userAgent": {
+              "type": "text"
+            },
+            "referer": {
+              "type": "keyword"
+            },
+            "headers": {
+              "properties": {
+                "accept": {
+                  "type": "keyword"
+                },
+                "accept-encoding": {
+                  "type": "keyword"
+                },
+                "accept-language": {
+                  "type": "keyword"
+                },
+                "connection": {
+                  "type": "keyword"
+                },
+                "content-length": {
+                  "type": "keyword"
+                },
+                "content-type": {
+                  "type": "keyword"
+                },
+                "host": {
+                  "type": "keyword"
+                },
+                "origin": {
+                  "type": "keyword"
+                },
+                "referer": {
+                  "type": "keyword"
+                },
+                "user-agent": {
+                  "type": "text"
+                }
+              }
+            }
+          }
+        },
+        "res": {
+          "properties": {
+            "statusCode": {
+              "type": "integer"
+            },
+            "responseTime": {
+              "type": "float"
+            },
+            "contentLength": {
+              "type": "integer"
+            }
+          }
+        },
+        "resStatusCode": {
+          "type": "integer"
+        },
+        "resResponseTime": {
+          "type": "float"
+        },
+        "resContentLength": {
+          "type": "integer"
+        },
+        "tags": {
+          "type": "keyword"
+        },
+        "type": {
+          "type": "keyword"
+        },
+        "\"\"method": {
+          "type": "keyword"
+        },
+        "\"\"path": {
+          "type": "keyword"
+        },
+        "\"\"status_code": {
+          "type": "integer"
+        },
+        "\"\"duration_ms": {
+          "type": "float"
+        },
+        "\"\"client_ip": {
+          "type": "ip"
+        },
+        "\"\"user_agent": {
+          "type": "text"
+        }
+      }
+    }
+  },
+  "priority": 1,
+  "version": 1
+}
+

@@ -12,7 +12,12 @@ RUN apt-get update && \
 
 # ---- shared plugins (repo-root paths) ----
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
+# ---- shared constants ----
+COPY services/constants /app/services/constants
 
 # ---- requirements ----
 COPY services/asr-service/requirements.txt .
@@ -20,8 +25,14 @@ COPY services/asr-service/requirements.txt .
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir --user -r requirements.txt
 
+# Install AI4ICore plugins (editable) so logging, telemetry and observability are available
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
+
+# Verify packaging is installed (for debugging)
+RUN python -c "import packaging; print(f'packaging version: {packaging.__version__}')" || (echo "ERROR: packaging not found!" && exit 1)
 
 # -----------------------------
 # STAGE 2 — RUNTIME
@@ -38,8 +49,21 @@ RUN apt-get update && \
 COPY --from=builder /root/.local /root/.local
 ENV PATH=/root/.local/bin:$PATH
 
+# Ensure packaging is available in runtime - install system-wide AND user-wide
+# This ensures it's available regardless of Python path resolution
+RUN pip install --no-cache-dir packaging>=21.0 && \
+    pip install --no-cache-dir --target=/root/.local/lib/python3.11/site-packages packaging>=21.0 && \
+    python -c "import sys; sys.path.insert(0, '/root/.local/lib/python3.11/site-packages'); import packaging; print(f'✓ packaging {packaging.__version__} verified')" || \
+    (echo "ERROR: packaging not available!" && exit 1)
+
+# Copy AI4ICore plugins into runtime image
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
+# ---- shared constants ----
+COPY services/constants /app/services/constants
 
 # ---- application code ----
 COPY services/asr-service /app
@@ -50,4 +74,4 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH="/app"
 
 EXPOSE 8087
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8087"]
+ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8087", "--no-access-log"]

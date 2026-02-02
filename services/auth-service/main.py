@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, Request, HTTPException, Depends, status, Query
+from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import RedirectResponse
@@ -30,6 +31,33 @@ from auth_utils import AuthUtils, ACCESS_TOKEN_EXPIRE_MINUTES
 from oauth_utils import OAuthUtils
 from casbin_enforcer import load_policies_from_db, check_roles_permission
 
+# Refresh token lifetimes
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+REFRESH_TOKEN_EXPIRE_HOURS = int(os.getenv("REFRESH_TOKEN_EXPIRE_HOURS", "24"))
+
+# Import error constants
+try:
+    from services.constants.error_messages import (
+        AUTHENTICATION_REQUIRED,
+        AUTHENTICATION_REQUIRED_MESSAGE,
+        INVALID_CREDENTIALS,
+        INVALID_CREDENTIALS_MESSAGE,
+        SESSION_EXPIRED,
+        SESSION_EXPIRED_MESSAGE,
+        UNAUTHORIZED,
+        UNAUTHORIZED_MESSAGE,
+    )
+except ImportError:
+    # Fallback if constants not available
+    AUTHENTICATION_REQUIRED = "AUTHENTICATION_REQUIRED"
+    AUTHENTICATION_REQUIRED_MESSAGE = "Authentication is required to access this service. Please log in."
+    INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
+    INVALID_CREDENTIALS_MESSAGE = "Invalid credentials provided. Please log in again."
+    SESSION_EXPIRED = "SESSION_EXPIRED"
+    SESSION_EXPIRED_MESSAGE = "Your session has expired. Please log in again."
+    UNAUTHORIZED = "UNAUTHORIZED"
+    UNAUTHORIZED_MESSAGE = "You don't have permission to access this service. Please contact your administrator."
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,6 +68,23 @@ app = FastAPI(
     version="1.0.0",
     description="Identity management and access control for microservices"
 )
+
+# Override OpenAPI server URL for Swagger UI (e.g., localhost)
+swagger_server_url = os.getenv("SWAGGER_SERVER_URL")
+if swagger_server_url:
+    def custom_openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+        openapi_schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+            servers=[{"url": swagger_server_url}],
+        )
+        app.openapi_schema = openapi_schema
+        return app.openapi_schema
+    app.openapi = custom_openapi
 
 # Add CORS middleware
 app.add_middleware(
@@ -54,6 +99,8 @@ app.add_middleware(
 redis_client = None
 db_engine = None
 db_session = None
+multi_tenant_db_engine = None
+multi_tenant_db_session = None
 
 # Security
 security = HTTPBearer()
@@ -62,6 +109,18 @@ security = HTTPBearer()
 async def get_db() -> AsyncSession:
     """Get database session"""
     async with db_session() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
+
+# Dependency to get multi-tenant database session
+async def get_multi_tenant_db():
+    """Get multi-tenant database session"""
+    if multi_tenant_db_session is None:
+        yield None
+        return
+    async with multi_tenant_db_session() as session:
         try:
             yield session
         finally:
@@ -79,7 +138,7 @@ async def get_current_user(
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -87,7 +146,7 @@ async def get_current_user(
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -95,14 +154,14 @@ async def get_current_user(
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Inactive user",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -120,10 +179,83 @@ async def get_current_active_user(
         )
     return current_user
 
+# Helper function to get tenant information for a user
+# Checks both tenants table (tenant admin) and tenant_users table (tenant user)
+async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession], is_tenant: bool) -> Optional[Dict[str, Any]]:
+    """
+    Get tenant information for a user from multi-tenant database.
+    """
+    if multi_tenant_db is None:
+        return None
+    
+    try:
+        if is_tenant:
+            tenant_admin_query = text("""
+                SELECT 
+                    t.tenant_id,
+                    t.id as tenant_uuid,
+                    t.schema_name,
+                    t.subscriptions as tenant_subscriptions,
+                    t.status
+                FROM tenants t
+                WHERE t.user_id = :user_id
+                AND t.status = 'ACTIVE'
+                LIMIT 1
+            """)
+
+            result = await multi_tenant_db.execute(tenant_admin_query, {"user_id": user_id})
+            row = result.fetchone()
+
+            if row:
+                # User is a tenant admin
+                return {
+                    "tenant_id": row[0],
+                    "tenant_uuid": str(row[1]),
+                    "schema_name": row[2],
+                    "subscriptions": row[3] if row[3] else [],
+                    "user_subscriptions": row[4] if row[4] else [],
+                }
+        else:
+            tenant_user_query = text("""
+                SELECT 
+                    t.tenant_id,
+                    t.id as tenant_uuid,
+                    t.schema_name,
+                    t.subscriptions as tenant_subscriptions,
+                    tu.subscriptions as user_subscriptions,
+                    t.status
+                FROM tenant_users tu
+                JOIN tenants t ON tu.tenant_uuid = t.id
+                WHERE tu.user_id = :user_id
+                AND t.status = 'ACTIVE'
+                AND tu.status = 'ACTIVE'
+                LIMIT 1
+            """)
+
+            result = await multi_tenant_db.execute(tenant_user_query, {"user_id": user_id})
+            row = result.fetchone()
+
+            if row:
+                # User is a tenant user
+                return {
+                    "tenant_id": row[0],
+                    "tenant_uuid": str(row[1]),
+                    "schema_name": row[2],
+                    "subscriptions": row[3] if row[3] else [],
+                    "user_subscriptions": row[4] if row[4] else [],
+                }
+        
+        # User not found in either table
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error getting tenant info for user {user_id}: {e}", exc_info=True)
+        return None
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections on startup"""
-    global redis_client, db_engine, db_session
+    global redis_client, db_engine, db_session, multi_tenant_db_engine, multi_tenant_db_session
     
     try:
         # Initialize Redis connection
@@ -180,6 +312,33 @@ async def startup_event():
         )
         logger.info("Connected to PostgreSQL")
         
+        # Initialize multi-tenant database connection
+        multi_tenant_db_url = os.getenv(
+            'MULTI_TENANT_DB_URL',
+            'postgresql+asyncpg://dhruva_user:dhruva_password@postgres:5434/multi_tenant_db'
+        )
+        try:
+            multi_tenant_db_engine = create_async_engine(
+                multi_tenant_db_url,
+                pool_size=int(os.getenv('MULTI_TENANT_DB_POOL_SIZE', '20')),
+                max_overflow=int(os.getenv('MULTI_TENANT_DB_MAX_OVERFLOW', '10')),
+                echo=False
+            )
+            multi_tenant_db_session = sessionmaker(
+                multi_tenant_db_engine,
+                class_=AsyncSession,
+                expire_on_commit=False
+            )
+            # Test connection
+            async with multi_tenant_db_session() as test_session:
+                await test_session.execute(text("SELECT 1"))
+            logger.info("Connected to multi-tenant PostgreSQL database")
+        except Exception as e:
+            logger.warning(f"Failed to connect to multi-tenant database: {e}")
+            logger.warning("JWT tokens will not include tenant information (fallback to API resolution)")
+            multi_tenant_db_engine = None
+            multi_tenant_db_session = None
+        
         # Load Casbin policies from database
         try:
             async with db_session() as session:
@@ -196,7 +355,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up connections on shutdown"""
-    global redis_client, db_engine
+    global redis_client, db_engine, multi_tenant_db_engine
     
     if redis_client:
         await redis_client.close()
@@ -205,6 +364,10 @@ async def shutdown_event():
     if db_engine:
         await db_engine.dispose()
         logger.info("PostgreSQL connection closed")
+    
+    if multi_tenant_db_engine:
+        await multi_tenant_db_engine.dispose()
+        logger.info("Multi-tenant PostgreSQL connection closed")
 
 @app.get("/")
 async def root():
@@ -324,7 +487,7 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already taken"
         )
-    
+
     # Create new user
     hashed_password = AuthUtils.get_password_hash(user_data.password)
     db_user = User(
@@ -334,7 +497,10 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
         full_name=user_data.full_name,
         phone_number=user_data.phone_number,
         timezone=user_data.timezone,
-        language=user_data.language
+        language=user_data.language,
+        # Flag indicating whether this user is a tenant admin or regular user.
+        # Multi-tenant service sets this explicitly when creating tenant admins / users.
+        is_tenant=user_data.is_tenant or None,
     )
     
     db.add(db_user)
@@ -402,7 +568,8 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
 async def login(
     login_data: LoginRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    multi_tenant_db: Optional[AsyncSession] = Depends(get_multi_tenant_db)
 ):
     """Authenticate user and return tokens"""
     # Get user by email
@@ -410,32 +577,56 @@ async def login(
     if not user or not AuthUtils.verify_password(login_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Account is deactivated",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
     # Get user roles
     user_roles = await AuthUtils.get_user_roles(db, user.id)
     
+    # Get tenant information
+    tenant_info = await get_tenant_info(user.id, multi_tenant_db , user.is_tenant)
+
+    token_data = {
+        "sub": str(user.id),
+        "email": user.email,
+        "username": user.username
+    }
+    
+    # Add tenant info if available
+    if tenant_info:
+        token_data.update({
+            "tenant_id": tenant_info["tenant_id"],
+            "tenant_uuid": tenant_info["tenant_uuid"],
+            "schema_name": tenant_info["schema_name"],
+            "subscriptions": tenant_info.get("subscriptions", []),
+            "user_subscriptions": tenant_info.get("user_subscriptions", []),
+        })
+        logger.info(f"Added tenant info to JWT for user {user.id}: tenant_id={tenant_info['tenant_id']}, schema={tenant_info['schema_name']}")
+    
     # Generate tokens
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    refresh_token_expires = timedelta(days=7) if login_data.remember_me else timedelta(hours=24)
+    refresh_token_expires = (
+        timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        if login_data.remember_me
+        else timedelta(hours=REFRESH_TOKEN_EXPIRE_HOURS)
+    )
     
     access_token = AuthUtils.create_access_token(
-        data={"sub": str(user.id), "email": user.email, "username": user.username},
+        data=token_data,
         expires_delta=access_token_expires,
         roles=user_roles
     )
     
     refresh_token = AuthUtils.create_refresh_token(
-        data={"sub": str(user.id), "email": user.email},
+        data=token_data,  # Include tenant info in refresh token too
         expires_delta=refresh_token_expires,
         roles=user_roles
     )
@@ -467,27 +658,50 @@ async def login(
     user.last_login = now
     
     await db.commit()
+    # Refresh to avoid expired attributes after commit (async DB)
+    await db.refresh(user)
     
     logger.info(f"User logged in: {user.email}")
+
+    # Build user response with roles (same shape as /auth/me)
+    user_dict = {
+        "id": user.id,
+        "email": user.email,
+        "username": user.username,
+        "full_name": user.full_name,
+        "phone_number": user.phone_number,
+        "timezone": user.timezone,
+        "language": user.language,
+        "is_active": user.is_active,
+        "is_verified": user.is_verified,
+        "is_superuser": user.is_superuser,
+        "created_at": user.created_at,
+        "updated_at": user.updated_at,
+        "last_login": user.last_login,
+        "avatar_url": user.avatar_url,
+        "roles": user_roles,
+    }
     
     return LoginResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         token_type="bearer",
-        expires_in=int(access_token_expires.total_seconds())
+        expires_in=int(access_token_expires.total_seconds()),
+        user=user_dict,
     )
 
 @app.post("/api/v1/auth/refresh", response_model=TokenRefreshResponse)
 async def refresh_token(
     refresh_data: TokenRefreshRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    multi_tenant_db: Optional[AsyncSession] = Depends(get_multi_tenant_db)
 ):
     """Refresh access token using refresh token"""
     payload = AuthUtils.verify_refresh_token(refresh_data.refresh_token)
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -495,7 +709,7 @@ async def refresh_token(
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token payload",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -512,26 +726,59 @@ async def refresh_token(
     if not session:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
+            detail={"code": SESSION_EXPIRED, "message": SESSION_EXPIRED_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Sliding window: extend session expiry on successful refresh
+    remember_me = False
+    if getattr(session, "device_info", None):
+        try:
+            remember_me = bool(session.device_info.get("remember_me"))
+        except Exception:
+            remember_me = False
+    session.expires_at = (
+        datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        if remember_me
+        else datetime.utcnow() + timedelta(hours=REFRESH_TOKEN_EXPIRE_HOURS)
+    )
     
     # Get user
     user = await AuthUtils.get_user_by_id(db, int(user_id))
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or inactive",
+            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
     # Get user roles
     user_roles = await AuthUtils.get_user_roles(db, user.id)
     
+    # Get tenant information
+    tenant_info = await get_tenant_info(user.id, multi_tenant_db, user.is_tenant)
+    
+    # Build JWT payload with tenant info
+    token_data = {
+        "sub": str(user.id),
+        "email": user.email,
+        "username": user.username
+    }
+    
+    # Add tenant info if available
+    if tenant_info:
+        token_data.update({
+            "tenant_id": tenant_info["tenant_id"],
+            "tenant_uuid": tenant_info["tenant_uuid"],
+            "schema_name": tenant_info["schema_name"],
+            "subscriptions": tenant_info.get("subscriptions", []),
+            "user_subscriptions": tenant_info.get("user_subscriptions", []),
+        })
+    
     # Generate new access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = AuthUtils.create_access_token(
-        data={"sub": str(user.id), "email": user.email, "username": user.username},
+        data=token_data,
         expires_delta=access_token_expires,
         roles=user_roles
     )
@@ -705,7 +952,7 @@ async def update_current_user(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Update current user information"""
+    """Update current user information and return updated details including roles."""
     update_data = user_update.dict(exclude_unset=True)
     
     for field, value in update_data.items():
@@ -716,7 +963,28 @@ async def update_current_user(
     await db.refresh(current_user)
     
     logger.info(f"User updated: {current_user.email}")
-    return current_user
+
+    # Include roles in the response, similar to GET /api/v1/auth/me
+    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    user_dict = {
+        "id": current_user.id,
+        "email": current_user.email,
+        "username": current_user.username,
+        "full_name": current_user.full_name,
+        "phone_number": current_user.phone_number,
+        "timezone": current_user.timezone,
+        "language": current_user.language,
+        "is_active": current_user.is_active,
+        "is_verified": current_user.is_verified,
+        "is_superuser": current_user.is_superuser,
+        "created_at": current_user.created_at,
+        "updated_at": current_user.updated_at,
+        "last_login": current_user.last_login,
+        "avatar_url": current_user.avatar_url,
+        "roles": user_roles,
+    }
+
+    return user_dict
 
 @app.post("/api/v1/auth/change-password")
 async def change_password(
@@ -809,7 +1077,7 @@ def require_permission(resource: str, action: str):
         if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Insufficient permissions: requires '{resource}.{action}'",
+                detail={"code": UNAUTHORIZED, "message": f"Insufficient permissions: requires '{resource}.{action}'"},
             )
         return current_user
 
@@ -826,7 +1094,7 @@ async def require_admin(
     if "ADMIN" not in user_roles and not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can access this endpoint"
+            detail={"code": UNAUTHORIZED, "message": "Only administrators can access this endpoint"}
         )
     return current_user
 
@@ -864,6 +1132,17 @@ async def create_api_key(
         
         target_user_id = api_key_data.user_id
     
+    # Expand permissions if pipeline.inference is selected
+    requested_permissions = list(api_key_data.permissions or [])
+    if "pipeline.inference" in requested_permissions:
+        for perm in ["asr.inference", "nmt.inference", "tts.inference"]:
+            if perm not in requested_permissions:
+                requested_permissions.append(perm)
+    # Ensure pipeline.inference is present when any service inference is requested
+    if any(perm in requested_permissions for perm in ["asr.inference", "nmt.inference", "tts.inference"]):
+        if "pipeline.inference" not in requested_permissions:
+            requested_permissions.append("pipeline.inference")
+
     # Generate API key
     api_key_value = AuthUtils.generate_api_key()
     api_key_hash = AuthUtils.hash_api_key(api_key_value)
@@ -880,7 +1159,7 @@ async def create_api_key(
         key_name=api_key_data.key_name,
         key_hash=api_key_hash,
         key_value_encrypted=api_key_encrypted,
-        permissions=api_key_data.permissions,
+        permissions=requested_permissions,
         expires_at=expires_at
     )
     
@@ -972,6 +1251,7 @@ async def list_all_api_keys_with_users(
                 last_used=api_key.last_used,
                 user_id=user.id,
                 user_email=user.email,
+                username=user.username,
             )
         )
 
@@ -983,12 +1263,14 @@ async def revoke_api_key(
     current_user: User = Depends(require_permission("apiKey", "delete")),
     db: AsyncSession = Depends(get_db)
 ):
-    """Revoke an API key"""
+    """
+    Revoke an API key.
+    
+    - Requires `apiKey.delete` permission (e.g. ADMIN, MODERATOR).
+    - Users with this permission can delete any API key.
+    """
     result = await db.execute(
-        select(APIKey).where(
-            APIKey.id == key_id,
-            APIKey.user_id == current_user.id
-        )
+        select(APIKey).where(APIKey.id == key_id)
     )
     api_key = result.scalar_one_or_none()
     
@@ -1001,7 +1283,7 @@ async def revoke_api_key(
     api_key.is_active = False
     await db.commit()
     
-    logger.info(f"API key revoked: {key_id} for user: {current_user.email}")
+    logger.info(f"API key revoked: {key_id} by user: {current_user.email}")
     return {"message": "API key revoked successfully"}
 
 
@@ -1029,12 +1311,23 @@ async def update_api_key(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="API key not found",
         )
-
     # Apply updates if provided
     if update_data.key_name is not None:
         api_key.key_name = update_data.key_name
     if update_data.permissions is not None:
-        api_key.permissions = update_data.permissions
+        updated_permissions = list(update_data.permissions or [])
+        if "pipeline.inference" in updated_permissions:
+            for perm in ["asr.inference", "nmt.inference", "tts.inference"]:
+                if perm not in updated_permissions:
+                    updated_permissions.append(perm)
+        # Ensure pipeline.inference is present when any service inference is requested
+        if any(perm in updated_permissions for perm in ["asr.inference", "nmt.inference", "tts.inference"]):
+            if "pipeline.inference" not in updated_permissions:
+                updated_permissions.append("pipeline.inference")
+        api_key.permissions = updated_permissions
+    # Allow toggling active status (soft-enable/soft-disable)
+    if update_data.is_active is not None:
+        api_key.is_active = update_data.is_active
 
     await db.commit()
     await db.refresh(api_key)
@@ -1128,7 +1421,8 @@ async def google_callback(
     request: Request,
     code: str = Query(..., description="Authorization code from Google"),
     state: str = Query(..., description="State token for CSRF protection"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    multi_tenant_db: Optional[AsyncSession] = Depends(get_multi_tenant_db)
 ):
     """Handle Google OAuth callback - exchange code for tokens and create/login user"""
     if not redis_client:
@@ -1187,18 +1481,38 @@ async def google_callback(
         # 6. Get user roles
         user_roles = await AuthUtils.get_user_roles(db, user.id)
         
+        # 6.5. Get tenant information
+        tenant_info = await get_tenant_info(user.id, multi_tenant_db, user.is_tenant)
+        
+        # Build JWT payload with tenant info
+        token_data = {
+            "sub": str(user.id),
+            "email": user.email,
+            "username": user.username
+        }
+        
+        # Add tenant info if available
+        if tenant_info:
+            token_data.update({
+                "tenant_id": tenant_info["tenant_id"],
+                "tenant_uuid": tenant_info["tenant_uuid"],
+                "schema_name": tenant_info["schema_name"],
+                "subscriptions": tenant_info.get("subscriptions", []),
+                "user_subscriptions": tenant_info.get("user_subscriptions", []),
+            })
+        
         # 7. Generate JWT tokens
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        refresh_token_expires = timedelta(days=7)
+        refresh_token_expires = timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
         
         jwt_access_token = AuthUtils.create_access_token(
-            data={"sub": str(user.id), "email": user.email, "username": user.username},
+            data=token_data,
             expires_delta=access_token_expires,
             roles=user_roles
         )
         
         jwt_refresh_token = AuthUtils.create_refresh_token(
-            data={"sub": str(user.id), "email": user.email},
+            data=token_data,  # Include tenant info in refresh token too
             expires_delta=refresh_token_expires,
             roles=user_roles
         )
@@ -1285,7 +1599,7 @@ async def assign_role(
     if "ADMIN" not in user_roles and not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can assign roles"
+            detail={"code": UNAUTHORIZED, "message": "Only administrators can assign roles"}
         )
     
     # Get target user
@@ -1379,7 +1693,7 @@ async def remove_role(
     if "ADMIN" not in user_roles and not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only administrators can remove roles"
+            detail={"code": UNAUTHORIZED, "message": "Only administrators can remove roles"}
         )
     
     # Get target user
@@ -1429,7 +1743,7 @@ async def get_user_roles_endpoint(
         if user_id != current_user.id and "ADMIN" not in user_roles and not current_user.is_superuser:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only administrators can view other users' roles"
+                detail={"code": UNAUTHORIZED, "message": "Only administrators can view other users' roles"}
             )
         
         target_user = await AuthUtils.get_user_by_id(db, user_id)
@@ -1594,14 +1908,39 @@ async def get_permission_list(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get list of all permission names from the permissions table
+    Get list of inference permissions only (for API keys).
     
-    Returns a list of permission names only
+    Returns only inference permissions that can be assigned to API keys:
+    - asr.inference
+    - tts.inference
+    - nmt.inference
+    - audio-lang.inference
+    - language-detection.inference
+    - language-diarization.inference
+    - ner.inference
+    - ocr.inference
+    - speaker-diarization.inference
+    - transliteration.inference
+    - pipeline.inference
+    - llm.inference
     """
-    result = await db.execute(select(Permission.name).order_by(Permission.name))
-    permission_names = result.scalars().all()
+    # Define allowed inference permissions for API keys
+    allowed_permissions = [
+        "asr.inference",
+        "tts.inference",
+        "nmt.inference",
+        "audio-lang.inference",
+        "language-detection.inference",
+        "language-diarization.inference",
+        "ner.inference",
+        "ocr.inference",
+        "speaker-diarization.inference",
+        "transliteration.inference",
+        "pipeline.inference",
+        "llm.inference"
+    ]
     
-    return list(permission_names)
+    return allowed_permissions
 
 
 @app.get("/api/v1/auth/users", response_model=List[UserListResponse], tags=["Admin"])

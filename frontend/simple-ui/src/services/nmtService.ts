@@ -13,18 +13,39 @@ import {
   NMTServiceDetailsResponse,
   LanguagePair
 } from '../types/nmt';
+import { performTryItNMTInference, trackTryItRequest } from './tryItService';
+import { isAnonymousUser } from '../utils/anonymousSession';
 
 /**
  * Perform NMT inference on text
+ * Automatically uses try-it endpoint for anonymous users
  * @param text - Text to translate
  * @param config - NMT configuration
+ * @param forceAuth - Force authenticated endpoint (for logged-in users)
  * @returns Promise with NMT inference response and timing info
  */
 export const performNMTInference = async (
   text: string,
-  config: NMTInferenceRequest['config']
+  config: NMTInferenceRequest['config'],
+  forceAuth: boolean = false
 ): Promise<{ data: NMTInferenceResponse; responseTime: number }> => {
   try {
+    // Check if user is anonymous and should use try-it endpoint
+    const isAnonymous = isAnonymousUser();
+    const useTryIt = isAnonymous && !forceAuth;
+
+    if (useTryIt) {
+      // Use try-it endpoint for anonymous users
+      console.log('Using try-it endpoint for anonymous user');
+      const result = await performTryItNMTInference(text, config);
+      
+      // Track request for client-side rate limit warning
+      trackTryItRequest();
+      
+      return result;
+    }
+
+    // Use authenticated endpoint for logged-in users
     const payload: NMTInferenceRequest = {
       input: [{ source: text }],
       config,
@@ -47,7 +68,7 @@ export const performNMTInference = async (
     };
   } catch (error) {
     console.error('NMT inference error:', error);
-    throw new Error('Failed to perform NMT inference');
+    throw error;
   }
 };
 
@@ -105,6 +126,7 @@ export const listNMTServices = async (): Promise<NMTServiceDetailsResponse[]> =>
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id,
+        model_version: service.modelVersion || service.model_version || '',
         triton_endpoint: endpoint,
         triton_model: 'nmt', // Default value
         provider: service.name || service.serviceId || 'unknown', // Keep for backward compatibility
@@ -112,6 +134,8 @@ export const listNMTServices = async (): Promise<NMTServiceDetailsResponse[]> =>
         name: service.name || '',
         serviceDescription: service.serviceDescription || service.description || '',
         supported_languages: Array.from(new Set(supportedLanguages)), // Remove duplicates
+        modelVersion: service.modelVersion || service.model_version,
+        model_version: service.modelVersion || service.model_version,
       } as NMTServiceDetailsResponse;
     });
 

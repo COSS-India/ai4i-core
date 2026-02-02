@@ -41,16 +41,30 @@ import {
   Checkbox,
   CheckboxGroup,
   SimpleGrid,
+  Modal,
+  ModalOverlay,
+  ModalContent,
+  ModalHeader,
+  ModalFooter,
+  ModalBody,
+  ModalCloseButton,
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogContent,
+  AlertDialogOverlay,
 } from "@chakra-ui/react";
 import { ViewIcon, ViewOffIcon, CopyIcon } from "@chakra-ui/icons";
 import { FiEdit2, FiCheck, FiX } from "react-icons/fi";
 import Head from "next/head";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/router";
 import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
 import { useApiKey } from "../hooks/useApiKey";
-import { User, UserUpdateRequest, Permission, APIKeyResponse } from "../types/auth";
+import { useSessionExpiry } from "../hooks/useSessionExpiry";
+import { User, UserUpdateRequest, Permission, APIKeyResponse, AdminAPIKeyWithUserResponse, APIKeyUpdate } from "../types/auth";
 import roleService, { Role, UserRole } from "../services/roleService";
 import authService from "../services/authService";
 
@@ -58,6 +72,7 @@ const ProfilePage: React.FC = () => {
   const router = useRouter();
   const { user, isAuthenticated, isLoading: authLoading, updateUser } = useAuth();
   const { apiKey, getApiKey, setApiKey } = useApiKey();
+  const { checkSessionExpiry } = useSessionExpiry();
   const [showApiKey, setShowApiKey] = useState(false);
   const [isEditingUser, setIsEditingUser] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -81,7 +96,6 @@ const ProfilePage: React.FC = () => {
   const [isLoadingRoles, setIsLoadingRoles] = useState(false);
   const [isLoadingUserRoles, setIsLoadingUserRoles] = useState(false);
   const [isAssigningRole, setIsAssigningRole] = useState(false);
-  const [isRemovingRole, setIsRemovingRole] = useState(false);
   
   // Permissions management state
   const [permissions, setPermissions] = useState<string[]>([]);
@@ -123,6 +137,27 @@ const ProfilePage: React.FC = () => {
     }
     return null;
   });
+  
+  // API Key Management state (for Admin/Moderator)
+  const [allApiKeys, setAllApiKeys] = useState<AdminAPIKeyWithUserResponse[]>([]);
+  const [isLoadingAllApiKeys, setIsLoadingAllApiKeys] = useState(false);
+  const [filterUser, setFilterUser] = useState<string>("all"); // "all" or user ID
+  const [filterPermission, setFilterPermission] = useState<string>("all"); // "all" or permission name
+  const [filterActive, setFilterActive] = useState<string>("all"); // "all", "active", "inactive"
+  const [selectedKeyForUpdate, setSelectedKeyForUpdate] = useState<AdminAPIKeyWithUserResponse | null>(null);
+  const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
+  const [isRevokeModalOpen, setIsRevokeModalOpen] = useState(false);
+  const [keyToRevoke, setKeyToRevoke] = useState<AdminAPIKeyWithUserResponse | null>(null);
+  const [isRevoking, setIsRevoking] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [updateFormData, setUpdateFormData] = useState<APIKeyUpdate>({
+    key_name: "",
+    permissions: [],
+    is_active: true,
+  });
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const [selectedKeyForView, setSelectedKeyForView] = useState<AdminAPIKeyWithUserResponse | null>(null);
+  const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   
   // Persist selected API key ID to localStorage whenever it changes
   useEffect(() => {
@@ -208,10 +243,14 @@ const ProfilePage: React.FC = () => {
     }
   }, [user]);
 
-  // Redirect to home if not authenticated
+  // Redirect to auth page if not authenticated
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
-      router.push("/");
+      // Store current path to redirect back after login
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('redirectAfterAuth', '/profile');
+      }
+      router.push("/auth");
     }
   }, [isAuthenticated, authLoading, router]);
 
@@ -252,6 +291,9 @@ const ProfilePage: React.FC = () => {
   }, [isAuthenticated, authLoading, toast, user]);
 
   const handleCopyApiKey = () => {
+    // Check session expiry before performing action
+    if (!checkSessionExpiry()) return;
+    
     const key = getApiKey();
     if (key) {
       navigator.clipboard.writeText(key);
@@ -266,6 +308,9 @@ const ProfilePage: React.FC = () => {
   };
 
   const handleEditUser = () => {
+    // Check session expiry before performing action
+    if (!checkSessionExpiry()) return;
+    
     setIsEditingUser(true);
     setErrors({});
   };
@@ -289,10 +334,41 @@ const ProfilePage: React.FC = () => {
     const newErrors: Record<string, string> = {};
 
     if (userFormData.phone_number && userFormData.phone_number.length > 0) {
-      // Basic phone validation (allows numbers, spaces, dashes, parentheses, plus)
-      const phoneRegex = /^[\d\s\-+()]+$/;
-      if (!phoneRegex.test(userFormData.phone_number)) {
-        newErrors.phone_number = "Invalid phone number format";
+      // Indian phone number validation
+      const phoneNumber = userFormData.phone_number.trim().replace(/\s+/g, '');
+      
+      // Remove common separators for validation
+      const cleanedPhone = phoneNumber.replace(/[-\s()]/g, '');
+      
+      // Indian phone number patterns:
+      // +91XXXXXXXXXX (13 digits: +91 + 10 digits)
+      // 91XXXXXXXXXX (12 digits: 91 + 10 digits)
+      // 0XXXXXXXXXX (11 digits: 0 + 10 digits)
+      // XXXXXXXXXX (10 digits: just the number)
+      
+      let isValid = false;
+      let digits = '';
+      
+      if (cleanedPhone.startsWith('+91')) {
+        // Format: +91XXXXXXXXXX
+        digits = cleanedPhone.substring(3);
+        isValid = digits.length === 10 && /^[6-9]\d{9}$/.test(digits);
+      } else if (cleanedPhone.startsWith('91') && cleanedPhone.length === 12) {
+        // Format: 91XXXXXXXXXX
+        digits = cleanedPhone.substring(2);
+        isValid = /^[6-9]\d{9}$/.test(digits);
+      } else if (cleanedPhone.startsWith('0') && cleanedPhone.length === 11) {
+        // Format: 0XXXXXXXXXX
+        digits = cleanedPhone.substring(1);
+        isValid = /^[6-9]\d{9}$/.test(digits);
+      } else if (cleanedPhone.length === 10) {
+        // Format: XXXXXXXXXX (10 digits)
+        digits = cleanedPhone;
+        isValid = /^[6-9]\d{9}$/.test(digits);
+      }
+      
+      if (!isValid) {
+        newErrors.phone_number = "Invalid Indian phone number. Please enter a valid 10-digit mobile number (starting with 6-9) or use formats: +91XXXXXXXXXX, 91XXXXXXXXXX, 0XXXXXXXXXX, or XXXXXXXXXX";
       }
     }
 
@@ -301,6 +377,9 @@ const ProfilePage: React.FC = () => {
   };
 
   const handleSaveUser = async () => {
+    // Check session expiry before performing action
+    if (!checkSessionExpiry()) return;
+    
     if (!validateForm()) {
       return;
     }
@@ -340,18 +419,71 @@ const ProfilePage: React.FC = () => {
     }
   };
 
+  const validatePhoneNumber = (phoneNumber: string): string | null => {
+    if (!phoneNumber || phoneNumber.trim().length === 0) {
+      return null; // Empty is valid (optional field)
+    }
+    
+    const cleanedPhone = phoneNumber.trim().replace(/\s+/g, '').replace(/[-\s()]/g, '');
+    let digits = '';
+    
+    if (cleanedPhone.startsWith('+91')) {
+      digits = cleanedPhone.substring(3);
+      if (digits.length === 10 && /^[6-9]\d{9}$/.test(digits)) {
+        return null; // Valid
+      }
+    } else if (cleanedPhone.startsWith('91') && cleanedPhone.length === 12) {
+      digits = cleanedPhone.substring(2);
+      if (/^[6-9]\d{9}$/.test(digits)) {
+        return null; // Valid
+      }
+    } else if (cleanedPhone.startsWith('0') && cleanedPhone.length === 11) {
+      digits = cleanedPhone.substring(1);
+      if (/^[6-9]\d{9}$/.test(digits)) {
+        return null; // Valid
+      }
+    } else if (cleanedPhone.length === 10) {
+      digits = cleanedPhone;
+      if (/^[6-9]\d{9}$/.test(digits)) {
+        return null; // Valid
+      }
+    }
+    
+    // Only show error if user has entered something substantial (more than 3 characters)
+    if (cleanedPhone.length > 3) {
+      return "Invalid Indian phone number. Please enter a valid 10-digit mobile number (starting with 6-9) or use formats: +91XXXXXXXXXX, 91XXXXXXXXXX, 0XXXXXXXXXX, or XXXXXXXXXX";
+    }
+    
+    return null; // Don't show error for partial input
+  };
+
   const handleInputChange = (field: keyof UserUpdateRequest, value: string | Record<string, any>) => {
     setUserFormData((prev) => ({
       ...prev,
       [field]: value,
     }));
-    // Clear error for this field when user starts typing
+    
+    // Real-time validation for phone number
+    if (field === 'phone_number' && typeof value === 'string') {
+      const error = validatePhoneNumber(value);
+      setErrors((prev) => {
+        const newErrors = { ...prev };
+        if (error) {
+          newErrors.phone_number = error;
+        } else {
+          delete newErrors.phone_number;
+        }
+        return newErrors;
+      });
+    } else {
+      // Clear error for other fields when user starts typing
     if (errors[field]) {
       setErrors((prev) => {
         const newErrors = { ...prev };
         delete newErrors[field];
         return newErrors;
       });
+      }
     }
   };
 
@@ -359,6 +491,9 @@ const ProfilePage: React.FC = () => {
 
   // Function to fetch API keys from the API
   const handleFetchApiKeys = async () => {
+    // Check session expiry before performing action
+    if (!checkSessionExpiry()) return;
+    
     console.log('Profile: Fetching API keys from /api/v1/auth/api-keys');
     setIsFetchingApiKey(true);
     setIsLoadingApiKeys(true);
@@ -401,6 +536,189 @@ const ProfilePage: React.FC = () => {
       setIsLoadingApiKeys(false);
     }
   };
+
+  // API Key Management handlers (Admin/Moderator)
+  const handleFetchAllApiKeys = async () => {
+    setIsLoadingAllApiKeys(true);
+    try {
+      const allKeys = await authService.listAllApiKeys();
+      setAllApiKeys(allKeys);
+      
+      // Also ensure users and permissions are loaded for filters
+      if (users.length === 0 && !isLoadingUsers) {
+        try {
+          const usersList = await authService.getAllUsers();
+          setUsers(usersList);
+        } catch (err) {
+          console.error("Failed to fetch users for filter:", err);
+        }
+      }
+      
+      if (permissions.length === 0 && !isLoadingPermissions) {
+        try {
+          const permsList = await authService.getAllPermissions();
+          setPermissions(permsList);
+        } catch (err) {
+          console.error("Failed to fetch permissions for filter:", err);
+        }
+      }
+      
+      toast({
+        title: "API Keys Loaded",
+        description: `Loaded ${allKeys.length} API key(s)`,
+        status: "success",
+        duration: 2000,
+        isClosable: true,
+      });
+    } catch (error) {
+      console.error("Failed to fetch all API keys:", error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to load API keys",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsLoadingAllApiKeys(false);
+    }
+  };
+
+  const handleOpenUpdateModal = (key: AdminAPIKeyWithUserResponse) => {
+    setSelectedKeyForUpdate(key);
+    setUpdateFormData({
+      key_name: key.key_name,
+      permissions: [...key.permissions],
+      is_active: key.is_active,
+    });
+    setIsUpdateModalOpen(true);
+  };
+
+  const handleCloseUpdateModal = () => {
+    setIsUpdateModalOpen(false);
+    setSelectedKeyForUpdate(null);
+    setUpdateFormData({
+      key_name: "",
+      permissions: [],
+      is_active: true,
+    });
+  };
+
+  const handleUpdateApiKey = async () => {
+    if (!selectedKeyForUpdate) return;
+
+    setIsUpdating(true);
+    try {
+      await authService.updateApiKey(selectedKeyForUpdate.id, updateFormData);
+      toast({
+        title: "API Key Updated",
+        description: "API key has been updated successfully",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+      handleCloseUpdateModal();
+      // Refresh the list
+      await handleFetchAllApiKeys();
+    } catch (error) {
+      toast({
+        title: "Update Failed",
+        description: error instanceof Error ? error.message : "Failed to update API key",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleOpenRevokeModal = (key: AdminAPIKeyWithUserResponse) => {
+    setKeyToRevoke(key);
+    setIsRevokeModalOpen(true);
+  };
+
+  const handleCloseRevokeModal = () => {
+    setIsRevokeModalOpen(false);
+    setKeyToRevoke(null);
+  };
+
+  const handleOpenViewModal = (key: AdminAPIKeyWithUserResponse) => {
+    setSelectedKeyForView(key);
+    setIsViewModalOpen(true);
+  };
+
+  const handleCloseViewModal = () => {
+    setIsViewModalOpen(false);
+    setSelectedKeyForView(null);
+  };
+
+  const handleResetFilters = () => {
+    setFilterUser("all");
+    setFilterPermission("all");
+    setFilterActive("all");
+  };
+
+  const handleRevokeApiKey = async () => {
+    if (!keyToRevoke) return;
+
+    setIsRevoking(true);
+    try {
+      await authService.revokeApiKey(keyToRevoke.id);
+      toast({
+        title: "API Key Revoked",
+        description: "API key has been revoked successfully",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+      handleCloseRevokeModal();
+      // Refresh the list
+      await handleFetchAllApiKeys();
+    } catch (error) {
+      toast({
+        title: "Revoke Failed",
+        description: error instanceof Error ? error.message : "Failed to revoke API key",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsRevoking(false);
+    }
+  };
+
+  // Filter API keys based on user, permission, and active status
+  const filteredApiKeys = allApiKeys
+    .filter((key) => {
+      if (filterUser !== "all" && key.user_id.toString() !== filterUser) {
+        return false;
+      }
+      if (filterPermission !== "all" && !key.permissions.includes(filterPermission)) {
+        return false;
+      }
+      if (filterActive === "active" && !key.is_active) {
+        return false;
+      }
+      if (filterActive === "inactive" && key.is_active) {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const dateA = new Date(a.created_at).getTime();
+      const dateB = new Date(b.created_at).getTime();
+      return dateB - dateA; // Descending order (newest first)
+    });
+
+  // Get unique permissions from all API keys for the filter dropdown
+  const allUniquePermissions = React.useMemo(() => {
+    const perms = new Set<string>();
+    allApiKeys.forEach(key => {
+      key.permissions.forEach(perm => perms.add(perm));
+    });
+    return Array.from(perms).sort();
+  }, [allApiKeys]);
 
   // Common timezones
   const timezones = [
@@ -447,10 +765,12 @@ const ProfilePage: React.FC = () => {
   if (!isAuthenticated || !user) {
     return (
       <ContentLayout>
-        <Alert status="warning">
-          <AlertIcon />
-          <AlertDescription>Please log in to view your profile.</AlertDescription>
-        </Alert>
+        <Center h="400px">
+          <VStack spacing={4}>
+            <Spinner size="xl" color="orange.500" />
+            <Text color="gray.600">Redirecting to sign in...</Text>
+          </VStack>
+        </Center>
       </ContentLayout>
     );
   }
@@ -463,7 +783,12 @@ const ProfilePage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <Box maxW="4xl" mx="auto" py={8} px={4}>
+        <Box 
+          maxW={(user?.roles?.includes('ADMIN') || user?.roles?.includes('MODERATOR') || user?.is_superuser) ? "7xl" : "4xl"} 
+          mx="auto" 
+          py={8} 
+          px={4}
+        >
           <Heading size="xl" mb={8} color="gray.800">
             Profile
           </Heading>
@@ -475,6 +800,19 @@ const ProfilePage: React.FC = () => {
               index={activeTabIndex}
               onChange={(index) => {
                 setActiveTabIndex(index);
+                // If API Key Management tab is clicked, fetch all API keys
+                const isAdmin = user?.roles?.includes('ADMIN') || user?.is_superuser;
+                const isModerator = user?.roles?.includes('MODERATOR');
+                // Calculate tab index: User Details(0), Organization(1), API Key(2), Roles(3 if admin), Create API Key(4 if admin), API Key Management(5 if admin, 3 if moderator only)
+                const apiKeyManagementTabIndex = isAdmin ? 5 : (isModerator ? 3 : -1);
+                if (index === apiKeyManagementTabIndex) {
+                  console.log('Profile: API Key Management tab clicked, fetching all API keys');
+                  handleFetchAllApiKeys();
+                  // Also ensure permissions are loaded for the filter dropdown
+                  if (permissions.length === 0 && !isLoadingPermissions) {
+                    authService.getAllPermissions().then(setPermissions).catch(console.error);
+                  }
+                }
                 // Calculate tab indices
                 // Tabs: 0=User Details, 1=Organization, 2=API Key, 3=Roles (if admin), 4=Permissions (if admin)
                 const apiKeyTabIndex = 2;
@@ -499,8 +837,11 @@ const ProfilePage: React.FC = () => {
                 {(user?.roles?.includes('ADMIN') || user?.is_superuser) && (
                   <>
                     <Tab fontWeight="semibold">Roles</Tab>
-                    <Tab fontWeight="semibold">Permissions</Tab>
+                    <Tab fontWeight="semibold">Create API Key</Tab>
                   </>
+                )}
+                {(user?.roles?.includes('ADMIN') || user?.roles?.includes('MODERATOR') || user?.is_superuser) && (
+                  <Tab fontWeight="semibold">API Key Management</Tab>
                 )}
               </TabList>
 
@@ -592,8 +933,14 @@ const ProfilePage: React.FC = () => {
                       isReadOnly={!isEditingUser}
                       onChange={(e) => handleInputChange("phone_number", e.target.value)}
                       bg={isEditingUser ? "white" : inputReadOnlyBg}
-                      placeholder="Enter your phone number"
+                      placeholder="+91XXXXXXXXXX or XXXXXXXXXX"
+                      type="tel"
                     />
+                    {isEditingUser && !errors.phone_number && (
+                      <Text fontSize="xs" color="gray.500" mt={1}>
+                        Enter a valid Indian mobile number (10 digits starting with 6-9)
+                      </Text>
+                    )}
                     {errors.phone_number && (
                       <FormErrorMessage>{errors.phone_number}</FormErrorMessage>
                     )}
@@ -806,7 +1153,11 @@ const ProfilePage: React.FC = () => {
                             Select an API key to use it as your current key
                           </Text>
                           <VStack spacing={2} align="stretch">
-                            {apiKeys.map((key) => (
+                            {[...apiKeys].sort((a, b) => {
+                              const dateA = new Date(a.created_at).getTime();
+                              const dateB = new Date(b.created_at).getTime();
+                              return dateB - dateA; // Descending order (newest first)
+                            }).map((key) => (
                               <Card 
                                 key={key.id} 
                                 bg={inputReadOnlyBg} 
@@ -913,14 +1264,21 @@ const ProfilePage: React.FC = () => {
                 </Card>
                 </TabPanel>
 
-                {/* Roles Tab - Only visible to ADMIN users */}
-                {(user?.roles?.includes('ADMIN') || user?.is_superuser) && (
+                {/* Roles Tab - Visible to ADMIN (can add/remove) and MODERATOR (view only) */}
+                {(user?.roles?.includes('ADMIN') || user?.roles?.includes('MODERATOR') || user?.is_superuser) && (
                   <TabPanel px={0} pt={6}>
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
+                        <HStack justify="space-between">
                         <Heading size="md" color="gray.700">
                           Role-Based Access Control (RBAC)
                         </Heading>
+                          {(user?.roles?.includes('MODERATOR') && !user?.roles?.includes('ADMIN') && !user?.is_superuser) && (
+                            <Badge colorScheme="orange" fontSize="sm" p={2}>
+                              View Only
+                            </Badge>
+                          )}
+                        </HStack>
                       </CardHeader>
                       <CardBody>
                         <VStack spacing={6} align="stretch">
@@ -1037,41 +1395,6 @@ const ProfilePage: React.FC = () => {
                                       <Badge colorScheme="green" fontSize="sm" p={1}>
                                         {roleName}
                                       </Badge>
-                                      <Button
-                                        size="xs"
-                                        colorScheme="red"
-                                        variant="outline"
-                                        onClick={async () => {
-                                          setIsRemovingRole(true);
-                                          try {
-                                            await roleService.removeRole(selectedUser.id, roleName);
-                                            toast({
-                                              title: "Success",
-                                              description: `Role ${roleName} removed from user ${selectedUser.username}`,
-                                              status: "success",
-                                              duration: 3000,
-                                              isClosable: true,
-                                            });
-                                            // Refresh user roles
-                                            const userRolesData = await roleService.getUserRoles(selectedUser.id);
-                                            setSelectedUserRoles(userRolesData.roles);
-                                          } catch (error) {
-                                            toast({
-                                              title: "Error",
-                                              description: error instanceof Error ? error.message : "Failed to remove role",
-                                              status: "error",
-                                              duration: 5000,
-                                              isClosable: true,
-                                            });
-                                          } finally {
-                                            setIsRemovingRole(false);
-                                          }
-                                        }}
-                                        isLoading={isRemovingRole}
-                                        loadingText="Removing..."
-                                      >
-                                        Remove
-                                      </Button>
                                     </HStack>
                                   ))}
                                 </VStack>
@@ -1086,8 +1409,8 @@ const ProfilePage: React.FC = () => {
                             </Box>
                           )}
 
-                          {/* Assign Role Section */}
-                          {selectedUser && roles.length > 0 && (
+                          {/* Assign Role Section - Only visible to ADMIN */}
+                          {selectedUser && roles.length > 0 && (user?.roles?.includes('ADMIN') || user?.is_superuser) && (
                             <Box>
                               <Heading size="sm" mb={4} color="gray.700">
                                 Assign Role to {selectedUser.username}
@@ -1156,7 +1479,7 @@ const ProfilePage: React.FC = () => {
                                   }}
                                   isLoading={isAssigningRole}
                                   loadingText="Assigning..."
-                                  isDisabled={!selectedRole}
+                                  isDisabled={!selectedRole || (user?.roles?.includes('MODERATOR') && !user?.roles?.includes('ADMIN') && !user?.is_superuser)}
                                 >
                                   Assign Role
                                 </Button>
@@ -1565,10 +1888,473 @@ const ProfilePage: React.FC = () => {
                     </Card>
                   </TabPanel>
                 )}
+
+                {/* API Key Management Tab - Visible to ADMIN and MODERATOR */}
+                {(user?.roles?.includes('ADMIN') || user?.roles?.includes('MODERATOR') || user?.is_superuser) && (
+                  <TabPanel px={0} pt={6}>
+                    <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
+                      <CardHeader>
+                        <HStack justify="space-between">
+                          <Heading size="md" color="gray.700">
+                            API Key Management
+                          </Heading>
+                          <Button
+                            size="sm"
+                            colorScheme="blue"
+                            onClick={handleFetchAllApiKeys}
+                            isLoading={isLoadingAllApiKeys}
+                            loadingText="Loading..."
+                          >
+                            Refresh
+                          </Button>
+                        </HStack>
+                      </CardHeader>
+                      <CardBody>
+                        <VStack spacing={6} align="stretch">
+                          {/* Filters */}
+                          <Box>
+                            <HStack justify="space-between" mb={4}>
+                              <Heading size="sm" color="gray.700">Filters</Heading>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                colorScheme="gray"
+                                onClick={handleResetFilters}
+                                isDisabled={filterUser === "all" && filterPermission === "all" && filterActive === "all"}
+                              >
+                                Reset Filters
+                              </Button>
+                            </HStack>
+                            <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                              <FormControl>
+                                <FormLabel fontWeight="semibold">Filter by User</FormLabel>
+                                <Select
+                                  value={filterUser}
+                                  onChange={(e) => setFilterUser(e.target.value)}
+                                  bg="white"
+                                  placeholder="All Users"
+                                >
+                                  <option value="all">All Users</option>
+                                  {users.map((user) => (
+                                    <option key={user.id} value={user.id.toString()}>
+                                      {user.email} ({user.username})
+                                    </option>
+                                  ))}
+                                </Select>
+                              </FormControl>
+                              <FormControl>
+                                <FormLabel fontWeight="semibold">Filter by Permission</FormLabel>
+                                <Select
+                                  value={filterPermission}
+                                  onChange={(e) => setFilterPermission(e.target.value)}
+                                  bg="white"
+                                  placeholder="All Permissions"
+                                >
+                                  <option value="all">All Permissions</option>
+                                  {allUniquePermissions.length > 0 ? (
+                                    allUniquePermissions.map((perm) => (
+                                      <option key={perm} value={perm}>
+                                        {perm}
+                                      </option>
+                                    ))
+                                  ) : permissions.length > 0 ? (
+                                    permissions.map((perm) => (
+                                      <option key={perm} value={perm}>
+                                        {perm}
+                                      </option>
+                                    ))
+                                  ) : null}
+                                </Select>
+                              </FormControl>
+                              <FormControl>
+                                <FormLabel fontWeight="semibold">Status</FormLabel>
+                                <Select
+                                  value={filterActive}
+                                  onChange={(e) => setFilterActive(e.target.value)}
+                                  bg="white"
+                                >
+                                  <option value="all">All</option>
+                                  <option value="active">Active</option>
+                                  <option value="inactive">Inactive</option>
+                                </Select>
+                              </FormControl>
+                            </SimpleGrid>
+                          </Box>
+
+                          {/* API Keys Table */}
+                          {isLoadingAllApiKeys ? (
+                            <Center py={8}>
+                              <VStack spacing={4}>
+                                <Spinner size="lg" color="blue.500" />
+                                <Text color="gray.600">Loading API keys...</Text>
+                              </VStack>
+                            </Center>
+                          ) : filteredApiKeys.length > 0 ? (
+                            <TableContainer>
+                              <Table variant="simple">
+                                <Thead>
+                                  <Tr>
+                                    <Th>Key Name</Th>
+                                    <Th>User</Th>
+                                    <Th>Permissions</Th>
+                                    <Th>Status</Th>
+                                    <Th>Created</Th>
+                                    <Th>Expires</Th>
+                                    <Th>Actions</Th>
+                                  </Tr>
+                                </Thead>
+                                <Tbody>
+                                  {filteredApiKeys.map((key) => (
+                                    <Tr 
+                                      key={key.id}
+                                      onClick={() => handleOpenViewModal(key)}
+                                      cursor="pointer"
+                                      _hover={{ bg: "gray.50" }}
+                                    >
+                                      <Td fontWeight="semibold">{key.key_name}</Td>
+                                      <Td>
+                                        <VStack align="start" spacing={0}>
+                                          <Text fontSize="sm">{key.user_email}</Text>
+                                          <Text fontSize="xs" color="gray.500">{key.username}</Text>
+                                        </VStack>
+                                      </Td>
+                                      <Td>
+                                        <HStack flexWrap="wrap" spacing={1}>
+                                          {key.permissions.slice(0, 3).map((perm) => (
+                                            <Badge key={perm} colorScheme="blue" fontSize="xs">
+                                              {perm}
+                                            </Badge>
+                                          ))}
+                                          {key.permissions.length > 3 && (
+                                            <Badge colorScheme="gray" fontSize="xs">
+                                              +{key.permissions.length - 3}
+                                            </Badge>
+                                          )}
+                                        </HStack>
+                                      </Td>
+                                      <Td>
+                                        <Badge colorScheme={key.is_active ? "green" : "red"}>
+                                          {key.is_active ? "Active" : "Inactive"}
+                                        </Badge>
+                                      </Td>
+                                      <Td fontSize="sm">
+                                        {new Date(key.created_at).toLocaleDateString()}
+                                      </Td>
+                                      <Td fontSize="sm">
+                                        {key.expires_at ? new Date(key.expires_at).toLocaleDateString() : "Never"}
+                                      </Td>
+                                      <Td>
+                                        <HStack spacing={2}>
+                                          <Button
+                                            size="xs"
+                                            colorScheme="blue"
+                                            variant="outline"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleOpenViewModal(key);
+                                            }}
+                                          >
+                                            View
+                                          </Button>
+                                          <Button
+                                            size="xs"
+                                            colorScheme="green"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleOpenUpdateModal(key);
+                                            }}
+                                          >
+                                            Update
+                                          </Button>
+                                          <Button
+                                            size="xs"
+                                            colorScheme="red"
+                                            variant="outline"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleOpenRevokeModal(key);
+                                            }}
+                                            isDisabled={!key.is_active}
+                                          >
+                                            Revoke
+                                          </Button>
+                                        </HStack>
+                                      </Td>
+                                    </Tr>
+                                  ))}
+                                </Tbody>
+                              </Table>
+                            </TableContainer>
+                          ) : (
+                            <Alert status="info" borderRadius="md">
+                              <AlertIcon />
+                              <AlertDescription>
+                                {allApiKeys.length === 0
+                                  ? "No API keys found. Click 'Refresh' to load API keys."
+                                  : "No API keys match the current filters."}
+                              </AlertDescription>
+                            </Alert>
+                          )}
+                        </VStack>
+                      </CardBody>
+                    </Card>
+                  </TabPanel>
+                )}
               </TabPanels>
             </Tabs>
           </Card>
         </Box>
+
+        {/* View API Key Modal */}
+        <Modal isOpen={isViewModalOpen} onClose={handleCloseViewModal} size="2xl" isCentered>
+          <ModalOverlay />
+          <ModalContent maxW="900px" maxH="600px">
+            <ModalHeader>API Key Details</ModalHeader>
+            <ModalCloseButton />
+            <ModalBody overflowY="auto">
+              {selectedKeyForView && (
+                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                  <Box>
+                    <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                      Key Name
+                    </Text>
+                    <Text fontSize="md">{selectedKeyForView.key_name}</Text>
+                  </Box>
+
+                  <Box>
+                    <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                      User
+                    </Text>
+                    <VStack align="start" spacing={0}>
+                      <Text fontSize="md">{selectedKeyForView.user_email}</Text>
+                      <Text fontSize="sm" color="gray.500">@{selectedKeyForView.username}</Text>
+                    </VStack>
+                  </Box>
+
+                  <Box gridColumn={{ base: "span 1", md: "span 2" }}>
+                    <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={2}>
+                      Permissions
+                    </Text>
+                    {selectedKeyForView.permissions.length > 0 ? (
+                      <HStack flexWrap="wrap" spacing={2}>
+                        {selectedKeyForView.permissions.map((perm) => (
+                          <Badge key={perm} colorScheme="blue" fontSize="sm" p={2}>
+                            {perm}
+                          </Badge>
+                        ))}
+                      </HStack>
+                    ) : (
+                      <Text fontSize="sm" color="gray.500">No permissions assigned</Text>
+                    )}
+                  </Box>
+
+                  <Box>
+                    <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                      Status
+                    </Text>
+                    <Badge colorScheme={selectedKeyForView.is_active ? "green" : "red"} fontSize="sm" p={2}>
+                      {selectedKeyForView.is_active ? "Active" : "Inactive"}
+                    </Badge>
+                  </Box>
+
+                  <Box>
+                    <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                      Created At
+                    </Text>
+                    <Text fontSize="sm">{new Date(selectedKeyForView.created_at).toLocaleString()}</Text>
+                  </Box>
+
+                  {selectedKeyForView.expires_at && (
+                    <Box>
+                      <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                        Expires At
+                      </Text>
+                      <Text fontSize="sm">{new Date(selectedKeyForView.expires_at).toLocaleString()}</Text>
+                    </Box>
+                  )}
+
+                  {selectedKeyForView.last_used && (
+                    <Box>
+                      <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                        Last Used
+                      </Text>
+                      <Text fontSize="sm">{new Date(selectedKeyForView.last_used).toLocaleString()}</Text>
+                    </Box>
+                  )}
+
+                  <Box>
+                    <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                      Key ID
+                    </Text>
+                    <Text fontSize="sm" fontFamily="mono" color="gray.700">{selectedKeyForView.id}</Text>
+                  </Box>
+                </SimpleGrid>
+              )}
+            </ModalBody>
+            <ModalFooter>
+              <Button onClick={handleCloseViewModal}>Close</Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+
+        {/* Update API Key Modal */}
+        <Modal isOpen={isUpdateModalOpen} onClose={handleCloseUpdateModal} size="lg">
+          <ModalOverlay />
+          <ModalContent>
+            <ModalHeader>Update API Key</ModalHeader>
+            <ModalCloseButton />
+            <ModalBody>
+              <VStack spacing={4} align="stretch">
+                <FormControl>
+                  <FormLabel fontWeight="semibold">Key Name</FormLabel>
+                  <Input
+                    value={updateFormData.key_name || ""}
+                    onChange={(e) => setUpdateFormData({ ...updateFormData, key_name: e.target.value })}
+                    bg="white"
+                  />
+                </FormControl>
+
+                <FormControl>
+                  <FormLabel fontWeight="semibold">Status</FormLabel>
+                  <Select
+                    value={updateFormData.is_active ? "active" : "inactive"}
+                    onChange={(e) => setUpdateFormData({ ...updateFormData, is_active: e.target.value === "active" })}
+                    bg="white"
+                  >
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </Select>
+                </FormControl>
+
+                <FormControl>
+                  <FormLabel fontWeight="semibold">Permissions</FormLabel>
+                  <Text fontSize="sm" color="gray.600" mb={3}>
+                    Select permissions for this API key
+                  </Text>
+                  {permissions.length > 0 ? (
+                    <Box
+                      borderWidth="1px"
+                      borderRadius="md"
+                      p={4}
+                      bg="white"
+                      maxH="300px"
+                      overflowY="auto"
+                    >
+                      <CheckboxGroup
+                        value={updateFormData.permissions || []}
+                        onChange={(values) => setUpdateFormData({ ...updateFormData, permissions: values as string[] })}
+                      >
+                        <SimpleGrid columns={2} spacing={3}>
+                          {permissions.map((perm) => (
+                            <Checkbox key={perm} value={perm} colorScheme="blue">
+                              <Text fontSize="sm">{perm}</Text>
+                            </Checkbox>
+                          ))}
+                        </SimpleGrid>
+                      </CheckboxGroup>
+                    </Box>
+                  ) : (
+                    <Alert status="info" borderRadius="md">
+                      <AlertIcon />
+                      <AlertDescription>
+                        Click &quot;Load Permissions&quot; in the Permissions tab to view available permissions
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </FormControl>
+
+                {selectedKeyForUpdate && (
+                  <Box>
+                    <Text fontSize="sm" fontWeight="semibold" mb={2}>User: {selectedKeyForUpdate.user_email}</Text>
+                    <Text fontSize="xs" color="gray.500">Key ID: {selectedKeyForUpdate.id}</Text>
+                  </Box>
+                )}
+              </VStack>
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="ghost" mr={3} onClick={handleCloseUpdateModal} isDisabled={isUpdating}>
+                Cancel
+              </Button>
+              <Button
+                colorScheme="blue"
+                onClick={handleUpdateApiKey}
+                isLoading={isUpdating}
+                loadingText="Updating..."
+              >
+                Update
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+
+        {/* Revoke API Key Alert Dialog */}
+        <AlertDialog
+          isOpen={isRevokeModalOpen}
+          leastDestructiveRef={cancelRef}
+          onClose={handleCloseRevokeModal}
+        >
+          <AlertDialogOverlay>
+            <AlertDialogContent>
+              <AlertDialogHeader fontSize="lg" fontWeight="bold">
+                Revoke API Key
+              </AlertDialogHeader>
+              <AlertDialogBody>
+                <VStack align="stretch" spacing={3}>
+                  <Text>
+                    Are you sure you want to revoke the API key &quot;{keyToRevoke?.key_name}&quot;?
+                  </Text>
+                  
+                  <Box>
+                    <Text fontWeight="semibold" fontSize="sm" color="gray.700" mb={2}>
+                      Key Details:
+                    </Text>
+                    <VStack align="start" spacing={1} fontSize="sm">
+                      <Text><strong>User:</strong> {keyToRevoke?.user_email} (@{keyToRevoke?.username})</Text>
+                      <Text><strong>Key ID:</strong> {keyToRevoke?.id}</Text>
+                      <Text><strong>Created:</strong> {keyToRevoke?.created_at ? new Date(keyToRevoke.created_at).toLocaleString() : "N/A"}</Text>
+                    </VStack>
+                  </Box>
+
+                  {keyToRevoke && keyToRevoke.permissions.length > 0 && (
+                    <Box>
+                      <Text fontWeight="semibold" fontSize="sm" color="gray.700" mb={2}>
+                        Permissions (will be revoked):
+                      </Text>
+                      <HStack flexWrap="wrap" spacing={2}>
+                        {keyToRevoke.permissions.map((perm) => (
+                          <Badge key={perm} colorScheme="orange" fontSize="xs">
+                            {perm}
+                          </Badge>
+                        ))}
+                      </HStack>
+                    </Box>
+                  )}
+
+                  <Alert status="warning" borderRadius="md" mt={2}>
+                    <AlertIcon />
+                    <AlertDescription fontSize="sm">
+                      This action will disable the API key and make it inactive. This action cannot be undone.
+                    </AlertDescription>
+                  </Alert>
+                </VStack>
+              </AlertDialogBody>
+              <AlertDialogFooter>
+                <Button ref={cancelRef} onClick={handleCloseRevokeModal} isDisabled={isRevoking}>
+                  Cancel
+                </Button>
+                <Button
+                  colorScheme="red"
+                  onClick={handleRevokeApiKey}
+                  ml={3}
+                  isLoading={isRevoking}
+                  loadingText="Revoking..."
+                >
+                  Revoke
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialogOverlay>
+        </AlertDialog>
       </ContentLayout>
     </>
   );

@@ -33,11 +33,12 @@ class TextInput(BaseModel):
     
     @validator('source')
     def validate_source_text(cls, v):
-        if not v or not v.strip():
-            raise ValueError('Source text cannot be empty')
-        if len(v) > 10000:
-            raise ValueError('Source text cannot exceed 10000 characters')
-        return v.strip()
+        # Allow empty source and any length - will be validated in validation_utils with proper error codes
+        if v is None:
+            return ""
+        # Strip whitespace but allow empty string to pass through for custom validation
+        # Max length validation is done in validation_utils to return proper error codes
+        return v.strip() if isinstance(v, str) else ""
 
 
 class NMTInferenceConfig(BaseModel):

@@ -7,6 +7,7 @@ import { performLLMInference } from '../services/llmService';
 import { performNMTInference } from '../services/nmtService';
 import { getWordCount } from '../utils/helpers';
 import { UseLLMReturn, LLMInferenceRequest } from '../types/llm';
+import { extractErrorInfo } from '../utils/errorHandler';
 
 const MAX_TEXT_LENGTH = 50000;
 const DEFAULT_LLM_CONFIG = {
@@ -15,7 +16,7 @@ const DEFAULT_LLM_CONFIG = {
   outputLanguage: 'hi',
 };
 
-export const useLLM = (): UseLLMReturn => {
+export const useLLM = (serviceId?: string): UseLLMReturn => {
   // State
   const [selectedModelId, setSelectedModelId] = useState<string>('llm');
   const [inputLanguage, setInputLanguage] = useState<string>('en');
@@ -39,8 +40,11 @@ export const useLLM = (): UseLLMReturn => {
   // LLM inference mutation
   const llmMutation = useMutation({
     mutationFn: async (text: string) => {
+      // Use the provided serviceId if available, otherwise fall back to selectedModelId
+      const effectiveServiceId = serviceId || selectedModelId;
+      
       const config: LLMInferenceRequest['config'] = {
-        serviceId: selectedModelId,
+        serviceId: effectiveServiceId,
         inputLanguage: inputLanguage,
         outputLanguage: outputLanguage,
       };
@@ -68,44 +72,13 @@ export const useLLM = (): UseLLMReturn => {
     onError: (error: any) => {
       console.error('LLM inference error:', error);
       
-      // Prioritize API error message from response
-      let errorMessage = 'Failed to process text. Please try again.';
-      let errorTitle = 'Processing Error';
-      
-      // Check for API error message first (from detail.message or detail.error)
-      if (error?.response?.data?.detail?.message) {
-        errorMessage = error.response.data.detail.message;
-        // Use error code for title if available
-        if (error.response.data.detail.error) {
-          errorTitle = error.response.data.detail.error;
-        } else if (error.response.data.detail.code) {
-          errorTitle = error.response.data.detail.code;
-        }
-      } else if (error?.response?.data?.message) {
-        errorMessage = error.response.data.message;
-      } else if (error?.response?.data?.detail) {
-        // Handle case where detail is a string
-        if (typeof error.response.data.detail === 'string') {
-          errorMessage = error.response.data.detail;
-        }
-      } else if (error?.response?.status === 401 || error?.status === 401 || error?.message?.includes('401')) {
-        errorTitle = 'Authentication Failed';
-        // Check if it's an API key issue
-        if (error?.message?.includes('API key') || error?.message?.includes('api key')) {
-          errorMessage = 'API key is missing or invalid. Please set a valid API key in your profile.';
-        } else if (error?.message?.includes('token') || error?.message?.includes('Token')) {
-          errorMessage = 'Your session has expired. Please sign in again.';
-        } else {
-          errorMessage = 'Authentication failed. Please check your API key and login status, then try again.';
-        }
-      } else if (error?.message) {
-        errorMessage = error.message;
-      }
+      // Use centralized error handler
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
       
       setError(errorMessage);
       setFetching(false);
       toast({
-        title: errorTitle,
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: 'error',
         duration: 7000,
@@ -138,6 +111,19 @@ export const useLLM = (): UseLLMReturn => {
       return;
     }
 
+    // Validate that a service is selected
+    const effectiveServiceId = serviceId || selectedModelId;
+    if (!effectiveServiceId) {
+      toast({
+        title: 'Service Required',
+        description: 'Please select an LLM service.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     try {
       setIsDualMode(false);
       setFetching(true);
@@ -148,7 +134,7 @@ export const useLLM = (): UseLLMReturn => {
     } catch (err) {
       console.error('Inference error:', err);
     }
-  }, [llmMutation, toast]);
+  }, [llmMutation, toast, serviceId, selectedModelId]);
 
   // Perform dual inference (LLM + NMT)
   const performDualInference = useCallback(async (text: string) => {
@@ -174,6 +160,19 @@ export const useLLM = (): UseLLMReturn => {
       return;
     }
 
+    // Validate that a service is selected
+    const effectiveServiceId = serviceId || selectedModelId;
+    if (!effectiveServiceId) {
+      toast({
+        title: 'Service Required',
+        description: 'Please select an LLM service.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     try {
       setIsDualMode(true);
       setFetching(true);
@@ -183,7 +182,7 @@ export const useLLM = (): UseLLMReturn => {
       // Call both LLM and NMT in parallel
       const [llmResponse, nmtResponse] = await Promise.all([
         performLLMInference(text, {
-          serviceId: selectedModelId,
+          serviceId: effectiveServiceId,
           inputLanguage: inputLanguage,
           outputLanguage: outputLanguage,
         }),
@@ -192,7 +191,7 @@ export const useLLM = (): UseLLMReturn => {
             sourceLanguage: inputLanguage,
             targetLanguage: outputLanguage,
           },
-          serviceId: 'nmt',
+          serviceId: 'ai4bharat/indictrans--gpu-t4',
         }),
       ]);
 
@@ -223,7 +222,7 @@ export const useLLM = (): UseLLMReturn => {
         isClosable: true,
       });
     }
-  }, [selectedModelId, inputLanguage, outputLanguage, toast]);
+  }, [serviceId, selectedModelId, inputLanguage, outputLanguage, toast]);
 
   // Set input text with validation
   const setInputTextWithValidation = useCallback((text: string) => {

@@ -47,41 +47,63 @@ FROM roles r, permissions p
 WHERE r.name = 'ADMIN'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- USER gets read/update on own resources and read on others
+-- USER gets read/update on own resources and read on others + model/service read permissions
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'USER' 
-AND p.name IN ('users.read', 'users.update', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.create', 'dashboards.read', 'dashboards.update')
+AND p.name IN ('users.read', 'users.update', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'model.read', 'service.read')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- GUEST gets read-only access
+-- GUEST gets read-only access + model/service read permissions
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'GUEST' 
-AND p.name IN ('users.read', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.read')
+AND p.name IN ('users.read', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.read', 'model.read', 'service.read')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- MODERATOR gets read/update on most resources
+-- MODERATOR gets read/update on most resources + model management permissions
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'MODERATOR' 
-AND p.name IN ('users.read', 'users.update', 'configs.read', 'configs.update', 'metrics.read', 'alerts.read', 'alerts.update', 'dashboards.create', 'dashboards.read', 'dashboards.update')
+AND p.name IN ('users.read', 'users.update', 'configs.read', 'configs.update', 'metrics.read', 'alerts.read', 'alerts.update', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'model.create', 'model.read', 'model.update', 'model.delete', 'model.publish', 'model.unpublish', 'service.create', 'service.read', 'service.update', 'service.delete')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- Create a default admin user (password: admin123)
--- Note: This is for development only - use a proper password hashing in production
-INSERT INTO users (email, username, password_hash, is_active, is_verified) VALUES
-('admin@ai4i.com', 'admin', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj4J/9QZQK2O', true, true)
-ON CONFLICT (email) DO NOTHING;
+-- ============================================================================
+-- Create Default Admin User
+-- ============================================================================
+-- Standard default admin user created during installation/initialization
+-- This user has ADMIN role with all permissions
+-- 
+-- Credentials:
+--   Username: admin
+--   Email:    admin@ai4i.org
+--   Password: Admin@123
+--   Role:     ADMIN (all permissions)
+--   Status:   ACTIVE
+-- ============================================================================
+
+-- Create the default admin user
+-- Password hash for "Admin@123" (bcrypt)
+INSERT INTO users (email, username, password_hash, is_active, is_verified, full_name, is_superuser) VALUES
+('admin@ai4i.org', 'admin', '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW', true, true, 'System Administrator', true)
+ON CONFLICT (email) DO UPDATE
+SET 
+    username = EXCLUDED.username,
+    password_hash = EXCLUDED.password_hash,
+    is_active = EXCLUDED.is_active,
+    is_verified = EXCLUDED.is_verified,
+    full_name = EXCLUDED.full_name,
+    is_superuser = EXCLUDED.is_superuser;
 
 -- Assign ADMIN role to the default admin user
+-- This ensures the admin user has all permissions through the ADMIN role
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'admin@ai4i.com' AND r.name = 'ADMIN'
+WHERE u.email = 'admin@ai4i.org' AND u.username = 'admin' AND r.name = 'ADMIN'
 ON CONFLICT (user_id, role_id) DO NOTHING;
 
 -- Additional user_roles INSERT queries
@@ -192,11 +214,11 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- Sample ASR Requests
 INSERT INTO asr_requests (user_id, model_id, language, audio_duration, processing_time, status, error_message) VALUES
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'vakyansh-asr-en', 'en', 5.5, 0.8, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'vakyansh-asr-hi', 'hi', 12.3, 1.5, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'conformer-asr-multilingual', 'ta', 30.0, 3.2, 'processing', NULL),
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'vakyansh-asr-en', 'en', 8.7, 1.1, 'failed', 'Audio format not supported'),
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'conformer-asr-multilingual', 'te', 15.2, 2.1, 'completed', NULL)
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'vakyansh-asr-en', 'en', 5.5, 0.8, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'vakyansh-asr-hi', 'hi', 12.3, 1.5, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'conformer-asr-multilingual', 'ta', 30.0, 3.2, 'processing', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'vakyansh-asr-en', 'en', 8.7, 1.1, 'failed', 'Audio format not supported'),
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'conformer-asr-multilingual', 'te', 15.2, 2.1, 'completed', NULL)
 ON CONFLICT DO NOTHING;
 
 -- Sample ASR Results
@@ -217,11 +239,11 @@ ON CONFLICT DO NOTHING;
 
 -- Sample TTS Requests
 INSERT INTO tts_requests (user_id, model_id, voice_id, language, text_length, processing_time, status, error_message) VALUES
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'indic-tts-en', 'female-1', 'en', 50, 1.2, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'indic-tts-hi', 'male-1', 'hi', 120, 2.5, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'glow-tts-multilingual', 'female-2', 'ta', 200, 4.0, 'processing', NULL),
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'indic-tts-en', 'male-2', 'en', 75, 1.8, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'glow-tts-multilingual', 'custom-voice', 'te', 150, 3.2, 'completed', NULL)
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'indic-tts-en', 'female-1', 'en', 50, 1.2, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'indic-tts-hi', 'male-1', 'hi', 120, 2.5, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'glow-tts-multilingual', 'female-2', 'ta', 200, 4.0, 'processing', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'indic-tts-en', 'male-2', 'en', 75, 1.8, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'glow-tts-multilingual', 'custom-voice', 'te', 150, 3.2, 'completed', NULL)
 ON CONFLICT DO NOTHING;
 
 -- Sample TTS Results
@@ -238,11 +260,11 @@ ON CONFLICT DO NOTHING;
 
 -- Sample NMT Requests
 INSERT INTO nmt_requests (user_id, model_id, source_language, target_language, text_length, processing_time, status, error_message) VALUES
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'indictrans-v2', 'en', 'hi', 45, 0.5, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'nmt-en-hi', 'hi', 'en', 100, 1.0, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'nmt-multilingual', 'en', 'ta', 250, 2.0, 'processing', NULL),
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'indictrans-v2', 'ta', 'en', 80, 1.2, 'completed', NULL),
-((SELECT id FROM users WHERE email = 'admin@ai4i.com'), 'nmt-multilingual', 'te', 'en', 120, 1.5, 'completed', NULL)
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'indictrans-v2', 'en', 'hi', 45, 0.5, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'nmt-en-hi', 'hi', 'en', 100, 1.0, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'nmt-multilingual', 'en', 'ta', 250, 2.0, 'processing', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'indictrans-v2', 'ta', 'en', 80, 1.2, 'completed', NULL),
+((SELECT id FROM users WHERE email = 'admin@ai4i.org'), 'nmt-multilingual', 'te', 'en', 120, 1.5, 'completed', NULL)
 ON CONFLICT DO NOTHING;
 
 -- Sample NMT Results
@@ -262,7 +284,7 @@ INSERT INTO nmt_results (request_id, translated_text, confidence_score, source_t
 ON CONFLICT DO NOTHING;
 
 -- Add comments indicating this is for development only
-COMMENT ON TABLE users IS 'Users table - contains default admin user for development (password: admin123)';
+COMMENT ON TABLE users IS 'Users table - contains default admin user (username: admin, email: admin@ai4i.org, password: Admin@123)';
 COMMENT ON TABLE feature_flags IS 'Feature flags table - contains sample feature flags for development';
 COMMENT ON TABLE configurations IS 'Configurations table - contains sample configurations for development';
 COMMENT ON TABLE service_registry IS 'Service registry table - contains sample service entries for development';

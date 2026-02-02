@@ -13,6 +13,8 @@ export interface Service {
   publishedOn?: number;
   modelId?: string;
   model_id?: string; // For backward compatibility
+  modelVersion?: string;
+  model_version?: string; // For backward compatibility
   endpoint?: string;
   endpoint_url?: string; // For backward compatibility
   api_key?: string;
@@ -32,6 +34,7 @@ export interface Service {
     status: string;
     lastUpdated: string;
   };
+  isPublished?: boolean;
   created_at?: string;
   updated_at?: string;
   [key: string]: any;
@@ -43,17 +46,18 @@ export interface Service {
  */
 export const listServices = async (): Promise<Service[]> => {
   try {
+    // The apiClient interceptor will automatically add:
+    // - Content-Type: application/json
+    // - Accept: application/json
+    // - Authorization: Bearer <token>
+    // - X-API-Key: <api_key> (if available)
+    // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
     const response = await apiClient.get<Service[]>('/api/v1/model-management/services/');
     return response.data;
   } catch (error: any) {
     console.error('List services error:', error);
-    const errorMessage =
-      error.response?.data?.detail?.message ||
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
-      'Failed to fetch services';
-    throw new Error(errorMessage);
+    // Don't transform the error - let extractErrorInfo handle it
+    throw error;
   }
 };
 
@@ -64,6 +68,7 @@ export const listServices = async (): Promise<Service[]> => {
  */
 export const getServiceById = async (serviceId: string): Promise<Service> => {
   try {
+    // The apiClient interceptor will automatically add authentication headers
     const response = await apiClient.post<Service>(
       `/api/v1/model-management/services/${serviceId}`,
       { service_id: serviceId }
@@ -71,13 +76,8 @@ export const getServiceById = async (serviceId: string): Promise<Service> => {
     return response.data;
   } catch (error: any) {
     console.error('Get service error:', error);
-    const errorMessage =
-      error.response?.data?.detail?.message ||
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
-      'Failed to fetch service';
-    throw new Error(errorMessage);
+    // Don't transform the error - let extractErrorInfo handle it
+    throw error;
   }
 };
 
@@ -89,6 +89,7 @@ export const getServiceById = async (serviceId: string): Promise<Service> => {
 export const createService = async (serviceData: Partial<Service>): Promise<Service> => {
   try {
     // Transform snake_case to camelCase for API
+    // The API expects camelCase format
     const apiPayload: any = {
       serviceId: serviceData.serviceId || serviceData.service_id,
       name: serviceData.name,
@@ -96,6 +97,7 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
       hardwareDescription: serviceData.hardwareDescription || 'Default hardware',
       publishedOn: serviceData.publishedOn || Math.floor(Date.now() / 1000),
       modelId: serviceData.modelId || serviceData.model_id,
+      modelVersion: serviceData.modelVersion || serviceData.model_version || '1.0', // Default to '1.0' if not provided
       endpoint: serviceData.endpoint || serviceData.endpoint_url,
       api_key: serviceData.api_key || serviceData.apiKey || '',
     };
@@ -108,6 +110,12 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
       };
     }
     
+    // The apiClient interceptor will automatically add:
+    // - Content-Type: application/json
+    // - Accept: application/json
+    // - Authorization: Bearer <token>
+    // - X-API-Key: <api_key> (if available)
+    // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
     const response = await apiClient.post<Service>(
       '/api/v1/model-management/services',
       apiPayload
@@ -115,13 +123,8 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
     return response.data;
   } catch (error: any) {
     console.error('Create service error:', error);
-    const errorMessage =
-      error.response?.data?.detail?.message ||
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
-      'Failed to create service';
-    throw new Error(errorMessage);
+    // Don't transform the error - let extractErrorInfo handle it
+    throw error;
   }
 };
 
@@ -132,25 +135,45 @@ export const createService = async (serviceData: Partial<Service>): Promise<Serv
  */
 export const updateService = async (serviceData: Partial<Service>): Promise<Service> => {
   try {
-    // Transform snake_case to camelCase for API
-    const apiPayload: any = {
-      uuid: serviceData.uuid,
-      serviceId: serviceData.serviceId || serviceData.service_id,
-      name: serviceData.name,
-      serviceDescription: serviceData.serviceDescription || serviceData.description,
-      hardwareDescription: serviceData.hardwareDescription,
-      publishedOn: serviceData.publishedOn,
-      modelId: serviceData.modelId || serviceData.model_id,
-      endpoint: serviceData.endpoint || serviceData.endpoint_url,
-      api_key: serviceData.api_key || serviceData.apiKey,
-    };
+    // For publish/unpublish, only send serviceId and isPublished
+    // For other updates, send all fields
+    const isPublishUpdate = serviceData.serviceId && serviceData.hasOwnProperty('isPublished') && Object.keys(serviceData).length <= 2;
     
-    // Add optional healthStatus if provided
-    if (serviceData.healthStatus || serviceData.status) {
-      apiPayload.healthStatus = serviceData.healthStatus || {
-        status: serviceData.status || 'active',
-        lastUpdated: new Date().toISOString(),
+    let apiPayload: any;
+    
+    if (isPublishUpdate) {
+      // Publish/unpublish: only send serviceId and isPublished
+      apiPayload = {
+        serviceId: serviceData.serviceId || serviceData.service_id,
+        isPublished: serviceData.isPublished,
       };
+    } else {
+      // Full update: send all fields
+      apiPayload = {
+        uuid: serviceData.uuid,
+        serviceId: serviceData.serviceId || serviceData.service_id,
+        name: serviceData.name,
+        serviceDescription: serviceData.serviceDescription || serviceData.description,
+        hardwareDescription: serviceData.hardwareDescription,
+        publishedOn: serviceData.publishedOn,
+        modelId: serviceData.modelId || serviceData.model_id,
+        modelVersion: serviceData.modelVersion || serviceData.model_version,
+        endpoint: serviceData.endpoint || serviceData.endpoint_url,
+        api_key: serviceData.api_key || serviceData.apiKey,
+      };
+      
+      // Add optional healthStatus if provided
+      if (serviceData.healthStatus || serviceData.status) {
+        apiPayload.healthStatus = serviceData.healthStatus || {
+          status: serviceData.status || 'active',
+          lastUpdated: new Date().toISOString(),
+        };
+      }
+      
+      // Add isPublished if provided
+      if (serviceData.hasOwnProperty('isPublished')) {
+        apiPayload.isPublished = serviceData.isPublished;
+      }
     }
     
     const response = await apiClient.patch<Service>(
@@ -160,13 +183,8 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
     return response.data;
   } catch (error: any) {
     console.error('Update service error:', error);
-    const errorMessage =
-      error.response?.data?.detail?.message ||
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
-      'Failed to update service';
-    throw new Error(errorMessage);
+    // Don't transform the error - let extractErrorInfo handle it
+    throw error;
   }
 };
 
@@ -177,19 +195,15 @@ export const updateService = async (serviceData: Partial<Service>): Promise<Serv
  */
 export const deleteService = async (uuid: string): Promise<any> => {
   try {
+    // The apiClient interceptor will automatically add authentication headers
     const response = await apiClient.delete<any>(
       `/api/v1/model-management/services/${uuid}`
     );
     return response.data;
   } catch (error: any) {
     console.error('Delete service error:', error);
-    const errorMessage =
-      error.response?.data?.detail?.message ||
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
-      'Failed to delete service';
-    throw new Error(errorMessage);
+    // Don't transform the error - let extractErrorInfo handle it
+    throw error;
   }
 };
 

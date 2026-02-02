@@ -35,6 +35,42 @@ class InvalidSampleRateError(Exception):
     pass
 
 
+# Text input validation exceptions
+class NoTextInputError(Exception):
+    """Custom exception for missing text input."""
+    pass
+
+
+class TextTooShortError(Exception):
+    """Custom exception for text that is too short."""
+    pass
+
+
+class TextTooLongError(Exception):
+    """Custom exception for text that is too long."""
+    pass
+
+
+class InvalidCharactersError(Exception):
+    """Custom exception for invalid characters in text."""
+    pass
+
+
+class EmptyInputError(Exception):
+    """Custom exception for empty text input."""
+    pass
+
+
+class LanguageMismatchError(Exception):
+    """Custom exception for language mismatch."""
+    pass
+
+
+class VoiceNotAvailableError(Exception):
+    """Custom exception for unavailable voice."""
+    pass
+
+
 # Supported languages constant
 SUPPORTED_LANGUAGES = [
     "en", "hi", "ta", "te", "kn", "ml", "bn", "gu", "mr", "pa", 
@@ -145,31 +181,44 @@ def validate_sample_rate(sample_rate: int) -> bool:
         raise InvalidSampleRateError(f"Sample rate validation failed: {e}")
 
 
-def validate_text_input(text: str) -> bool:
+def validate_text_input(text: str, min_length: int = 1, max_length: int = 5000) -> bool:
     """Validate text input for TTS processing."""
     try:
-        if not text or not text.strip():
-            raise ValueError("Text cannot be empty")
+        # Check if text is provided or empty
+        if text is None or not text or not text.strip():
+            raise NoTextInputError()
         
-        if len(text) > 5000:
-            raise ValueError("Text cannot exceed 5000 characters")
+        text_stripped = text.strip()
+        
+        # Check minimum length
+        if len(text_stripped) < min_length:
+            raise TextTooShortError()
+        
+        # Check maximum length
+        if len(text_stripped) > max_length:
+            raise TextTooLongError()
         
         # Check if text contains at least one Unicode letter (works for any language script)
         # This allows pure local language text (Hindi, Tamil, Telugu, etc.) without requiring English letters
         has_letter = False
-        for char in text:
+        invalid_chars = []
+        for char in text_stripped:
             if unicodedata.category(char).startswith('L'):  # 'L' means Letter category
                 has_letter = True
-                break
+            # Check for invalid characters (control characters except whitespace)
+            elif unicodedata.category(char).startswith('C') and char not in ['\n', '\r', '\t', ' ']:
+                invalid_chars.append(char)
+        
+        if invalid_chars:
+            raise InvalidCharactersError()
         
         if not has_letter:
-            raise ValueError("Text must contain at least one letter character")
+            raise TextTooShortError()  # No meaningful content
         
         return True
         
-    except ValueError as e:
-        logger.error(f"Text input validation failed: {e}")
-        raise ValueError(f"Text input validation failed: {e}")
+    except (NoTextInputError, EmptyInputError, TextTooShortError, TextTooLongError, InvalidCharactersError):
+        raise
     except Exception as e:
         logger.error(f"Text input validation failed: {e}")
         raise ValueError(f"Text input validation failed: {e}")

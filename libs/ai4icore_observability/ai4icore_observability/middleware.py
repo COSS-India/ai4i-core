@@ -10,12 +10,16 @@ import base64
 import io
 import wave
 import hashlib
+import logging
+import random
 from typing import Optional, Dict, Any
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from .config import PluginConfig
 from .metrics import MetricsCollector
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class ObservabilityMiddleware(BaseHTTPMiddleware):
@@ -43,14 +47,36 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # Extract organization and app (including from JWT token)
         organization, app = self._extract_customer_app(request)
         
+        # Store organization in request.state for other middlewares to access
+        # IMPORTANT: Set this BEFORE await call_next() so it's available to inner middlewares
+        request.state.organization = organization
+        
+        # Set organization in logging context for log formatter
+        try:
+            from ai4icore_logging.context import set_organization
+            set_organization(organization)
+            if self.config.debug:
+                logger.debug(f"Set organization in logging context: {organization}")
+        except Exception as e:
+            # Log error for debugging
+            if self.config.debug:
+                logger.debug(f"Failed to set organization in context: {e}", exc_info=True)
+            pass
+        
         # Initialize body_bytes variable for potential reuse
         body_bytes = None
         body_already_read = False
                 
+                
         if method == "POST" and (path.endswith("/pipeline") or path == "/services/inference/pipeline") and "/pipeline/" not in path:
             # Read body to detect task type
             body_bytes = await request.body()  # FastAPI caches this automatically
+            # Read body to detect task type
+            body_bytes = await request.body()  # FastAPI caches this automatically
             body_already_read = True
+            
+            # NO MORE request._receive = receive HERE!
+            
             
             # NO MORE request._receive = receive HERE!
             
@@ -62,14 +88,15 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     if task_type == 'txt-lang-detection':
                         path = path + '/txt-lang-detection'
                         if self.config.debug:
-                            print(f"🔍 Detected txt-lang-detection in generic pipeline endpoint, updating path to: {path}")
+                            logger.debug(f"Detected txt-lang-detection in generic pipeline endpoint, updating path to: {path}")
             except Exception as e:
                 if self.config.debug:
-                    print(f"⚠️ Failed to parse request body for pipeline detection: {e}")
+                    logger.debug(f"Failed to parse request body for pipeline detection: {e}", exc_info=True)
         
         # Detect service type
         service_type = self._detect_service_type(path)
         
+        # Extract metrics from body
         # Extract metrics from body
         tts_characters = 0
         translation_characters = 0
@@ -84,19 +111,18 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         speaker_diarization_length = 0
         language_diarization_length = 0
         
-        if method == "POST" and service_type in [...]:
+        if method == "POST" and service_type in ["tts", "translation", "asr", "ocr", "transliteration", "language_detection", "audio_lang_detection", "speaker_verification", "speaker_diarization", "language_diarization", "ner"]:
             # Read body if not already read
             if not body_already_read:
                 body_bytes = await request.body()  # FastAPI caches this automatically
                 
                 # NO MORE request._receive = receive HERE!
             else:
-
                 # Body already read - use cached body, DO NOT overwrite receive callable
                 body_bytes = request._body if hasattr(request, '_body') else body_bytes
             
             if self.config.debug:
-                print("The service type", service_type)
+                logger.debug(f"The service type: {service_type}")
 
             # Extract metrics from the body
             if service_type == "tts":
@@ -123,24 +149,25 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             elif service_type == "ner":
                 ner_tokens = self._extract_ner_tokens_from_body(body_bytes)
 
-            if language_detection_characters > 0:
-                print(f"LANG_DET_CHARS_EXTRACTED={language_detection_characters}")
+            if language_detection_characters > 0 and self.config.debug:
+                logger.debug(f"LANG_DET_CHARS_EXTRACTED={language_detection_characters}")
         
         # Debug logging
         if self.config.debug:
-            print(f"🔍 Request: {method} {path} -> Service: {service_type}, Organization: {organization}, App: {app}")
-            # ... rest of debug logging ...
+            logger.debug(f"Request: {method} {path} -> Service: {service_type}, Organization: {organization}, App: {app}")
         
         # Process request
         response = await call_next(request)
         
         # Calculate duration and track metrics
         duration = time.time() - start_time        
+        # Calculate duration and track metrics
+        duration = time.time() - start_time        
         # Track request
         try:
             # Debug: Log the full path being used for metrics
             if self.config.debug:
-                print(f"📊 Tracking metrics for endpoint: {path}, service_type: {service_type}")
+                logger.debug(f"Tracking metrics for endpoint: {path}, service_type: {service_type}")
             
             self.metrics_collector.track_request(
                 organization=organization,
@@ -158,7 +185,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             # Don't let metrics collection break the request
             if self.config.debug:
-                print(f"⚠️ Metrics collection failed: {e}")
+                logger.debug(f"Metrics collection failed: {e}", exc_info=True)
 
         return response
     
@@ -178,7 +205,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             return decoded_token
         except Exception as e:
             if self.config.debug:
-                print(f"⚠️ JWT decoding failed: {e}")
+                logger.debug(f"JWT decoding failed: {e}", exc_info=True)
             return None
     
     @staticmethod
@@ -194,7 +221,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         return organizations[org_index]
     
     def _extract_customer_from_token(self, request: Request) -> Optional[str]:
-        """Extract customer name from JWT token in authorization header."""
+        """Extract customer name from JWT token in authorization header.
+        
+        Only extracts organization names that are valid (non-numeric, known organizations).
+        Numeric 'sub' fields (like user IDs) are ignored to prevent them from being used as organization names.
+        """
         auth_header = request.headers.get("authorization", "")
         
         if auth_header:
@@ -203,60 +234,53 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 # Extract customer name from 'name' field in token
                 customer_name = decoded_token.get("name")
                 if customer_name:
-                    if self.config.debug:
-                        print(f"🔑 Extracted customer from JWT: {customer_name}")
-                    return customer_name
+                    # Validate that it's a valid organization name (not numeric)
+                    if customer_name and not customer_name.isdigit():
+                        if self.config.debug:
+                            logger.debug(f"Extracted customer from JWT 'name': {customer_name}")
+                        return customer_name
                 
                 # Fallback: try to extract from 'sub' field if 'name' is not available
+                # BUT: Only use 'sub' if it's not numeric (user IDs are numeric, org names are not)
                 sub = decoded_token.get("sub")
-                if sub:
-                    if self.config.debug:
-                        print(f"🔑 Using 'sub' field as customer: {sub}")
-                    return sub
+                if sub and not str(sub).isdigit():
+                    # Check if it's one of the known organizations
+                    known_orgs = ["irctc", "kisanmitra", "bashadaan", "beml"]
+                    if str(sub).lower() in known_orgs:
+                        if self.config.debug:
+                            logger.debug(f"Using 'sub' field as customer: {sub}")
+                        return str(sub).lower()
         
         return None
     
     def _extract_customer_app(self, request: Request) -> tuple:
         """Extract organization and app from request headers and JWT token.
 
-        For consistency, whenever an API key or Authorization token is present,
-        we always derive the organization using `_get_organization_from_api_key`
-        (hash-based mapping). JWT claims and `X-Customer-ID` are only used as
-        fallbacks when no key is available.
+        Priority order:
+        1. X-Customer-ID header (explicit organization identifier - highest priority)
+        2. JWT token claims
+        3. Random organization assignment (for even distribution across organizations)
         """
         organization: Optional[str] = None
 
-        # Determine API key source: prefer Authorization, fall back to X-API-Key
-        auth_header = request.headers.get("authorization", "")
-        api_key_header = request.headers.get("X-API-Key")
-
-        api_key: Optional[str] = None
-        if auth_header:
-            # Extract the API key (remove "Bearer " prefix if present)
-            api_key = auth_header
-            if auth_header.startswith("Bearer "):
-                api_key = auth_header[7:]
-        elif api_key_header:
-            api_key = api_key_header
-
-        if api_key:
-            # Always map API key to organization using consistent hashing
-            organization = self._get_organization_from_api_key(api_key)
-
+        # PRIORITY 1: Check X-Customer-ID first (explicit organization identifier)
+        customer_id_header = request.headers.get("X-Customer-ID")
+        if customer_id_header:
+            organization = customer_id_header
             if self.config.debug:
-                print(f"🏢 Mapped API key to organization using hash: {organization}")
+                logger.debug(f"Found organization from X-Customer-ID header: {organization}")
         else:
-            # No API key found; fall back to token claim or header if available
+            # PRIORITY 2: Try JWT token extraction
+            if self.config.debug:
+                logger.debug("No X-Customer-ID found, trying JWT token extraction...")
             organization = self._extract_customer_from_token(request)
 
-            if organization is None:
-                organization = request.headers.get("X-Customer-ID")
-
-        # If still no organization, use "unknown"
+        # PRIORITY 3: If still no organization, randomly assign one for even distribution
         if organization is None:
-            organization = "unknown"
+            organizations = ["irctc", "kisanmitra", "bashadaan", "beml"]
+            organization = random.choice(organizations)
             if self.config.debug:
-                print(f"⚠️ No organization found,  using: {organization}")
+                logger.debug(f"No organization found, randomly assigned: {organization}")
 
         # Get app from header or use "unknown"
         app = request.headers.get("X-App-ID")

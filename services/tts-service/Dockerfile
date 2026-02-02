@@ -22,15 +22,22 @@ RUN pip install --upgrade pip setuptools wheel
 # Install Python deps
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Copy observability plugin
+# Copy AI4ICore plugins from monorepo
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
-# Copy Model Management plugin
+COPY libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
+# Copy constants folder
+COPY services/constants /app/services/constants
 
-# ✅ INSTALL PLUGINS AS NORMAL PACKAGES (FIX)
-RUN pip install --no-cache-dir --user /app/libs/ai4icore_observability
-RUN pip install --no-cache-dir --user /app/libs/ai4icore_model_management
+# Install AI4ICore plugins
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_telemetry
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_model_management
 
+# Verify packaging is installed (for debugging)
+RUN python -c "import packaging; print(f'packaging version: {packaging.__version__}')" || (echo "ERROR: packaging not found!" && exit 1)
 
 # -----------------------------
 # STAGE 2 — RUNTIME
@@ -56,9 +63,21 @@ ENV PATH="/home/app/.local/bin:$PATH"
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
 
-# Copy plugins into runtime image
+# Ensure packaging is available in runtime - install system-wide AND user-wide
+# This ensures it's available regardless of Python path resolution
+RUN pip install --no-cache-dir packaging>=21.0 && \
+    pip install --no-cache-dir --target=/home/app/.local/lib/python3.11/site-packages packaging>=21.0 && \
+    python -c "import sys; sys.path.insert(0, '/home/app/.local/lib/python3.11/site-packages'); import packaging; print(f'✓ packaging {packaging.__version__} verified')" || \
+    (echo "ERROR: packaging not available!" && exit 1)
+
+# Copy AI4ICore plugins into runtime image
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
+COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
+
+# Copy constants folder
+COPY services/constants /app/services/constants
 
 # Copy app code
 COPY services/tts-service /app
@@ -71,4 +90,6 @@ EXPOSE 8088
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD curl -f http://localhost:8088/health || exit 1
 
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8088"]
+# Run the application
+# Disable uvicorn access logs since we use RequestLoggingMiddleware with trace_id
+ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8088", "--no-access-log"]
