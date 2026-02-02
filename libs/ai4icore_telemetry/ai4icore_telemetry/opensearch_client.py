@@ -109,7 +109,8 @@ class OpenSearchQueryClient:
         level: Optional[str] = None,
         search_text: Optional[str] = None,
         page: int = 1,
-        size: int = 50
+        size: int = 50,
+        allowed_services: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Search logs with filters and pagination.
@@ -124,6 +125,7 @@ class OpenSearchQueryClient:
             search_text: Text to search in log messages
             page: Page number (1-indexed)
             size: Number of results per page
+            allowed_services: Optional list of service names to filter by (for tenant subscriptions)
         
         Returns:
             Dict with 'logs' (list), 'total' (int), 'page' (int), 'size' (int)
@@ -160,6 +162,13 @@ class OpenSearchQueryClient:
             if service:
                 must_clauses.append({
                     "term": {"service": service}
+                })
+            
+            # Filter by allowed services (tenant subscriptions)
+            # If allowed_services is provided, only show logs from those services
+            if allowed_services is not None and len(allowed_services) > 0:
+                must_clauses.append({
+                    "terms": {"service": allowed_services}
                 })
             
             # Level filter
@@ -222,7 +231,8 @@ class OpenSearchQueryClient:
     async def get_log_aggregations(
         self,
         organization_filter: Optional[str] = None,
-        time_range: Optional[Dict[str, Any]] = None
+        time_range: Optional[Dict[str, Any]] = None,
+        allowed_services: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Get log aggregations and statistics.
@@ -232,6 +242,7 @@ class OpenSearchQueryClient:
                                 Note: This parameter name is kept for backward compatibility,
                                 but it now filters by tenant_id field
             time_range: Dict with 'start_time' and 'end_time'
+            allowed_services: Optional list of service names to filter by (for tenant subscriptions)
         
         Returns:
             Dict with statistics: total, by_level, by_service, error_count, warning_count
@@ -262,6 +273,12 @@ class OpenSearchQueryClient:
                             "@timestamp": time_filter
                         }
                     })
+            
+            # Filter by allowed services (tenant subscriptions)
+            if allowed_services is not None and len(allowed_services) > 0:
+                must_clauses.append({
+                    "terms": {"service": allowed_services}
+                })
             
             query = {
                 "bool": {
