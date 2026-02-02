@@ -11,7 +11,6 @@ import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from elasticsearch import AsyncElasticsearch
-from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 # Import observability clients and router
@@ -47,8 +46,6 @@ redis_client = None
 db_engine = None
 db_session = None
 es_client = None
-kafka_producer = None
-kafka_consumer = None
 
 # Observability clients (for querying logs and traces)
 opensearch_query_client = None
@@ -58,7 +55,7 @@ rbac_enforcer = None
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections on startup"""
-    global redis_client, db_engine, db_session, es_client, kafka_producer, kafka_consumer
+    global redis_client, db_engine, db_session, es_client
     global opensearch_query_client, jaeger_query_client, rbac_enforcer
     
     try:
@@ -100,49 +97,6 @@ async def startup_event():
         )
         await es_client.ping()
         logger.info("Connected to Elasticsearch")
-        
-        # Initialize Kafka producer (optional - skip if not available)
-        kafka_producer = None
-        kafka_consumer = None
-        try:
-            kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
-            kafka_producer = AIOKafkaProducer(
-                bootstrap_servers=kafka_servers,
-                value_serializer=lambda v: str(v).encode('utf-8')
-            )
-            await asyncio.wait_for(kafka_producer.start(), timeout=5.0)
-            logger.info("Connected to Kafka producer")
-        except Exception as kafka_error:
-            logger.warning(f"Kafka producer not available, skipping: {kafka_error}")
-            if kafka_producer:
-                try:
-                    await kafka_producer.stop()
-                except:
-                    pass
-            kafka_producer = None
-        
-        # Initialize Kafka consumer (optional - skip if not available)
-        try:
-            if kafka_producer:  # Only try consumer if producer succeeded
-                kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
-                kafka_consumer = AIOKafkaConsumer(
-                    'logs',
-                    'traces',
-                    bootstrap_servers=kafka_servers,
-                    value_deserializer=lambda m: m.decode('utf-8')
-                )
-                await asyncio.wait_for(kafka_consumer.start(), timeout=5.0)
-                logger.info("Connected to Kafka consumer")
-            else:
-                logger.info("Skipping Kafka consumer (producer not available)")
-        except Exception as kafka_error:
-            logger.warning(f"Kafka consumer not available, skipping: {kafka_error}")
-            if kafka_consumer:
-                try:
-                    await kafka_consumer.stop()
-                except:
-                    pass
-            kafka_consumer = None
         
         # Initialize OpenSearch query client (for observability endpoints)
         opensearch_query_client = OpenSearchQueryClient(
@@ -255,7 +209,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up connections on shutdown"""
-    global redis_client, db_engine, es_client, kafka_producer, kafka_consumer
+    global redis_client, db_engine, es_client
     global opensearch_query_client, jaeger_query_client
     
     if redis_client:
@@ -269,14 +223,6 @@ async def shutdown_event():
     if es_client:
         await es_client.close()
         logger.info("Elasticsearch connection closed")
-    
-    if kafka_producer:
-        await kafka_producer.stop()
-        logger.info("Kafka producer closed")
-    
-    if kafka_consumer:
-        await kafka_consumer.stop()
-        logger.info("Kafka consumer closed")
     
     if opensearch_query_client:
         await opensearch_query_client.close()
@@ -330,12 +276,6 @@ async def health_check():
         else:
             elasticsearch_status = "unhealthy"
         
-        # Check Kafka connectivity (optional)
-        if kafka_producer and kafka_consumer:
-            kafka_status = "healthy"
-        else:
-            kafka_status = "not_configured"  # Not unhealthy, just not configured
-        
         overall_status = "healthy" if all([
             redis_status == "healthy", 
             postgres_status == "healthy",
@@ -348,7 +288,6 @@ async def health_check():
             "redis": redis_status,
             "postgres": postgres_status,
             "elasticsearch": elasticsearch_status,
-            "kafka": kafka_status,
             "timestamp": asyncio.get_event_loop().time()
         }
     except Exception as e:

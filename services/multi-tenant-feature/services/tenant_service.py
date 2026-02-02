@@ -1703,13 +1703,13 @@ async def view_tenant_details(tenant_id: str, db: AsyncSession) -> TenantViewRes
     response = TenantViewResponse(
         id=tenant.id,
         tenant_id=tenant.tenant_id,
-        user_id=tenant.user_id,
+        user_id=tenant.user_id or 0,  # Handle None case
         organization_name=tenant.organization_name,
         email=tenant.contact_email,
         domain=tenant.domain,
         schema=tenant.schema_name,
         subscriptions=tenant.subscriptions or [],
-        status=tenant.status,
+        status=tenant.status.value if hasattr(tenant.status, "value") else str(tenant.status),  # Convert enum to string
         quotas=tenant.quotas or {},
         created_at=tenant.created_at.isoformat(),
         updated_at=tenant.updated_at.isoformat(),
