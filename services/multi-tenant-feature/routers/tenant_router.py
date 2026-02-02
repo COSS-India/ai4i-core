@@ -20,7 +20,7 @@ router = APIRouter(
     dependencies=[Depends(AuthProvider)],
 )
 
-# Separate router for tenant resolution (no auth required for internal service calls)
+
 tenant_resolve_router = APIRouter(
     prefix="/resolve/tenant",
     tags=["Tenant Resolution"],
@@ -77,6 +77,7 @@ async def remove_tenant_subscriptions(
         raise HTTPException(status_code=500,detail="Internal server error",)
 
 
+# Separate router for tenant resolution (no auth required for internal service calls)
 @tenant_resolve_router.get("/from/user", status_code=status.HTTP_200_OK)
 async def resolve_tenant_from_user(
     user_id: int,

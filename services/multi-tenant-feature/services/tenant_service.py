@@ -53,6 +53,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def normalize_to_strings(values):
+    """
+    Normalize a collection of values to strings.
+    Handles enum objects by extracting their .value attribute.
+    """
+    return [str(v.value) if hasattr(v, 'value') else str(v) for v in values]
+
 EMAIL_VERIFICATION_LINK = str(os.getenv("EMAIL_VERIFICATION_LINK",""))
 DB_NAME                 = str(os.getenv("APP_DB_NAME", "multi_tenant_db"))
 API_GATEWAY_URL        = str(os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080"))
@@ -1153,7 +1161,7 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
     if invalid:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid subscriptions: {list(invalid)}",
+            detail=f"Invalid subscriptions: {normalize_to_strings(invalid)}",
         )
 
     current = set(tenant.subscriptions or [])
@@ -1162,7 +1170,7 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
     if duplicates:
         raise HTTPException(
             status_code=400,
-            detail=f"Subscription(s) already exist: {list(duplicates)}",
+            detail=f"Subscription(s) already exist: {normalize_to_strings(duplicates)}",
         )
 
     updated = list(current | set(subscriptions))
@@ -1237,7 +1245,7 @@ async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: Async
     if missing:
         raise HTTPException(
             status_code=400,
-            detail=f"Subscriptions not present for tenant: {list(missing)}",
+            detail=f"Subscriptions not present for tenant: {normalize_to_strings(missing)}",
         )
     
     updated = list(current - set(subscriptions))
@@ -1783,7 +1791,7 @@ async def view_tenant_user_details(user_id: str, db: AsyncSession) -> TenantUser
 async def add_user_subscriptions(
     tenant_id: str,
     user_id: int,
-    subscriptions: list[SubscriptionType],
+    subscriptions: list[str],
     db: AsyncSession,
 ) -> UserSubscriptionResponse:
     """
@@ -1816,7 +1824,7 @@ async def add_user_subscriptions(
     if missing_for_tenant:
         raise HTTPException(
             status_code=400,
-            detail=f"One or more services are not enabled for this tenant: {list(missing_for_tenant)}",
+            detail=f"One or more services are not enabled for this tenant: {normalize_to_strings(missing_for_tenant)}",
         )
 
     # Validate services are active
@@ -1835,7 +1843,7 @@ async def add_user_subscriptions(
             status_code=400,
             detail={
                 "message": "One or more services are invalid or inactive",
-                "invalid_services": list(invalid_or_inactive),
+                "invalid_services": normalize_to_strings(invalid_or_inactive),
             },
         )
 
@@ -1844,7 +1852,7 @@ async def add_user_subscriptions(
     if duplicates:
         raise HTTPException(
             status_code=400,
-            detail=f"Subscription(s) already exist for user: {list(duplicates)}",
+            detail=f"Subscription(s) already exist for user: {normalize_to_strings(duplicates)}",
         )
 
     updated = list(current | requested_services)
@@ -1889,7 +1897,7 @@ async def add_user_subscriptions(
 async def remove_user_subscriptions(
     tenant_id: str,
     user_id: int,
-    subscriptions: list[SubscriptionType],
+    subscriptions: list[str],
     db: AsyncSession,
 ) -> UserSubscriptionResponse:
     """
