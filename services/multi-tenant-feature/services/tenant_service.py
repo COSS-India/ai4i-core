@@ -1140,7 +1140,7 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     if tenant.status != TenantStatus.ACTIVE:
-        raise HTTPException(status_code=400, detail="Tenant is not active")
+        raise HTTPException(status_code=400, detail="Tenant is not active , cannot add subscriptions")
 
     # Validate services
     valid_services = await db.scalars(
@@ -1225,6 +1225,9 @@ async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: Async
 
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    
+    if tenant.status != TenantStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail="Tenant is not active , cannot remove subscriptions")
 
     current = set(tenant.subscriptions or [])
     to_remove = set(subscriptions)
@@ -1357,7 +1360,7 @@ async def register_user(
     select(TenantUser).where(TenantUser.email == payload.email))
 
     if existing_tenant_user:
-        raise HTTPException(status_code=409,detail="User already registered under this tenant")
+        raise HTTPException(status_code=409,detail="Email already registered , please use a different email")
 
     # Generate password (if not provided). Hashing is handled by auth-service.
     plain_password = generate_random_password(length=12)
@@ -1544,6 +1547,18 @@ async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
             .where(UserBillingRecord.tenant_id == payload.tenant_id)
             .values(status=TenantUserStatus.ACTIVE)
         )
+    elif new_status == TenantStatus.DEACTIVATED:
+        await db.execute(
+            update(TenantUser)
+            .where(TenantUser.tenant_id == payload.tenant_id)
+            .values(status=TenantUserStatus.DEACTIVATED)
+        )
+        # Deactivate user billing records
+        await db.execute(
+            update(UserBillingRecord)
+            .where(UserBillingRecord.tenant_id == payload.tenant_id)
+            .values(status=TenantUserStatus.DEACTIVATED)
+        )
 
     # Update tenant-level billing record status if it exists
     billing_record = await db.scalar(select(BillingRecord).where(BillingRecord.tenant_id == tenant.id))
@@ -1563,15 +1578,29 @@ async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
             billing_record.suspension_reason = None
             billing_record.suspended_until = None
 
+        elif new_status == TenantStatus.DEACTIVATED:
+            billing_record.billing_status = BillingStatus.DEACTIVATED
+            billing_record.suspension_reason = payload.reason if payload.reason else ""
+            billing_record.suspended_until = None
+    
+    action = None
+
+    if new_status == TenantStatus.SUSPENDED:
+        action = AuditAction.tenant_suspended
+
+     # Tenant is made active during the registration process
+     # so if the tenant status is changed to ACTIVE through this api it is considered a reactivation
+    elif new_status == TenantStatus.ACTIVE: 
+        action = AuditAction.tenant_reactivated
+
+    elif new_status == TenantStatus.DEACTIVATED:
+        action = AuditAction.tenant_deactivated
+
     # Audit log for tenant status change
     db.add(
         AuditLog(
             tenant_id=tenant.id,
-            action=(
-                AuditAction.tenant_suspended
-                if new_status == TenantStatus.SUSPENDED
-                else AuditAction.tenant_updated
-            ),
+            action=action,
             actor=AuditActorType.SYSTEM,
             details={
                 "old_status": old_status,
@@ -1621,10 +1650,10 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    if tenant.status == TenantStatus.SUSPENDED:
+    if tenant.status == TenantStatus.SUSPENDED or tenant.status == TenantStatus.DEACTIVATED:
         raise HTTPException(
             status_code=400,
-            detail="Cannot update user status while tenant is suspended",
+            detail="Cannot update user status while tenant is suspended or deactivated",
         )
     
     tenant_user = await db.scalar(select(TenantUser).where(TenantUser.tenant_id == tenant_id,TenantUser.user_id == user_id))
@@ -1768,7 +1797,7 @@ async def add_user_subscriptions(
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     if tenant.status != TenantStatus.ACTIVE:
-        raise HTTPException(status_code=400, detail="Tenant is not active")
+        raise HTTPException(status_code=400, detail="Tenant is not active , cannot add user subscriptions")
 
     tenant_user = await db.scalar(
         select(TenantUser).where(
@@ -1872,6 +1901,9 @@ async def remove_user_subscriptions(
 
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    
+    if tenant.status != TenantStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail="Tenant is not active , cannot remove subscriptions")
 
     tenant_user = await db.scalar(
         select(TenantUser).where(
