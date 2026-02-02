@@ -12,7 +12,7 @@ interface AuthGuardProps {
 
 // Routes that require authentication
 // Note: /nmt is excluded to allow anonymous "try-it" access
-const protectedRoutes = ['/asr', '/tts', '/llm', '/pipeline', '/pipeline-builder', '/model-management', '/profile'];
+const protectedRoutes = ['/asr', '/tts', '/llm', '/pipeline', '/pipeline-builder', '/model-management', '/services-management', '/profile'];
 
 // Routes that allow anonymous access with limited functionality
 const tryItRoutes = ['/nmt'];
