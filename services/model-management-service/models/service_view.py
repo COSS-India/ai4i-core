@@ -22,6 +22,8 @@ class ServiceResponse(BaseModel):
     isPublished: bool = False
     publishedAt: Optional[str] = None
     unpublishedAt: Optional[str] = None
+    createdBy: Optional[str] = None  # User ID (string) who created this service
+    updatedBy: Optional[str] = None  # User ID (string) who last updated this service
 
 
 class _ServiceUsage(BaseModel):

@@ -4020,9 +4020,10 @@ async def list_models(
     task_type: Union[ModelTaskTypeEnum,None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
     include_deprecated: bool = Query(True, description="Include deprecated versions. Set to false to show only ACTIVE versions."),
     model_name: Optional[str] = Query(None, description="Filter by model name. Returns all versions of models matching this name."),
+    created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the model."),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """List all registered models. Use include_deprecated=false to show only ACTIVE versions. Use model_name to filter by model name and get all versions. Requires Bearer token authentication with 'model.read' permission."""
+    """List all registered models. Use include_deprecated=false to show only ACTIVE versions. Use model_name to filter by model name and get all versions. Use created_by to filter by creator. Requires Bearer token authentication with 'model.read' permission."""
     await check_permission("model.read", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     params = {
@@ -4031,6 +4032,8 @@ async def list_models(
     }
     if model_name:
         params["model_name"] = model_name
+    if created_by:
+        params["created_by"] = created_by
     return await proxy_to_service_with_params(
         None, 
         "/services/details/list_models", 
@@ -4160,14 +4163,17 @@ async def list_services(
     request: Request,
     task_type: Union[ModelTaskTypeEnum,None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
     is_published: Optional[bool] = Query(None, description="Filter by publish status. True = published only, False = unpublished only, None = all services"),
+    created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the service."),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """List all deployed services. Requires Bearer token authentication with 'service.read' permission."""
+    """List all deployed services. Use created_by to filter by creator. Requires Bearer token authentication with 'service.read' permission."""
     await check_permission("service.read", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     params = {"task_type": task_type.value if task_type else None}
     if is_published is not None:
         params["is_published"] = str(is_published).lower()
+    if created_by:
+        params["created_by"] = created_by
     return await proxy_to_service_with_params(
         None, 
         "/services/details/list_services", 
