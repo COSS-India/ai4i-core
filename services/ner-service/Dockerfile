@@ -25,6 +25,8 @@ RUN pip install --upgrade pip setuptools wheel
 
 # Install Python deps
 RUN pip install --no-cache-dir --user -r requirements.txt
+# Ensure packaging is installed (required by opentelemetry-instrumentation)
+RUN pip install --no-cache-dir --user packaging>=21.0
 # Install AI4ICore plugins (non-editable since we copy source to runtime)
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_observability
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_logging
@@ -47,9 +49,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN useradd --create-home --shell /bin/bash app
 
-# Copy Python site-packages
+# Copy Python site-packages (including all dependencies like packaging)
 COPY --from=builder /root/.local /home/app/.local
 ENV PATH=/home/app/.local/bin:$PATH
+# Ensure packaging is available - install system-wide first, then as user
+RUN pip install --no-cache-dir packaging>=21.0 && \
+    pip install --no-cache-dir --user packaging>=21.0
 
 # Copy AI4ICore plugins into runtime image
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
