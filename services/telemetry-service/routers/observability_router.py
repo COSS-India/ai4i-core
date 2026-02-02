@@ -102,6 +102,92 @@ async def query_tenant_id_from_db(user_id: str) -> Optional[str]:
         return None
 
 
+def map_subscription_to_service_name(subscription: str) -> str:
+    """
+    Map subscription name (e.g., "asr") to actual service name in logs (e.g., "asr-service").
+    
+    Args:
+        subscription: Subscription name from tenant (e.g., "asr", "ocr", "tts")
+        
+    Returns:
+        Service name as it appears in logs (e.g., "asr-service", "ocr-service")
+    """
+    # Most services follow the pattern: {name}-service
+    # Handle special cases if any
+    service_name_mapping = {
+        "asr": "asr-service",
+        "ocr": "ocr-service",
+        "tts": "tts-service",
+        "nmt": "nmt-service",
+        "ner": "ner-service",
+        "llm": "llm-service",
+        "transliteration": "transliteration-service",
+        "language-detection": "language-detection-service",
+        "language_detection": "language-detection-service",
+        "speaker-diarization": "speaker-diarization-service",
+        "speaker_diarization": "speaker-diarization-service",
+        "audio-lang-detection": "audio-lang-detection-service",
+        "audio_lang_detection": "audio-lang-detection-service",
+        "language-diarization": "language-diarization-service",
+        "language_diarization": "language-diarization-service",
+        "pipeline": "pipeline-service",
+    }
+    
+    # Check if it's already a service name (contains "-service")
+    if "-service" in subscription or "_service" in subscription:
+        return subscription
+    
+    # Map subscription name to service name
+    return service_name_mapping.get(subscription.lower(), f"{subscription}-service")
+
+
+async def get_tenant_subscriptions(tenant_id: str) -> Optional[List[str]]:
+    """
+    Query tenant subscriptions (registered services) from multi_tenant_db.
+    Maps subscription names to actual service names as they appear in logs.
+    
+    Args:
+        tenant_id: The tenant identifier
+        
+    Returns:
+        List of service names (as they appear in logs) that the tenant is subscribed to, 
+        or None if tenant not found
+    """
+    if multi_tenant_db_session is None:
+        logger.warning("multi_tenant_db_session is None, cannot query tenant subscriptions")
+        return None
+    
+    try:
+        logger.debug(f"Querying subscriptions for tenant_id: {tenant_id}")
+        
+        async with multi_tenant_db_session() as session:
+            # Query tenants table for subscriptions
+            result = await session.execute(
+                text("""
+                    SELECT subscriptions
+                    FROM tenants
+                    WHERE tenant_id = :tenant_id
+                    AND status = 'ACTIVE'
+                    LIMIT 1
+                """),
+                {"tenant_id": tenant_id}
+            )
+            row = result.fetchone()
+            
+            if row:
+                subscriptions = row[0] if row[0] else []
+                # Map subscription names to actual service names
+                service_names = [map_subscription_to_service_name(sub) for sub in subscriptions]
+                logger.debug(f"Found subscriptions for tenant {tenant_id}: {subscriptions} -> mapped to service names: {service_names}")
+                return service_names
+            else:
+                logger.warning(f"No active tenant found with tenant_id: {tenant_id}")
+                return None
+    except Exception as e:
+        logger.error(f"Error querying tenant subscriptions for tenant_id {tenant_id}: {e}", exc_info=True)
+        return None
+
+
 # ==================== Logs Endpoints ====================
 
 @router.get("/logs/search")
@@ -123,6 +209,7 @@ async def search_logs(
     Requires 'logs.read' permission.
     Admin users see all logs, normal users see only their tenant's logs.
     Non-tenant users are denied access.
+    Tenant users can only see logs from services registered to their tenant.
     """
     try:
         # Get tenant_id filter (handles RBAC)
@@ -131,6 +218,28 @@ async def search_logs(
             request, enforcer, "logs.read",
             tenant_id_fallback=query_tenant_id_from_db
         )
+        
+        # If user is not admin, filter by tenant subscriptions
+        tenant_subscriptions = None
+        if org_filter:  # Not admin, has tenant_id
+            tenant_subscriptions = await get_tenant_subscriptions(org_filter)
+            if tenant_subscriptions is None:
+                logger.warning(f"Could not retrieve subscriptions for tenant {org_filter}, denying access")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Tenant not found or inactive"
+                )
+            
+            logger.info(f"Filtering logs for tenant {org_filter} by services: {tenant_subscriptions}")
+            
+            # If user specified a service, validate it's in tenant subscriptions
+            if service:
+                if service not in tenant_subscriptions:
+                    logger.warning(f"User from tenant {org_filter} requested service {service} which is not in subscribed services {tenant_subscriptions}")
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Service '{service}' is not registered to your tenant"
+                    )
         
         # Build time range
         time_range = None
@@ -141,6 +250,11 @@ async def search_logs(
             if end_time:
                 time_range["end_time"] = end_time
         
+        # For non-admin users, we need to filter by subscribed services
+        # We'll pass this to opensearch which will add it to the query
+        # For now, if service is not specified and user is not admin, we need to filter by subscriptions
+        # This will be handled by modifying the opensearch query
+        
         # Search logs
         result = await opensearch.search_logs(
             organization_filter=org_filter,
@@ -149,7 +263,8 @@ async def search_logs(
             level=level,
             search_text=search_text,
             page=page,
-            size=size
+            size=size,
+            allowed_services=tenant_subscriptions  # Pass subscriptions to filter
         )
         
         return result
@@ -178,6 +293,7 @@ async def get_log_aggregations(
     Requires 'logs.read' permission.
     Admin users see all logs, normal users see only their tenant's logs.
     Non-tenant users are denied access.
+    Tenant users can only see aggregations from services registered to their tenant.
     Returns total logs, error count, warning count, breakdown by level and service.
     """
     try:
@@ -187,6 +303,17 @@ async def get_log_aggregations(
             request, enforcer, "logs.read",
             tenant_id_fallback=query_tenant_id_from_db
         )
+        
+        # If user is not admin, filter by tenant subscriptions
+        tenant_subscriptions = None
+        if org_filter:  # Not admin, has tenant_id
+            tenant_subscriptions = await get_tenant_subscriptions(org_filter)
+            if tenant_subscriptions is None:
+                logger.warning(f"Could not retrieve subscriptions for tenant {org_filter}, denying access")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Tenant not found or inactive"
+                )
         
         # Build time range
         time_range = None
@@ -200,7 +327,8 @@ async def get_log_aggregations(
         # Get aggregations
         result = await opensearch.get_log_aggregations(
             organization_filter=org_filter,
-            time_range=time_range
+            time_range=time_range,
+            allowed_services=tenant_subscriptions  # Pass subscriptions to filter
         )
         
         return result
@@ -227,7 +355,7 @@ async def get_log_services(
     Get list of services that have logs.
     
     Requires 'logs.read' permission.
-    Admin users see all services, normal users see only services from their tenant.
+    Admin users see all services, normal users see only services registered to their tenant.
     Non-tenant users are denied access.
     """
     try:
@@ -238,6 +366,17 @@ async def get_log_services(
             tenant_id_fallback=query_tenant_id_from_db
         )
         
+        # If user is not admin, get tenant subscriptions to filter services
+        tenant_subscriptions = None
+        if org_filter:  # Not admin, has tenant_id
+            tenant_subscriptions = await get_tenant_subscriptions(org_filter)
+            if tenant_subscriptions is None:
+                logger.warning(f"Could not retrieve subscriptions for tenant {org_filter}, denying access")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Tenant not found or inactive"
+                )
+        
         # Build time range
         time_range = None
         if start_time or end_time:
@@ -247,13 +386,22 @@ async def get_log_services(
             if end_time:
                 time_range["end_time"] = end_time
         
-        # Get services
-        services = await opensearch.get_services_with_logs(
+        # Get services from OpenSearch
+        all_services = await opensearch.get_services_with_logs(
             organization_filter=org_filter,
             time_range=time_range
         )
         
-        return {"services": services}
+        # Filter services by tenant subscriptions if not admin
+        if tenant_subscriptions:
+            # Only return services that are both in OpenSearch results AND in tenant subscriptions
+            filtered_services = [s for s in all_services if s in tenant_subscriptions]
+            logger.info(f"Filtered services for tenant {org_filter}: {filtered_services} (from OpenSearch: {all_services}, from subscriptions: {tenant_subscriptions})")
+            return {"services": filtered_services}
+        else:
+            # Admin sees all services
+            logger.debug(f"Admin user - returning all services: {all_services}")
+            return {"services": all_services}
         
     except HTTPException:
         raise
