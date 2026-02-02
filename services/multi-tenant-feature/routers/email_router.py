@@ -6,13 +6,11 @@ from models.tenant_email import TenantResendEmailVerificationRequest, TenantRese
 from services.tenant_service import verify_email_token, resend_verification_email
 
 from logger import logger
-from middleware.auth_provider import AuthProvider
 
 
 router = APIRouter(
     prefix="/email", 
     tags=["Email Verification"],
-    dependencies=[Depends(AuthProvider)]
 )
 
 

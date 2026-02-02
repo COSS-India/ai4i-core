@@ -57,6 +57,11 @@ python-multipart==0.0.9
 python-dotenv==1.0.1
 
 # =========================================================
+# Packaging (required by opentelemetry-instrumentation-fastapi)
+# =========================================================
+packaging>=21.0
+
+# =========================================================
 # Authentication & Security
 # =========================================================
 passlib[bcrypt]==1.7.4

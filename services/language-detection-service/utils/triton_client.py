@@ -1,6 +1,6 @@
 """
 Triton Client
-Triton Inference Server client wrapper for transliteration
+Triton Inference Server client wrapper for language detection
 """
 
 import logging
@@ -10,8 +10,12 @@ from typing import List, Tuple, Optional, Dict
 import tritonclient.http as http_client
 from tritonclient.utils import np_to_triton_dtype
 from tritonclient.http import InferInput, InferRequestedOutput
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 logger = logging.getLogger(__name__)
+# Use service name to get the same tracer instance as main.py
+tracer = trace.get_tracer("language-detection-service")
 
 
 class TritonInferenceError(Exception):
@@ -120,6 +124,108 @@ class TritonClient:
         headers: Optional[Dict[str, str]] = None
     ):
         """Send inference request to Triton server"""
+        if not tracer:
+            # Fallback if tracing not available
+            return self._send_triton_request_impl(model_name, inputs, outputs, headers)
+        
+        with tracer.start_as_current_span("triton.inference") as span:
+            try:
+                span.set_attribute("triton.model_name", model_name)
+                span.set_attribute("triton.endpoint", self.triton_url)
+                span.set_attribute("triton.has_auth", bool(self.api_key))
+                
+                # Calculate input size (approximate)
+                try:
+                    total_size = sum(
+                        len(inp.get_data()) if hasattr(inp, 'get_data') else 0
+                        for inp in inputs
+                    )
+                    span.set_attribute("triton.input_size_bytes", total_size)
+                except Exception:
+                    pass
+                
+                span.set_attribute("triton.input_count", len(inputs))
+                span.set_attribute("triton.output_count", len(outputs))
+                
+                # Add span event for Triton call start
+                span.add_event("triton.inference.start", {
+                    "model": model_name,
+                    "endpoint": self.triton_url
+                })
+                
+                # Check server health (non-blocking - log warning but try anyway)
+                if not self.is_server_ready():
+                    logger.warning(
+                        f"Triton server health check failed for '{self.triton_url}', "
+                        f"but attempting inference request anyway for model '{model_name}'"
+                    )
+                    span.set_attribute("triton.health_check", "failed")
+                else:
+                    span.set_attribute("triton.health_check", "passed")
+                
+                # Prepare headers
+                if headers is None:
+                    headers = {}
+                if self.api_key:
+                    headers["Authorization"] = f"Bearer {self.api_key}"
+                
+                logger.debug(f"Sending inference request to model '{model_name}' at '{self.triton_url}'")
+                
+                # Send async inference request
+                response = self.client.async_infer(
+                    model_name=model_name,
+                    model_version="1",
+                    inputs=inputs,
+                    outputs=outputs,
+                    headers=headers
+                )
+                
+                # Get result with timeout
+                result = response.get_result(block=True, timeout=20)
+                
+                # Add span event for successful completion
+                span.add_event("triton.inference.complete", {
+                    "model": model_name,
+                    "status": "success"
+                })
+                
+                return result
+                
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(
+                    f"Triton inference request failed for model '{model_name}' at '{self.triton_url}': {e}",
+                    exc_info=True
+                )
+                
+                # Record error in span
+                span.set_attribute("error", True)
+                span.set_attribute("error.type", type(e).__name__)
+                span.set_attribute("error.message", error_msg)
+                span.set_status(Status(StatusCode.ERROR, error_msg))
+                span.record_exception(e)
+                
+                # Provide more helpful error messages
+                if "404" in error_msg or "Not Found" in error_msg:
+                    raise TritonInferenceError(
+                        f"Triton model '{model_name}' not found at '{self.triton_url}'. "
+                        f"Please verify the model name and endpoint are correct."
+                    )
+                elif "Connection" in error_msg or "connect" in error_msg.lower():
+                    raise TritonInferenceError(
+                        f"Cannot connect to Triton server at '{self.triton_url}'. "
+                        f"Please verify the endpoint is correct and the server is running."
+                    )
+                raise TritonInferenceError(f"Triton inference request failed: {e}")
+    
+    def _send_triton_request_impl(
+        self,
+        model_name: str,
+        inputs: List[InferInput],
+        outputs: List[InferRequestedOutput],
+        headers: Optional[Dict[str, str]] = None
+    ):
+        """Fallback implementation when tracing is not available."""
         try:
             # Check server health (non-blocking - log warning but try anyway)
             if not self.is_server_ready():
