@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.tts_request import TTSInferenceRequest
 from models.tts_response import TTSInferenceResponse
-from repositories.tts_repository import TTSRepository, get_db_session
+from repositories.tts_repository import TTSRepository
 from services.tts_service import TTSService
 from services.audio_service import AudioService
 from services.text_service import TextService
@@ -70,6 +70,7 @@ from services.constants.error_messages import (
 )
 from middleware.exceptions import AuthenticationError, AuthorizationError
 from middleware.auth_provider import AuthProvider
+from middleware.tenant_db_dependency import get_tenant_db_session
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -97,7 +98,7 @@ inference_router = APIRouter(
 )
 
 
-async def get_tts_service(db: AsyncSession = Depends(get_db_session)) -> TTSService:
+async def get_tts_service(request: Request, db: AsyncSession = Depends(get_tenant_db_session)) -> TTSService:
     """Dependency to get configured TTS service."""
     try:
         # Create repository
