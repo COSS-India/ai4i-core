@@ -1309,13 +1309,19 @@ class ServiceCurrencyType(str, Enum):
     """Service currency type enumeration."""
     INR = "INR"
 
+class QuotaStructure(BaseModel):
+    """Structure for quota limits"""
+    characters_length: Optional[int] = Field(None, ge=0, description="Character length quota")
+    audio_length_in_min: Optional[int] = Field(None, ge=0, description="Audio length quota in minutes")
+
 class TenantRegisterRequest(BaseModel):
     """Request model for tenant registration."""
     organization_name: str = Field(..., min_length=2, max_length=255)
     domain: str = Field(..., min_length=3, max_length=255)
     contact_email: EmailStr = Field(..., description="Contact email for the tenant")
-    requested_subscriptions: Optional[List[SubscriptionType]] = Field(default=[], description="List of requested service subscriptions")
-    requested_quotas: Optional[Dict[str, Any]] = Field(None, description="Requested quotas configuration")
+    requested_subscriptions: Optional[List[SubscriptionType]] = Field(default=[], description="List of requested service subscriptions, e.g. ['tts', 'asr']")
+    requested_quotas: Optional[QuotaStructure] = Field(None, description="Requested quota limits for the tenant")
+    usage_quota: Optional[QuotaStructure] = Field(None, description="Initial usage quota values")
 
 class TenantRegisterResponse(BaseModel):
     """Response model for tenant registration."""
@@ -1325,6 +1331,7 @@ class TenantRegisterResponse(BaseModel):
     schema_name: str = Field(..., description="Database schema name")
     subscriptions: List[str] = Field(..., description="List of active subscriptions")
     quotas: Dict[str, Any] = Field(..., description="Quota configuration")
+    usage_quota: Optional[Dict[str, Any]] = Field(None, description="Usage quota values")
     status: str = Field(..., description="Tenant status")
     token: str = Field(..., description="Email verification token")
     message: Optional[str] = Field(None, description="Additional message")
@@ -1464,6 +1471,22 @@ class ServiceUpdateResponse(BaseModel):
     changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
 
 
+class TenantUpdateRequest(BaseModel):
+    """Request model for updating tenant information"""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    organization_name: Optional[str] = Field(None, min_length=2, max_length=255, description="Organization name")
+    contact_email: Optional[str] = Field(None, description="Contact email address")
+    domain: Optional[str] = Field(None, min_length=3, max_length=255, description="Domain name")
+    requested_quotas: Optional[QuotaStructure] = Field(None, description="Requested quota limits (characters_length, audio_length_in_min)")
+    usage_quota: Optional[QuotaStructure] = Field(None, description="Usage quota values (characters_length, audio_length_in_min)")
+
+class TenantUpdateResponse(BaseModel):
+    """Response model for tenant update"""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    message: str = Field(..., description="Update message")
+    changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
+    updated_fields: List[str] = Field(..., description="List of updated field names")
+
 class TenantViewResponse(BaseModel):
     """Response model for viewing tenant information."""
     id: UUID = Field(..., description="Tenant UUID")
@@ -1476,6 +1499,7 @@ class TenantViewResponse(BaseModel):
     subscriptions: list[str] = Field(..., description="List of subscriptions")
     status: str = Field(..., description="Tenant status")
     quotas: Dict[str , Any] = Field(..., description="Quotas for the tenant")
+    usage_quota: Optional[Dict[str, Any]] = Field(None, description="Usage quota values")
     created_at: str = Field(..., description="Creation timestamp")
     updated_at: str = Field(..., description="Update timestamp")
 
@@ -1491,6 +1515,18 @@ class TenantUserViewResponse(BaseModel):
     status: str = Field(..., description="User status")
     created_at: str = Field(..., description="Creation timestamp")
     updated_at: str = Field(..., description="Update timestamp")
+
+
+class ListTenantsResponse(BaseModel):
+    """Response model for listing all tenants"""
+    count: int = Field(..., description="Total number of tenants")
+    tenants: List[TenantViewResponse] = Field(..., description="List of tenant details")
+
+
+class ListUsersResponse(BaseModel):
+    """Response model for listing all tenant users"""
+    count: int = Field(..., description="Total number of users")
+    users: List[TenantUserViewResponse] = Field(..., description="List of user details")
 
 
 
@@ -4595,6 +4631,31 @@ async def update_tenant_status(
         headers=headers
     )
 
+@app.patch("/api/v1/multi-tenant/update/tenant", response_model=TenantUpdateResponse, tags=["Multi-Tenant"])
+async def update_tenant(
+    payload: TenantUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Update tenant information including organization_name, contact_email, domain,
+    requested_quotas, and usage_quota. Supports partial updates - only provided
+    fields will be updated.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/admin/update/tenant",
+        "multi-tenant-service",
+        method="PATCH",
+        body=body,
+        headers=headers
+    )
+
 @app.patch("/api/v1/multi-tenant/update/users/status", response_model=TenantUserStatusUpdateResponse, tags=["Multi-Tenant"])
 async def update_tenant_user_status(
     payload: TenantUserStatusUpdateRequest,
@@ -4680,6 +4741,50 @@ async def view_tenant_user(
         "/admin/view/user",
         "multi-tenant-service",
         {"user_id": user_id},
+        method="GET",
+        headers=headers,
+    )
+
+@app.get("/api/v1/multi-tenant/list/tenants", response_model=ListTenantsResponse, tags=["Multi-Tenant"])
+async def list_tenants(
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    List all tenants with their details via API Gateway.
+    Returns a list of all tenants registered in the system.
+    Proxies to multi-tenant-service /admin/list/tenants.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    return await proxy_to_service(
+        request,
+        "/admin/list/tenants",
+        "multi-tenant-service",
+        method="GET",
+        headers=headers,
+    )
+
+@app.get("/api/v1/multi-tenant/list/users", response_model=ListUsersResponse, tags=["Multi-Tenant"])
+async def list_users(
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    List all tenant users across all tenants via API Gateway.
+    Returns a list of all users registered under any tenant.
+    Proxies to multi-tenant-service /admin/list/users.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    return await proxy_to_service(
+        request,
+        "/admin/list/users",
+        "multi-tenant-service",
         method="GET",
         headers=headers,
     )
