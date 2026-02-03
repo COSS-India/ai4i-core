@@ -1270,11 +1270,13 @@ class TenantStatus(str, Enum):
     IN_PROGRESS = "IN_PROGRESS"
     ACTIVE = "ACTIVE"
     SUSPENDED = "SUSPENDED"
+    DEACTIVATED = "DEACTIVATED"
 
 class TenantUserStatus(str, Enum):
     """Tenant user status enumeration."""
     ACTIVE = "ACTIVE"
     SUSPENDED = "SUSPENDED"
+    DEACTIVATED = "DEACTIVATED"
 
 class SubscriptionType(str, Enum):
     """Subscription type enumeration."""
@@ -1285,6 +1287,7 @@ class SubscriptionType(str, Enum):
     PIPELINE = "pipeline"
     OCR = "ocr"
     NER = "ner"
+    Speech_to_Speech_Pipeline = "speech_to_speech_pipeline"
     Transliteration = "transliteration"
     Langauage_detection = "language_detection"
     Speaker_diarization = "speaker_diarization"
@@ -1392,6 +1395,27 @@ class TenantSubscriptionResponse(BaseModel):
     """Response model for tenant subscription operations."""
     tenant_id: str = Field(..., description="Tenant identifier")
     subscriptions: List[str] = Field(..., description="Updated list of subscriptions")
+
+
+class UserSubscriptionAddRequest(BaseModel):
+    """Request model for adding user subscriptions under a tenant."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="Auth user id for tenant user")
+    subscriptions: List[str] = Field(..., min_items=1, description="List of subscriptions to add for the user")
+
+
+class UserSubscriptionRemoveRequest(BaseModel):
+    """Request model for removing user subscriptions under a tenant."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="Auth user id for tenant user")
+    subscriptions: List[str] = Field(..., min_items=1, description="List of subscriptions to remove for the user")
+
+
+class UserSubscriptionResponse(BaseModel):
+    """Response model for user subscription operations."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="Auth user id for tenant user")
+    subscriptions: List[str] = Field(..., description="Updated list of user subscriptions")
 
 class ServiceCreateRequest(BaseModel):
     """Request model for creating a service."""
@@ -4009,9 +4033,10 @@ async def list_models(
     task_type: Union[ModelTaskTypeEnum,None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
     include_deprecated: bool = Query(True, description="Include deprecated versions. Set to false to show only ACTIVE versions."),
     model_name: Optional[str] = Query(None, description="Filter by model name. Returns all versions of models matching this name."),
+    created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the model."),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """List all registered models. Use include_deprecated=false to show only ACTIVE versions. Use model_name to filter by model name and get all versions. Requires Bearer token authentication with 'model.read' permission."""
+    """List all registered models. Use include_deprecated=false to show only ACTIVE versions. Use model_name to filter by model name and get all versions. Use created_by to filter by creator. Requires Bearer token authentication with 'model.read' permission."""
     await check_permission("model.read", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     params = {
@@ -4020,6 +4045,8 @@ async def list_models(
     }
     if model_name:
         params["model_name"] = model_name
+    if created_by:
+        params["created_by"] = created_by
     return await proxy_to_service_with_params(
         None, 
         "/services/details/list_models", 
@@ -4149,14 +4176,17 @@ async def list_services(
     request: Request,
     task_type: Union[ModelTaskTypeEnum,None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
     is_published: Optional[bool] = Query(None, description="Filter by publish status. True = published only, False = unpublished only, None = all services"),
+    created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the service."),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """List all deployed services. Requires Bearer token authentication with 'service.read' permission."""
+    """List all deployed services. Use created_by to filter by creator. Requires Bearer token authentication with 'service.read' permission."""
     await check_permission("service.read", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     params = {"task_type": task_type.value if task_type else None}
     if is_published is not None:
         params["is_published"] = str(is_published).lower()
+    if created_by:
+        params["created_by"] = created_by
     return await proxy_to_service_with_params(
         None, 
         "/services/details/list_services", 
@@ -4690,6 +4720,59 @@ async def remove_tenant_subscriptions(
         method="POST",
         body=body,
         headers=headers
+    )
+
+
+@app.post(
+    "/api/v1/multi-tenant/user/subscriptions/add",
+    response_model=UserSubscriptionResponse,
+    tags=["Multi-Tenant"],
+    status_code=201,
+)
+async def add_user_subscriptions(
+    payload: UserSubscriptionAddRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Add subscriptions to a tenant user."""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/user/subscriptions/add",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.post(
+    "/api/v1/multi-tenant/user/subscriptions/remove",
+    response_model=UserSubscriptionResponse,
+    tags=["Multi-Tenant"],
+)
+async def remove_user_subscriptions(
+    payload: UserSubscriptionRemoveRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Remove subscriptions from a tenant user."""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/user/subscriptions/remove",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers,
     )
 
 @app.post("/api/v1/multi-tenant/register/services", response_model=ServiceResponse, tags=["Multi-Tenant"], status_code=201)

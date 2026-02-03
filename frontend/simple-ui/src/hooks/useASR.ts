@@ -188,7 +188,7 @@ export const useASR = (): UseASRReturn => {
         console.log('✓ Error accepted - languages match, showing error');
         
         // Use centralized error handler
-        const { title: errorTitle, message: errorMessage } = extractErrorInfo(error);
+        const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
         
         setError(errorMessage);
         setFetching(false);
@@ -196,7 +196,7 @@ export const useASR = (): UseASRReturn => {
         setAudioText('');
         setResponseWordCount(0);
         toast({
-          title: errorTitle,
+          title: showOnlyMessage ? undefined : errorTitle,
           description: errorMessage,
           status: 'error',
           duration: 7000,
