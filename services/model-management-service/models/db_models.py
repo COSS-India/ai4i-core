@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String,BigInteger, Text, DateTime, ForeignKey , Boolean, UniqueConstraint, Enum as SQLEnum, and_
+from sqlalchemy import Column, String, BigInteger, Integer, Text, DateTime, ForeignKey, Boolean, UniqueConstraint, Index, Enum as SQLEnum, CheckConstraint, and_, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship, foreign
 from sqlalchemy.sql import func
@@ -10,6 +10,13 @@ import enum
 class VersionStatus(str, enum.Enum):
     ACTIVE = "ACTIVE"
     DEPRECATED = "DEPRECATED"
+
+
+class ExperimentStatus(str, enum.Enum):
+    """Status of an A/B experiment"""
+    DRAFT = "DRAFT"       # Created but not started
+    RUNNING = "RUNNING"   # Actively routing traffic
+    STOPPED = "STOPPED"   # Manually stopped or completed
 
 
 class Model(AppDBBase):
@@ -81,4 +88,43 @@ class Service(AppDBBase):
         foreign_keys=[model_id, model_version],
         uselist=False
     )
+
+
+class ABExperiment(AppDBBase):
+    """
+    A/B Experiment for comparing two model services.
+    Only one experiment can be active per task_type at a time.
+    """
+    __tablename__ = "ab_experiments"
+    __table_args__ = (
+        CheckConstraint('treatment_percentage >= 0 AND treatment_percentage <= 100', name='valid_treatment_percentage'),
+        # Partial unique index: only one active experiment per task_type
+        Index('idx_one_active_per_task', 'task_type', unique=True, postgresql_where=text("status = 'RUNNING'")),
+    )
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), nullable=False, unique=True)
+    description = Column(Text)
+    
+    # What task type this experiment applies to (asr, nmt, tts, etc.)
+    task_type = Column(String(100), nullable=False)
+    
+    # The two services being compared
+    control_service_id = Column(String(255), nullable=False)      # Baseline/current production
+    treatment_service_id = Column(String(255), nullable=False)    # New model being tested
+    
+    # Traffic split: percentage of traffic going to treatment (0-100)
+    # e.g., 30 means 30% treatment, 70% control
+    treatment_percentage = Column(Integer, nullable=False, default=50)
+    
+    # Experiment status
+    status = Column(SQLEnum(ExperimentStatus, name='experiment_status'), nullable=False, default=ExperimentStatus.DRAFT)
+    
+    # Audit fields
+    created_by = Column(String(255))
+    updated_by = Column(String(255))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    started_at = Column(DateTime(timezone=True))  # When status changed to RUNNING
+    stopped_at = Column(DateTime(timezone=True))  # When status changed to STOPPED
 

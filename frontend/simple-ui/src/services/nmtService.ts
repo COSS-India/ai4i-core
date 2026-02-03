@@ -135,7 +135,6 @@ export const listNMTServices = async (): Promise<NMTServiceDetailsResponse[]> =>
         serviceDescription: service.serviceDescription || service.description || '',
         supported_languages: Array.from(new Set(supportedLanguages)), // Remove duplicates
         modelVersion: service.modelVersion || service.model_version,
-        model_version: service.modelVersion || service.model_version,
       } as NMTServiceDetailsResponse;
     });
 

@@ -20,6 +20,7 @@ from services.nmt_service import NMTService
 from services.text_service import TextService
 from utils.triton_client import TritonClient
 from utils.auth_utils import extract_auth_headers
+from utils.experiment_client import ExperimentClient
 from utils.validation_utils import (
     validate_language_pair, validate_service_id, validate_batch_size,
     InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError
@@ -149,6 +150,7 @@ async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_db_se
     # Get Redis client and Model Management client from app state
     redis_client = getattr(request.app.state, "redis_client", None)
     model_management_client = getattr(request.app.state, "model_management_client", None)
+    experiment_client = getattr(request.app.state, "experiment_client", None)
     
     if not model_management_client:
         raise HTTPException(
@@ -164,6 +166,7 @@ async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_db_se
         text_service=text_service,
         get_triton_client_func=get_triton_client_for_endpoint,
         model_management_client=model_management_client,
+        experiment_client=experiment_client,
         redis_client=redis_client,
         cache_ttl_seconds=cache_ttl_seconds
     )

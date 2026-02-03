@@ -24,6 +24,8 @@ from ai4icore_logging import (
 )
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from fastapi.responses import Response
 
 # Load environment variables from .env file if it exists
 load_dotenv()
@@ -32,6 +34,7 @@ from routers import health_router, inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
 from utils.triton_client import TritonClient
 from utils.model_management_client import ModelManagementClient
+from utils.experiment_client import ExperimentClient
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
@@ -229,6 +232,16 @@ async def lifespan(app: FastAPI):
         cache_ttl_seconds=MODEL_MANAGEMENT_CACHE_TTL
     )
     app.state.model_management_client = model_management_client
+    
+    # Create Experiment client for A/B testing
+    # Uses the same Model Management service URL
+    experiment_client = ExperimentClient(
+        base_url=MODEL_MANAGEMENT_SERVICE_URL,
+        timeout=2.0,  # Fast timeout - don't block inference
+        cache_ttl_seconds=60  # Cache "no experiment" results for 1 minute
+    )
+    app.state.experiment_client = experiment_client
+    logger.info("✅ Experiment Client initialized for A/B testing")
     
     # NOTE: Model Management Plugin is registered BEFORE app starts (see line ~320)
     # to avoid "Cannot add middleware after application has started" error
@@ -480,6 +493,20 @@ async def health(request: Request):
         "db_ok": db_ok,
         "version": "1.0.2",
     }, status_code
+
+
+@app.get("/metrics", tags=["Monitoring"])
+async def metrics():
+    """
+    Prometheus metrics endpoint.
+    
+    Exposes metrics including A/B experiment labels for comparing
+    control vs treatment performance.
+    """
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST
+    )
 
 
 if __name__ == "__main__":
