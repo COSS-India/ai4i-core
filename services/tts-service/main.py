@@ -36,6 +36,8 @@ from services.text_service import TextService
 from services.voice_service import VoiceService
 from utils.triton_client import TritonClient
 from repositories.tts_repository import TTSRepository
+from middleware.tenant_schema_router import TenantSchemaRouter
+from middleware.tenant_middleware import TenantMiddleware
 
 # Try to import streaming service, but make it optional
 try:
@@ -170,6 +172,16 @@ async def lifespan(app: FastAPI):
         app.state.redis_client = redis_client
         app.state.db_session_factory = db_session_factory
         app.state.db_engine = db_engine
+
+         # Initialize tenant schema router for multi-tenant routing
+        multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL")
+        if not multi_tenant_db_url:
+            logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
+            multi_tenant_db_url = database_url
+        logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")
+        tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
+        app.state.tenant_schema_router = tenant_schema_router
+        logger.info("Tenant schema router initialized with multi-tenant database")
         
         # Update rate limiting middleware with Redis client
         for middleware in app.user_middleware:
@@ -362,6 +374,11 @@ app.add_middleware(CorrelationMiddleware)
 # FastAPI middleware runs in REVERSE order, so this will run AFTER ObservabilityMiddleware
 # This ensures organization is set in context before logging
 app.add_middleware(RequestLoggingMiddleware)
+
+# Add tenant middleware (after auth, before routes)
+# This extracts tenant context from JWT or user_id
+app.add_middleware(TenantMiddleware)
+
 
 # Add rate limiting middleware (will be configured with Redis in lifespan)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
