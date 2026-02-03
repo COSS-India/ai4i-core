@@ -126,6 +126,7 @@ export const listNMTServices = async (): Promise<NMTServiceDetailsResponse[]> =>
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id,
+        model_version: service.modelVersion || service.model_version || '',
         triton_endpoint: endpoint,
         triton_model: 'nmt', // Default value
         provider: service.name || service.serviceId || 'unknown', // Keep for backward compatibility
@@ -133,6 +134,8 @@ export const listNMTServices = async (): Promise<NMTServiceDetailsResponse[]> =>
         name: service.name || '',
         serviceDescription: service.serviceDescription || service.description || '',
         supported_languages: Array.from(new Set(supportedLanguages)), // Remove duplicates
+        modelVersion: service.modelVersion || service.model_version,
+        model_version: service.modelVersion || service.model_version,
       } as NMTServiceDetailsResponse;
     });
 

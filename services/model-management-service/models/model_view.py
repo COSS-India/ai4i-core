@@ -23,3 +23,5 @@ class ModelViewResponse(BaseModel):
     inferenceEndPoint: InferenceEndPoint
     source: Optional[str]  ## ask value for this field
     task: TaskResponse  # Use TaskResponse to allow invalid task types from DB
+    createdBy: Optional[str] = None  # User ID (string) who created this model
+    updatedBy: Optional[str] = None  # User ID (string) who last updated this model
