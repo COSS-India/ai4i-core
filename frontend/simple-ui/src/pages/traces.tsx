@@ -50,6 +50,8 @@ interface ProcessedSpan {
   icon: any;
   isImportant: boolean;
   isTopLevel: boolean;
+  hasError: boolean;
+  errorMessage?: string;
   relativeStart: number; // milliseconds from trace start
   relativeEnd: number;
 }
@@ -71,6 +73,71 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
   let icon = FiSettings;
   let isImportant = false;
   let isTopLevel = false; // Flag for top-level operations
+  let hasError = false;
+  let errorMessage: string | undefined = undefined;
+
+  // Check for errors in span
+  const checkForErrors = () => {
+    const errorTag = tags.find(t => t.key === "error" || t.key.toLowerCase().includes("error"));
+    const statusCode = tags.find(t => t.key === "otel.status_code" || t.key === "http.status_code");
+    const rejectTag = tags.find(t => t.key.toLowerCase().includes("reject"));
+    const httpStatus = tags.find(t => t.key === "http.status_code");
+    
+    // Check for error tags
+    if (errorTag) {
+      hasError = true;
+      errorMessage = String(errorTag.value);
+    } 
+    // Check for non-OK status codes
+    else if (statusCode && String(statusCode.value) !== "OK" && String(statusCode.value) !== "200") {
+      hasError = true;
+      errorMessage = `Status: ${statusCode.value}`;
+    }
+    // Check for HTTP error status codes (4xx, 5xx)
+    else if (httpStatus) {
+      const status = parseInt(String(httpStatus.value));
+      if (status >= 400) {
+        hasError = true;
+        if (status >= 500) {
+          errorMessage = `Server error (${status})`;
+        } else {
+          errorMessage = `Client error (${status})`;
+        }
+      }
+    }
+    // Check for reject tags
+    else if (rejectTag) {
+      hasError = true;
+      errorMessage = String(rejectTag.value);
+    }
+    // Check operation name for reject
+    else if (opName.includes("reject")) {
+      hasError = true;
+      errorMessage = "Request was rejected during processing";
+    }
+    // Check logs for errors
+    else if (span.logs && span.logs.length > 0) {
+      const errorLog = span.logs.find((log: any) => {
+        if (log.fields) {
+          return log.fields.some((f: any) => 
+            f.key === "error" || 
+            f.key === "level" && String(f.value).toLowerCase() === "error" ||
+            String(f.value).toLowerCase().includes("error") ||
+            String(f.value).toLowerCase().includes("failed") ||
+            String(f.value).toLowerCase().includes("reject")
+          );
+        }
+        return false;
+      });
+      if (errorLog) {
+        hasError = true;
+        const errorField = errorLog.fields.find((f: any) => f.key === "error" || f.key === "message");
+        errorMessage = errorField ? String(errorField.value) : "Error occurred during processing";
+      }
+    }
+  };
+  
+  checkForErrors();
 
   // Authentication & Authorization - show request.authorize or auth.validate
   if (opName === "request.authorize" || (opName.includes("authorize") && !opName.includes("decision") && !opName.includes("check"))) {
@@ -80,6 +147,17 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     icon = FiShield;
     const authMethod = getTag("auth.method") || getTag("auth_source") || "API Key";
     const org = getTag("organization");
+    const authResult = getTag("auth.decision.result");
+    const authValid = getTag("auth.valid");
+    
+    // Check if authorization failed
+    if (authResult && (authResult.toLowerCase().includes("reject") || authResult.toLowerCase().includes("deny") || authResult.toLowerCase().includes("fail"))) {
+      hasError = true;
+      errorMessage = `Authorization failed: ${authResult}`;
+    } else if (authValid && String(authValid).toLowerCase() === "false") {
+      hasError = true;
+      errorMessage = "Authorization validation failed";
+    }
     displayName = "Request Authorization";
     description = `Validates authentication credentials using ${authMethod}${org ? ` for ${org}` : ""}`;
   }
@@ -91,6 +169,18 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     icon = FiShield;
     const authMethod = getTag("auth.method") || getTag("auth_source") || "API Key";
     const org = getTag("organization");
+    const authValid = getTag("auth.valid");
+    const authResponseStatus = getTag("auth.response_status");
+    
+    // Check if validation failed
+    if (authValid && String(authValid).toLowerCase() === "false") {
+      hasError = true;
+      errorMessage = "Authentication validation failed";
+    } else if (authResponseStatus && parseInt(authResponseStatus) >= 400) {
+      hasError = true;
+      errorMessage = `Authentication service returned error (${authResponseStatus})`;
+    }
+    
     displayName = "Authentication Validation";
     description = `Validates authentication credentials using ${authMethod}${org ? ` for ${org}` : ""}`;
   }
@@ -260,6 +350,25 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     }
   }
 
+  // Check for request.reject operations - mark as important and error
+  if (opName.includes("reject") || opName.includes("request.reject")) {
+    category = "error";
+    hasError = true;
+    isImportant = true; // Always show reject operations
+    isTopLevel = true; // Make them prominent
+    icon = FiShield; // Use shield icon for security-related rejections
+    displayName = "Request Rejection";
+    description = "Request was rejected";
+    
+    // Try to get more specific error message from tags
+    const rejectReason = getTag("reject.reason") || getTag("error.message") || getTag("error");
+    if (rejectReason) {
+      errorMessage = String(rejectReason);
+    } else {
+      errorMessage = "Request was rejected during processing";
+    }
+  }
+
   return {
     span,
     serviceName,
@@ -269,6 +378,8 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     icon,
     isImportant,
     isTopLevel,
+    hasError,
+    errorMessage,
     relativeStart: (span.startTime - traceStartTime) / 1000, // Convert microseconds to milliseconds, relative to trace start
     relativeEnd: (span.startTime + span.duration - traceStartTime) / 1000,
   };
@@ -474,6 +585,8 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       return {
         ...p,
         isImportant: true,
+        hasError: p.hasError || false,
+        errorMessage: p.errorMessage,
         displayName,
         description: description || `Processes ${p.span.operationName}`,
         icon: p.icon || FiSettings,
@@ -518,6 +631,28 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
     const tag = tags.find(t => t.key.toLowerCase() === key.toLowerCase());
     return tag ? String(tag.value) : null;
   };
+
+  // If there's an error, add error description
+  if (processed.hasError) {
+    let errorDesc = "";
+    if (processed.displayName.includes("Authorization") || processed.displayName.includes("Request Authorization")) {
+      errorDesc = "❌ This step failed during authentication. The credentials provided were invalid, expired, or missing required permissions. ";
+    } else if (processed.displayName.includes("Rejection") || processed.displayName.includes("reject")) {
+      errorDesc = "❌ This step rejected the request. The request did not meet the required criteria or validation checks failed. ";
+    } else if (processed.displayName.includes("verify") || processed.displayName.includes("jwt") || processed.displayName.includes("JWT")) {
+      errorDesc = "❌ This step failed during JWT token verification. The token may be invalid, expired, or improperly signed. ";
+    } else if (processed.displayName.includes("Validation") || processed.displayName.includes("validate")) {
+      errorDesc = "❌ This step failed during validation. The input data or credentials did not pass the validation checks. ";
+    } else if (processed.category === "auth") {
+      errorDesc = "❌ This authentication step failed. The credentials or permissions were not sufficient to proceed. ";
+    } else {
+      errorDesc = "❌ This step encountered an error during processing. ";
+    }
+    if (processed.errorMessage) {
+      errorDesc += `Error details: ${processed.errorMessage}.`;
+    }
+    return errorDesc;
+  }
 
   switch (processed.category) {
     case "auth":
@@ -843,32 +978,32 @@ const TracesPage: React.FC = () => {
                 <FormLabel fontWeight="medium" color="gray.700" mb={2}>
                   Search by Trace ID
                 </FormLabel>
-                <HStack spacing={2}>
-                  <Input
+                  <HStack spacing={2}>
+                    <Input
                     placeholder="Enter trace ID (e.g., 741229d83d4d22e4de3e9abddaf37e01)..."
-                    value={traceIdSearch}
+                      value={traceIdSearch}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTraceIdSearch(e.target.value)}
-                    bg="white"
-                    fontFamily="mono"
-                    fontSize="sm"
+                      bg="white"
+                      fontFamily="mono"
+                      fontSize="sm"
                     size="lg"
                     onKeyPress={(e: React.KeyboardEvent<HTMLInputElement>) => {
-                      if (e.key === "Enter") {
-                        handleSearchByTraceId();
-                      }
-                    }}
-                  />
-                  <Button
+                        if (e.key === "Enter") {
+                          handleSearchByTraceId();
+                        }
+                      }}
+                    />
+                    <Button
                     colorScheme="blue"
-                    onClick={handleSearchByTraceId}
-                    isDisabled={!traceIdSearch.trim()}
-                    leftIcon={<SearchIcon />}
+                      onClick={handleSearchByTraceId}
+                      isDisabled={!traceIdSearch.trim()}
+                      leftIcon={<SearchIcon />}
                     size="lg"
-                  >
+                    >
                     Load Trace
-                  </Button>
-                </HStack>
-              </FormControl>
+                    </Button>
+                  </HStack>
+                </FormControl>
             </CardBody>
           </Card>
 
@@ -908,8 +1043,8 @@ const TracesPage: React.FC = () => {
                       </Text>
                     </Box>
 
-                    <HStack spacing={6} flexWrap="wrap">
-                      <Box>
+                    <HStack spacing={6} flexWrap="wrap" align="flex-start">
+                      <Box minH="50px">
                         <Text fontSize="xs" color="gray.600" mb={1}>
                           Started
                         </Text>
@@ -917,7 +1052,7 @@ const TracesPage: React.FC = () => {
                           {formatTimestamp(traceStartTime)}
                         </Text>
                       </Box>
-                      <Box>
+                      <Box minH="50px">
                         <Text fontSize="xs" color="gray.600" mb={1}>
                           Duration
                         </Text>
@@ -925,7 +1060,7 @@ const TracesPage: React.FC = () => {
                           {formatDuration(traceDuration)}
                         </Text>
                       </Box>
-                      <Box>
+                      <Box minH="50px">
                         <Text fontSize="xs" color="gray.600" mb={1}>
                           Steps
                         </Text>
@@ -933,7 +1068,7 @@ const TracesPage: React.FC = () => {
                           {processedSpans.length}
                         </Text>
                       </Box>
-                      <Box>
+                      <Box minH="50px" display="flex" flexDirection="column">
                         <Text fontSize="xs" color="gray.600" mb={1}>
                           Status
                         </Text>
@@ -942,20 +1077,24 @@ const TracesPage: React.FC = () => {
                           fontSize="sm"
                           px={2}
                           py={1}
+                          display="inline-flex"
+                          alignItems="center"
+                          height="fit-content"
+                          lineHeight="1.5"
                         >
-                          {traceStatus.status === "success" && <Icon as={CheckCircleIcon} mr={1} />}
+                          {traceStatus.status === "success" && <Icon as={CheckCircleIcon} mr={1} boxSize={3} />}
                           {traceStatus.message}
                         </Badge>
                       </Box>
-                    </HStack>
+              </HStack>
                   </VStack>
-                </CardBody>
-              </Card>
+            </CardBody>
+          </Card>
 
               {/* Main Content: Two Column Layout */}
               <Grid templateColumns={{ base: "1fr", lg: "1fr 1fr" }} gap={6} w="full">
                 {/* Left Column: User Interface (What the user sees) */}
-                <GridItem>
+            <GridItem>
                   <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" h="full">
                     <CardBody>
                       <VStack spacing={4} align="stretch">
@@ -968,8 +1107,8 @@ const TracesPage: React.FC = () => {
                           </HStack>
                           <Text fontSize="xs" color="gray.500" pl={7}>
                             (What the user sees)
-                          </Text>
-                        </Box>
+                    </Text>
+                  </Box>
 
                         <Divider />
 
@@ -1014,11 +1153,12 @@ const TracesPage: React.FC = () => {
                                 return (
                                   <Box
                                     key={idx}
-                                    p={3}
-                                    bg="white"
+                            p={3}
+                                    bg={processed.hasError ? "red.50" : "white"}
                                     borderRadius="md"
                                     borderLeft="4px solid"
                                     borderLeftColor={
+                                      processed.hasError || processed.category === "error" ? "red.500" :
                                       processed.category === "auth" ? "green.500" :
                                       processed.category === "processing" ? "blue.500" :
                                       processed.category === "routing" ? "purple.500" :
@@ -1026,13 +1166,14 @@ const TracesPage: React.FC = () => {
                                     }
                                     boxShadow="sm"
                                     _hover={{ boxShadow: "md", transform: "translateX(2px)" }}
-                                    transition="all 0.2s"
-                                  >
+                            transition="all 0.2s"
+                          >
                                     <HStack justify="space-between" mb={2} align="start">
                                       <HStack spacing={2} align="center">
                                         <Icon
                                           as={processed.icon}
                                           color={
+                                            processed.hasError || processed.category === "error" ? "red.500" :
                                             processed.category === "auth" ? "green.500" :
                                             processed.category === "processing" ? "blue.500" :
                                             processed.category === "routing" ? "purple.500" :
@@ -1041,61 +1182,68 @@ const TracesPage: React.FC = () => {
                                           boxSize={4}
                                         />
                                         <VStack align="start" spacing={0}>
-                                          <Text fontSize="sm" color="gray.700" fontWeight="semibold">
-                                            {processed.displayName}
-                                          </Text>
+                                          <HStack spacing={2} align="center">
+                                            <Text fontSize="sm" color={processed.hasError ? "red.700" : "gray.700"} fontWeight="semibold">
+                                              {processed.displayName}
+                                            </Text>
+                                            {processed.hasError && (
+                                              <Badge colorScheme="red" fontSize="xx-small" px={1.5} py={0.5} borderRadius="full">
+                                                FAILED
+                                              </Badge>
+                                            )}
+                                          </HStack>
                                           <Text fontSize="xs" color="gray.500" fontFamily="mono">
                                             +{relativeTime} since start
-                                          </Text>
+                                </Text>
                                         </VStack>
                                       </HStack>
-                                      <Badge fontSize="xs" colorScheme="orange" px={2} py={1} borderRadius="full">
+                                      <Badge fontSize="xs" colorScheme={processed.hasError ? "red" : "orange"} px={2} py={1} borderRadius="full">
                                         {duration}
-                                      </Badge>
-                                    </HStack>
-                                    <Text fontSize="xs" color="gray.600" pl={6}>
-                                      {processed.description}
-                                    </Text>
-                                  </Box>
+                                  </Badge>
+                                </HStack>
+                                    <Text fontSize="xs" color={processed.hasError ? "red.700" : "gray.600"} pl={6} fontWeight={processed.hasError ? "medium" : "normal"}>
+                                      {processed.hasError && processed.errorMessage ? `❌ ${processed.errorMessage}` : processed.description}
+                                </Text>
+                          </Box>
                                 );
                               })
                             ) : traceDetails?.spans && traceDetails.spans.length > 0 ? (
                               <Box>
                                 <Text fontSize="sm" color="orange.600" textAlign="center" py={2} fontWeight="medium">
                                   ⚠️ Spans found but not processed
-                                </Text>
+                      </Text>
                                 <Text fontSize="xs" color="gray.500" textAlign="center">
                                   Check browser console for details. Total spans: {traceDetails.spans.length}
-                                </Text>
+                      </Text>
                               </Box>
-                            ) : (
+                  ) : (
                               <Text fontSize="sm" color="gray.500" textAlign="center" py={4}>
                                 Waiting for activity...
-                              </Text>
-                            )}
-                          </VStack>
-                        </Box>
+                      </Text>
+                      )}
+                    </VStack>
+                    </Box>
                       </VStack>
-                    </CardBody>
-                  </Card>
-                </GridItem>
+                </CardBody>
+              </Card>
+            </GridItem>
 
                 {/* Right Column: Behind the Scenes (What the orchestrator does) */}
-                <GridItem>
+            <GridItem>
                   <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" h="full">
-                    <CardBody>
+                  <CardBody>
                       <VStack spacing={4} align="stretch">
                         <Box>
                           <HStack spacing={2} align="center" mb={1}>
                             <Icon as={FiLayers} color="purple.500" boxSize={5} />
                             <Heading size="sm" color="gray.700">
                               Behind the Scenes
-                            </Heading>
+                      </Heading>
                           </HStack>
                           <Text fontSize="xs" color="gray.500" pl={7}>
                             (What the orchestrator does)
-                          </Text>
-                        </Box>
+                      </Text>
+                    </Box>
 
                         <Divider />
 
@@ -1119,9 +1267,11 @@ const TracesPage: React.FC = () => {
                             return (
                               <Card
                                 key={idx}
-                                bg={idx === 0 ? "blue.50" : "white"}
+                                bg={processed.hasError ? "red.50" : idx === 0 ? "blue.50" : "white"}
                                 border="1px"
-                                borderColor={idx === 0 ? "blue.300" : borderColor}
+                                borderColor={processed.hasError ? "red.300" : idx === 0 ? "blue.300" : borderColor}
+                                borderLeft={processed.hasError ? "4px solid" : "1px"}
+                                borderLeftColor={processed.hasError ? "red.500" : undefined}
                                 boxShadow={idx === 0 ? "md" : "sm"}
                                 borderRadius="lg"
                                 overflow="hidden"
@@ -1134,6 +1284,7 @@ const TracesPage: React.FC = () => {
                                         p={2.5}
                                         borderRadius="lg"
                                         bg={
+                                          processed.hasError || processed.category === "error" ? "red.50" :
                                           processed.category === "auth" ? "green.50" :
                                           processed.category === "processing" ? "blue.50" :
                                           processed.category === "routing" ? "purple.50" :
@@ -1141,6 +1292,7 @@ const TracesPage: React.FC = () => {
                                         }
                                         border="1px"
                                         borderColor={
+                                          processed.hasError || processed.category === "error" ? "red.200" :
                                           processed.category === "auth" ? "green.200" :
                                           processed.category === "processing" ? "blue.200" :
                                           processed.category === "routing" ? "purple.200" :
@@ -1151,6 +1303,7 @@ const TracesPage: React.FC = () => {
                                         <Icon
                                           as={processed.icon}
                                           color={
+                                            processed.hasError || processed.category === "error" ? "red.600" :
                                             processed.category === "auth" ? "green.600" :
                                             processed.category === "processing" ? "blue.600" :
                                             processed.category === "routing" ? "purple.600" :
@@ -1158,19 +1311,24 @@ const TracesPage: React.FC = () => {
                                           }
                                           boxSize={5}
                                         />
-                                      </Box>
+                            </Box>
                                       <VStack align="start" spacing={1} flex={1}>
                                         <HStack spacing={2} align="center" w="full">
-                                          <Text fontSize="sm" fontWeight="bold" color="gray.700" flex={1}>
+                                          <Text fontSize="sm" fontWeight="bold" color={processed.hasError ? "red.700" : "gray.700"} flex={1}>
                                             {processed.displayName}
-                                          </Text>
-                                          {traceStatus.status === "success" && (
+                              </Text>
+                                          {processed.hasError ? (
+                                            <Badge colorScheme="red" fontSize="xx-small" px={2} py={0.5} borderRadius="full">
+                                              FAILED
+                                            </Badge>
+                                          ) : traceStatus.status === "success" && (
                                             <Icon as={CheckCircleIcon} color="green.500" boxSize={4} />
                                           )}
                                         </HStack>
                                         <Badge
                                           fontSize="xs"
                                           colorScheme={
+                                            processed.hasError || processed.category === "error" ? "red" :
                                             processed.category === "auth" ? "green" :
                                             processed.category === "processing" ? "blue" :
                                             processed.category === "routing" ? "purple" :
@@ -1188,32 +1346,43 @@ const TracesPage: React.FC = () => {
                                     {/* User-friendly description */}
                                     <Box 
                                       p={3} 
-                                      bg="blue.50" 
+                                      bg={processed.hasError ? "red.50" : "blue.50"} 
                                       borderRadius="md" 
                                       borderLeft="3px solid" 
-                                      borderLeftColor="blue.400"
+                                      borderLeftColor={processed.hasError ? "red.400" : "blue.400"}
                                       boxShadow="sm"
                                     >
                                       <HStack spacing={2} mb={1} align="center">
-                                        <Icon as={FiInfo} color="blue.600" boxSize={3} />
-                                        <Text fontSize="xs" color="blue.700" fontWeight="medium">
-                                          What this step does:
-                                        </Text>
+                                        <Icon as={FiInfo} color={processed.hasError ? "red.600" : "blue.600"} boxSize={3} />
+                                        <Text fontSize="xs" color={processed.hasError ? "red.700" : "blue.700"} fontWeight="medium">
+                                          {processed.hasError ? "Why this step failed:" : "What this step does:"}
+                              </Text>
                                       </HStack>
-                                      <Text fontSize="xs" color="gray.700" lineHeight="1.6" pl={5}>
+                                      <Text fontSize="xs" color={processed.hasError ? "red.800" : "gray.700"} lineHeight="1.6" pl={5} fontWeight={processed.hasError ? "medium" : "normal"}>
                                         {getUserFriendlyDescription(processed)}
-                                      </Text>
-                                    </Box>
+                              </Text>
+                        </Box>
 
                                     {/* Technical details - collapsible */}
                                     {relevantTags.length > 0 && (
                                       <Box>
                                         <Button
-                                          size="sm"
                                           variant="outline"
                                           colorScheme="gray"
                                           width="full"
-                                          leftIcon={<Icon as={expandedTags.has(processed.span.spanID) ? FiEyeOff : FiEye} />}
+                                          h="22px"
+                                          minH="22px"
+                                          maxH="22px"
+                                          fontSize="10px"
+                                          px={2}
+                                          py={0}
+                                          lineHeight="1.2"
+                                          sx={{
+                                            '& .chakra-button__icon': {
+                                              marginInlineEnd: '6px',
+                                            }
+                                          }}
+                                          leftIcon={<Icon as={expandedTags.has(processed.span.spanID) ? FiEyeOff : FiEye} boxSize={2.5} />}
                                           onClick={() => {
                                             const spanId = processed.span.spanID;
                                             const newExpanded = new Set(expandedTags);
@@ -1243,7 +1412,7 @@ const TracesPage: React.FC = () => {
                                               <Icon as={FiSettings} color="gray.600" boxSize={3} />
                                               <Text fontSize="xs" color="gray.700" fontWeight="semibold">
                                                 Technical Information:
-                                              </Text>
+                                </Text>
                                             </HStack>
                                             <VStack spacing={2} align="stretch">
                                               {relevantTags.map((tag: { key: string; value: any }, tagIdx: number) => (
@@ -1265,7 +1434,7 @@ const TracesPage: React.FC = () => {
                                                       letterSpacing="0.5px"
                                                     >
                                                       {tag.key}:
-                                                    </Text>
+                                          </Text>
                                                     <Text 
                                                       color="gray.800" 
                                                       fontFamily="mono" 
@@ -1274,8 +1443,8 @@ const TracesPage: React.FC = () => {
                                                       flex={1}
                                                     >
                                                       {String(tag.value)}
-                                                    </Text>
-                                                  </HStack>
+                                              </Text>
+                                          </HStack>
                                                 </Box>
                                               ))}
                                             </VStack>
@@ -1295,33 +1464,33 @@ const TracesPage: React.FC = () => {
                               <Text fontSize="xs" color="gray.500" textAlign="center">
                                 Check browser console for details. Total spans: {traceDetails.spans.length}
                               </Text>
-                            </Box>
-                          ) : (
+                      </Box>
+                    ) : (
                             <Text fontSize="sm" color="gray.500" textAlign="center" py={4}>
                               No processing steps available
-                            </Text>
+                        </Text>
                           )}
                         </VStack>
                       </VStack>
-                    </CardBody>
-                  </Card>
+                  </CardBody>
+                </Card>
                 </GridItem>
               </Grid>
             </VStack>
-          ) : (
+              ) : (
             <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
-              <CardBody>
+                  <CardBody>
                 <Flex direction="column" align="center" justify="center" py={12}>
-                  <Text fontSize="lg" color="gray.500" fontWeight="medium" mb={2}>
+                      <Text fontSize="lg" color="gray.500" fontWeight="medium" mb={2}>
                     No Trace Loaded
-                  </Text>
-                  <Text fontSize="sm" color="gray.400" textAlign="center">
+                      </Text>
+                      <Text fontSize="sm" color="gray.400" textAlign="center">
                     Enter a trace ID above to view trace details
-                  </Text>
-                </Flex>
-              </CardBody>
-            </Card>
-          )}
+                      </Text>
+                    </Flex>
+                  </CardBody>
+                </Card>
+              )}
         </VStack>
       </ContentLayout>
     </>
