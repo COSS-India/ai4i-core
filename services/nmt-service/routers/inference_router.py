@@ -210,6 +210,13 @@ async def run_inference(
             total_input_characters = sum(len(text) for text in input_texts)
             total_input_words = sum(count_words(text) for text in input_texts)
             
+            # Store input details in request.state for middleware to access
+            http_request.state.input_details = {
+                "character_length": total_input_characters,
+                "word_count": total_input_words,
+                "input_count": len(request.input)
+            }
+            
             # Add request metadata to span
             span.set_attribute("nmt.input_count", len(request.input))
             span.set_attribute("nmt.service_id", request.config.serviceId)
@@ -282,6 +289,13 @@ async def run_inference(
             output_texts = [output.target for output in response.output]
             total_output_characters = sum(len(text) for text in output_texts)
             total_output_words = sum(count_words(text) for text in output_texts)
+            
+            # Store output details in request.state for middleware to access
+            http_request.state.output_details = {
+                "character_length": total_output_characters,
+                "word_count": total_output_words,
+                "output_count": len(response.output)
+            }
             
             # Add response metadata
             span.set_attribute("nmt.output_count", len(response.output))

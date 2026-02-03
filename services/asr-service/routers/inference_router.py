@@ -419,6 +419,13 @@ async def _run_asr_inference_internal(
             duration = calculate_audio_duration(audio_input)
             total_input_audio_duration += duration
         
+        # Store input details in request.state for middleware to access
+        http_request.state.input_details = {
+            "audio_length_seconds": total_input_audio_duration,
+            "audio_length_ms": total_input_audio_duration * 1000.0,
+            "input_count": len(request.audio)
+        }
+        
         # Log request
         logger.info(
             "Processing ASR inference request with %d audio inputs, audio_duration=%.2fs - user_id=%s api_key_id=%s",
@@ -451,6 +458,13 @@ async def _run_asr_inference_internal(
         output_texts = [output.source for output in response.output]
         total_output_characters = sum(len(text) for text in output_texts)
         total_output_words = sum(count_words(text) for text in output_texts)
+        
+        # Store output details in request.state for middleware to access
+        http_request.state.output_details = {
+            "character_length": total_output_characters,
+            "word_count": total_output_words,
+            "output_count": len(response.output)
+        }
         
         # Add output metrics to trace span
         if TRACING_AVAILABLE and trace:
