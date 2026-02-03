@@ -139,6 +139,7 @@ const AuthPage: React.FC = () => {
                         onSuccess={handleLoginSuccess}
                         onSwitchToLogin={switchToLogin}
                         onRegisterSuccess={handleRegisterSuccess}
+                        isActive={mode === "register"}
                       />
                     </TabPanel>
                   </TabPanels>
