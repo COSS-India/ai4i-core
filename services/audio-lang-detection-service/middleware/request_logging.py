@@ -6,10 +6,21 @@ Copied from language-diarization service to keep behavior and structure consiste
 
 import logging
 import time
+import os
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from ai4icore_logging import get_logger
+
+# Import OpenTelemetry to extract trace_id
+try:
+    from opentelemetry import trace
+    TRACING_AVAILABLE = True
+except ImportError:
+    TRACING_AVAILABLE = False
+
+# Get Jaeger URL from environment or use default
+JAEGER_UI_URL = os.getenv("JAEGER_UI_URL", "http://localhost:16686")
 
 logger = get_logger(__name__)
 
@@ -44,6 +55,26 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Determine log level based on status code
         status_code = response.status_code
         
+        # Extract trace_id from OpenTelemetry context for Jaeger URL
+        # IMPORTANT: Extract AFTER request processing to ensure span is fully initialized
+        trace_id = None
+        jaeger_trace_url = None
+        if TRACING_AVAILABLE:
+            try:
+                current_span = trace.get_current_span()
+                if current_span:
+                    span_context = current_span.get_span_context()
+                    # Format trace_id as hex string (Jaeger format) - 32 hex characters
+                    # Ensure trace_id is non-zero (valid trace) and span is valid
+                    if span_context.is_valid and span_context.trace_id != 0:
+                        trace_id = format(span_context.trace_id, '032x')
+                        # Store only trace_id - OpenSearch will use URL template to construct full URL
+                        jaeger_trace_url = trace_id
+            except Exception as e:
+                # If trace extraction fails, continue without it
+                logger.debug(f"Failed to extract trace ID: {e}")
+                pass
+        
         # Get correlation ID if available
         try:
             from ai4icore_logging import get_correlation_id
@@ -67,6 +98,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_context["api_key_id"] = api_key_id
         if correlation_id:
             log_context["correlation_id"] = correlation_id
+        # Add trace_id and Jaeger URL if available
+        if trace_id:
+            log_context["trace_id"] = trace_id
+        if jaeger_trace_url:
+            log_context["jaeger_trace_url"] = jaeger_trace_url
         
         # Logging strategy to avoid duplicates:
         # - 200-299: Log here (successful requests - service level)

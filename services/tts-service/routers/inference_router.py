@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.tts_request import TTSInferenceRequest
 from models.tts_response import TTSInferenceResponse
-from repositories.tts_repository import TTSRepository, get_db_session
+from repositories.tts_repository import TTSRepository
 from services.tts_service import TTSService
 from services.audio_service import AudioService
 from services.text_service import TextService
@@ -70,6 +70,7 @@ from services.constants.error_messages import (
 )
 from middleware.exceptions import AuthenticationError, AuthorizationError
 from middleware.auth_provider import AuthProvider
+from middleware.tenant_db_dependency import get_tenant_db_session
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -97,7 +98,7 @@ inference_router = APIRouter(
 )
 
 
-async def get_tts_service(db: AsyncSession = Depends(get_db_session)) -> TTSService:
+async def get_tts_service(request: Request, db: AsyncSession = Depends(get_tenant_db_session)) -> TTSService:
     """Dependency to get configured TTS service."""
     try:
         # Create repository
@@ -247,6 +248,13 @@ async def run_inference(
             total_input_characters = sum(len(text) for text in input_texts)
             total_input_words = sum(count_words(text) for text in input_texts)
             
+            # Store input details in request.state for middleware to access
+            http_request.state.input_details = {
+                "character_length": total_input_characters,
+                "word_count": total_input_words,
+                "input_count": len(request.input)
+            }
+            
             logger.info(
                 "Processing TTS inference request with %d text input(s), input_characters=%d, input_words=%d, user_id=%s api_key_id=%s session_id=%s",
                 len(request.input),
@@ -303,6 +311,13 @@ async def run_inference(
                         total_output_audio_duration += total_samples / target_sr
                     except Exception:
                         pass
+            
+            # Store output details in request.state for middleware to access
+            http_request.state.output_details = {
+                "audio_length_seconds": total_output_audio_duration,
+                "audio_length_ms": total_output_audio_duration * 1000.0,
+                "output_count": len(response.audio)
+            }
             
             # Add output audio length to trace span
             span.set_attribute("tts.output.audio_length_seconds", total_output_audio_duration)
