@@ -111,6 +111,7 @@ const apiClient: AxiosInstance = axios.create({
   timeout: 300000, // 5 minutes (300 seconds) for most requests
   headers: {
     'Content-Type': 'application/json',
+    'Accept': 'application/json',
   },
 });
 
@@ -344,22 +345,39 @@ apiClient.interceptors.request.use(
     if (requiresJWT && !isAuthEndpoint) {
       // For services that require JWT tokens, use JWT token
       const jwtToken = getJwtToken();
-      if (jwtToken) {
-        config.headers['Authorization'] = `Bearer ${jwtToken}`;
-        if (isModelManagementEndpoint) {
+      const apiKey = getApiKey();
+      
+      // Model management endpoints support both JWT and API key authentication
+      if (isModelManagementEndpoint) {
+        if (jwtToken && apiKey) {
+          // Both JWT and API key present - use BOTH
+          config.headers['Authorization'] = `Bearer ${jwtToken}`;
+          config.headers['X-API-Key'] = apiKey;
+          config.headers['x-auth-source'] = 'BOTH';
+          config.headers['X-Auth-Source'] = 'BOTH';
+        } else if (jwtToken) {
+          // Only JWT token present - use AUTH_TOKEN
+          config.headers['Authorization'] = `Bearer ${jwtToken}`;
           config.headers['x-auth-source'] = 'AUTH_TOKEN';
         }
-        // Observability endpoints use JWT token with x-auth-source: BOTH
-        if (isObservabilityEndpoint) {
+      } 
+      
+      // Observability endpoints use JWT token with x-auth-source: BOTH
+      if (isObservabilityEndpoint) {
+        if (jwtToken) {
+          config.headers['Authorization'] = `Bearer ${jwtToken}`;
           config.headers['x-auth-source'] = 'BOTH';
           config.headers['X-Auth-Source'] = 'BOTH';
         }
-      } 
+      }
       
       // All services require BOTH JWT token AND API key
       if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint || isNEREndpoint ||
           isOCREndpoint || isTransliterationEndpoint || isLanguageDetectionEndpoint || 
           isSpeakerDiarizationEndpoint || isLanguageDiarizationEndpoint || isAudioLangDetectionEndpoint) {
+        if (jwtToken) {
+          config.headers['Authorization'] = `Bearer ${jwtToken}`;
+        }
         const apiKey = getApiKey();
         if (apiKey) {
           config.headers['X-API-Key'] = apiKey;

@@ -104,22 +104,46 @@ class JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         
-        # Prefer OpenTelemetry trace ID (for Jaeger correlation), fallback to correlation ID
-        # Always ensure trace_id is set for correlation between logs and traces
-        # CRITICAL: trace_id must ALWAYS be present in logs
-        if opentelemetry_trace_id:
+        # Check if trace_id is already set in log record's context (from RequestLoggingMiddleware)
+        # This takes highest priority as it's explicitly set by middleware
+        context_trace_id = None
+        if hasattr(record, "context") and isinstance(record.context, dict):
+            context_trace_id = record.context.get("trace_id")
+        
+        # Priority order for trace_id:
+        # 1. trace_id from log record context (set by RequestLoggingMiddleware - already normalized)
+        # 2. OpenTelemetry trace ID (from active span - already in hex format)
+        # 3. Correlation ID (normalized to hex format)
+        # 4. Generated fallback (normalized to hex format)
+        # CRITICAL: trace_id must ALWAYS be 32 hex characters for Jaeger compatibility
+        if context_trace_id:
+            # Use trace_id from context (already normalized by RequestLoggingMiddleware)
+            log_data["trace_id"] = context_trace_id
+            # Also include correlation_id if different
+            if correlation_id and correlation_id != context_trace_id:
+                log_data["correlation_id"] = correlation_id
+        elif opentelemetry_trace_id:
             log_data["trace_id"] = opentelemetry_trace_id
             # Also include correlation_id if different
             if correlation_id and correlation_id != opentelemetry_trace_id:
                 log_data["correlation_id"] = correlation_id
         elif correlation_id:
-            log_data["trace_id"] = correlation_id
+            # Normalize correlation ID to hex format (remove hyphens) for Jaeger compatibility
+            # Correlation IDs are UUIDs (with hyphens), but Jaeger requires 32 hex characters
+            normalized_trace_id = correlation_id.replace("-", "") if "-" in correlation_id else correlation_id
+            log_data["trace_id"] = normalized_trace_id
+            # Keep original correlation_id if it was different (UUID format)
+            if normalized_trace_id != correlation_id:
+                log_data["correlation_id"] = correlation_id
         else:
             # Fallback: generate a trace ID if neither is available
             # This ensures trace_id is always present in logs
             # IMPORTANT: This should never happen in normal operation, but ensures logs always have trace_id
             from .context import generate_trace_id
-            log_data["trace_id"] = generate_trace_id()
+            fallback_id = generate_trace_id()
+            # Normalize the generated UUID to hex format
+            normalized_fallback = fallback_id.replace("-", "") if "-" in fallback_id else fallback_id
+            log_data["trace_id"] = normalized_fallback
         
         # Get organization from context (if available)
         # Also check log record's extra context (set by RequestLoggingMiddleware)
