@@ -217,6 +217,7 @@ export interface NMTModelDetailsResponse {
 export interface NMTServiceDetailsResponse {
   service_id: string;
   model_id: string;
+  model_version?: string;
   triton_endpoint: string;
   triton_model: string;
   provider: string; // Keep for backward compatibility

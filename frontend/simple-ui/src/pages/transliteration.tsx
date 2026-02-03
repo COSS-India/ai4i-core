@@ -153,13 +153,13 @@ const TransliterationPage: React.FC = () => {
             </Text>
           </Box>
 
-          <Grid
-            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
-            gap={8}
-            w="full"
+        <Grid
+          templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
+          gap={8}
+          w="full"
             maxW="1200px"
-            mx="auto"
-          >
+          mx="auto"
+        >
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
@@ -327,59 +327,59 @@ const TransliterationPage: React.FC = () => {
                   </Box>
                 )}
 
-                {/* Metrics Box */}
-                {fetched && (
-                  <Box
-                    p={4}
-                    bg="orange.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="orange.200"
-                  >
-                    <HStack spacing={6}>
-                      <VStack align="start" spacing={0}>
-                        <Text fontSize="xs" color="gray.600">
-                          Response Time
-                        </Text>
-                        <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                          {responseTime.toFixed(2)} seconds
-                        </Text>
-                      </VStack>
-                    </HStack>
-                  </Box>
-                )}
+              {/* Metrics Box */}
+              {fetched && (
+                <Box
+                  p={4}
+                  bg="orange.50"
+                  borderRadius="md"
+                  border="1px"
+                  borderColor="orange.200"
+                >
+                  <HStack spacing={6}>
+                    <VStack align="start" spacing={0}>
+                      <Text fontSize="xs" color="gray.600">
+                        Response Time
+                      </Text>
+                      <Text fontSize="lg" fontWeight="bold" color="gray.800">
+                        {responseTime.toFixed(2)} seconds
+                      </Text>
+                    </VStack>
+                  </HStack>
+                </Box>
+              )}
 
                 {/* Transliteration Results */}
-                {fetched && result && result.output && result.output.length > 0 && (
+              {fetched && result && result.output && result.output.length > 0 && (
                   <>
-                    <Box
-                      p={4}
-                      bg="blue.50"
-                      borderRadius="md"
-                      border="1px"
-                      borderColor="blue.200"
-                    >
-                      <Text fontSize="sm" fontWeight="semibold" mb={2} color="gray.700">
-                        Transliterated Text:
+                <Box
+                  p={4}
+                  bg="blue.50"
+                  borderRadius="md"
+                  border="1px"
+                  borderColor="blue.200"
+                >
+                  <Text fontSize="sm" fontWeight="semibold" mb={2} color="gray.700">
+                    Transliterated Text:
+                  </Text>
+                  {result.output.map((item: any, index: number) => (
+                    <Box key={index}>
+                      {item.source && (
+                        <Text fontSize="xs" color="gray.600" mb={1}>
+                          Source: {item.source}
+                        </Text>
+                      )}
+                      <Text fontSize="md" fontWeight="semibold" color="blue.700">
+                        {item.target}
                       </Text>
-                      {result.output.map((item: any, index: number) => (
-                        <Box key={index}>
-                          {item.source && (
-                            <Text fontSize="xs" color="gray.600" mb={1}>
-                              Source: {item.source}
-                            </Text>
-                          )}
-                          <Text fontSize="md" fontWeight="semibold" color="blue.700">
-                            {item.target}
-                          </Text>
-                        </Box>
-                      ))}
                     </Box>
+                  ))}
+                </Box>
 
                     {/* Clear Results Button */}
                     <Box textAlign="center">
                       <button
-                        onClick={clearResults}
+                  onClick={clearResults}
                         style={{
                           padding: "8px 16px",
                           backgroundColor: "#f7fafc",
@@ -389,15 +389,15 @@ const TransliterationPage: React.FC = () => {
                           fontSize: "14px",
                           color: "#4a5568",
                         }}
-                      >
-                        Clear Results
+                >
+                  Clear Results
                       </button>
                     </Box>
                   </>
-                )}
-              </VStack>
-            </GridItem>
-          </Grid>
+              )}
+            </VStack>
+          </GridItem>
+        </Grid>
         </VStack>
       </ContentLayout>
     </>
