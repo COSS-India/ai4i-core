@@ -1514,6 +1514,18 @@ class TenantUserViewResponse(BaseModel):
     updated_at: str = Field(..., description="Update timestamp")
 
 
+class ListTenantsResponse(BaseModel):
+    """Response model for listing all tenants"""
+    count: int = Field(..., description="Total number of tenants")
+    tenants: List[TenantViewResponse] = Field(..., description="List of tenant details")
+
+
+class ListUsersResponse(BaseModel):
+    """Response model for listing all tenant users"""
+    count: int = Field(..., description="Total number of users")
+    users: List[TenantUserViewResponse] = Field(..., description="List of user details")
+
+
 
 class ServiceRegistry:
     """Redis-based service instance management"""
@@ -4703,6 +4715,50 @@ async def view_tenant_user(
         "/admin/view/user",
         "multi-tenant-service",
         {"user_id": user_id},
+        method="GET",
+        headers=headers,
+    )
+
+@app.get("/api/v1/multi-tenant/list/tenants", response_model=ListTenantsResponse, tags=["Multi-Tenant"])
+async def list_tenants(
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    List all tenants with their details via API Gateway.
+    Returns a list of all tenants registered in the system.
+    Proxies to multi-tenant-service /admin/list/tenants.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    return await proxy_to_service(
+        request,
+        "/admin/list/tenants",
+        "multi-tenant-service",
+        method="GET",
+        headers=headers,
+    )
+
+@app.get("/api/v1/multi-tenant/list/users", response_model=ListUsersResponse, tags=["Multi-Tenant"])
+async def list_users(
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    List all tenant users across all tenants via API Gateway.
+    Returns a list of all users registered under any tenant.
+    Proxies to multi-tenant-service /admin/list/users.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    return await proxy_to_service(
+        request,
+        "/admin/list/users",
+        "multi-tenant-service",
         method="GET",
         headers=headers,
     )

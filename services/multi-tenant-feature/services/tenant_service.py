@@ -40,8 +40,8 @@ from models.tenant_email import TenantResendEmailVerificationResponse
 from models.tenant_subscription import TenantSubscriptionResponse
 from models.tenant_status import TenantStatusUpdateRequest , TenantStatusUpdateResponse
 from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
-from models.tenant_view import TenantViewResponse
-from models.user_view import TenantUserViewResponse
+from models.tenant_view import TenantViewResponse, ListTenantsResponse
+from models.user_view import TenantUserViewResponse, ListUsersResponse
 from models.user_subscription import UserSubscriptionResponse
 from models.tenant_update import TenantUpdateRequest, TenantUpdateResponse
 
@@ -1937,6 +1937,77 @@ async def view_tenant_user_details(user_id: str, db: AsyncSession) -> TenantUser
     )
 
     return response
+
+
+async def list_all_tenants(db: AsyncSession) -> ListTenantsResponse:
+    """
+    List all tenants with their details.
+    
+    Args:
+        db: Database session
+    Returns:
+        ListTenantsResponse: List of all tenants and their details
+    """
+    result = await db.execute(select(Tenant).order_by(Tenant.created_at.desc()))
+    tenants = result.scalars().all()
+    
+    tenant_list = [
+        TenantViewResponse(
+            id=tenant.id,
+            tenant_id=tenant.tenant_id,
+            user_id=tenant.user_id or 0,
+            organization_name=tenant.organization_name,
+            email=tenant.contact_email,
+            domain=tenant.domain,
+            schema=tenant.schema_name,
+            subscriptions=tenant.subscriptions or [],
+            status=tenant.status.value if hasattr(tenant.status, "value") else str(tenant.status),
+            quotas=tenant.quotas or {},
+            usage_quota=tenant.usage or {},
+            created_at=tenant.created_at.isoformat(),
+            updated_at=tenant.updated_at.isoformat(),
+        )
+        for tenant in tenants
+    ]
+    
+    return ListTenantsResponse(
+        count=len(tenant_list),
+        tenants=tenant_list,
+    )
+
+
+async def list_all_users(db: AsyncSession) -> ListUsersResponse:
+    """
+    List all tenant users across all tenants.
+    
+    Args:
+        db: Database session
+    Returns:
+        ListUsersResponse: List of all tenant users and their details
+    """
+    result = await db.execute(select(TenantUser).order_by(TenantUser.created_at.desc()))
+    users = result.scalars().all()
+    
+    user_list = [
+        TenantUserViewResponse(
+            id=user.id,
+            tenant_id=user.tenant_id,
+            user_id=user.user_id,
+            username=user.username,
+            email=user.email,
+            subscriptions=user.subscriptions or [],
+            status=user.status.value if hasattr(user.status, "value") else str(user.status),
+            is_approved=user.is_approved,
+            created_at=user.created_at.isoformat(),
+            updated_at=user.updated_at.isoformat(),
+        )
+        for user in users
+    ]
+    
+    return ListUsersResponse(
+        count=len(user_list),
+        users=user_list,
+    )
 
 
 async def add_user_subscriptions(

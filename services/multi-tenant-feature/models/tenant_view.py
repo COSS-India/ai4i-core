@@ -1,6 +1,6 @@
 from pydantic import BaseModel , EmailStr, Field
 from uuid import UUID
-from typing import Dict , Any, Optional
+from typing import Dict , Any, Optional, List
 
 
 class TenantViewResponse(BaseModel):
@@ -22,3 +22,9 @@ class TenantViewResponse(BaseModel):
     model_config = {
         "populate_by_name": True
     }
+
+
+class ListTenantsResponse(BaseModel):
+    """Response model for listing all tenants"""
+    count: int = Field(..., description="Total number of tenants")
+    tenants: List[TenantViewResponse] = Field(..., description="List of tenant details")
