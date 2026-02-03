@@ -19,11 +19,19 @@ from repositories.nmt_repository import NMTRepository
 from services.text_service import TextService
 from utils.triton_client import TritonClient
 from utils.model_management_client import ModelManagementClient, ServiceInfo
+from utils.experiment_client import ExperimentClient, ExperimentResolution
 from middleware.exceptions import (
     TritonInferenceError,
     TextProcessingError,
     ModelNotFoundError,
     ServiceUnavailableError
+)
+from utils.metrics import (
+    record_inference_request,
+    record_inference_error,
+    record_triton_latency,
+    record_experiment_assignment,
+    record_experiment_resolution_latency
 )
 
 logger = logging.getLogger(__name__)
@@ -47,6 +55,7 @@ class NMTService:
         text_service: TextService,
         get_triton_client_func=None,
         model_management_client: Optional[ModelManagementClient] = None,
+        experiment_client: Optional[ExperimentClient] = None,
         redis_client = None,
         cache_ttl_seconds: int = 300
     ):
@@ -54,6 +63,7 @@ class NMTService:
         self.text_service = text_service
         self.get_triton_client_func = get_triton_client_func
         self.model_management_client = model_management_client
+        self.experiment_client = experiment_client
         self.redis_client = redis_client
         self.cache_ttl_seconds = cache_ttl_seconds
         self.cache_prefix = "nmt:triton"
@@ -323,6 +333,71 @@ class NMTService:
         
         logger.info(f"Cache invalidated for service {service_id} across all layers")
     
+    async def resolve_experiment_variant(
+        self,
+        request_service_id: str,
+        user_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        request_id: Optional[str] = None,
+        auth_headers: Optional[Dict[str, str]] = None
+    ) -> Tuple[str, ExperimentResolution]:
+        """
+        Resolve which service to use based on active A/B experiments.
+        
+        If an experiment is active for 'nmt' task type, returns the experiment's
+        service_id (control or treatment based on user bucket). Otherwise returns
+        the original request service_id.
+        
+        Args:
+            request_service_id: The service_id from the original request
+            user_id: User ID for sticky assignment
+            tenant_id: Tenant ID for sticky assignment (fallback)
+            request_id: Request ID (fallback)
+            auth_headers: Auth headers to forward
+            
+        Returns:
+            Tuple of (effective_service_id, ExperimentResolution)
+        """
+        if not self.experiment_client:
+            # No experiment client configured, use original service_id
+            return request_service_id, ExperimentResolution(
+                service_id=None,
+                variant="default",
+                experiment_name=None,
+                experiment_id=None
+            )
+        
+        try:
+            resolution = await self.experiment_client.resolve_variant(
+                task_type="nmt",
+                user_id=user_id,
+                tenant_id=tenant_id,
+                request_id=request_id,
+                auth_headers=auth_headers
+            )
+            
+            if resolution.service_id:
+                # Experiment is active, use experiment's service_id
+                logger.info(
+                    f"A/B experiment active: {resolution.experiment_name} "
+                    f"variant={resolution.variant} "
+                    f"using service_id={resolution.service_id[:16]}... "
+                    f"(original: {request_service_id[:16]}...)"
+                )
+                return resolution.service_id, resolution
+            else:
+                # No experiment or default variant, use original service_id
+                return request_service_id, resolution
+                
+        except Exception as e:
+            logger.warning(f"Experiment resolution failed, using original service_id: {e}")
+            return request_service_id, ExperimentResolution(
+                service_id=None,
+                variant="default",
+                experiment_name=None,
+                experiment_id=None
+            )
+    
     async def run_inference(
         self,
         request: NMTInferenceRequest,
@@ -341,15 +416,51 @@ class NMTService:
         
         with tracer.start_as_current_span("nmt.process_batch") as span:
             try:
-                # Extract configuration
-                service_id = request.config.serviceId
+                # Extract configuration from request
+                original_service_id = request.config.serviceId
                 source_lang = request.config.language.sourceLanguage
                 target_lang = request.config.language.targetLanguage
                 
+                # ---- A/B Experiment Resolution ----
+                # Check if there's an active experiment and get the effective service_id
+                exp_resolution_start = time.time()
+                with tracer.start_as_current_span("nmt.resolve_experiment") as exp_span:
+                    service_id, experiment_resolution = await self.resolve_experiment_variant(
+                        request_service_id=original_service_id,
+                        user_id=str(user_id) if user_id else None,
+                        tenant_id=None,  # Could extract from request if available
+                        request_id=str(request_id) if request_id else None,
+                        auth_headers=auth_headers
+                    )
+                    
+                    # Record experiment resolution metrics
+                    exp_resolution_latency = time.time() - exp_resolution_start
+                    record_experiment_resolution_latency(
+                        experiment_resolution.experiment_name,
+                        exp_resolution_latency
+                    )
+                    record_experiment_assignment(
+                        experiment_resolution.experiment_name,
+                        experiment_resolution.variant,
+                        service_id
+                    )
+                    
+                    # Track experiment info in span
+                    exp_span.set_attribute("experiment.variant", experiment_resolution.variant)
+                    if experiment_resolution.experiment_name:
+                        exp_span.set_attribute("experiment.name", experiment_resolution.experiment_name)
+                        exp_span.set_attribute("experiment.id", experiment_resolution.experiment_id or "")
+                        exp_span.set_attribute("experiment.original_service_id", original_service_id)
+                        exp_span.set_attribute("experiment.effective_service_id", service_id)
+                
                 span.set_attribute("nmt.total_inputs", len(request.input))
                 span.set_attribute("nmt.service_id", service_id)
+                span.set_attribute("nmt.original_service_id", original_service_id)
                 span.set_attribute("nmt.source_language", source_lang)
                 span.set_attribute("nmt.target_language", target_lang)
+                # Add experiment attributes for metrics/filtering
+                span.set_attribute("nmt.experiment", experiment_resolution.experiment_name or "none")
+                span.set_attribute("nmt.variant", experiment_resolution.variant)
                 
                 # Get model name dynamically based on service ID
                 with tracer.start_as_current_span("nmt.get_model_name") as model_span:
@@ -498,6 +609,18 @@ class NMTService:
                 span.set_attribute("nmt.processing_time_seconds", processing_time)
                 span.set_attribute("nmt.output_count", len(response.output))
                 
+                # Record success metrics with experiment labels
+                record_inference_request(
+                    source_language=original_source_lang,
+                    target_language=original_target_lang,
+                    experiment=experiment_resolution.experiment_name,
+                    variant=experiment_resolution.variant,
+                    status="success",
+                    latency_seconds=processing_time,
+                    batch_size=len(request.input),
+                    text_length=total_text_length
+                )
+                
                 logger.info(f"NMT inference completed for request {request_id} in {processing_time:.2f}s")
                 return response
                 
@@ -508,6 +631,30 @@ class NMTService:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.record_exception(e)
                 logger.error(f"NMT inference failed: {e}")
+                
+                # Record error metrics with experiment labels
+                try:
+                    record_inference_error(
+                        source_language=source_lang if 'source_lang' in dir() else "unknown",
+                        target_language=target_lang if 'target_lang' in dir() else "unknown",
+                        experiment=experiment_resolution.experiment_name if 'experiment_resolution' in dir() else None,
+                        variant=experiment_resolution.variant if 'experiment_resolution' in dir() else "default",
+                        error_type=type(e).__name__
+                    )
+                    # Also record as failed request
+                    if 'start_time' in dir():
+                        record_inference_request(
+                            source_language=source_lang if 'source_lang' in dir() else "unknown",
+                            target_language=target_lang if 'target_lang' in dir() else "unknown",
+                            experiment=experiment_resolution.experiment_name if 'experiment_resolution' in dir() else None,
+                            variant=experiment_resolution.variant if 'experiment_resolution' in dir() else "default",
+                            status="error",
+                            latency_seconds=time.time() - start_time,
+                            batch_size=len(request.input) if request else 0,
+                            text_length=0
+                        )
+                except Exception as metrics_error:
+                    logger.warning(f"Failed to record error metrics: {metrics_error}")
                 
                 # Update request status to failed
                 if request_id:
@@ -541,10 +688,26 @@ class NMTService:
         request_id = None
         
         try:
-            # Extract configuration
-            service_id = request.config.serviceId
+            # Extract configuration from request
+            original_service_id = request.config.serviceId
             source_lang = request.config.language.sourceLanguage
             target_lang = request.config.language.targetLanguage
+            
+            # ---- A/B Experiment Resolution ----
+            service_id, experiment_resolution = await self.resolve_experiment_variant(
+                request_service_id=original_service_id,
+                user_id=str(user_id) if user_id else None,
+                tenant_id=None,
+                request_id=str(request_id) if request_id else None,
+                auth_headers=auth_headers
+            )
+            
+            if experiment_resolution.experiment_name:
+                logger.info(
+                    f"A/B experiment: {experiment_resolution.experiment_name} "
+                    f"variant={experiment_resolution.variant} "
+                    f"service_id={service_id[:16]}..."
+                )
             
             # Get model name dynamically based on service ID
             model_name = await self.get_model_name(service_id, auth_headers)

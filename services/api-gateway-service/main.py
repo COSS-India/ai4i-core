@@ -1188,6 +1188,65 @@ class ServiceListResponse(BaseModel):
     modelVersion: Optional[str] = Field(None, description="Model version associated with this service")
     versionStatus: Optional[str] = Field(None, description="Version status of the associated model (ACTIVE or DEPRECATED)")
 
+# A/B Experiment models (Model Management - Experiments)
+class ExperimentStatus(str, Enum):
+    """Status of an A/B experiment."""
+    DRAFT = "DRAFT"
+    RUNNING = "RUNNING"
+    STOPPED = "STOPPED"
+
+class ExperimentCreateRequest(BaseModel):
+    """Request model for creating a new A/B experiment."""
+    name: str = Field(..., min_length=1, max_length=255, description="Unique experiment name")
+    description: Optional[str] = Field(None, description="Description of what this experiment tests")
+    task_type: str = Field(..., description="Task type: asr, nmt, tts, ocr, ner, etc.")
+    control_service_id: str = Field(..., description="Service ID of the control (baseline) model")
+    treatment_service_id: str = Field(..., description="Service ID of the treatment (new) model")
+    treatment_percentage: int = Field(50, ge=0, le=100, description="Percentage of traffic to treatment (0-100)")
+
+class ExperimentUpdateRequest(BaseModel):
+    """Request model for updating an experiment."""
+    description: Optional[str] = Field(None, description="Updated description")
+    treatment_percentage: Optional[int] = Field(None, ge=0, le=100, description="Updated traffic percentage")
+
+class ExperimentResponse(BaseModel):
+    """Response model for experiment details."""
+    id: str = Field(..., description="Experiment UUID")
+    name: str = Field(..., description="Experiment name")
+    description: Optional[str] = Field(None, description="Experiment description")
+    task_type: str = Field(..., description="Task type")
+    control_service_id: str = Field(..., description="Control service ID")
+    treatment_service_id: str = Field(..., description="Treatment service ID")
+    treatment_percentage: int = Field(..., description="Traffic percentage to treatment")
+    status: ExperimentStatus = Field(..., description="Experiment status")
+    created_by: Optional[str] = Field(None, description="User who created the experiment")
+    updated_by: Optional[str] = Field(None, description="User who last updated the experiment")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
+    started_at: Optional[datetime] = Field(None, description="When experiment was started")
+    stopped_at: Optional[datetime] = Field(None, description="When experiment was stopped")
+
+class ExperimentStartStopResponse(BaseModel):
+    """Response model for start/stop operations."""
+    id: str = Field(..., description="Experiment UUID")
+    name: str = Field(..., description="Experiment name")
+    status: ExperimentStatus = Field(..., description="New status")
+    message: str = Field(..., description="Operation result message")
+
+class VariantResolutionRequest(BaseModel):
+    """Request model for resolving which variant to use."""
+    task_type: str = Field(..., description="Task type: asr, nmt, tts, etc.")
+    user_id: Optional[str] = Field(None, description="User ID for sticky assignment")
+    tenant_id: Optional[str] = Field(None, description="Tenant ID for sticky assignment")
+    request_id: Optional[str] = Field(None, description="Request ID (fallback)")
+
+class VariantResolutionResponse(BaseModel):
+    """Response model for variant resolution."""
+    service_id: str = Field(..., description="Service ID to use (empty if no experiment)")
+    variant: str = Field(..., description="Variant: 'control', 'treatment', or 'default'")
+    experiment_name: Optional[str] = Field(None, description="Active experiment name")
+    experiment_id: Optional[str] = Field(None, description="Active experiment ID")
+
 # Auth models (for API documentation)
 class RegisterUser(BaseModel):
     email: str = Field(..., description="Email address")
@@ -1683,6 +1742,10 @@ tags_metadata = [
     {
         "name": "Model Management",
         "description": "Model catalog management endpoints. Register, update, and list AI models and services.",
+    },
+    {
+        "name": "A/B Experiments",
+        "description": "A/B testing endpoints for comparing model services. Create experiments, manage traffic splitting, and resolve variants.",
     },
     {
         "name": "Pipeline",
@@ -2315,6 +2378,7 @@ def custom_openapi():
         ("/api/v1/ner", "NER"),
         ("/api/v1/transliteration", "Transliteration"),
         ("/api/v1/language-detection", "Language Detection"),
+        ("/api/v1/model-management/experiments", "A/B Experiments"),  # Must be before model-management
         ("/api/v1/model-management", "Model Management"),
         ("/api/v1/speaker-diarization", "Speaker Diarization"),
         ("/api/v1/language-diarization", "Language Diarization"),
@@ -4289,6 +4353,224 @@ async def update_service_health(
         "model-management-service",
         method="PATCH",
         body=body,
+        headers=headers,
+    )
+
+
+# A/B Experiment Endpoints (Proxy to Model Management Service)
+
+@app.post("/api/v1/model-management/experiments", response_model=dict, tags=["A/B Experiments"])
+async def create_experiment(
+    payload: ExperimentCreateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Create a new A/B experiment for comparing two model services.
+    
+    The experiment starts in DRAFT status. Use POST /experiments/{id}/start to activate it.
+    Only one experiment can be RUNNING per task_type at a time.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json')).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/experiments",
+        "model-management-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.get("/api/v1/model-management/experiments", response_model=List[ExperimentResponse], tags=["A/B Experiments"])
+async def list_experiments(
+    request: Request,
+    task_type: Optional[str] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
+    status: Optional[str] = Query(None, description="Filter by status (DRAFT, RUNNING, STOPPED)"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """List all A/B experiments with optional filters."""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    query_params = {}
+    if task_type:
+        query_params["task_type"] = task_type
+    if status:
+        query_params["status"] = status
+    return await proxy_to_service_with_params(
+        None,
+        "/experiments",
+        "model-management-service",
+        query_params,
+        method="GET",
+        headers=headers,
+    )
+
+
+@app.get("/api/v1/model-management/experiments/{experiment_id}", response_model=ExperimentResponse, tags=["A/B Experiments"])
+async def get_experiment(
+    experiment_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Get experiment details by ID."""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}",
+        "model-management-service",
+        method="GET",
+        headers=headers,
+    )
+
+
+@app.patch("/api/v1/model-management/experiments/{experiment_id}", response_model=dict, tags=["A/B Experiments"])
+async def update_experiment(
+    experiment_id: str,
+    payload: ExperimentUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Update experiment settings.
+    
+    Note: You can update treatment_percentage even while the experiment is running.
+    This allows gradual rollout (e.g., start at 10%, increase to 50%, then 100%).
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json', exclude_none=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}",
+        "model-management-service",
+        method="PATCH",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.delete("/api/v1/model-management/experiments/{experiment_id}", response_model=dict, tags=["A/B Experiments"])
+async def delete_experiment(
+    experiment_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Delete an experiment.
+    
+    Only DRAFT or STOPPED experiments can be deleted.
+    Running experiments must be stopped first.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}",
+        "model-management-service",
+        method="DELETE",
+        headers=headers,
+    )
+
+
+@app.post("/api/v1/model-management/experiments/{experiment_id}/start", response_model=ExperimentStartStopResponse, tags=["A/B Experiments"])
+async def start_experiment(
+    experiment_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Start an experiment (activate traffic splitting).
+    
+    - Experiment must be in DRAFT status
+    - Only one experiment can be RUNNING per task_type
+    - Use PATCH to adjust treatment_percentage after starting
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}/start",
+        "model-management-service",
+        method="POST",
+        headers=headers,
+    )
+
+
+@app.post("/api/v1/model-management/experiments/{experiment_id}/stop", response_model=ExperimentStartStopResponse, tags=["A/B Experiments"])
+async def stop_experiment(
+    experiment_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Stop an experiment (disable traffic splitting).
+    
+    After stopping, all traffic will use default routing.
+    Stopped experiments cannot be restarted - create a new experiment instead.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}/stop",
+        "model-management-service",
+        method="POST",
+        headers=headers,
+    )
+
+
+@app.get("/api/v1/model-management/experiments/resolve/variant", response_model=VariantResolutionResponse, tags=["A/B Experiments"])
+async def resolve_experiment_variant(
+    request: Request,
+    task_type: str = Query(..., description="Task type: asr, nmt, tts, etc."),
+    user_id: Optional[str] = Query(None, description="User ID for sticky assignment"),
+    tenant_id: Optional[str] = Query(None, description="Tenant ID for sticky assignment"),
+    request_id: Optional[str] = Query(None, description="Request ID (fallback)"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Resolve which service variant to use for a request.
+    
+    **Called by inference services** to determine which model/service to use
+    based on active A/B experiments.
+    
+    Returns:
+    - `service_id`: The service to route to (empty if no experiment)
+    - `variant`: "control", "treatment", or "default" (no experiment)
+    - `experiment_name`: Name of active experiment (if any)
+    
+    **Sticky Assignment:** Same user_id always gets the same variant.
+    """
+    # This endpoint can be called without auth by internal services
+    # but we still support auth for external access
+    headers = build_auth_headers(request, credentials, api_key) if credentials or api_key else {}
+    query_params = {"task_type": task_type}
+    if user_id:
+        query_params["user_id"] = user_id
+    if tenant_id:
+        query_params["tenant_id"] = tenant_id
+    if request_id:
+        query_params["request_id"] = request_id
+    return await proxy_to_service_with_params(
+        None,
+        "/experiments/resolve/variant",
+        "model-management-service",
+        query_params,
+        method="GET",
         headers=headers,
     )
 
