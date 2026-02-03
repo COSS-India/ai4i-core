@@ -169,10 +169,10 @@ const AudioLanguageDetectionPage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               Audio Language Detection
             </Heading>
-            <Text color="gray.600" fontSize="lg">
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
               Detect the spoken language directly from an audio file. Identify which language is being spoken in audio recordings.
             </Text>
           </Box>

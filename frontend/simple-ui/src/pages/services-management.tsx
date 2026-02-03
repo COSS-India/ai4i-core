@@ -692,10 +692,10 @@ const ServicesManagementPage: React.FC = () => {
         <VStack spacing={6} w="full">
           {/* Page Header */}
           <Box textAlign="center" mb={2}>
-            <Heading size="lg" color="gray.800" mb={1}>
+            <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
               Services Management
             </Heading>
-            <Text color="gray.600" fontSize="sm">
+            <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
               Manage and configure services
             </Text>
           </Box>
@@ -727,7 +727,7 @@ const ServicesManagementPage: React.FC = () => {
                   <TabPanel px={0} pt={6}>
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
-                        <Heading size="md" color="gray.700">
+                        <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                           All Services
                         </Heading>
                       </CardHeader>
@@ -859,7 +859,7 @@ const ServicesManagementPage: React.FC = () => {
                   <TabPanel px={0} pt={6}>
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
-                        <Heading size="md" color="gray.700">
+                        <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                           Create New Service
                         </Heading>
                       </CardHeader>
@@ -991,7 +991,7 @@ const ServicesManagementPage: React.FC = () => {
                       <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                         <CardHeader>
                           <HStack justify="space-between" align="center">
-                            <Heading size="md" color="gray.700">
+                            <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                               Service Details: {selectedService.name || selectedService.serviceId || selectedService.service_id}
                             </Heading>
                             <HStack spacing={2}>
