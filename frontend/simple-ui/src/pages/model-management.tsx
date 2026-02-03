@@ -915,7 +915,7 @@ const ModelManagementPage: React.FC = () => {
                                 Required Fields:
                               </Text>
                               <Text fontSize="xs" color="blue.600">
-                                modelId, name, description, task (with type), languages, license, domain, inferenceEndPoint, submitter. Optional: version (defaults to "1.0"), refUrl, benchmarks. Timestamps (submittedOn, updatedOn) will be auto-added if not present.
+                                modelId, name, description, task (with type), languages, license, domain, inferenceEndPoint, submitter. Optional: version (defaults to &quot;1.0&quot;), refUrl, benchmarks. Timestamps (submittedOn, updatedOn) will be auto-added if not present.
                               </Text>
                             </Box>
                             </FormControl>
@@ -1002,7 +1002,7 @@ const ModelManagementPage: React.FC = () => {
                             <Alert status="success" borderRadius="md" mb={4}>
                               <AlertIcon />
                               <AlertDescription>
-                                JSON file validated successfully! Review the data below and click "Create Model" to proceed.
+                                JSON file validated successfully! Review the data below and click &quot;Create Model&quot; to proceed.
                               </AlertDescription>
                             </Alert>
                             <Box>
