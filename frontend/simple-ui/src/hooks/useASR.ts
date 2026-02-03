@@ -499,10 +499,11 @@ export const useASR = (): UseASRReturn => {
       console.error('Inference error:', err);
       console.error('Request language:', currentRequestLanguageRef.current);
       console.error('Current language:', languageRef.current);
-      
-      // Only set error if this is still the current request
+      // State and toast are already handled by the mutation's onError; only update state
+      // here in case onError was skipped (e.g. language mismatch). Do not show a second toast.
       if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current === languageRef.current) {
-        setError('Failed to transcribe audio');
+        const { message: errorMessage } = extractErrorInfo(err);
+        setError(errorMessage);
         setFetching(false);
         setFetched(false);
         setAudioText('');

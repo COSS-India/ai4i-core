@@ -14,22 +14,13 @@ export const useApiKey = (): UseApiKeyReturn => {
   const [apiKey, setApiKeyState] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
-  // Load API key from localStorage (user-provided) or environment variable (fallback) on mount
+  // Load API key from localStorage only (user-provided via "manage API key")
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      // First check localStorage (user-provided via "manage API key")
       const storedApiKey = localStorage.getItem('api_key');
       if (storedApiKey && storedApiKey.trim() !== '') {
         setApiKeyState(storedApiKey);
         setIsAuthenticated(true);
-      } else {
-        // Fallback to environment variable if no API key is provided
-        const envApiKey = process.env.NEXT_PUBLIC_API_KEY;
-        if (envApiKey && envApiKey.trim() !== '' && envApiKey !== 'your_api_key_here') {
-          // Don't automatically store env key in localStorage - only use it as fallback
-          setApiKeyState(envApiKey.trim());
-          setIsAuthenticated(true);
-        }
       }
     }
   }, []);
@@ -62,21 +53,14 @@ export const useApiKey = (): UseApiKeyReturn => {
   };
 
   /**
-   * Get current API key
-   * Priority: localStorage (user-provided) > env file (fallback)
+   * Get current API key from localStorage only (do not use env)
    * @returns Current API key or null
    */
   const getApiKey = (): string | null => {
     if (typeof window !== 'undefined') {
-      // First check localStorage (user-provided via "manage API key")
       const storedApiKey = localStorage.getItem('api_key');
       if (storedApiKey && storedApiKey.trim() !== '') {
         return storedApiKey.trim();
-      }
-      // Fallback to environment variable if no API key is provided
-      const envApiKey = process.env.NEXT_PUBLIC_API_KEY;
-      if (envApiKey && envApiKey.trim() !== '' && envApiKey !== 'your_api_key_here') {
-        return envApiKey.trim();
       }
     }
     return apiKey;
