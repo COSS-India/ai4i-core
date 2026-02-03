@@ -87,8 +87,9 @@ CREATE TABLE IF NOT EXISTS users (
     avatar_url VARCHAR(500),
     phone_number VARCHAR(20),
     timezone VARCHAR(50) DEFAULT 'UTC',
-    language VARCHAR(10) DEFAULT 'en'
-    is_tenant BOOLEAN DEFAULT NULL
+    language VARCHAR(10) DEFAULT 'en',
+    is_tenant BOOLEAN DEFAULT NULL,
+    selected_api_key_id INTEGER
 );
 
 -- Roles table
@@ -136,6 +137,11 @@ CREATE TABLE IF NOT EXISTS api_keys (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     last_used TIMESTAMP WITH TIME ZONE
 );
+
+-- Selected API key reference (per user)
+ALTER TABLE users
+    ADD CONSTRAINT users_selected_api_key_id_fkey
+    FOREIGN KEY (selected_api_key_id) REFERENCES api_keys(id) ON DELETE SET NULL;
 
 -- Create sequence for user_sessions if it doesn't exist
 CREATE SEQUENCE IF NOT EXISTS sessions_id_seq;
