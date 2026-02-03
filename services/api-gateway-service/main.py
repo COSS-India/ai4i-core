@@ -1614,6 +1614,7 @@ class RouteManager:
             '/api/v1/feature-flags': 'config-service',
             '/api/v1/metrics': 'metrics-service',
             '/api/v1/telemetry': 'telemetry-service',
+            '/api/v1/observability': 'telemetry-service',
             '/api/v1/alerting': 'alerting-service',
             '/api/v1/dashboard': 'dashboard-service',
             '/api/v1/asr': 'asr-service',
@@ -1719,6 +1720,10 @@ tags_metadata = [
     {
         "name": "Multi-Tenant",
         "description": "Multi-tenant management endpoints. Tenant registration, user management, billing, and subscriptions.",
+    },
+    {
+        "name": "Observability",
+        "description": "Observability endpoints for logs and traces. Search, aggregate, and query logs and distributed traces with RBAC support.",
     },
     {
         "name": "Status",
@@ -2345,6 +2350,8 @@ def custom_openapi():
         ("/api/v1/audio-lang-detection", "Audio Language Detection"),
         ("/api/v1/pipeline", "Pipeline"),
         ("/api/v1/feature-flags", "Feature Flags"),
+        ("/api/v1/observability", "Observability"),
+        ("/api/v1/telemetry", "Observability"),
         ("/api/v1/protected", "Protected"),
         ("/api/v1/status", "Status"),
         ("/health", "Status"),
@@ -4869,6 +4876,129 @@ async def resolve_tenant_from_user(
         method="GET",
         headers=headers
     )
+
+# ==================== Observability Endpoints ====================
+
+@app.get("/api/v1/observability/logs/search", tags=["Observability"])
+async def search_logs(
+    request: Request,
+    service: Optional[str] = Query(None, description="Filter by service name"),
+    level: Optional[str] = Query(None, description="Filter by log level (INFO, WARN, ERROR, DEBUG)"),
+    search_text: Optional[str] = Query(None, description="Search text in log messages"),
+    start_time: Optional[str] = Query(None, description="Start time (ISO format or timestamp)"),
+    end_time: Optional[str] = Query(None, description="End time (ISO format or timestamp)"),
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(50, ge=1, le=100, description="Results per page"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Search logs with filters and pagination.
+    
+    Requires 'logs.read' permission.
+    Admin users see all logs, normal users see only their tenant's logs.
+    """
+    return await proxy_to_service(request, "/api/v1/observability/logs/search", "telemetry-service")
+
+
+@app.get("/api/v1/observability/logs/aggregate", tags=["Observability"])
+async def get_log_aggregations(
+    request: Request,
+    start_time: Optional[str] = Query(None, description="Start time (ISO format or timestamp)"),
+    end_time: Optional[str] = Query(None, description="End time (ISO format or timestamp)"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Get log aggregations and statistics.
+    
+    Requires 'logs.read' permission.
+    Returns total logs, error count, warning count, breakdown by level and service.
+    """
+    return await proxy_to_service(request, "/api/v1/observability/logs/aggregate", "telemetry-service")
+
+
+@app.get("/api/v1/observability/logs/services", tags=["Observability"])
+async def get_log_services(
+    request: Request,
+    start_time: Optional[str] = Query(None, description="Start time (ISO format or timestamp)"),
+    end_time: Optional[str] = Query(None, description="End time (ISO format or timestamp)"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Get list of services that have logs.
+    
+    Requires 'logs.read' permission.
+    Admin users see all services, normal users see only services registered to their tenant.
+    """
+    return await proxy_to_service(request, "/api/v1/observability/logs/services", "telemetry-service")
+
+
+@app.get("/api/v1/observability/traces/search", tags=["Observability"])
+async def search_traces(
+    request: Request,
+    service: Optional[str] = Query(None, description="Filter by service name"),
+    operation: Optional[str] = Query(None, description="Filter by operation name"),
+    start_time: Optional[int] = Query(None, description="Start time (microseconds since epoch)"),
+    end_time: Optional[int] = Query(None, description="End time (microseconds since epoch)"),
+    limit: int = Query(20, ge=1, le=100, description="Maximum number of traces"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Search traces with filters.
+    
+    Requires 'traces.read' permission.
+    Admin users see all traces, normal users see only their organization's traces.
+    """
+    return await proxy_to_service(request, "/api/v1/observability/traces/search", "telemetry-service")
+
+
+@app.get("/api/v1/observability/traces/{trace_id}", tags=["Observability"])
+async def get_trace_by_id(
+    trace_id: str = Path(..., description="Trace ID"),
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Get a specific trace by ID.
+    
+    Requires 'traces.read' permission.
+    Returns 404 if trace not found or not accessible.
+    """
+    return await proxy_to_service(request, f"/api/v1/observability/traces/{trace_id}", "telemetry-service")
+
+
+@app.get("/api/v1/observability/traces/services", tags=["Observability"])
+async def get_trace_services(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Get list of services that have traces.
+    
+    Requires 'traces.read' permission.
+    """
+    return await proxy_to_service(request, "/api/v1/observability/traces/services", "telemetry-service")
+
+
+@app.get("/api/v1/observability/traces/services/{service}/operations", tags=["Observability"])
+async def get_trace_operations(
+    service: str = Path(..., description="Service name"),
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Get list of operations for a specific service.
+    
+    Requires 'traces.read' permission.
+    """
+    return await proxy_to_service(request, f"/api/v1/observability/traces/services/{service}/operations", "telemetry-service")
+
 
 # Helper function to proxy requests to auth service
 async def proxy_to_auth_service(request: Request, path: str):
