@@ -7,15 +7,15 @@ Your tenant has been successfully activated.
 
 Tenant Id: {tenant_id}
 Admin Username: {username}
-Temporary Password: {password}
+Email: {email}
+Password: {password}
 
 Login here:
 {login_url}
 
 
-copy and paste the link in your browser to verify your email address
+copy and paste the login in your browser to access your account.
 
-Please change your password after first login.
 """.strip()
 
 
@@ -27,10 +27,13 @@ User has been successfully activated.
 
 User id: {user_id}
 Username: {username}
+Email: {email}
 Password: {password}
 
 Login here:
 {login_url}
 
-Please change your password after first login.
+copy and paste the login in your browser to access your account.
+
+
 """.strip()

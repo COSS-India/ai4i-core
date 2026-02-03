@@ -16,10 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.audio_lang_detection_request import AudioLangDetectionInferenceRequest
 from models.audio_lang_detection_response import AudioLangDetectionInferenceResponse
-from repositories.audio_lang_detection_repository import AudioLangDetectionRepository, get_db_session
+from repositories.audio_lang_detection_repository import AudioLangDetectionRepository
 from services.audio_lang_detection_service import AudioLangDetectionService
 from utils.triton_client import TritonClient, TritonInferenceError
 from middleware.auth_provider import AuthProvider
+from middleware.tenant_db_dependency import get_tenant_db_session
 
 logger = logging.getLogger(__name__)
 # Use service name to get the same tracer instance as main.py
@@ -34,14 +35,23 @@ inference_router = APIRouter(
 
 async def get_audio_lang_detection_service(
     request: Request,
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_tenant_db_session)
 ) -> AudioLangDetectionService:
     """
     Dependency to construct AudioLangDetectionService with configured Triton client and repository.
 
     REQUIRES Model Management database resolution - no environment variable fallback.
     Request must include config.serviceId for Model Management to resolve endpoint and model.
+    
+    The db session is tenant-aware:
+    - For tenant users: routes to tenant-specific schema in multi_tenant_db
+    - For normal users: uses shared auth_db tables
     """
+    # Log tenant context if available (set by tenant middleware/JWT)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    tenant_schema = getattr(request.state, "tenant_schema", None)
+    if tenant_id:
+        logger.info(f"Audio Lang Detection request with tenant context: tenant_id={tenant_id}, schema={tenant_schema}")
     triton_endpoint: str = getattr(request.state, "triton_endpoint", None)
     triton_api_key: str = getattr(request.app.state, "triton_api_key", "")
     triton_timeout: float = getattr(request.app.state, "triton_timeout", 300.0)

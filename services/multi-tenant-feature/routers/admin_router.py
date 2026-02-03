@@ -159,5 +159,5 @@ async def view_tenant_user(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception(f"Error viewing tenant user details | tenant_id={tenant_id} user_id={user_id}: {exc}")
+        logger.exception(f"Error viewing tenant user details | user_id={user_id}: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")

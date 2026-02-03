@@ -27,8 +27,8 @@ requests>=2.31.0
 
 # Utilities
 python-multipart==0.0.9
-python-dotenv==1.0.1
 packaging>=21.0
+python-dotenv>=1.0.0
 
 # Authentication and security (for future auth integration)
 passlib[bcrypt]==1.7.4

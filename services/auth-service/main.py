@@ -606,8 +606,8 @@ async def login(
             "tenant_id": tenant_info["tenant_id"],
             "tenant_uuid": tenant_info["tenant_uuid"],
             "schema_name": tenant_info["schema_name"],
-            "subscriptions": tenant_info.get("subscriptions", []),
-            "user_subscriptions": tenant_info.get("user_subscriptions", []),
+            # "subscriptions": tenant_info.get("subscriptions", []), # Add subscirptions if needed
+            # "user_subscriptions": tenant_info.get("user_subscriptions", []), # Add subscirptions if needed
         })
         logger.info(f"Added tenant info to JWT for user {user.id}: tenant_id={tenant_info['tenant_id']}, schema={tenant_info['schema_name']}")
     
@@ -771,8 +771,8 @@ async def refresh_token(
             "tenant_id": tenant_info["tenant_id"],
             "tenant_uuid": tenant_info["tenant_uuid"],
             "schema_name": tenant_info["schema_name"],
-            "subscriptions": tenant_info.get("subscriptions", []),
-            "user_subscriptions": tenant_info.get("user_subscriptions", []),
+            # "subscriptions": tenant_info.get("subscriptions", []), # Add subscirptions if needed
+            # "user_subscriptions": tenant_info.get("user_subscriptions", []), # Add subscirptions if needed
         })
     
     # Generate new access token
@@ -1497,8 +1497,8 @@ async def google_callback(
                 "tenant_id": tenant_info["tenant_id"],
                 "tenant_uuid": tenant_info["tenant_uuid"],
                 "schema_name": tenant_info["schema_name"],
-                "subscriptions": tenant_info.get("subscriptions", []),
-                "user_subscriptions": tenant_info.get("user_subscriptions", []),
+                # "subscriptions": tenant_info.get("subscriptions", []), # Add subscirptions if needed
+                # "user_subscriptions": tenant_info.get("user_subscriptions", []), # Add subscirptions if needed
             })
         
         # 7. Generate JWT tokens

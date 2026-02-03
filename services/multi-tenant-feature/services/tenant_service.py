@@ -31,7 +31,7 @@ from models.db_models import (
     UserBillingRecord,
 )
 from models.auth_models import UserDB
-from models.enum_tenant import  TenantStatus, AuditAction , BillingStatus , AuditActorType , TenantUserStatus
+from models.enum_tenant import  SubscriptionType, TenantStatus, AuditAction , BillingStatus , AuditActorType , TenantUserStatus
 from models.tenant_create import TenantRegisterRequest, TenantRegisterResponse
 from models.service_create import ServiceCreateRequest , ServiceResponse , ListServicesResponse
 from models.user_create import UserRegisterRequest, UserRegisterResponse
@@ -43,6 +43,7 @@ from models.tenant_status import TenantStatusUpdateRequest , TenantStatusUpdateR
 from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
 from models.tenant_view import TenantViewResponse
 from models.user_view import TenantUserViewResponse
+from models.user_subscription import UserSubscriptionResponse
 
 from services.email_service import send_welcome_email, send_verification_email , send_user_welcome_email
 
@@ -51,6 +52,14 @@ from uuid import UUID
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def normalize_to_strings(values):
+    """
+    Normalize a collection of values to strings.
+    Handles enum objects by extracting their .value attribute.
+    """
+    return [str(v.value) if hasattr(v, 'value') else str(v) for v in values]
 
 EMAIL_VERIFICATION_LINK = str(os.getenv("EMAIL_VERIFICATION_LINK",""))
 DB_NAME                 = str(os.getenv("APP_DB_NAME", "multi_tenant_db"))
@@ -759,7 +768,7 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     plain_password = generate_random_password(length = 8)
 
     # TODO: Add logging for password generation , Remove once done testing
-    # logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+    logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
 
     # Store temp credentials on tenant for email / audit purposes
     hashed_password = hash_password(plain_password)
@@ -852,7 +861,7 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
         send_welcome_email,
         tenant_id_str,
         contact_email_str,
-        None,  # subdomain not available
+        None,  # use subdomain if required
         admin_username_str,
         password_str,
     )
@@ -1139,7 +1148,7 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
         raise HTTPException(status_code=404, detail="Tenant not found")
 
     if tenant.status != TenantStatus.ACTIVE:
-        raise HTTPException(status_code=400, detail="Tenant is not active")
+        raise HTTPException(status_code=400, detail="Tenant is not active , cannot add subscriptions")
 
     # Validate services
     valid_services = await db.scalars(
@@ -1152,7 +1161,7 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
     if invalid:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid subscriptions: {list(invalid)}",
+            detail=f"Invalid subscriptions: {normalize_to_strings(invalid)}",
         )
 
     current = set(tenant.subscriptions or [])
@@ -1161,7 +1170,7 @@ async def add_subscriptions(tenant_id: str,subscriptions: list[str],db: AsyncSes
     if duplicates:
         raise HTTPException(
             status_code=400,
-            detail=f"Subscription(s) already exist: {list(duplicates)}",
+            detail=f"Subscription(s) already exist: {normalize_to_strings(duplicates)}",
         )
 
     updated = list(current | set(subscriptions))
@@ -1224,6 +1233,9 @@ async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: Async
 
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    
+    if tenant.status != TenantStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail="Tenant is not active , cannot remove subscriptions")
 
     current = set(tenant.subscriptions or [])
     to_remove = set(subscriptions)
@@ -1233,7 +1245,7 @@ async def remove_subscriptions(tenant_id: str,subscriptions: list[str],db: Async
     if missing:
         raise HTTPException(
             status_code=400,
-            detail=f"Subscriptions not present for tenant: {list(missing)}",
+            detail=f"Subscriptions not present for tenant: {normalize_to_strings(missing)}",
         )
     
     updated = list(current - set(subscriptions))
@@ -1356,7 +1368,7 @@ async def register_user(
     select(TenantUser).where(TenantUser.email == payload.email))
 
     if existing_tenant_user:
-        raise HTTPException(status_code=409,detail="User already registered under this tenant")
+        raise HTTPException(status_code=409,detail="Email already registered , please use a different email")
 
     # Generate password (if not provided). Hashing is handled by auth-service.
     plain_password = generate_random_password(length=12)
@@ -1405,7 +1417,7 @@ async def register_user(
         )
     
     # TODO: Add logging for password generation , Remove once done testing
-    # logger.debug(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+    logger.debug(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
     
     if payload.is_approved:
         #Create TenantUser entry only if user is approved
@@ -1485,6 +1497,7 @@ async def register_user(
         username=payload.username,
         email=payload.email,
         services=list(requested_services),
+        schema=tenant.schema_name,
         created_at=datetime.utcnow(),
     )
 
@@ -1543,6 +1556,18 @@ async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
             .where(UserBillingRecord.tenant_id == payload.tenant_id)
             .values(status=TenantUserStatus.ACTIVE)
         )
+    elif new_status == TenantStatus.DEACTIVATED:
+        await db.execute(
+            update(TenantUser)
+            .where(TenantUser.tenant_id == payload.tenant_id)
+            .values(status=TenantUserStatus.DEACTIVATED)
+        )
+        # Deactivate user billing records
+        await db.execute(
+            update(UserBillingRecord)
+            .where(UserBillingRecord.tenant_id == payload.tenant_id)
+            .values(status=TenantUserStatus.DEACTIVATED)
+        )
 
     # Update tenant-level billing record status if it exists
     billing_record = await db.scalar(select(BillingRecord).where(BillingRecord.tenant_id == tenant.id))
@@ -1562,15 +1587,29 @@ async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
             billing_record.suspension_reason = None
             billing_record.suspended_until = None
 
+        elif new_status == TenantStatus.DEACTIVATED:
+            billing_record.billing_status = BillingStatus.DEACTIVATED
+            billing_record.suspension_reason = payload.reason if payload.reason else ""
+            billing_record.suspended_until = None
+    
+    action = None
+
+    if new_status == TenantStatus.SUSPENDED:
+        action = AuditAction.tenant_suspended
+
+     # Tenant is made active during the registration process
+     # so if the tenant status is changed to ACTIVE through this api it is considered a reactivation
+    elif new_status == TenantStatus.ACTIVE: 
+        action = AuditAction.tenant_reactivated
+
+    elif new_status == TenantStatus.DEACTIVATED:
+        action = AuditAction.tenant_deactivated
+
     # Audit log for tenant status change
     db.add(
         AuditLog(
             tenant_id=tenant.id,
-            action=(
-                AuditAction.tenant_suspended
-                if new_status == TenantStatus.SUSPENDED
-                else AuditAction.tenant_updated
-            ),
+            action=action,
             actor=AuditActorType.SYSTEM,
             details={
                 "old_status": old_status,
@@ -1620,10 +1659,10 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    if tenant.status == TenantStatus.SUSPENDED:
+    if tenant.status == TenantStatus.SUSPENDED or tenant.status == TenantStatus.DEACTIVATED:
         raise HTTPException(
             status_code=400,
-            detail="Cannot update user status while tenant is suspended",
+            detail="Cannot update user status while tenant is suspended or deactivated",
         )
     
     tenant_user = await db.scalar(select(TenantUser).where(TenantUser.tenant_id == tenant_id,TenantUser.user_id == user_id))
@@ -1748,6 +1787,190 @@ async def view_tenant_user_details(user_id: str, db: AsyncSession) -> TenantUser
     )
 
     return response
+
+
+async def add_user_subscriptions(
+    tenant_id: str,
+    user_id: int,
+    subscriptions: list[str],
+    db: AsyncSession,
+) -> UserSubscriptionResponse:
+    """
+    Add subscriptions to a tenant user.
+    Validates tenant, tenant user, and that requested services are enabled and active.
+    """
+
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    if tenant.status != TenantStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail="Tenant is not active , cannot add user subscriptions")
+
+    tenant_user = await db.scalar(
+        select(TenantUser).where(
+            TenantUser.tenant_id == tenant_id,
+            TenantUser.user_id == user_id,
+        )
+    )
+
+    if not tenant_user:
+        raise HTTPException(status_code=404, detail="Tenant user not found")
+
+    # Tenant must have the services enabled
+    tenant_services = set(tenant.subscriptions or [])
+    requested_services = set(subscriptions)
+    missing_for_tenant = requested_services - tenant_services
+    if missing_for_tenant:
+        raise HTTPException(
+            status_code=400,
+            detail=f"One or more services are not enabled for this tenant: {normalize_to_strings(missing_for_tenant)}",
+        )
+
+    # Validate services are active
+    services = await db.scalars(
+        select(ServiceConfig).where(
+            ServiceConfig.service_name.in_(requested_services),
+            ServiceConfig.is_active.is_(True),
+        )
+    )
+    services = services.all()
+    active_service_names = {service.service_name for service in services}
+
+    invalid_or_inactive = requested_services - active_service_names
+    if invalid_or_inactive:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "One or more services are invalid or inactive",
+                "invalid_services": normalize_to_strings(invalid_or_inactive),
+            },
+        )
+
+    current = set(tenant_user.subscriptions or [])
+    duplicates = current & requested_services
+    if duplicates:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Subscription(s) already exist for user: {normalize_to_strings(duplicates)}",
+        )
+
+    updated = list(current | requested_services)
+    tenant_user.subscriptions = updated
+
+    # Audit log for user subscription add
+    db.add(
+        AuditLog(
+            tenant_id=tenant.id,
+            action=AuditAction.user_updated,
+            actor=AuditActorType.ADMIN,
+            details={
+                "user_id": user_id,
+                "added_subscriptions": list(requested_services),
+            },
+        )
+    )
+
+    try:
+        await db.commit()
+        await db.refresh(tenant_user)
+    except IntegrityError as e:
+        logger.error(
+            f"Integrity error while adding user subscriptions | tenant={tenant_id} user_id={user_id}: {e}"
+        )
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Failed to add user subscriptions")
+    except Exception as e:
+        logger.exception(
+            f"Error committing user subscription changes to database | tenant={tenant_id} user_id={user_id}: {e}"
+        )
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to add user subscriptions")
+
+    return UserSubscriptionResponse(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        subscriptions=tenant_user.subscriptions or [],
+    )
+
+
+async def remove_user_subscriptions(
+    tenant_id: str,
+    user_id: int,
+    subscriptions: list[str],
+    db: AsyncSession,
+) -> UserSubscriptionResponse:
+    """
+    Remove subscriptions from a tenant user.
+    Validates that subscriptions exist for the user.
+    """
+
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    
+    if tenant.status != TenantStatus.ACTIVE:
+        raise HTTPException(status_code=400, detail="Tenant is not active , cannot remove subscriptions")
+
+    tenant_user = await db.scalar(
+        select(TenantUser).where(
+            TenantUser.tenant_id == tenant_id,
+            TenantUser.user_id == user_id,
+        )
+    )
+
+    if not tenant_user:
+        raise HTTPException(status_code=404, detail="Tenant user not found")
+    
+    current = set(tenant_user.subscriptions or [])
+    to_remove = set(subscriptions)
+
+    missing = to_remove - current
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Subscriptions not present for user: {list(missing)}",
+        )
+
+    updated = list(current - to_remove)
+    tenant_user.subscriptions = updated
+
+    # Audit log for user subscription removal
+    db.add(
+        AuditLog(
+            tenant_id=tenant.id,
+            action=AuditAction.user_updated,
+            actor=AuditActorType.ADMIN,
+            details={
+                "user_id": user_id,
+                "removed_subscriptions": list(to_remove),
+            },
+        )
+    )
+
+    try:
+        await db.commit()
+        await db.refresh(tenant_user)
+    except IntegrityError as e:
+        logger.error(
+            f"Integrity error while removing user subscriptions | tenant={tenant_id} user_id={user_id}: {e}"
+        )
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Failed to remove user subscriptions")
+    except Exception as e:
+        logger.exception(
+            f"Error committing user subscription removal to database | tenant={tenant_id} user_id={user_id}: {e}"
+        )
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to remove user subscriptions")
+
+    return UserSubscriptionResponse(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        subscriptions=tenant_user.subscriptions or [],
+    )
 
 async def update_billing_plan(db: AsyncSession,payload: BillingUpdateRequest) -> BillingUpdateResponse:
     """
