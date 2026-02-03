@@ -20,4 +20,5 @@ class UserRegisterResponse(BaseModel):
     username: str
     email: str
     services: List[str]
+    schema: str
     created_at: datetime

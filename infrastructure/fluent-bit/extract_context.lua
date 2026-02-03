@@ -52,8 +52,11 @@ function extract_context_fields(tag, timestamp, record)
             record["correlationId"] = context["correlation_id"]
         end
         -- Extract jaeger_trace_url from context if it exists
-        if context["jaeger_trace_url"] ~= nil then
+        -- This ensures it's available at top level for OpenSearch Dashboards
+        if context["jaeger_trace_url"] ~= nil and context["jaeger_trace_url"] ~= "" then
             record["jaeger_trace_url"] = context["jaeger_trace_url"]
+            -- Also ensure it's in context.jaeger_trace_url for nested access
+            record["context"]["jaeger_trace_url"] = context["jaeger_trace_url"]
         end
     end
     
@@ -88,19 +91,65 @@ function extract_context_fields(tag, timestamp, record)
     
     -- Flatten input_details.* fields if they exist (common field structure)
     if record["input_details"] ~= nil and type(record["input_details"]) == "table" then
-        local input_flat = flatten_table(record["input_details"], "input_details.")
+        local input_details = record["input_details"]
+        
+        -- Flatten all nested fields with prefix for searching
+        local input_flat = flatten_table(input_details, "input_details.")
         for key, value in pairs(input_flat) do
             -- Add flattened version for easier searching and table display
             record[key] = value
+        end
+        
+        -- Extract key input fields to top level with cleaner names for document details visibility
+        if input_details["character_length"] ~= nil then
+            record["inputCharacterLength"] = input_details["character_length"]
+        end
+        if input_details["word_count"] ~= nil then
+            record["inputWordCount"] = input_details["word_count"]
+        end
+        if input_details["audio_length_seconds"] ~= nil then
+            record["inputAudioLengthSeconds"] = input_details["audio_length_seconds"]
+        end
+        if input_details["audio_length_ms"] ~= nil then
+            record["inputAudioLengthMs"] = input_details["audio_length_ms"]
+        end
+        if input_details["input_count"] ~= nil then
+            record["inputCount"] = input_details["input_count"]
+        end
+        if input_details["token_count"] ~= nil then
+            record["inputTokenCount"] = input_details["token_count"]
         end
     end
     
     -- Flatten output_details.* fields if they exist (common field structure)
     if record["output_details"] ~= nil and type(record["output_details"]) == "table" then
-        local output_flat = flatten_table(record["output_details"], "output_details.")
+        local output_details = record["output_details"]
+        
+        -- Flatten all nested fields with prefix for searching
+        local output_flat = flatten_table(output_details, "output_details.")
         for key, value in pairs(output_flat) do
             -- Add flattened version for easier searching and table display
             record[key] = value
+        end
+        
+        -- Extract key output fields to top level with cleaner names for document details visibility
+        if output_details["character_length"] ~= nil then
+            record["outputCharacterLength"] = output_details["character_length"]
+        end
+        if output_details["word_count"] ~= nil then
+            record["outputWordCount"] = output_details["word_count"]
+        end
+        if output_details["audio_length_seconds"] ~= nil then
+            record["outputAudioLengthSeconds"] = output_details["audio_length_seconds"]
+        end
+        if output_details["audio_length_ms"] ~= nil then
+            record["outputAudioLengthMs"] = output_details["audio_length_ms"]
+        end
+        if output_details["output_count"] ~= nil then
+            record["outputCount"] = output_details["output_count"]
+        end
+        if output_details["token_count"] ~= nil then
+            record["outputTokenCount"] = output_details["token_count"]
         end
     end
     
@@ -109,7 +158,20 @@ end
 
 -- Function to add Jaeger trace URL to logs
 function add_jaeger_url(tag, timestamp, record)
-    -- First, check if jaeger_trace_url exists in context and extract it
+    -- First, check if jaeger_trace_url already exists at top level (from nest filter or extract_context_fields)
+    -- If it exists and is not empty, preserve it and return
+    if record["jaeger_trace_url"] ~= nil and record["jaeger_trace_url"] ~= "" then
+        -- Ensure it's also in context for consistency
+        if record["context"] == nil then
+            record["context"] = {}
+        end
+        if type(record["context"]) == "table" then
+            record["context"]["jaeger_trace_url"] = record["jaeger_trace_url"]
+        end
+        return 1, timestamp, record
+    end
+    
+    -- If not at top level, check if it exists in context
     if record["context"] ~= nil and type(record["context"]) == "table" then
         local context = record["context"]
         if context["jaeger_trace_url"] ~= nil and context["jaeger_trace_url"] ~= "" then
@@ -118,7 +180,7 @@ function add_jaeger_url(tag, timestamp, record)
         end
     end
     
-    -- Only add jaeger_trace_url if it doesn't already exist (from context extraction or nest filter)
+    -- Only add jaeger_trace_url if it doesn't already exist (fallback: construct from trace_id)
     if record["jaeger_trace_url"] == nil or record["jaeger_trace_url"] == "" then
         -- Check if trace_id exists
         if record["trace_id"] ~= nil and type(record["trace_id"]) == "string" and record["trace_id"] ~= "" then
