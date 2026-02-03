@@ -284,6 +284,42 @@
         "output_details.token_count": {
           "type": "integer"
         },
+        "inputCharacterLength": {
+          "type": "integer"
+        },
+        "inputWordCount": {
+          "type": "integer"
+        },
+        "inputAudioLengthSeconds": {
+          "type": "float"
+        },
+        "inputAudioLengthMs": {
+          "type": "float"
+        },
+        "inputCount": {
+          "type": "integer"
+        },
+        "inputTokenCount": {
+          "type": "integer"
+        },
+        "outputCharacterLength": {
+          "type": "integer"
+        },
+        "outputWordCount": {
+          "type": "integer"
+        },
+        "outputAudioLengthSeconds": {
+          "type": "float"
+        },
+        "outputAudioLengthMs": {
+          "type": "float"
+        },
+        "outputCount": {
+          "type": "integer"
+        },
+        "outputTokenCount": {
+          "type": "integer"
+        },
         "service_id": {
           "type": "keyword"
         },

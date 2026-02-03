@@ -38,6 +38,15 @@ class LanguageDiarizationRepository:
     ) -> LanguageDiarizationRequestDB:
         """Create new language diarization request record"""
         try:
+            # Log current search_path for debugging
+            try:
+                from sqlalchemy import text
+                result = await self.db.execute(text("SHOW search_path"))
+                search_path = result.scalar()
+                logger.info(f"Current search_path: {search_path}")
+            except Exception:
+                pass
+            
             request = LanguageDiarizationRequestDB(
                 user_id=user_id,
                 api_key_id=api_key_id,
@@ -49,15 +58,17 @@ class LanguageDiarizationRepository:
             )
             
             self.db.add(request)
+            await self.db.flush()  # Flush to get the ID without committing
+            logger.info(f"Flushed language diarization request {request.id}, committing...")
             await self.db.commit()
             await self.db.refresh(request)
             
-            logger.info(f"Created language diarization request {request.id}")
+            logger.info(f"Created language diarization request {request.id} successfully")
             return request
             
         except Exception as e:
             await self.db.rollback()
-            logger.error(f"Failed to create language diarization request: {e}")
+            logger.error(f"Failed to create language diarization request: {e}", exc_info=True)
             raise DatabaseError(f"Failed to create language diarization request: {e}")
     
     async def update_request_status(
@@ -104,6 +115,15 @@ class LanguageDiarizationRepository:
     ) -> LanguageDiarizationResultDB:
         """Create new language diarization result record"""
         try:
+            # Log current search_path for debugging
+            try:
+                from sqlalchemy import text
+                result = await self.db.execute(text("SHOW search_path"))
+                search_path = result.scalar()
+                logger.info(f"Current search_path for result creation: {search_path}")
+            except Exception:
+                pass
+            
             # JSONB columns accept Python dict/list directly, SQLAlchemy handles conversion
             result = LanguageDiarizationResultDB(
                 request_id=request_id,
@@ -113,15 +133,17 @@ class LanguageDiarizationRepository:
             )
             
             self.db.add(result)
+            await self.db.flush()  # Flush to get the ID without committing
+            logger.info(f"Flushed language diarization result {result.id} for request {request_id}, committing...")
             await self.db.commit()
             await self.db.refresh(result)
             
-            logger.info(f"Created language diarization result {result.id} for request {request_id}")
+            logger.info(f"Created language diarization result {result.id} for request {request_id} successfully")
             return result
             
         except Exception as e:
             await self.db.rollback()
-            logger.error(f"Failed to create language diarization result: {e}")
+            logger.error(f"Failed to create language diarization result: {e}", exc_info=True)
             raise DatabaseError(f"Failed to create language diarization result: {e}")
 
 

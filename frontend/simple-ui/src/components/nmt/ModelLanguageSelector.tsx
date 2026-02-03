@@ -24,6 +24,8 @@ interface ModelLanguageSelectorProps extends LanguageSelectorProps {
   selectedServiceId?: string;
   onServiceChange?: (serviceId: string) => void;
   hideServiceSelector?: boolean;
+  /** When true, service dropdown is shown but disabled (e.g. anonymous users with fixed IndicTrans). */
+  serviceDropdownDisabled?: boolean;
 }
 
 const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
@@ -34,6 +36,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   selectedServiceId,
   onServiceChange,
   hideServiceSelector = false,
+  serviceDropdownDisabled = false,
 }) => {
   const [currentServiceId, setCurrentServiceId] = useState<string>(selectedServiceId || '');
   const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
@@ -65,6 +68,13 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
     }
   }, [languagesData]);
 
+  // Sync with parent when selectedServiceId is set (e.g. anonymous users with fixed IndicTrans)
+  useEffect(() => {
+    if (selectedServiceId) {
+      setCurrentServiceId(selectedServiceId);
+    }
+  }, [selectedServiceId]);
+
   // Do not auto-select a service; user must choose explicitly
   useEffect(() => {
     if (!services || services.length === 0) return;
@@ -81,17 +91,27 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
 
   const handleSourceLanguageChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const newSourceLanguage = event.target.value;
+    const match = availableLanguagePairs?.find(
+      (p) => p.sourceLanguage === newSourceLanguage && p.targetLanguage === languagePair.targetLanguage
+    );
     onLanguagePairChange({
       ...languagePair,
       sourceLanguage: newSourceLanguage,
+      sourceScriptCode: match?.sourceScriptCode ?? languagePair.sourceScriptCode,
+      targetScriptCode: match?.targetScriptCode ?? languagePair.targetScriptCode,
     });
   };
 
   const handleTargetLanguageChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const newTargetLanguage = event.target.value;
+    const match = availableLanguagePairs?.find(
+      (p) => p.sourceLanguage === languagePair.sourceLanguage && p.targetLanguage === newTargetLanguage
+    );
     onLanguagePairChange({
       ...languagePair,
       targetLanguage: newTargetLanguage,
+      sourceScriptCode: match?.sourceScriptCode ?? languagePair.sourceScriptCode,
+      targetScriptCode: match?.targetScriptCode ?? languagePair.targetScriptCode,
     });
   };
 
@@ -137,7 +157,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                 value={currentServiceId}
                 onChange={handleServiceChange}
                 placeholder="Select a model"
-                disabled={servicesLoading}
+                disabled={servicesLoading || serviceDropdownDisabled}
               >
                 {services?.map((service) => {
                   const version = service.modelVersion || service.model_version;

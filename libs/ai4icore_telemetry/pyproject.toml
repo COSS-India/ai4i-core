@@ -11,6 +11,7 @@ authors = [
 ]
 keywords = ["telemetry", "tracing", "opentelemetry", "jaeger", "opensearch", "fastapi", "ai4icore"]
 dependencies = [
+    "packaging>=21.0",  # Required by opentelemetry-instrumentation
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-instrumentation-fastapi>=0.41b0",

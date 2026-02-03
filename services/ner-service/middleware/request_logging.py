@@ -87,8 +87,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     # Ensure trace_id is non-zero (valid trace) and span is valid
                     if span_context.is_valid and span_context.trace_id != 0:
                         trace_id = format(span_context.trace_id, '032x')
-                        # Create full Jaeger URL - use /jaeger prefix for Jaeger UI
-                        jaeger_trace_url = f"{JAEGER_UI_URL}/jaeger/trace/{trace_id}"
+                        # Store only trace_id - OpenSearch will use URL template to construct full URL
+                        jaeger_trace_url = trace_id
             except Exception as e:
                 # If trace extraction fails, continue without it
                 logger.debug(f"Failed to extract trace ID: {e}")
