@@ -15,9 +15,10 @@ from ai4icore_logging import get_correlation_id
 from models.ner_request import NerInferenceRequest
 from models.ner_response import NerInferenceResponse
 from services.ner_service import NerService, TritonInferenceError
-from repositories.ner_repository import NERRepository, get_db_session
+from repositories.ner_repository import NERRepository
 from utils.triton_client import TritonClient
 from middleware.auth_provider import AuthProvider
+from middleware.tenant_db_dependency import get_tenant_db_session
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ inference_router = APIRouter(
 
 async def get_ner_service(
     request: Request,
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_tenant_db_session),
 ) -> NerService:
     """
     Dependency to construct NerService with configured Triton client and repository.

@@ -1270,11 +1270,13 @@ class TenantStatus(str, Enum):
     IN_PROGRESS = "IN_PROGRESS"
     ACTIVE = "ACTIVE"
     SUSPENDED = "SUSPENDED"
+    DEACTIVATED = "DEACTIVATED"
 
 class TenantUserStatus(str, Enum):
     """Tenant user status enumeration."""
     ACTIVE = "ACTIVE"
     SUSPENDED = "SUSPENDED"
+    DEACTIVATED = "DEACTIVATED"
 
 class SubscriptionType(str, Enum):
     """Subscription type enumeration."""
@@ -1285,6 +1287,7 @@ class SubscriptionType(str, Enum):
     PIPELINE = "pipeline"
     OCR = "ocr"
     NER = "ner"
+    Speech_to_Speech_Pipeline = "speech_to_speech_pipeline"
     Transliteration = "transliteration"
     Langauage_detection = "language_detection"
     Speaker_diarization = "speaker_diarization"
@@ -1392,6 +1395,27 @@ class TenantSubscriptionResponse(BaseModel):
     """Response model for tenant subscription operations."""
     tenant_id: str = Field(..., description="Tenant identifier")
     subscriptions: List[str] = Field(..., description="Updated list of subscriptions")
+
+
+class UserSubscriptionAddRequest(BaseModel):
+    """Request model for adding user subscriptions under a tenant."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="Auth user id for tenant user")
+    subscriptions: List[str] = Field(..., min_items=1, description="List of subscriptions to add for the user")
+
+
+class UserSubscriptionRemoveRequest(BaseModel):
+    """Request model for removing user subscriptions under a tenant."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="Auth user id for tenant user")
+    subscriptions: List[str] = Field(..., min_items=1, description="List of subscriptions to remove for the user")
+
+
+class UserSubscriptionResponse(BaseModel):
+    """Response model for user subscription operations."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="Auth user id for tenant user")
+    subscriptions: List[str] = Field(..., description="Updated list of user subscriptions")
 
 class ServiceCreateRequest(BaseModel):
     """Request model for creating a service."""
@@ -3424,10 +3448,8 @@ async def speaker_diarization_inference(
 
     body = json.dumps(payload.dict()).encode()
     headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(
         None, "/api/v1/speaker-diarization/inference", "speaker-diarization-service", method="POST", body=body, headers=headers
     )
@@ -3458,11 +3480,8 @@ async def language_diarization_inference(
     import json
 
     body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(
         None, "/api/v1/language-diarization/inference", "language-diarization-service", method="POST", body=body, headers=headers
     )
@@ -3505,11 +3524,8 @@ async def audio_lang_detection_inference(
     import json
 
     body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
     
     logger.info(f"Proxying audio-lang-detection inference request to service")
     return await proxy_to_service(
@@ -3732,11 +3748,8 @@ async def ner_inference(
 
     body = json.dumps(payload.dict()).encode()
 
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
 
     result = await proxy_to_service(
         None, "/api/v1/ner/inference", "ner-service", method="POST", body=body, headers=headers
@@ -4707,6 +4720,59 @@ async def remove_tenant_subscriptions(
         method="POST",
         body=body,
         headers=headers
+    )
+
+
+@app.post(
+    "/api/v1/multi-tenant/user/subscriptions/add",
+    response_model=UserSubscriptionResponse,
+    tags=["Multi-Tenant"],
+    status_code=201,
+)
+async def add_user_subscriptions(
+    payload: UserSubscriptionAddRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Add subscriptions to a tenant user."""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/user/subscriptions/add",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.post(
+    "/api/v1/multi-tenant/user/subscriptions/remove",
+    response_model=UserSubscriptionResponse,
+    tags=["Multi-Tenant"],
+)
+async def remove_user_subscriptions(
+    payload: UserSubscriptionRemoveRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Remove subscriptions from a tenant user."""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/user/subscriptions/remove",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers,
     )
 
 @app.post("/api/v1/multi-tenant/register/services", response_model=ServiceResponse, tags=["Multi-Tenant"], status_code=201)
