@@ -1,6 +1,6 @@
-from pydantic import BaseModel , EmailStr, Field , Field
+from pydantic import BaseModel , EmailStr, Field
 from uuid import UUID
-from typing import Dict , Any
+from typing import Dict , Any, Optional
 
 
 class TenantViewResponse(BaseModel):
@@ -13,7 +13,8 @@ class TenantViewResponse(BaseModel):
     schema_name: str = Field(..., alias="schema")
     subscriptions: list[str]
     status: str
-    quotas: Dict[str , Any]
+    quotas: Dict[str, Any]
+    usage_quota: Optional[Dict[str, Any]] = None
     created_at: str
     updated_at: str
 

@@ -7,12 +7,14 @@ from models.tenant_create import TenantRegisterRequest, TenantRegisterResponse
 from models.user_create import UserRegisterRequest , UserRegisterResponse
 from models.tenant_status import TenantStatusUpdateRequest , TenantStatusUpdateResponse
 from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
+from models.tenant_update import TenantUpdateRequest, TenantUpdateResponse
 
 from services.tenant_service import (
     create_new_tenant , 
     register_user,
     update_tenant_status,
     update_tenant_user_status,
+    update_tenant,
     view_tenant_details,
     view_tenant_user_details,
 )
@@ -114,6 +116,31 @@ async def change_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
         raise HTTPException(status_code=400, detail=str(ve),)
     except Exception as exc:
         logger.exception(f"Unexpected error while updating tenant user status | tenant={payload.tenant_id} user_id={payload.user_id}: {exc}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.patch("/update/tenant", response_model=TenantUpdateResponse, status_code=status.HTTP_200_OK)
+async def update_tenant_info(
+    payload: TenantUpdateRequest,
+    db: AsyncSession = Depends(get_tenant_db_session),
+):
+    """
+    Update tenant information including organization_name, contact_email, domain,
+    requested_quotas, and usage_quota. Supports partial updates - only provided
+    fields will be updated.
+    """
+    try:
+        return await update_tenant(payload, db)
+    except HTTPException:
+        raise
+    except IntegrityError as ie:
+        logger.error(f"Integrity error while updating tenant | tenant_id={payload.tenant_id}: {ie}")
+        raise HTTPException(status_code=409, detail="Tenant update conflict (e.g., domain already exists)")
+    except ValueError as ve:
+        logger.error(f"Validation error while updating tenant | tenant_id={payload.tenant_id}: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception(f"Unexpected error while updating tenant | tenant_id={payload.tenant_id}: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
