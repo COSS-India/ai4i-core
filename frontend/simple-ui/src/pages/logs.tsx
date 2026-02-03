@@ -787,17 +787,18 @@ const LogsPage: React.FC = () => {
                                     </Text>
                                   </Td>
                                   <Td>
-                                    {jaegerUrl ? (
-                                      <Link 
-                                        href={jaegerUrl} 
-                                        isExternal 
-                                        color="blue.500" 
+                                    {traceId ? (
+                                      <Button
+                                        size="sm"
+                                        colorScheme="blue"
+                                        variant="link"
+                                        onClick={() => router.push(`/traces?traceId=${traceId}`)}
                                         fontSize="sm"
                                         fontWeight="medium"
-                                        _hover={{ color: "blue.600", textDecoration: "underline" }}
+                                        _hover={{ textDecoration: "underline" }}
                                       >
                                         View Trace
-                                      </Link>
+                                      </Button>
                                     ) : (
                                       <Text color="gray.400" fontSize="sm">-</Text>
                                     )}

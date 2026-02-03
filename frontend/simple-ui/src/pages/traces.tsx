@@ -762,6 +762,17 @@ const TracesPage: React.FC = () => {
     }
   }, [isAuthenticated, authLoading, router, toast]);
 
+  // Handle traceId from query parameter (e.g., from logs page)
+  useEffect(() => {
+    if (router.isReady && router.query.traceId) {
+      const traceIdFromQuery = String(router.query.traceId).trim();
+      if (traceIdFromQuery) {
+        setTraceIdSearch(traceIdFromQuery);
+        setSelectedTraceId(traceIdFromQuery);
+      }
+    }
+  }, [router.isReady, router.query.traceId]);
+
   // Fetch selected trace details
   const { data: traceDetails, isLoading: traceDetailsLoading, error: traceError } = useQuery({
     queryKey: ["trace-details", selectedTraceId],
