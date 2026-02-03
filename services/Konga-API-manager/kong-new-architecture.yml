@@ -461,6 +461,7 @@ services:
           - GET
           - POST
           - PUT
+          - PATCH
           - DELETE
           - OPTIONS
         plugins:

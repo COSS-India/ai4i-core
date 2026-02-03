@@ -1,13 +1,13 @@
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import select , delete , update, func as sql_func, and_, case, desc
+from sqlalchemy import select , delete , update, func as sql_func, and_, case, desc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import os
 import hashlib
 
-from models.db_models import Model , Service, VersionStatus
+from models.db_models import Model , Service, VersionStatus, Experiment, ExperimentVariant, ExperimentStatus
 from models.cache_models_services import ModelCache , ServiceCache
 from models.model_create import ModelCreateRequest
 from models.model_update import ModelUpdateRequest
@@ -1610,5 +1610,1005 @@ async def unpublish_service(service_id: str):
         await db.rollback()
         logger.exception("Error while unpublishing service.")
         raise Exception("Unpublish failed due to internal DB error") from e
+    finally:
+        await db.close()
+
+
+# ============================================================================
+# A/B Testing Experiment Operations
+# ============================================================================
+
+async def _check_duplicate_running_experiment(
+    db: AsyncSession,
+    experiment_id: UUID,
+    variant_service_ids: set,
+    task_type: Optional[List[str]],
+    languages: Optional[List[str]],
+    start_date: Optional[datetime],
+    end_date: Optional[datetime]
+) -> Optional[Experiment]:
+    """
+    Check if there's already a RUNNING experiment with the same configuration.
+    
+    Args:
+        db: Database session
+        experiment_id: ID of the experiment to check (exclude from search)
+        variant_service_ids: Set of service IDs used in variants
+        task_type: Task type filter
+        languages: Languages filter
+        start_date: Start date
+        end_date: End date
+        
+    Returns:
+        Existing RUNNING experiment with same config if found, None otherwise
+    """
+    # Find RUNNING experiments with overlapping date ranges (excluding current experiment)
+    query = select(Experiment).where(
+        Experiment.status == ExperimentStatus.RUNNING,
+        Experiment.id != experiment_id
+    )
+    
+    # Check for overlapping date ranges
+    # Two date ranges overlap if: start1 <= end2 AND start2 <= end1
+    # If start_date is None, treat it as starting now
+    effective_start_date = start_date if start_date is not None else datetime.now()
+    
+    if end_date:
+        # New experiment has both start and end dates
+        date_overlap_condition = or_(
+            Experiment.end_date.is_(None),
+            Experiment.end_date >= effective_start_date
+        )
+        date_overlap_condition = and_(
+            date_overlap_condition,
+            or_(
+                Experiment.start_date.is_(None),
+                Experiment.start_date <= end_date
+            )
+        )
+    else:
+        # New experiment has start date but no end date (runs indefinitely)
+        date_overlap_condition = or_(
+            Experiment.end_date.is_(None),
+            Experiment.end_date >= effective_start_date
+        )
+    
+    query = query.where(date_overlap_condition)
+    result = await db.execute(query)
+    running_experiments = result.scalars().all()
+    
+    # Check each RUNNING experiment for duplicate configuration
+    for running_exp in running_experiments:
+        # Get variants for running experiment
+        variants_result = await db.execute(
+            select(ExperimentVariant).where(ExperimentVariant.experiment_id == running_exp.id)
+        )
+        variants = variants_result.scalars().all()
+        running_service_ids = {v.service_id for v in variants}
+        
+        # Check if service IDs match
+        if variant_service_ids != running_service_ids:
+            continue
+        
+        # Check if task_type matches
+        task_type_match = (
+            (task_type is None and running_exp.task_type is None) or
+            (task_type == [] and (running_exp.task_type is None or running_exp.task_type == [])) or
+            (task_type and running_exp.task_type and set(task_type) == set(running_exp.task_type))
+        )
+        
+        if not task_type_match:
+            continue
+        
+        # Check if languages match
+        languages_match = (
+            (languages is None and running_exp.languages is None) or
+            (languages == [] and (running_exp.languages is None or running_exp.languages == [])) or
+            (languages and running_exp.languages and set(languages) == set(running_exp.languages))
+        )
+        
+        if languages_match:
+            return running_exp
+    
+    return None
+
+
+async def create_experiment(payload, created_by: str = None) -> str:
+    """
+    Create a new A/B testing experiment.
+    
+    Args:
+        payload: ExperimentCreateRequest object
+        created_by: User ID who created the experiment
+        
+    Returns:
+        Experiment ID (UUID as string)
+    """
+    from models.ab_testing import ExperimentCreateRequest
+    
+    db: AsyncSession = AppDatabase()
+    try:
+        # Validate that all service_ids exist and are published
+        variant_service_ids = set()
+        for variant in payload.variants:
+            service_result = await db.execute(
+                select(Service).where(Service.service_id == variant.service_id)
+            )
+            service = service_result.scalars().first()
+            
+            if not service:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Service with ID '{variant.service_id}' not found"
+                )
+            
+            if not service.is_published:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Service '{variant.service_id}' must be published to be used in an experiment"
+                )
+            
+            variant_service_ids.add(variant.service_id)
+        
+        # Create experiment (duplicates allowed, but only one can be RUNNING at a time)
+        
+        experiment = Experiment(
+            name=payload.name,
+            description=payload.description,
+            status=ExperimentStatus.DRAFT,
+            task_type=payload.task_type,
+            languages=payload.languages,
+            start_date=start_date,
+            end_date=payload.end_date,
+            created_by=created_by
+        )
+        
+        db.add(experiment)
+        await db.flush()  # Flush to get experiment.id
+        
+        # Create variants
+        for variant_req in payload.variants:
+            variant = ExperimentVariant(
+                experiment_id=experiment.id,
+                variant_name=variant_req.variant_name,
+                service_id=variant_req.service_id,
+                traffic_percentage=variant_req.traffic_percentage,
+                description=variant_req.description
+            )
+            db.add(variant)
+        
+        await db.commit()
+        await db.refresh(experiment)
+        
+        logger.info(f"Experiment '{payload.name}' (ID: {experiment.id}) created successfully.")
+        return str(experiment.id)
+        
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.exception("Error while creating experiment.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create experiment: {str(e)}"
+        ) from e
+    finally:
+        await db.close()
+
+
+async def get_experiment(experiment_id: str) -> Dict[str, Any]:
+    """
+    Get experiment details by ID.
+    
+    Args:
+        experiment_id: Experiment UUID
+        
+    Returns:
+        Dictionary with experiment details including variants
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        result = await db.execute(
+            select(Experiment).where(Experiment.id == UUID(experiment_id))
+        )
+        experiment = result.scalars().first()
+        
+        if not experiment:
+            return None
+        
+        # Load variants
+        variants_result = await db.execute(
+            select(ExperimentVariant)
+            .where(ExperimentVariant.experiment_id == experiment.id)
+            .order_by(ExperimentVariant.traffic_percentage)
+        )
+        variants = variants_result.scalars().all()
+        
+        # Build response
+        response = {
+            "id": str(experiment.id),
+            "name": experiment.name,
+            "description": experiment.description,
+            "status": experiment.status.value,
+            "task_type": experiment.task_type,
+            "languages": experiment.languages,
+            "start_date": experiment.start_date.isoformat() if experiment.start_date else None,
+            "end_date": experiment.end_date.isoformat() if experiment.end_date else None,
+            "created_by": experiment.created_by,
+            "updated_by": experiment.updated_by,
+            "created_at": experiment.created_at.isoformat() if experiment.created_at else None,
+            "updated_at": experiment.updated_at.isoformat() if experiment.updated_at else None,
+            "started_at": experiment.started_at.isoformat() if experiment.started_at else None,
+            "completed_at": experiment.completed_at.isoformat() if experiment.completed_at else None,
+            "variants": [
+                {
+                    "id": str(v.id),
+                    "variant_name": v.variant_name,
+                    "service_id": v.service_id,
+                    "traffic_percentage": v.traffic_percentage,
+                    "description": v.description,
+                    "created_at": v.created_at.isoformat() if v.created_at else None,
+                    "updated_at": v.updated_at.isoformat() if v.updated_at else None,
+                }
+                for v in variants
+            ]
+        }
+        
+        return response
+        
+    except Exception as e:
+        logger.exception(f"Error while fetching experiment {experiment_id}.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch experiment: {str(e)}"
+        ) from e
+    finally:
+        await db.close()
+
+
+async def list_experiments(
+    status_filter: Optional[str] = None,
+    task_type: Optional[str] = None,
+    created_by: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    List all experiments with optional filters.
+    
+    Args:
+        status_filter: Filter by experiment status
+        task_type: Filter by task type
+        created_by: Filter by creator
+        
+    Returns:
+        List of experiment dictionaries
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        query = select(Experiment)
+        
+        if status_filter:
+            try:
+                status_enum = ExperimentStatus(status_filter.upper())
+                query = query.where(Experiment.status == status_enum)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid status: {status_filter}. Valid values: {[s.value for s in ExperimentStatus]}"
+                )
+        
+        if task_type:
+            query = query.where(Experiment.task_type.contains([task_type]))
+        
+        if created_by:
+            query = query.where(Experiment.created_by == created_by)
+        
+        query = query.order_by(desc(Experiment.created_at))
+        
+        result = await db.execute(query)
+        experiments = result.scalars().all()
+        
+        # Get variant counts for each experiment
+        experiments_list = []
+        for exp in experiments:
+            variant_count_result = await db.execute(
+                select(sql_func.count(ExperimentVariant.id))
+                .where(ExperimentVariant.experiment_id == exp.id)
+            )
+            variant_count = variant_count_result.scalar() or 0
+            
+            experiments_list.append({
+                "id": str(exp.id),
+                "name": exp.name,
+                "description": exp.description,
+                "status": exp.status.value,
+                "task_type": exp.task_type,
+                "languages": exp.languages,
+                "start_date": exp.start_date.isoformat() if exp.start_date else None,
+                "end_date": exp.end_date.isoformat() if exp.end_date else None,
+                "created_at": exp.created_at.isoformat() if exp.created_at else None,
+                "updated_at": exp.updated_at.isoformat() if exp.updated_at else None,
+                "variant_count": variant_count
+            })
+        
+        return experiments_list
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error while listing experiments.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list experiments: {str(e)}"
+        ) from e
+    finally:
+        await db.close()
+
+
+async def update_experiment(experiment_id: str, payload, updated_by: str = None) -> int:
+    """
+    Update an experiment.
+    
+    Args:
+        experiment_id: Experiment UUID
+        payload: ExperimentUpdateRequest object
+        updated_by: User ID who updated the experiment
+        
+    Returns:
+        Number of updated records (should be 1)
+    """
+    from models.ab_testing import ExperimentUpdateRequest
+    
+    db: AsyncSession = AppDatabase()
+    try:
+        result = await db.execute(
+            select(Experiment).where(Experiment.id == UUID(experiment_id))
+        )
+        experiment = result.scalars().first()
+        
+        if not experiment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Experiment with ID '{experiment_id}' not found"
+            )
+        
+        # Don't allow updates to RUNNING experiments (except status changes)
+        if experiment.status == ExperimentStatus.RUNNING:
+            if payload.variants is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot update variants of a running experiment. Stop it first."
+                )
+        
+        # Update experiment fields
+        if payload.name is not None:
+            experiment.name = payload.name
+        if payload.description is not None:
+            experiment.description = payload.description
+        if payload.task_type is not None:
+            experiment.task_type = payload.task_type
+            flag_modified(experiment, "task_type")
+        if payload.languages is not None:
+            experiment.languages = payload.languages
+            flag_modified(experiment, "languages")
+        if payload.start_date is not None:
+            experiment.start_date = payload.start_date
+        if payload.end_date is not None:
+            experiment.end_date = payload.end_date
+        if updated_by is not None:
+            experiment.updated_by = updated_by
+        
+        # Update variants if provided
+        if payload.variants is not None:
+            # Validate services exist and are published
+            for variant_req in payload.variants:
+                service_result = await db.execute(
+                    select(Service).where(Service.service_id == variant_req.service_id)
+                )
+                service = service_result.scalars().first()
+                
+                if not service:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Service with ID '{variant_req.service_id}' not found"
+                    )
+                
+                if not service.is_published:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Service '{variant_req.service_id}' must be published"
+                    )
+            
+            # Delete existing variants
+            await db.execute(
+                delete(ExperimentVariant).where(ExperimentVariant.experiment_id == experiment.id)
+            )
+            
+            # Create new variants
+            for variant_req in payload.variants:
+                variant = ExperimentVariant(
+                    experiment_id=experiment.id,
+                    variant_name=variant_req.variant_name,
+                    service_id=variant_req.service_id,
+                    traffic_percentage=variant_req.traffic_percentage,
+                    description=variant_req.description
+                )
+                db.add(variant)
+        
+        await db.commit()
+        logger.info(f"Experiment {experiment_id} updated successfully.")
+        return 1
+        
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error while updating experiment {experiment_id}.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update experiment: {str(e)}"
+        ) from e
+    finally:
+        await db.close()
+
+
+async def update_experiment_status(experiment_id: str, action: str, updated_by: str = None) -> int:
+    """
+    Update experiment status based on action.
+    
+    Args:
+        experiment_id: Experiment UUID
+        action: Action to perform ('start', 'stop', 'pause', 'resume', 'cancel')
+        updated_by: User ID who performed the action
+        
+    Returns:
+        Number of updated records (should be 1)
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        result = await db.execute(
+            select(Experiment).where(Experiment.id == UUID(experiment_id))
+        )
+        experiment = result.scalars().first()
+        
+        if not experiment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Experiment with ID '{experiment_id}' not found"
+            )
+        
+        action = action.lower()
+        now = datetime.now()
+        
+        if action == "start":
+            if experiment.status != ExperimentStatus.DRAFT:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot start experiment in '{experiment.status.value}' status. Only DRAFT experiments can be started."
+                )
+            
+            # Verify at least 2 variants exist
+            variant_count_result = await db.execute(
+                select(sql_func.count(ExperimentVariant.id))
+                .where(ExperimentVariant.experiment_id == experiment.id)
+            )
+            variant_count = variant_count_result.scalar() or 0
+            
+            if variant_count < 2:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="At least 2 variants are required to start an experiment"
+                )
+            
+            # Check for duplicate RUNNING experiment with same configuration
+            variants_result = await db.execute(
+                select(ExperimentVariant).where(ExperimentVariant.experiment_id == experiment.id)
+            )
+            variants = variants_result.scalars().all()
+            variant_service_ids = {v.service_id for v in variants}
+            
+            duplicate_exp = await _check_duplicate_running_experiment(
+                db=db,
+                experiment_id=experiment.id,
+                variant_service_ids=variant_service_ids,
+                task_type=experiment.task_type,
+                languages=experiment.languages,
+                start_date=experiment.start_date,
+                end_date=experiment.end_date
+            )
+            
+            if duplicate_exp:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot start experiment: Another experiment '{duplicate_exp.name}' (ID: {duplicate_exp.id}) is already RUNNING with the same configuration (same service IDs, task types, languages, and overlapping date range). Only one experiment with identical configuration can be RUNNING at a time."
+                )
+            
+            experiment.status = ExperimentStatus.RUNNING
+            experiment.started_at = now
+            
+        elif action == "stop":
+            if experiment.status != ExperimentStatus.RUNNING:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot stop experiment in '{experiment.status.value}' status. Only RUNNING experiments can be stopped."
+                )
+            
+            experiment.status = ExperimentStatus.COMPLETED
+            experiment.completed_at = now
+            
+        elif action == "pause":
+            if experiment.status != ExperimentStatus.RUNNING:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot pause experiment in '{experiment.status.value}' status. Only RUNNING experiments can be paused."
+                )
+            
+            experiment.status = ExperimentStatus.PAUSED
+            
+        elif action == "resume":
+            if experiment.status != ExperimentStatus.PAUSED:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot resume experiment in '{experiment.status.value}' status. Only PAUSED experiments can be resumed."
+                )
+            
+            # Check for duplicate RUNNING experiment with same configuration
+            variants_result = await db.execute(
+                select(ExperimentVariant).where(ExperimentVariant.experiment_id == experiment.id)
+            )
+            variants = variants_result.scalars().all()
+            variant_service_ids = {v.service_id for v in variants}
+            
+            duplicate_exp = await _check_duplicate_running_experiment(
+                db=db,
+                experiment_id=experiment.id,
+                variant_service_ids=variant_service_ids,
+                task_type=experiment.task_type,
+                languages=experiment.languages,
+                start_date=experiment.start_date,
+                end_date=experiment.end_date
+            )
+            
+            if duplicate_exp:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot resume experiment: Another experiment '{duplicate_exp.name}' (ID: {duplicate_exp.id}) is already RUNNING with the same configuration (same service IDs, task types, languages, and overlapping date range). Only one experiment with identical configuration can be RUNNING at a time."
+                )
+            
+            experiment.status = ExperimentStatus.RUNNING
+            
+        elif action == "cancel":
+            if experiment.status == ExperimentStatus.RUNNING:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot cancel a RUNNING experiment. Stop it first."
+                )
+            
+            experiment.status = ExperimentStatus.CANCELLED
+            experiment.completed_at = now
+            
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid action '{action}'. Valid actions: start, stop, pause, resume, cancel"
+            )
+        
+        if updated_by:
+            experiment.updated_by = updated_by
+        
+        await db.commit()
+        logger.info(f"Experiment {experiment_id} status updated to {experiment.status.value} (action: {action}) by user {updated_by}.")
+        return 1
+        
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error while updating experiment status {experiment_id}.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update experiment status: {str(e)}"
+        ) from e
+    finally:
+        await db.close()
+
+
+async def start_experiment(experiment_id: str, updated_by: str = None) -> int:
+    """
+    Start a DRAFT experiment by changing status to RUNNING.
+    
+    Args:
+        experiment_id: Experiment UUID
+        updated_by: User ID who started the experiment
+        
+    Returns:
+        Number of updated records (should be 1)
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        result = await db.execute(
+            select(Experiment).where(Experiment.id == UUID(experiment_id))
+        )
+        experiment = result.scalars().first()
+        
+        if not experiment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Experiment with ID '{experiment_id}' not found"
+            )
+        
+        if experiment.status != ExperimentStatus.DRAFT:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot start experiment in '{experiment.status.value}' status. Only DRAFT experiments can be started."
+            )
+        
+        # Verify at least 2 variants exist
+        variant_count_result = await db.execute(
+            select(sql_func.count(ExperimentVariant.id))
+            .where(ExperimentVariant.experiment_id == experiment.id)
+        )
+        variant_count = variant_count_result.scalar() or 0
+        
+        if variant_count < 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least 2 variants are required to start an experiment"
+            )
+        
+        # Update status
+        experiment.status = ExperimentStatus.RUNNING
+        experiment.started_at = datetime.now()
+        if updated_by:
+            experiment.updated_by = updated_by
+        
+        await db.commit()
+        logger.info(f"Experiment {experiment_id} started successfully.")
+        return 1
+        
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error while starting experiment {experiment_id}.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start experiment: {str(e)}"
+        ) from e
+    finally:
+        await db.close()
+
+
+async def stop_experiment(experiment_id: str, updated_by: str = None) -> int:
+    """
+    Stop a RUNNING experiment by changing status to COMPLETED.
+    
+    Args:
+        experiment_id: Experiment UUID
+        updated_by: User ID who stopped the experiment
+        
+    Returns:
+        Number of updated records (should be 1)
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        result = await db.execute(
+            select(Experiment).where(Experiment.id == UUID(experiment_id))
+        )
+        experiment = result.scalars().first()
+        
+        if not experiment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Experiment with ID '{experiment_id}' not found"
+            )
+        
+        if experiment.status != ExperimentStatus.RUNNING:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot stop experiment in '{experiment.status.value}' status. Only RUNNING experiments can be stopped."
+            )
+        
+        experiment.status = ExperimentStatus.COMPLETED
+        experiment.completed_at = datetime.now()
+        if updated_by:
+            experiment.updated_by = updated_by
+        
+        await db.commit()
+        logger.info(f"Experiment {experiment_id} stopped successfully.")
+        return 1
+        
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error while stopping experiment {experiment_id}.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to stop experiment: {str(e)}"
+        ) from e
+    finally:
+        await db.close()
+
+
+async def pause_experiment(experiment_id: str, updated_by: str = None) -> int:
+    """
+    Pause a RUNNING experiment.
+    
+    Args:
+        experiment_id: Experiment UUID
+        updated_by: User ID who paused the experiment
+        
+    Returns:
+        Number of updated records (should be 1)
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        result = await db.execute(
+            select(Experiment).where(Experiment.id == UUID(experiment_id))
+        )
+        experiment = result.scalars().first()
+        
+        if not experiment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Experiment with ID '{experiment_id}' not found"
+            )
+        
+        if experiment.status != ExperimentStatus.RUNNING:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot pause experiment in '{experiment.status.value}' status. Only RUNNING experiments can be paused."
+            )
+        
+        experiment.status = ExperimentStatus.PAUSED
+        if updated_by:
+            experiment.updated_by = updated_by
+        
+        await db.commit()
+        logger.info(f"Experiment {experiment_id} paused successfully.")
+        return 1
+        
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error while pausing experiment {experiment_id}.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to pause experiment: {str(e)}"
+        ) from e
+    finally:
+        await db.close()
+
+
+async def resume_experiment(experiment_id: str, updated_by: str = None) -> int:
+    """
+    Resume a PAUSED experiment.
+    
+    Args:
+        experiment_id: Experiment UUID
+        updated_by: User ID who resumed the experiment
+        
+    Returns:
+        Number of updated records (should be 1)
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        result = await db.execute(
+            select(Experiment).where(Experiment.id == UUID(experiment_id))
+        )
+        experiment = result.scalars().first()
+        
+        if not experiment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Experiment with ID '{experiment_id}' not found"
+            )
+        
+        if experiment.status != ExperimentStatus.PAUSED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot resume experiment in '{experiment.status.value}' status. Only PAUSED experiments can be resumed."
+            )
+        
+        experiment.status = ExperimentStatus.RUNNING
+        if updated_by:
+            experiment.updated_by = updated_by
+        
+        await db.commit()
+        logger.info(f"Experiment {experiment_id} resumed successfully.")
+        return 1
+        
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error while resuming experiment {experiment_id}.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to resume experiment: {str(e)}"
+        ) from e
+    finally:
+        await db.close()
+
+
+async def delete_experiment(experiment_id: str) -> int:
+    """
+    Delete an experiment (only if not RUNNING).
+    
+    Args:
+        experiment_id: Experiment UUID
+        
+    Returns:
+        Number of deleted records (should be 1)
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        result = await db.execute(
+            select(Experiment).where(Experiment.id == UUID(experiment_id))
+        )
+        experiment = result.scalars().first()
+        
+        if not experiment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Experiment with ID '{experiment_id}' not found"
+            )
+        
+        if experiment.status == ExperimentStatus.RUNNING:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete a RUNNING experiment. Stop it first."
+            )
+        
+        await db.execute(
+            delete(Experiment).where(Experiment.id == UUID(experiment_id))
+        )
+        await db.commit()
+        
+        logger.info(f"Experiment {experiment_id} deleted successfully.")
+        return 1
+        
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error while deleting experiment {experiment_id}.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete experiment: {str(e)}"
+        ) from e
+    finally:
+        await db.close()
+
+
+async def select_experiment_variant(
+    task_type: str,
+    language: Optional[str] = None,
+    request_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Select an experiment variant for a given request based on traffic distribution.
+    This implements deterministic routing using consistent hashing.
+    
+    Args:
+        task_type: Task type (e.g., 'asr', 'tts')
+        language: Optional language code
+        request_id: Optional request ID for consistent routing
+        
+    Returns:
+        Dictionary with variant and service details, or None if no active experiment matches
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        # Find active experiments matching the criteria
+        query = select(Experiment).where(
+            Experiment.status == ExperimentStatus.RUNNING
+        )
+        
+        # Filter by task type if experiment has task_type filter
+        # If task_type is None or empty array, it matches all tasks
+        # Otherwise, it must contain the requested task_type
+        query = query.where(
+            or_(
+                Experiment.task_type.is_(None),
+                Experiment.task_type == [],
+                Experiment.task_type.contains([task_type])
+            )
+        )
+        
+        # Filter by language if provided and experiment has language filter
+        if language:
+            query = query.where(
+                or_(
+                    Experiment.languages.is_(None),
+                    Experiment.languages == [],
+                    Experiment.languages.contains([language])
+                )
+            )
+        
+        # Check date range
+        now = datetime.now()
+        query = query.where(
+            (Experiment.start_date.is_(None)) | (Experiment.start_date <= now)
+        )
+        query = query.where(
+            (Experiment.end_date.is_(None)) | (Experiment.end_date >= now)
+        )
+        
+        result = await db.execute(query)
+        experiments = result.scalars().all()
+        
+        if not experiments:
+            return None
+        
+        # For now, use the first matching experiment (can be enhanced for multiple experiments)
+        # In production, you might want to prioritize or combine experiments
+        experiment = experiments[0]
+        
+        # Get variants
+        variants_result = await db.execute(
+            select(ExperimentVariant)
+            .where(ExperimentVariant.experiment_id == experiment.id)
+            .order_by(ExperimentVariant.traffic_percentage)
+        )
+        variants = variants_result.scalars().all()
+        
+        if not variants:
+            return None
+        
+        # Deterministic variant selection using consistent hashing
+        # Use request_id if provided, otherwise generate a hash from task_type + language
+        hash_input = request_id if request_id else f"{task_type}:{language or 'none'}"
+        hash_value = int(hashlib.md5(hash_input.encode()).hexdigest(), 16)
+        bucket = hash_value % 100  # 0-99 bucket
+        
+        # Select variant based on traffic distribution
+        cumulative = 0
+        selected_variant = None
+        for variant in variants:
+            cumulative += variant.traffic_percentage
+            if bucket < cumulative:
+                selected_variant = variant
+                break
+        
+        if not selected_variant:
+            # Fallback to last variant (shouldn't happen if percentages sum to 100)
+            selected_variant = variants[-1]
+        
+        # Get service details
+        service_result = await db.execute(
+            select(Service).where(Service.service_id == selected_variant.service_id)
+        )
+        service = service_result.scalars().first()
+        
+        if not service or not service.is_published:
+            logger.warning(f"Service {selected_variant.service_id} not found or not published")
+            return None
+        
+        return {
+            "experiment_id": str(experiment.id),
+            "variant_id": str(selected_variant.id),
+            "variant_name": selected_variant.variant_name,
+            "service_id": service.service_id,
+            "model_id": service.model_id,
+            "model_version": service.model_version,
+            "endpoint": service.endpoint,
+            "api_key": service.api_key,
+            "is_experiment": True
+        }
+        
+    except Exception as e:
+        logger.exception(f"Error while selecting experiment variant for task_type={task_type}, language={language}")
+        # Don't fail the request, just return None (no experiment)
+        return None
     finally:
         await db.close()

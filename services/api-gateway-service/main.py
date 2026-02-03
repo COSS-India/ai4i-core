@@ -23,7 +23,7 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from enum import Enum
 from uuid import UUID
 from urllib.parse import urlencode, urlparse, parse_qs
-from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security
+from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security, status
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -1187,6 +1187,98 @@ class ServiceListResponse(BaseModel):
     languages: Optional[List[dict]] = Field(None, description="Supported languages")
     modelVersion: Optional[str] = Field(None, description="Model version associated with this service")
     versionStatus: Optional[str] = Field(None, description="Version status of the associated model (ACTIVE or DEPRECATED)")
+
+# A/B Testing Experiment Models
+class ExperimentVariantRequest(BaseModel):
+    """Request model for creating/updating an experiment variant"""
+    variant_name: str = Field(..., description="Name of the variant (e.g., 'control', 'variant-a')")
+    service_id: str = Field(..., description="Service ID to use for this variant")
+    traffic_percentage: int = Field(..., ge=0, le=100, description="Traffic percentage (0-100)")
+    description: Optional[str] = Field(None, description="Optional description of the variant")
+
+class ExperimentVariantResponse(BaseModel):
+    """Response model for experiment variant"""
+    id: str
+    variant_name: str
+    service_id: str
+    traffic_percentage: int
+    description: Optional[str] = None
+    created_at: Union[str, datetime]
+    updated_at: Union[str, datetime]
+
+class ExperimentCreateRequest(BaseModel):
+    """Request model for creating an experiment"""
+    name: str = Field(..., min_length=1, max_length=255, description="Experiment name")
+    description: Optional[str] = Field(None, description="Experiment description")
+    task_type: Optional[List[str]] = Field(None, description="List of task types to filter (e.g., ['asr', 'tts'])")
+    languages: Optional[List[str]] = Field(None, description="List of language codes to filter (e.g., ['hi', 'en'])")
+    start_date: Optional[Union[datetime, str]] = Field(None, description="Experiment start date (optional, defaults to now)")
+    end_date: Optional[Union[datetime, str]] = Field(None, description="Experiment end date (optional)")
+    variants: List[ExperimentVariantRequest] = Field(..., min_items=2, description="At least 2 variants required")
+
+class ExperimentUpdateRequest(BaseModel):
+    """Request model for updating an experiment"""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    task_type: Optional[List[str]] = None
+    languages: Optional[List[str]] = None
+    start_date: Optional[Union[datetime, str]] = None
+    end_date: Optional[Union[datetime, str]] = None
+    variants: Optional[List[ExperimentVariantRequest]] = None
+
+class ExperimentStatusUpdateRequest(BaseModel):
+    """Request model for updating experiment status"""
+    action: str = Field(..., description="Action to perform: 'start', 'stop', 'pause', 'resume', or 'cancel'")
+
+class ExperimentResponse(BaseModel):
+    """Response model for experiment"""
+    id: str
+    name: str
+    description: Optional[str] = None
+    status: str
+    task_type: Optional[List[str]] = None
+    languages: Optional[List[str]] = None
+    start_date: Optional[Union[datetime, str]] = None
+    end_date: Optional[Union[datetime, str]] = None
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+    created_at: Union[datetime, str]
+    updated_at: Union[datetime, str]
+    started_at: Optional[Union[datetime, str]] = None
+    completed_at: Optional[Union[datetime, str]] = None
+    variants: List[ExperimentVariantResponse] = []
+
+class ExperimentListResponse(BaseModel):
+    """Response model for listing experiments"""
+    id: str
+    name: str
+    description: Optional[str] = None
+    status: str
+    task_type: Optional[List[str]] = None
+    languages: Optional[List[str]] = None
+    start_date: Optional[Union[datetime, str]] = None
+    end_date: Optional[Union[datetime, str]] = None
+    created_at: Union[datetime, str]
+    updated_at: Union[datetime, str]
+    variant_count: int = 0
+
+class ExperimentVariantSelectionRequest(BaseModel):
+    """Request model for selecting a variant for a given request"""
+    task_type: str = Field(..., description="Task type (e.g., 'asr', 'tts')")
+    language: Optional[str] = Field(None, description="Language code (e.g., 'hi', 'en')")
+    request_id: Optional[str] = Field(None, description="Optional request ID for consistent routing")
+
+class ExperimentVariantSelectionResponse(BaseModel):
+    """Response model for variant selection"""
+    experiment_id: Optional[str] = None
+    variant_id: Optional[str] = None
+    variant_name: Optional[str] = None
+    service_id: Optional[str] = None
+    model_id: Optional[str] = None
+    model_version: Optional[str] = None
+    endpoint: Optional[str] = None
+    api_key: Optional[str] = None
+    is_experiment: bool = False
 
 # Auth models (for API documentation)
 class RegisterUser(BaseModel):
@@ -4294,6 +4386,169 @@ async def update_service_health(
         "/services/admin/health",
         "model-management-service",
         method="PATCH",
+        body=body,
+        headers=headers,
+    )
+
+
+# A/B Testing Experiment Endpoints
+
+@app.post("/api/v1/model-management/experiments", response_model=ExperimentResponse, status_code=status.HTTP_201_CREATED, tags=["A/B Testing"])
+async def create_experiment(
+    payload: ExperimentCreateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Create a new A/B testing experiment. Requires at least 2 variants with traffic percentages summing to 100."""
+    # await check_permission("experiment.create", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/experiments",
+        "model-management-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.get("/api/v1/model-management/experiments", response_model=List[ExperimentListResponse], tags=["A/B Testing"])
+async def list_experiments(
+    request: Request,
+    status: Optional[str] = Query(None, description="Filter by experiment status"),
+    task_type: Optional[str] = Query(None, description="Filter by task type"),
+    created_by: Optional[str] = Query(None, description="Filter by creator user ID"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """List all experiments with optional filters."""
+    # await check_permission("experiment.read", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    params = {}
+    if status:
+        params["status"] = status
+    if task_type:
+        params["task_type"] = task_type
+    if created_by:
+        params["created_by"] = created_by
+    return await proxy_to_service_with_params(
+        None,
+        "/experiments",
+        "model-management-service",
+        params,
+        method="GET",
+        headers=headers
+    )
+
+
+@app.get("/api/v1/model-management/experiments/{experiment_id}", response_model=ExperimentResponse, tags=["A/B Testing"])
+async def get_experiment(
+    experiment_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Get experiment details by ID."""
+    # await check_permission("experiment.read", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}",
+        "model-management-service",
+        method="GET",
+        headers=headers,
+    )
+
+
+@app.patch("/api/v1/model-management/experiments/{experiment_id}", response_model=ExperimentResponse, tags=["A/B Testing"])
+async def update_experiment(
+    experiment_id: str,
+    payload: ExperimentUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Update an experiment. Cannot update variants of a RUNNING experiment."""
+    # await check_permission("experiment.update", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}",
+        "model-management-service",
+        method="PATCH",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.post("/api/v1/model-management/experiments/{experiment_id}/status", response_model=ExperimentResponse, tags=["A/B Testing"])
+async def update_experiment_status(
+    experiment_id: str,
+    payload: ExperimentStatusUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """
+    Update experiment status by action.
+    
+    Actions:
+    - 'start': Start a DRAFT experiment (changes to RUNNING)
+    - 'stop': Stop a RUNNING experiment (changes to COMPLETED)
+    - 'pause': Pause a RUNNING experiment (changes to PAUSED)
+    - 'resume': Resume a PAUSED experiment (changes to RUNNING)
+    - 'cancel': Cancel a non-RUNNING experiment (changes to CANCELLED)
+    
+    """
+    # await check_permission("experiment.update", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}/status",
+        "model-management-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.delete("/api/v1/model-management/experiments/{experiment_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["A/B Testing"])
+async def delete_experiment(
+    experiment_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Delete an experiment. Cannot delete a RUNNING experiment. Stop it first."""
+    # await check_permission("experiment.delete", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}",
+        "model-management-service",
+        method="DELETE",
+        headers=headers,
+    )
+
+
+@app.post("/api/v1/model-management/experiments/select-variant", response_model=ExperimentVariantSelectionResponse, tags=["A/B Testing"])
+async def select_experiment_variant(
+    payload: ExperimentVariantSelectionRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Select an experiment variant for a given request. This endpoint is used by services to determine which variant to route a request to."""
+    # await ensure_authenticated_for_request(request, credentials, api_key)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/experiments/select-variant",
+        "model-management-service",
+        method="POST",
         body=body,
         headers=headers,
     )
