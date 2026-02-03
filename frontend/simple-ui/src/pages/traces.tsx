@@ -1278,14 +1278,23 @@ const TracesPage: React.FC = () => {
                             return (
                               <Card
                                 key={idx}
-                                bg={processed.hasError ? "red.50" : idx === 0 ? "blue.50" : "white"}
+                                bg={processed.hasError ? "red.50" : "white"}
                                 border="1px"
-                                borderColor={processed.hasError ? "red.300" : idx === 0 ? "blue.300" : borderColor}
+                                borderColor={processed.hasError ? "red.300" : borderColor}
                                 borderLeft={processed.hasError ? "4px solid" : "1px"}
                                 borderLeftColor={processed.hasError ? "red.500" : undefined}
-                                boxShadow={idx === 0 ? "md" : "sm"}
+                                boxShadow="sm"
                                 borderRadius="lg"
                                 overflow="hidden"
+                                _hover={{
+                                  bg: processed.hasError ? "red.50" : "blue.50",
+                                  borderColor: processed.hasError ? "red.300" : "blue.300",
+                                  boxShadow: "md",
+                                  transform: "translateY(-2px)",
+                                  transition: "all 0.2s"
+                                }}
+                                transition="all 0.2s"
+                                cursor="pointer"
                               >
                                 <CardBody>
                                   <VStack spacing={3} align="stretch">
