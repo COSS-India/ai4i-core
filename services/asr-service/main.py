@@ -36,6 +36,8 @@ from repositories.asr_repository import ASRRepository
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
+from middleware.tenant_schema_router import TenantSchemaRouter
+from middleware.tenant_middleware import TenantMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
@@ -129,6 +131,17 @@ async def lifespan(app: FastAPI):
         # Store Triton config in app state (for use by routers after Model Management resolution)
         app.state.triton_api_key = TRITON_API_KEY
         app.state.triton_timeout = TRITON_TIMEOUT
+
+
+        # Initialize tenant schema router for multi-tenant routing
+        multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL")
+        if not multi_tenant_db_url:
+            logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
+            multi_tenant_db_url = database_url
+        logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")
+        tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
+        app.state.tenant_schema_router = tenant_schema_router
+        logger.info("Tenant schema router initialized with multi-tenant database")
         
         # Initialize streaming service (optional - requires Model Management serviceId)
         global streaming_service
