@@ -14,7 +14,7 @@ from middleware.auth_provider import AuthProvider
 router = APIRouter(
     # prefix="/adopter", 
     tags=["Service registeration"],
-    dependencies=[Depends(AuthProvider)]
+    # dependencies=[Depends(AuthProvider)]
 )
 
 

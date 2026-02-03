@@ -86,6 +86,24 @@ function extract_context_fields(tag, timestamp, record)
         end
     end
     
+    -- Flatten input_details.* fields if they exist (common field structure)
+    if record["input_details"] ~= nil and type(record["input_details"]) == "table" then
+        local input_flat = flatten_table(record["input_details"], "input_details.")
+        for key, value in pairs(input_flat) do
+            -- Add flattened version for easier searching and table display
+            record[key] = value
+        end
+    end
+    
+    -- Flatten output_details.* fields if they exist (common field structure)
+    if record["output_details"] ~= nil and type(record["output_details"]) == "table" then
+        local output_flat = flatten_table(record["output_details"], "output_details.")
+        for key, value in pairs(output_flat) do
+            -- Add flattened version for easier searching and table display
+            record[key] = value
+        end
+    end
+    
     return 1, timestamp, record
 end
 

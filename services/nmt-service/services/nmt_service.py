@@ -19,6 +19,7 @@ from repositories.nmt_repository import NMTRepository
 from services.text_service import TextService
 from utils.triton_client import TritonClient
 from utils.model_management_client import ModelManagementClient, ServiceInfo
+from utils.text_utils import count_words
 from middleware.exceptions import (
     TritonInferenceError,
     TextProcessingError,
@@ -377,7 +378,10 @@ class NMTService:
                         normalized_text = text_input.source.replace("\n", " ").strip() if text_input.source else " "
                         input_texts.append(normalized_text)
                     total_text_length = sum(len(text) for text in input_texts)
+                    total_input_words = sum(count_words(text) for text in input_texts)
                     preprocess_span.set_attribute("nmt.total_text_length", total_text_length)
+                    preprocess_span.set_attribute("nmt.input.character_length", total_text_length)
+                    preprocess_span.set_attribute("nmt.input.word_count", total_input_words)
                     preprocess_span.set_attribute("nmt.preprocessed_count", len(input_texts))
                 
                 # Create database request record
@@ -472,7 +476,15 @@ class NMTService:
                             source=source_text,
                             target=translated_text
                         ))
+                    
+                    # Calculate output metrics from Triton response
+                    output_texts = [result.target for result in results]
+                    total_output_characters = sum(len(text) for text in output_texts)
+                    total_output_words = sum(count_words(text) for text in output_texts)
+                    
                     format_span.set_attribute("nmt.formatted_count", len(results))
+                    format_span.set_attribute("nmt.output.character_length", total_output_characters)
+                    format_span.set_attribute("nmt.output.word_count", total_output_words)
                 
                 # Create response
                 response = NMTInferenceResponse(output=results)
@@ -497,8 +509,33 @@ class NMTService:
                 
                 span.set_attribute("nmt.processing_time_seconds", processing_time)
                 span.set_attribute("nmt.output_count", len(response.output))
+                span.set_attribute("nmt.output.character_length", total_output_characters)
+                span.set_attribute("nmt.output.word_count", total_output_words)
                 
-                logger.info(f"NMT inference completed for request {request_id} in {processing_time:.2f}s")
+                # Log output metrics for successful inference
+                logger.info(
+                    f"NMT inference completed for request {request_id} in {processing_time:.2f}s, "
+                    f"output_characters={total_output_characters}, output_words={total_output_words}",
+                    extra={
+                        # Common input/output details structure (general fields for all services)
+                        "input_details": {
+                            "character_length": total_text_length,
+                            "word_count": total_input_words,
+                            "input_count": len(input_texts)
+                        },
+                        "output_details": {
+                            "character_length": total_output_characters,
+                            "word_count": total_output_words,
+                            "output_count": len(response.output)
+                        },
+                        # Service metadata (for filtering)
+                        "request_id": str(request_id),
+                        "processing_time_seconds": processing_time,
+                        "service_id": service_id,
+                        "source_language": original_source_lang,
+                        "target_language": original_target_lang,
+                    }
+                )
                 return response
                 
             except Exception as e:

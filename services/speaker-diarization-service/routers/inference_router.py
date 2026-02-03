@@ -16,10 +16,11 @@ from ai4icore_logging import get_logger, get_correlation_id
 
 from models.speaker_diarization_request import SpeakerDiarizationInferenceRequest
 from models.speaker_diarization_response import SpeakerDiarizationInferenceResponse
-from repositories.speaker_diarization_repository import SpeakerDiarizationRepository, get_db_session
+from repositories.speaker_diarization_repository import SpeakerDiarizationRepository
 from services.speaker_diarization_service import SpeakerDiarizationService
 from utils.triton_client import TritonClient, TritonInferenceError
 from middleware.auth_provider import AuthProvider
+from middleware.tenant_db_dependency import get_tenant_db_session
 
 logger = get_logger(__name__)
 # Use service name to get the same tracer instance as main.py
@@ -32,9 +33,14 @@ inference_router = APIRouter(
 )
 
 
+async def get_db_session(request: Request) -> AsyncSession:
+    """Dependency to get database session (legacy - use get_tenant_db_session for tenant routing)"""
+    return request.app.state.db_session_factory()
+
+
 async def get_speaker_diarization_service(
     request: Request,
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_tenant_db_session)
 ) -> SpeakerDiarizationService:
     """
     Dependency to construct SpeakerDiarizationService with configured Triton client and repository.

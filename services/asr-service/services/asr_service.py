@@ -20,6 +20,7 @@ from models.asr_response import ASRInferenceResponse, TranscriptOutput, NBestTok
 from repositories.asr_repository import ASRRepository
 from services.audio_service import AudioService
 from utils.triton_client import TritonClient
+from utils.audio_utils import get_audio_duration
 from middleware.exceptions import (
     TritonInferenceError,
     ModelNotFoundError,
@@ -47,6 +48,15 @@ if TRACING_AVAILABLE and trace:
         tracer = trace.get_tracer("asr-service")
     except Exception:
         tracer = None
+
+
+def count_words(text: str) -> int:
+    """Count words in text"""
+    try:
+        words = [word for word in text.split() if word.strip()]
+        return len(words)
+    except Exception:
+        return 0
 
 
 class ASRService:
@@ -307,13 +317,50 @@ class ASRService:
                     # Add empty transcript for failed input
                     response.output.append(TranscriptOutput(source="", nBestTokens=None))
             
+            # Calculate output metrics (character length and word count) for successful responses
+            output_texts = [output.source for output in response.output]
+            total_output_characters = sum(len(text) for text in output_texts)
+            total_output_words = sum(count_words(text) for text in output_texts)
+            
+            # Calculate total input audio duration (approximate from processed audio)
+            # Note: We don't have exact duration for all inputs, so we'll use a placeholder
+            # The router will calculate it from the original audio bytes
+            total_input_audio_duration = 0.0  # Will be calculated in router from original audio
+            
+            # Add output metrics to trace span if available
+            if tracer:
+                try:
+                    current_span = trace.get_current_span()
+                    if current_span and current_span.is_recording():
+                        current_span.set_attribute("asr.output_count", len(response.output))
+                        current_span.set_attribute("asr.output.character_length", total_output_characters)
+                        current_span.set_attribute("asr.output.word_count", total_output_words)
+                        current_span.set_attribute("asr.processing_time_seconds", time.time() - start_time)
+                except Exception:
+                    pass  # Don't fail if tracing fails
+            
             # Update request status
             processing_time = time.time() - start_time
             await self.repository.update_request_status(
                 db_request.id, "completed", processing_time
             )
             
-            logger.info(f"Completed ASR inference in {processing_time:.2f}s")
+            logger.info(
+                f"Completed ASR inference in {processing_time:.2f}s, output_characters={total_output_characters}, output_words={total_output_words}",
+                extra={
+                    # Common input/output details structure (general fields for all services)
+                    "output_details": {
+                        "character_length": total_output_characters,
+                        "word_count": total_output_words,
+                        "output_count": len(response.output)
+                    },
+                    # Service metadata (for filtering)
+                    "request_id": str(db_request.id),
+                    "processing_time_seconds": processing_time,
+                    "service_id": service_id,
+                    "language": language,
+                }
+            )
             return response
             
         except Exception as e:
