@@ -8,6 +8,8 @@ from models.user_create import UserRegisterRequest , UserRegisterResponse
 from models.tenant_status import TenantStatusUpdateRequest , TenantStatusUpdateResponse
 from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
 from models.tenant_update import TenantUpdateRequest, TenantUpdateResponse
+from models.tenant_view import TenantViewResponse, ListTenantsResponse
+from models.user_view import TenantUserViewResponse, ListUsersResponse
 
 from services.tenant_service import (
     create_new_tenant , 
@@ -17,6 +19,8 @@ from services.tenant_service import (
     update_tenant,
     view_tenant_details,
     view_tenant_user_details,
+    list_all_tenants,
+    list_all_users,
 )
 
 from logger import logger
@@ -187,4 +191,38 @@ async def view_tenant_user(
         raise
     except Exception as exc:
         logger.exception(f"Error viewing tenant user details | user_id={user_id}: {exc}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/list/tenants", response_model=ListTenantsResponse, status_code=status.HTTP_200_OK)
+async def list_tenants(
+    db: AsyncSession = Depends(get_tenant_db_session),
+):
+    """
+    List all tenants with their details.
+    Returns a list of all tenants registered in the system.
+    """
+    try:
+        return await list_all_tenants(db)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(f"Error listing tenants: {exc}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/list/users", response_model=ListUsersResponse, status_code=status.HTTP_200_OK)
+async def list_users(
+    db: AsyncSession = Depends(get_tenant_db_session),
+):
+    """
+    List all tenant users across all tenants.
+    Returns a list of all users registered under any tenant.
+    """
+    try:
+        return await list_all_users(db)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(f"Error listing users: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")
