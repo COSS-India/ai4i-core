@@ -3448,10 +3448,8 @@ async def speaker_diarization_inference(
 
     body = json.dumps(payload.dict()).encode()
     headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(
         None, "/api/v1/speaker-diarization/inference", "speaker-diarization-service", method="POST", body=body, headers=headers
     )
@@ -3482,11 +3480,8 @@ async def language_diarization_inference(
     import json
 
     body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(
         None, "/api/v1/language-diarization/inference", "language-diarization-service", method="POST", body=body, headers=headers
     )
@@ -3529,11 +3524,8 @@ async def audio_lang_detection_inference(
     import json
 
     body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
     
     logger.info(f"Proxying audio-lang-detection inference request to service")
     return await proxy_to_service(
@@ -3756,11 +3748,8 @@ async def ner_inference(
 
     body = json.dumps(payload.dict()).encode()
 
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
 
     result = await proxy_to_service(
         None, "/api/v1/ner/inference", "ner-service", method="POST", body=body, headers=headers

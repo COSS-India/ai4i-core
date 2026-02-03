@@ -53,6 +53,8 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
+from middleware.tenant_middleware import TenantMiddleware
+from middleware.tenant_schema_router import TenantSchemaRouter
 from utils.triton_client import TritonClient
 
 # Configure structured logging (JSON) so Fluent Bit can forward logs to OpenSearch.
@@ -86,6 +88,9 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db",
 )
+
+# Multi-tenant database URL for tenant schema routing
+MULTI_TENANT_DB_URL = os.getenv("MULTI_TENANT_DB_URL")
 
 TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
@@ -187,6 +192,21 @@ async def lifespan(app: FastAPI):
     app.state.redis_client = redis_client
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
+    
+    # Initialize tenant schema router for multi-tenant routing
+    # Use MULTI_TENANT_DB_URL for tenant schema routing (different from auth DATABASE_URL)
+    if not MULTI_TENANT_DB_URL:
+        logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
+        # Fallback to DATABASE_URL but log warning
+        multi_tenant_db_url = DATABASE_URL
+    else:
+        multi_tenant_db_url = MULTI_TENANT_DB_URL
+    
+    logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")  # Mask password in logs
+    tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
+    app.state.tenant_schema_router = tenant_schema_router
+    logger.info("Tenant schema router initialized with multi-tenant database")
+    
     app.state.triton_endpoint = TRITON_ENDPOINT
     app.state.triton_api_key = TRITON_API_KEY
     app.state.triton_timeout = TRITON_TIMEOUT
@@ -329,6 +349,9 @@ app.add_middleware(
 
 # Request logging
 app.add_middleware(RequestLoggingMiddleware)
+
+# Tenant middleware (must be before rate limiting to mark tenant-aware endpoints)
+app.add_middleware(TenantMiddleware)
 
 # Rate limiting (Redis client will be picked from app.state)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))

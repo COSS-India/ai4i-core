@@ -9,11 +9,12 @@ from ai4icore_logging import get_logger, get_correlation_id
 
 from models.language_detection_request import LanguageDetectionInferenceRequest
 from models.language_detection_response import LanguageDetectionInferenceResponse
-from repositories.language_detection_repository import LanguageDetectionRepository, get_db_session
+from repositories.language_detection_repository import LanguageDetectionRepository
 from services.language_detection_service import LanguageDetectionService
 from services.text_service import TextService
 from utils.triton_client import TritonClient
 from middleware.auth_provider import AuthProvider
+from middleware.tenant_db_dependency import get_tenant_db_session
 
 logger = get_logger(__name__)
 # Use service name to get the same tracer instance as main.py
@@ -28,7 +29,7 @@ inference_router = APIRouter(
 
 async def get_language_detection_service(
     request: Request,
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_tenant_db_session)
 ) -> LanguageDetectionService:
     """
     Dependency to construct LanguageDetectionService with Triton client resolved
