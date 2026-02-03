@@ -105,7 +105,7 @@ const AuthPage: React.FC = () => {
       >
         <Container maxW="md">
           <VStack spacing={8}>
-            <Heading size="xl" color="gray.800" textAlign="center">
+            <Heading size="xl" color="gray.800" textAlign="center" userSelect="none" cursor="default" tabIndex={-1}>
               AI4I Platform
             </Heading>
 
