@@ -63,7 +63,8 @@ def _log_error_to_opensearch(request: Request, status_code: int, error_code: str
                 # Format trace_id as hex string (Jaeger format)
                 trace_id = format(span_context.trace_id, '032x')
                 # Create full Jaeger URL
-                jaeger_trace_url = f"{JAEGER_UI_URL}/trace/{trace_id}"
+                # Store only trace_id - OpenSearch will use URL template to construct full URL
+                jaeger_trace_url = trace_id
         except Exception:
             # If trace extraction fails, continue without it
             pass
@@ -239,7 +240,8 @@ def add_error_handlers(app: FastAPI) -> None:
                 if current_span and current_span.get_span_context().is_valid:
                     span_context = current_span.get_span_context()
                     trace_id = format(span_context.trace_id, '032x')
-                    jaeger_trace_url = f"{JAEGER_UI_URL}/trace/{trace_id}"
+                    # Store only trace_id - OpenSearch will use URL template to construct full URL
+                jaeger_trace_url = trace_id
             except Exception:
                 pass
         
@@ -339,7 +341,8 @@ def add_error_handlers(app: FastAPI) -> None:
                 if current_span and current_span.get_span_context().is_valid:
                     span_context = current_span.get_span_context()
                     trace_id = format(span_context.trace_id, '032x')
-                    jaeger_trace_url = f"{JAEGER_UI_URL}/trace/{trace_id}"
+                    # Store only trace_id - OpenSearch will use URL template to construct full URL
+                jaeger_trace_url = trace_id
             except Exception:
                 pass
         
@@ -441,7 +444,8 @@ def add_error_handlers(app: FastAPI) -> None:
                 if current_span and current_span.get_span_context().is_valid:
                     span_context = current_span.get_span_context()
                     trace_id = format(span_context.trace_id, '032x')
-                    jaeger_trace_url = f"{JAEGER_UI_URL}/trace/{trace_id}"
+                    # Store only trace_id - OpenSearch will use URL template to construct full URL
+                jaeger_trace_url = trace_id
             except Exception:
                 pass
         
