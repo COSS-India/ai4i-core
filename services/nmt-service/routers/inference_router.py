@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
-from ai4icore_logging import get_correlation_id
+from ai4icore_logging import get_correlation_id, get_logger
 
 from models.nmt_request import NMTInferenceRequest
 from models.nmt_response import NMTInferenceResponse
@@ -20,6 +20,7 @@ from services.nmt_service import NMTService
 from services.text_service import TextService
 from utils.triton_client import TritonClient
 from utils.auth_utils import extract_auth_headers
+from utils.text_utils import count_words
 from utils.validation_utils import (
     validate_language_pair, validate_service_id, validate_batch_size,
     InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError
@@ -62,7 +63,8 @@ from services.constants.error_messages import (
     INTERNAL_SERVER_ERROR_MESSAGE
 )
 
-logger = logging.getLogger(__name__)
+# Use get_logger from ai4icore_logging to ensure JSON formatting and proper handlers
+logger = get_logger(__name__)
 # Use service name to get the same tracer instance as main.py
 tracer = trace.get_tracer("nmt-service")
 
@@ -203,6 +205,11 @@ async def run_inference(
             if correlation_id:
                 span.set_attribute("correlation.id", correlation_id)
 
+            # Calculate input metrics (character length and word count)
+            input_texts = [text_input.source for text_input in request.input]
+            total_input_characters = sum(len(text) for text in input_texts)
+            total_input_words = sum(count_words(text) for text in input_texts)
+            
             # Add request metadata to span
             span.set_attribute("nmt.input_count", len(request.input))
             span.set_attribute("nmt.service_id", request.config.serviceId)
@@ -212,6 +219,10 @@ async def run_inference(
                 span.set_attribute("nmt.source_script_code", request.config.language.sourceScriptCode)
             if request.config.language.targetScriptCode:
                 span.set_attribute("nmt.target_script_code", request.config.language.targetScriptCode)
+            
+            # Add input metrics to span
+            span.set_attribute("nmt.input.character_length", total_input_characters)
+            span.set_attribute("nmt.input.word_count", total_input_words)
             
             # Track request size (approximate)
             try:
@@ -237,11 +248,25 @@ async def run_inference(
             })
 
             logger.info(
-                "Processing NMT inference request with %d text input(s), user_id=%s api_key_id=%s session_id=%s",
+                "Processing NMT inference request with %d text input(s), input_characters=%d, input_words=%d, user_id=%s api_key_id=%s session_id=%s",
                 len(request.input),
+                total_input_characters,
+                total_input_words,
                 user_id,
                 api_key_id,
                 session_id,
+                extra={
+                    # Common input/output details structure (general fields for all services)
+                    "input_details": {
+                        "character_length": total_input_characters,
+                        "word_count": total_input_words,
+                        "input_count": len(request.input)
+                    },
+                    # Service metadata (for filtering)
+                    "service_id": request.config.serviceId,
+                    "source_language": request.config.language.sourceLanguage,
+                    "target_language": request.config.language.targetLanguage,
+                }
             )
 
             # Run inference
@@ -253,9 +278,18 @@ async def run_inference(
                 auth_headers=extract_auth_headers(http_request)
             )
             
+            # Calculate output metrics (character length and word count) for successful responses
+            output_texts = [output.target for output in response.output]
+            total_output_characters = sum(len(text) for text in output_texts)
+            total_output_words = sum(count_words(text) for text in output_texts)
+            
             # Add response metadata
             span.set_attribute("nmt.output_count", len(response.output))
             span.set_attribute("http.status_code", 200)
+            
+            # Add output metrics to span (for 200 responses)
+            span.set_attribute("nmt.output.character_length", total_output_characters)
+            span.set_attribute("nmt.output.word_count", total_output_words)
             
             # Track response size (approximate)
             try:
@@ -268,10 +302,34 @@ async def run_inference(
             # Add span event for successful completion
             span.add_event("nmt.inference.completed", {
                 "output_count": len(response.output),
+                "output_character_length": total_output_characters,
+                "output_word_count": total_output_words,
                 "status": "success"
             })
             span.set_status(Status(StatusCode.OK))
-            logger.info("NMT inference completed successfully")
+            logger.info(
+                "NMT inference completed successfully, output_characters=%d, output_words=%d",
+                total_output_characters,
+                total_output_words,
+                extra={
+                    # Common input/output details structure (general fields for all services)
+                    "input_details": {
+                        "character_length": total_input_characters,
+                        "word_count": total_input_words,
+                        "input_count": len(request.input)
+                    },
+                    "output_details": {
+                        "character_length": total_output_characters,
+                        "word_count": total_output_words,
+                        "output_count": len(response.output)
+                    },
+                    # Service metadata (for filtering)
+                    "service_id": request.config.serviceId,
+                    "source_language": request.config.language.sourceLanguage,
+                    "target_language": request.config.language.targetLanguage,
+                    "http_status_code": 200,
+                }
+            )
             return response
 
         except (InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError) as exc:
