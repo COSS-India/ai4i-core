@@ -1858,3 +1858,4 @@ const TracesPage: React.FC = () => {
 };
 
 export default TracesPage;
+
