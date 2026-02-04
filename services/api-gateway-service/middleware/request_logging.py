@@ -5,10 +5,14 @@ Uses structured JSON logging with trace correlation, compatible with OpenSearch 
 """
 
 import time
+import os
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from ai4icore_logging import get_logger, get_correlation_id, get_organization
+
+# Get Jaeger URL from environment or use default
+JAEGER_UI_URL = os.getenv("JAEGER_UI_URL", "http://localhost:16686")
 
 logger = get_logger(__name__)
 
@@ -111,6 +115,32 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_context["correlation_id"] = correlation_id
         if organization:
             log_context["organization"] = organization
+        
+        # Extract trace_id from OpenTelemetry context for Jaeger URL
+        # IMPORTANT: Extract AFTER request processing to ensure span is fully initialized
+        trace_id = None
+        jaeger_trace_url = None
+        if trace:  # trace is already imported in this file
+            try:
+                current_span = trace.get_current_span()
+                if current_span:
+                    span_context = current_span.get_span_context()
+                    # Format trace_id as hex string (Jaeger format) - 32 hex characters
+                    # Ensure trace_id is non-zero (valid trace) and span is valid
+                    if span_context.is_valid and span_context.trace_id != 0:
+                        trace_id = format(span_context.trace_id, '032x')
+                        # Store only trace_id - OpenSearch will use URL template to construct full URL
+                        jaeger_trace_url = trace_id
+            except Exception as e:
+                # If trace extraction fails, continue without it
+                logger.debug(f"Failed to extract trace ID: {e}")
+                pass
+        
+        # Add trace_id and Jaeger URL if available
+        if trace_id:
+            log_context["trace_id"] = trace_id
+        if jaeger_trace_url:
+            log_context["jaeger_trace_url"] = jaeger_trace_url
         
         # Add gateway error context if available (for service unavailable scenarios)
         gateway_error_service = getattr(request.state, "gateway_error_service", None)

@@ -694,10 +694,10 @@ const ModelManagementPage: React.FC = () => {
            <VStack spacing={6} w="full">
                   {/* Page Header */}
                   <Box textAlign="center" mb={2}>
-                    <Heading size="lg" color="gray.800" mb={1}>
+                    <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
                      Model Management
                     </Heading>
-                    <Text color="gray.600" fontSize="sm">
+                    <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
                     Manage and configure AI models
                     </Text>
                   </Box>
@@ -733,7 +733,7 @@ const ModelManagementPage: React.FC = () => {
                 <TabPanel px={0} pt={6}>
                   <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                     <CardHeader>
-                      <Heading size="md" color="gray.700">
+                      <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                         All Models
                       </Heading>
                     </CardHeader>
@@ -878,7 +878,7 @@ const ModelManagementPage: React.FC = () => {
                 <TabPanel px={0} pt={6}>
                   <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                     <CardHeader>
-                      <Heading size="md" color="gray.700">
+                      <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                         Create New Model
                       </Heading>
                     </CardHeader>
@@ -915,7 +915,7 @@ const ModelManagementPage: React.FC = () => {
                                 Required Fields:
                               </Text>
                               <Text fontSize="xs" color="blue.600">
-                                modelId, name, description, task (with type), languages, license, domain, inferenceEndPoint, submitter. Optional: version (defaults to "1.0"), refUrl, benchmarks. Timestamps (submittedOn, updatedOn) will be auto-added if not present.
+                                modelId, name, description, task (with type), languages, license, domain, inferenceEndPoint, submitter. Optional: version (defaults to &quot;1.0&quot;), refUrl, benchmarks. Timestamps (submittedOn, updatedOn) will be auto-added if not present.
                               </Text>
                             </Box>
                             </FormControl>
@@ -1002,11 +1002,11 @@ const ModelManagementPage: React.FC = () => {
                             <Alert status="success" borderRadius="md" mb={4}>
                               <AlertIcon />
                               <AlertDescription>
-                                JSON file validated successfully! Review the data below and click "Create Model" to proceed.
+                                JSON file validated successfully! Review the data below and click &quot;Create Model&quot; to proceed.
                               </AlertDescription>
                             </Alert>
                             <Box>
-                              <Heading size="sm" color="gray.700" mb={4}>
+                              <Heading size="sm" color="gray.700" mb={4} userSelect="none" cursor="default">
                                 Parsed Model Data
                               </Heading>
                               <Box
@@ -1060,7 +1060,7 @@ const ModelManagementPage: React.FC = () => {
                               </AlertDescription>
                             </Alert>
                             <Box>
-                              <Heading size="sm" color="gray.700" mb={4}>
+                              <Heading size="sm" color="gray.700" mb={4} userSelect="none" cursor="default">
                                 Created Model Data
                               </Heading>
                               <Box
@@ -1104,7 +1104,7 @@ const ModelManagementPage: React.FC = () => {
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
                         <HStack justify="space-between" align="center">
-                          <Heading size="md" color="gray.700">
+                          <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                             Model Details: {selectedModel.name}
                           </Heading>
                           <HStack spacing={2}>

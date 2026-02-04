@@ -33,6 +33,8 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
+from middleware.tenant_schema_router import TenantSchemaRouter
+from middleware.tenant_middleware import TenantMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 
@@ -164,6 +166,17 @@ async def lifespan(app: FastAPI):
         app.state.redis_client = redis_client
         app.state.db_engine = db_engine
         app.state.db_session_factory = db_session_factory
+
+         # Initialize tenant schema router for multi-tenant routing
+        multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL")
+        if not multi_tenant_db_url:
+            logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
+            multi_tenant_db_url = DATABASE_URL
+        logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")
+        tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
+        app.state.tenant_schema_router = tenant_schema_router
+        logger.info("Tenant schema router initialized with multi-tenant database")
+
         app.state.triton_endpoint = TRITON_ENDPOINT
         app.state.triton_api_key = TRITON_API_KEY
         app.state.triton_timeout = TRITON_TIMEOUT
@@ -280,6 +293,10 @@ app.add_middleware(CorrelationMiddleware)
 # FastAPI middleware runs in REVERSE order, so this will run AFTER ObservabilityMiddleware
 # This ensures organization is set in context before logging
 app.add_middleware(RequestLoggingMiddleware)
+
+# Add tenant middleware (after auth, before routes)
+# This extracts tenant context from JWT or user_id
+app.add_middleware(TenantMiddleware)
 
 # Observability (MUST be added AFTER RequestLoggingMiddleware)
 # FastAPI middleware runs in REVERSE order, so this will run FIRST

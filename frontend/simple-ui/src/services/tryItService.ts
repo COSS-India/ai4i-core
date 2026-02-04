@@ -3,12 +3,13 @@
 // Rate limited to 5 requests per hour per user/IP
 
 import axios, { AxiosInstance } from 'axios';
+import { API_BASE_URL } from './api';
 import { NMTInferenceRequest, NMTInferenceResponse } from '../types/nmt';
 import { getAnonymousSessionId } from '../utils/anonymousSession';
 
 // Create a dedicated axios instance for try-it (no auth required)
 const tryItClient: AxiosInstance = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL,
+  baseURL: API_BASE_URL,
   timeout: 300000, // 5 minutes
   headers: {
     'Content-Type': 'application/json',

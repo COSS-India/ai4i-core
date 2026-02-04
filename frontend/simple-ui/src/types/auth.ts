@@ -123,6 +123,17 @@ export interface APIKeyUpdate {
   expires_days?: number;
 }
 
+/** Response from GET /api/v1/auth/api-keys */
+export interface APIKeyListResponse {
+  api_keys: APIKeyResponse[];
+  selected_api_key_id: number | null;
+}
+
+/** Request body for POST /api/v1/auth/api-keys/select */
+export interface APIKeySelectRequest {
+  api_key_id: number;
+}
+
 export interface OAuth2Provider {
   provider: string;
   client_id: string;

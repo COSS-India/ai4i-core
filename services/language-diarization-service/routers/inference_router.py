@@ -26,10 +26,11 @@ except ImportError:
 
 from models.language_diarization_request import LanguageDiarizationInferenceRequest
 from models.language_diarization_response import LanguageDiarizationInferenceResponse
-from repositories.language_diarization_repository import LanguageDiarizationRepository, get_db_session
+from repositories.language_diarization_repository import LanguageDiarizationRepository
 from services.language_diarization_service import LanguageDiarizationService
 from utils.triton_client import TritonClient, TritonInferenceError
 from middleware.auth_provider import AuthProvider
+from middleware.tenant_db_dependency import get_tenant_db_session
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ inference_router = APIRouter(
 
 async def get_language_diarization_service(
     request: Request,
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_tenant_db_session)
 ) -> LanguageDiarizationService:
     """
     Dependency to construct LanguageDiarizationService with configured Triton client and repository.

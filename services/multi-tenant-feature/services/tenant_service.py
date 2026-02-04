@@ -13,7 +13,6 @@ from utils.utils import (
     generate_tenant_id,
     generate_subdomain,
     schema_name_from_tenant_id,
-    DEFAULT_QUOTAS,
     now_utc,
     generate_billing_customer_id,
     generate_email_verification_token,
@@ -41,9 +40,10 @@ from models.tenant_email import TenantResendEmailVerificationResponse
 from models.tenant_subscription import TenantSubscriptionResponse
 from models.tenant_status import TenantStatusUpdateRequest , TenantStatusUpdateResponse
 from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
-from models.tenant_view import TenantViewResponse
-from models.user_view import TenantUserViewResponse
+from models.tenant_view import TenantViewResponse, ListTenantsResponse
+from models.user_view import TenantUserViewResponse, ListUsersResponse
 from models.user_subscription import UserSubscriptionResponse
+from models.tenant_update import TenantUpdateRequest, TenantUpdateResponse
 
 from services.email_service import send_welcome_email, send_verification_email , send_user_welcome_email
 
@@ -53,13 +53,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+DEFAULT_QUOTAS = {
+    "api_calls_per_day": 10_000,
+    "storage_gb": 10,
+}
 
-def normalize_to_strings(values):
-    """
-    Normalize a collection of values to strings.
-    Handles enum objects by extracting their .value attribute.
-    """
-    return [str(v.value) if hasattr(v, 'value') else str(v) for v in values]
+
 
 EMAIL_VERIFICATION_LINK = str(os.getenv("EMAIL_VERIFICATION_LINK",""))
 DB_NAME                 = str(os.getenv("APP_DB_NAME", "multi_tenant_db"))
@@ -83,6 +82,12 @@ SERVICE_TABLE_MAPPING = {
     "language_diarization": ["language_diarization_requests", "language_diarization_results"],
 }
 
+def normalize_to_strings(values):
+    """
+    Normalize a collection of values to strings.
+    Handles enum objects by extracting their .value attribute.
+    """
+    return [str(v.value) if hasattr(v, 'value') else str(v) for v in values]
 
 async def create_service_tables_for_subscriptions(schema_name: str, subscriptions: list[str], db: Optional[AsyncSession] = None):
     """
@@ -604,7 +609,9 @@ async def create_new_tenant(
                     id=existing.id,
                     tenant_id=existing.tenant_id,
                     schema_name=existing.schema_name,
-                    quotas=existing.quotas,
+                    subscriptions=existing.subscriptions or [],
+                    quotas=existing.quotas or {},
+                    usage_quota=existing.usage or {},
                     status=existing.status.value,
                     token=resend.token,
                     message="Email verification pending. Link resent , please check your inbox.",
@@ -627,6 +634,20 @@ async def create_new_tenant(
     # subdomain = generate_subdomain(tenant_id) # TODO : add subdomain if required
     schema_name = schema_name_from_tenant_id(tenant_id)
     
+    # Convert requested_quotas from QuotaStructure to dict, or use DEFAULT_QUOTAS
+    quotas_dict = {}
+    if payload.requested_quotas:
+        quotas_dict = payload.requested_quotas.model_dump(exclude_none=True)
+        quotas_dict = {**quotas_dict}
+    
+    # Convert usage_quota from QuotaStructure to dict, or use empty dict
+    usage_dict = {}
+    if payload.usage_quota:
+        usage_dict = payload.usage_quota.model_dump(exclude_none=True)
+    
+    # Convert SubscriptionType enums to strings for storage
+    subscription_strings = [s.value if hasattr(s, "value") else str(s) for s in payload.requested_subscriptions]
+    
     tenant_data = {
         "tenant_id": tenant_id,
         "organization_name": payload.organization_name,
@@ -634,8 +655,9 @@ async def create_new_tenant(
         "domain": payload.domain,
         # "subdomain": subdomain,
         "schema_name": schema_name,
-        "subscriptions": payload.requested_subscriptions,
-        "quotas": payload.requested_quotas or DEFAULT_QUOTAS,
+        "subscriptions": subscription_strings,
+        "quotas": quotas_dict,
+        "usage": usage_dict,
         "status": TenantStatus.PENDING,
         "temp_admin_username": "",                 # Will be set upon email verification
         "temp_admin_password_hash": "",            # Will be set upon email verification
@@ -651,7 +673,7 @@ async def create_new_tenant(
     )
     services = services.all()
 
-    requested_services = {s.value for s in tenant_data.get("subscriptions", [])}
+    requested_services = {s for s in tenant_data.get("subscriptions", [])}
 
     # Extract service names that are valid & active
     active_service_names = {service.service_name for service in services}
@@ -694,7 +716,7 @@ async def create_new_tenant(
         actor=AuditActorType.SYSTEM,
         details={
             "organization": payload.organization_name,
-            "subscriptions": payload.requested_subscriptions,
+            "subscriptions": subscription_strings,
             "email": payload.contact_email,
         },
     )
@@ -715,8 +737,9 @@ async def create_new_tenant(
         id=created.id,
         tenant_id=created.tenant_id,
         schema_name=created.schema_name,
-        subscriptions=created.subscriptions,
-        quotas=created.quotas,
+        subscriptions=created.subscriptions or [],
+        quotas=created.quotas or {},
+        usage_quota=created.usage or {},
         status=created.status.value if hasattr(created.status, "value") else str(created.status),
         token=token,
     )
@@ -768,7 +791,7 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     plain_password = generate_random_password(length = 8)
 
     # TODO: Add logging for password generation , Remove once done testing
-    # logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+    logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
 
     # Store temp credentials on tenant for email / audit purposes
     hashed_password = hash_password(plain_password)
@@ -861,7 +884,7 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
         send_welcome_email,
         tenant_id_str,
         contact_email_str,
-        None,  # subdomain not available
+        None,  # use subdomain if required
         admin_username_str,
         password_str,
     )
@@ -1417,7 +1440,7 @@ async def register_user(
         )
     
     # TODO: Add logging for password generation , Remove once done testing
-    # logger.debug(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+    logger.debug(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
     
     if payload.is_approved:
         #Create TenantUser entry only if user is approved
@@ -1497,6 +1520,7 @@ async def register_user(
         username=payload.username,
         email=payload.email,
         services=list(requested_services),
+        schema=tenant.schema_name,
         created_at=datetime.utcnow(),
     )
 
@@ -1747,13 +1771,140 @@ async def view_tenant_details(tenant_id: str, db: AsyncSession) -> TenantViewRes
         domain=tenant.domain,
         schema=tenant.schema_name,
         subscriptions=tenant.subscriptions or [],
-        status=tenant.status,
+        status=tenant.status.value if hasattr(tenant.status, "value") else str(tenant.status),
         quotas=tenant.quotas or {},
+        usage_quota=tenant.usage or {},
         created_at=tenant.created_at.isoformat(),
         updated_at=tenant.updated_at.isoformat(),
     )
 
     return response
+
+
+async def update_tenant(payload: TenantUpdateRequest, db: AsyncSession) -> TenantUpdateResponse:
+    """
+    Update tenant information including quotas and usage_quota.
+    Supports partial updates - only provided fields will be updated.
+    
+    Args:
+        payload: Tenant update request payload with optional fields
+        db: Database session
+    Returns:
+        TenantUpdateResponse: Details of the updated tenant and changes made
+    """
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == payload.tenant_id))
+    
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    
+    # Get update data excluding unset fields
+    update_data = payload.model_dump(exclude_unset=True, exclude={"tenant_id"})
+    
+    if not update_data:
+        raise HTTPException(
+            status_code=400,
+            detail="No fields provided for update"
+        )
+    
+    changes = {}
+    updated_fields = []
+    
+    # Handle organization_name update
+    if "organization_name" in update_data:
+        old_value = tenant.organization_name
+        new_value = update_data["organization_name"]
+        if old_value != new_value:
+            changes["organization_name"] = FieldChange(old=old_value, new=new_value)
+            tenant.organization_name = new_value
+            updated_fields.append("organization_name")
+    
+    # Handle contact_email update
+    if "contact_email" in update_data:
+        old_value = tenant.contact_email
+        new_value = update_data["contact_email"]
+        if old_value != new_value:
+            changes["contact_email"] = FieldChange(old=old_value, new=new_value)
+            tenant.contact_email = new_value
+            updated_fields.append("contact_email")
+    
+    # Handle domain update
+    if "domain" in update_data:
+        old_value = tenant.domain
+        new_value = update_data["domain"]
+        if old_value != new_value:
+            changes["domain"] = FieldChange(old=old_value, new=new_value)
+            tenant.domain = new_value
+            updated_fields.append("domain")
+    
+    # Handle requested_quotas update
+    if "requested_quotas" in update_data:
+        old_quotas = tenant.quotas or {}
+        quota_structure = update_data["requested_quotas"]
+        # Convert QuotaStructure to dict, merge with existing quotas
+        new_quotas_dict = quota_structure
+        # Merge with existing quotas to preserve other fields
+        merged_quotas = {**old_quotas, **new_quotas_dict}
+        
+        if old_quotas != merged_quotas:
+            changes["requested_quotas"] = FieldChange(old=old_quotas, new=merged_quotas)
+            tenant.quotas = merged_quotas
+            updated_fields.append("requested_quotas")
+    
+    # Handle usage_quota update
+    if "usage_quota" in update_data:
+        old_usage = tenant.usage or {}
+        usage_structure = update_data["usage_quota"]
+        # Convert QuotaStructure to dict, merge with existing usage
+        new_usage_dict = usage_structure
+        # Merge with existing usage to preserve other fields
+        merged_usage = {**old_usage, **new_usage_dict}
+        
+        if old_usage != merged_usage:
+            changes["usage_quota"] = FieldChange(old=old_usage, new=merged_usage)
+            tenant.usage = merged_usage
+            updated_fields.append("usage_quota")
+    
+    if not changes:
+        raise HTTPException(
+            status_code=400,
+            detail="No changes detected. All provided values are the same as current values."
+        )
+    
+    # Create audit log
+    audit = AuditLog(
+        tenant_id=tenant.id,
+        action=AuditAction.tenant_updated,
+        actor=AuditActorType.USER,
+        details={
+            "updated_fields": updated_fields,
+            "changes": {k: {"old": str(v.old), "new": str(v.new)} for k, v in changes.items()},
+        },
+    )
+    db.add(audit)
+    
+    try:
+        await db.commit()
+        await db.refresh(tenant)
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Integrity error while updating tenant {payload.tenant_id}: {e}")
+        raise HTTPException(
+            status_code=409,
+            detail="Tenant update failed due to integrity constraint violation (e.g., domain already exists)"
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error committing tenant update to database | tenant={payload.tenant_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update tenant")
+    
+    logger.info(f"Tenant updated successfully | tenant_id={payload.tenant_id} | updated_fields={updated_fields}")
+    
+    return TenantUpdateResponse(
+        tenant_id=tenant.tenant_id,
+        message=f"Tenant updated successfully. {len(updated_fields)} field(s) modified.",
+        changes=changes,
+        updated_fields=updated_fields,
+    )
 
 
 async def view_tenant_user_details(user_id: str, db: AsyncSession) -> TenantUserViewResponse:
@@ -1786,6 +1937,77 @@ async def view_tenant_user_details(user_id: str, db: AsyncSession) -> TenantUser
     )
 
     return response
+
+
+async def list_all_tenants(db: AsyncSession) -> ListTenantsResponse:
+    """
+    List all tenants with their details.
+    
+    Args:
+        db: Database session
+    Returns:
+        ListTenantsResponse: List of all tenants and their details
+    """
+    result = await db.execute(select(Tenant).order_by(Tenant.created_at.desc()))
+    tenants = result.scalars().all()
+    
+    tenant_list = [
+        TenantViewResponse(
+            id=tenant.id,
+            tenant_id=tenant.tenant_id,
+            user_id=tenant.user_id or 0,
+            organization_name=tenant.organization_name,
+            email=tenant.contact_email,
+            domain=tenant.domain,
+            schema=tenant.schema_name,
+            subscriptions=tenant.subscriptions or [],
+            status=tenant.status.value if hasattr(tenant.status, "value") else str(tenant.status),
+            quotas=tenant.quotas or {},
+            usage_quota=tenant.usage or {},
+            created_at=tenant.created_at.isoformat(),
+            updated_at=tenant.updated_at.isoformat(),
+        )
+        for tenant in tenants
+    ]
+    
+    return ListTenantsResponse(
+        count=len(tenant_list),
+        tenants=tenant_list,
+    )
+
+
+async def list_all_users(db: AsyncSession) -> ListUsersResponse:
+    """
+    List all tenant users across all tenants.
+    
+    Args:
+        db: Database session
+    Returns:
+        ListUsersResponse: List of all tenant users and their details
+    """
+    result = await db.execute(select(TenantUser).order_by(TenantUser.created_at.desc()))
+    users = result.scalars().all()
+    
+    user_list = [
+        TenantUserViewResponse(
+            id=user.id,
+            tenant_id=user.tenant_id,
+            user_id=user.user_id,
+            username=user.username,
+            email=user.email,
+            subscriptions=user.subscriptions or [],
+            status=user.status.value if hasattr(user.status, "value") else str(user.status),
+            is_approved=user.is_approved,
+            created_at=user.created_at.isoformat(),
+            updated_at=user.updated_at.isoformat(),
+        )
+        for user in users
+    ]
+    
+    return ListUsersResponse(
+        count=len(user_list),
+        users=user_list,
+    )
 
 
 async def add_user_subscriptions(
