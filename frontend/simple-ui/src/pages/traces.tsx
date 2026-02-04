@@ -78,22 +78,56 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
 
   // Check for errors in span
   const checkForErrors = () => {
-    const errorTag = tags.find(t => t.key === "error" || t.key.toLowerCase().includes("error"));
+    // Priority 1: Check for reject.reason (most specific for rejections)
+    const rejectReasonTag = tags.find(t => 
+      t.key === "reject.reason" || 
+      t.key === "REJECT.REASON" || 
+      t.key.toLowerCase() === "reject.reason"
+    );
+    
+    // Priority 2: Check for specific error message fields (most descriptive)
+    const errorMessageTag = tags.find(t => 
+      t.key === "error.message" || 
+      t.key === "ERROR.MESSAGE" || 
+      t.key.toLowerCase() === "error.message"
+    );
+    const errorReasonTag = tags.find(t => 
+      t.key === "error.reason" || 
+      t.key === "ERROR.REASON" || 
+      t.key.toLowerCase() === "error.reason"
+    );
+    
+    // Priority 3: Check for generic error tags
+    const errorTag = tags.find(t => t.key === "error" || (t.key.toLowerCase().includes("error") && !t.key.toLowerCase().includes("message") && !t.key.toLowerCase().includes("reason")));
     const statusCode = tags.find(t => t.key === "otel.status_code" || t.key === "http.status_code");
-    const rejectTag = tags.find(t => t.key.toLowerCase().includes("reject"));
+    const rejectTag = tags.find(t => t.key.toLowerCase().includes("reject") && t.key.toLowerCase() !== "reject.reason");
     const httpStatus = tags.find(t => t.key === "http.status_code");
     
-    // Check for error tags
-    if (errorTag) {
+    // Priority 1: Use reject.reason if available (most specific for rejections)
+    if (rejectReasonTag) {
+      hasError = true;
+      errorMessage = String(rejectReasonTag.value);
+    }
+    // Priority 2: Use specific error message if available
+    else if (errorMessageTag) {
+      hasError = true;
+      errorMessage = String(errorMessageTag.value);
+      // Add reason if available
+      if (errorReasonTag) {
+        errorMessage += ` (${errorReasonTag.value})`;
+      }
+    }
+    // Priority 3: Check for error tags
+    else if (errorTag) {
       hasError = true;
       errorMessage = String(errorTag.value);
     } 
-    // Check for non-OK status codes
+    // Priority 4: Check for non-OK status codes
     else if (statusCode && String(statusCode.value) !== "OK" && String(statusCode.value) !== "200") {
       hasError = true;
       errorMessage = `Status: ${statusCode.value}`;
     }
-    // Check for HTTP error status codes (4xx, 5xx)
+    // Priority 5: Check for HTTP error status codes (4xx, 5xx)
     else if (httpStatus) {
       const status = parseInt(String(httpStatus.value));
       if (status >= 400) {
@@ -105,17 +139,17 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
         }
       }
     }
-    // Check for reject tags
+    // Priority 6: Check for reject tags
     else if (rejectTag) {
       hasError = true;
       errorMessage = String(rejectTag.value);
     }
-    // Check operation name for reject
+    // Priority 7: Check operation name for reject
     else if (opName.includes("reject")) {
       hasError = true;
       errorMessage = "Request was rejected during processing";
     }
-    // Check logs for errors
+    // Priority 8: Check logs for errors
     else if (span.logs && span.logs.length > 0) {
       const errorLog = span.logs.find((log: any) => {
         if (log.fields) {
@@ -902,6 +936,72 @@ const TracesPage: React.FC = () => {
     return getTraceStatus(traceDetails);
   }, [traceDetails]);
 
+  // Extract primary error message from the most descriptive failed span
+  const primaryErrorMessage = useMemo(() => {
+    if (!processedSpans || processedSpans.length === 0) return null;
+    
+    // Helper function to check if an error message is trivial/not useful
+    const isTrivialError = (msg: string | undefined): boolean => {
+      if (!msg) return true;
+      const msgLower = msg.toLowerCase().trim();
+      // Filter out boolean values, single characters, very short messages, or generic status codes
+      return msgLower === "true" || 
+             msgLower === "false" || 
+             msgLower.length <= 3 ||
+             msgLower === "error" ||
+             /^status:\s*\d+$/.test(msgLower) ||
+             /^\d+$/.test(msgLower);
+    };
+    
+    // Collect all error messages with their spans
+    const errorSpans = processedSpans
+      .filter((p: ProcessedSpan) => p.hasError && p.errorMessage && !isTrivialError(p.errorMessage))
+      .map((p: ProcessedSpan) => ({
+        span: p,
+        errorMessage: p.errorMessage!,
+        priority: 0, // Higher priority = better
+      }));
+    
+    // If we have non-trivial errors, prioritize them
+    if (errorSpans.length > 0) {
+      // Prioritize error messages:
+      // 1. Reject operations (most specific)
+      // 2. Longer, more descriptive messages
+      // 3. Messages from top-level spans
+      errorSpans.forEach((item: { span: ProcessedSpan; errorMessage: string; priority: number }) => {
+        if (item.span.category === "error" || item.span.displayName.includes("Rejection")) {
+          item.priority += 10; // Highest priority for rejections
+        }
+        if (item.span.isTopLevel) {
+          item.priority += 5; // Higher priority for top-level spans
+        }
+        if (item.errorMessage.length > 20) {
+          item.priority += 3; // Prefer longer, more descriptive messages
+        }
+        if (item.errorMessage.length > 10) {
+          item.priority += 1; // Slight boost for medium-length messages
+        }
+      });
+      
+      // Sort by priority (descending) and return the best one
+      errorSpans.sort((a: { span: ProcessedSpan; errorMessage: string; priority: number }, b: { span: ProcessedSpan; errorMessage: string; priority: number }) => b.priority - a.priority);
+      return errorSpans[0]?.errorMessage || null;
+    }
+    
+    // Fallback: if all errors are trivial, try to find any error message
+    // But still prefer rejection operations
+    const anyError = processedSpans.find((p: ProcessedSpan) => 
+      p.hasError && p.errorMessage && (p.category === "error" || p.displayName.includes("Rejection"))
+    );
+    if (anyError && anyError.errorMessage) {
+      return anyError.errorMessage;
+    }
+    
+    // Last resort: return first error message even if trivial
+    const firstError = processedSpans.find((p: ProcessedSpan) => p.hasError && p.errorMessage);
+    return firstError?.errorMessage || null;
+  }, [processedSpans]);
+
   // Calculate trace startTime and duration from spans if not provided
   const traceStartTime = useMemo(() => {
     if (!traceDetails || !traceDetails.spans || traceDetails.spans.length === 0) {
@@ -1107,23 +1207,41 @@ const TracesPage: React.FC = () => {
                           {processedSpans.length}
                         </Text>
                       </Box>
-                      <Box minH="50px" display="flex" flexDirection="column">
+                      <Box minH="50px" display="flex" flexDirection="column" flex={1} minW="200px">
                         <Text fontSize="xs" color="gray.600" mb={1}>
                           Status
                         </Text>
-                        <Badge
-                          colorScheme={traceStatus.status === "success" ? "green" : traceStatus.status === "error" ? "red" : "yellow"}
-                          fontSize="sm"
-                          px={2}
-                          py={1}
-                          display="inline-flex"
-                          alignItems="center"
-                          height="fit-content"
-                          lineHeight="1.5"
-                        >
-                          {traceStatus.status === "success" && <Icon as={CheckCircleIcon} mr={1} boxSize={3} />}
-                          {traceStatus.message}
-                        </Badge>
+                        <HStack spacing={2} align="center" flexWrap="wrap">
+                          <Badge
+                            colorScheme={traceStatus.status === "success" ? "green" : traceStatus.status === "error" ? "red" : "yellow"}
+                            fontSize="sm"
+                            px={2}
+                            py={1}
+                            display="inline-flex"
+                            alignItems="center"
+                            height="fit-content"
+                            lineHeight="1.5"
+                          >
+                            {traceStatus.status === "success" && <Icon as={CheckCircleIcon} mr={1} boxSize={3} />}
+                            {traceStatus.message}
+                          </Badge>
+                          {traceStatus.status === "error" && primaryErrorMessage && (
+                            <Text 
+                              fontSize="xs" 
+                              color="red.600" 
+                              fontWeight="bold"
+                              bg="red.50"
+                              px={2}
+                              py={1}
+                              borderRadius="md"
+                              border="1px solid"
+                              borderColor="red.200"
+                              maxW="500px"
+                            >
+                              {primaryErrorMessage}
+                            </Text>
+                          )}
+                        </HStack>
                       </Box>
               </HStack>
                   </VStack>
@@ -1221,14 +1339,31 @@ const TracesPage: React.FC = () => {
                                           boxSize={4}
                                         />
                                         <VStack align="start" spacing={0}>
-                                          <HStack spacing={2} align="center">
+                                          <HStack spacing={2} align="center" flexWrap="wrap">
                                             <Text fontSize="sm" color={processed.hasError ? "red.700" : "gray.700"} fontWeight="semibold">
                                               {processed.displayName}
                                             </Text>
                                             {processed.hasError && (
-                                              <Badge colorScheme="red" fontSize="xx-small" px={1.5} py={0.5} borderRadius="full">
-                                                FAILED
-                                              </Badge>
+                                              <>
+                                                <Badge colorScheme="red" fontSize="xx-small" px={1.5} py={0.5} borderRadius="full">
+                                                  FAILED
+                                                </Badge>
+                                                {processed.errorMessage && (
+                                                  <Text 
+                                                    fontSize="xs" 
+                                                    color="red.600" 
+                                                    fontWeight="bold"
+                                                    bg="red.50"
+                                                    px={2}
+                                                    py={0.5}
+                                                    borderRadius="md"
+                                                    border="1px solid"
+                                                    borderColor="red.200"
+                                                  >
+                                                    {processed.errorMessage}
+                                                  </Text>
+                                                )}
+                                              </>
                                             )}
                                           </HStack>
                                           <Text fontSize="xs" color="gray.500" fontFamily="mono">
@@ -1361,14 +1496,32 @@ const TracesPage: React.FC = () => {
                                         />
                             </Box>
                                       <VStack align="start" spacing={1} flex={1}>
-                                        <HStack spacing={2} align="center" w="full">
+                                        <HStack spacing={2} align="center" w="full" flexWrap="wrap">
                                           <Text fontSize="sm" fontWeight="bold" color={processed.hasError ? "red.700" : "gray.700"} flex={1}>
                                             {processed.displayName}
                               </Text>
                                           {processed.hasError ? (
-                                            <Badge colorScheme="red" fontSize="xx-small" px={2} py={0.5} borderRadius="full">
-                                              FAILED
-                                            </Badge>
+                                            <HStack spacing={2} align="center" flexWrap="wrap">
+                                              <Badge colorScheme="red" fontSize="xx-small" px={2} py={0.5} borderRadius="full">
+                                                FAILED
+                                              </Badge>
+                                              {processed.errorMessage && (
+                                                <Text 
+                                                  fontSize="xs" 
+                                                  color="red.600" 
+                                                  fontWeight="bold"
+                                                  bg="red.50"
+                                                  px={2}
+                                                  py={0.5}
+                                                  borderRadius="md"
+                                                  border="1px solid"
+                                                  borderColor="red.200"
+                                                  maxW="400px"
+                                                >
+                                                  {processed.errorMessage}
+                                                </Text>
+                                              )}
+                                            </HStack>
                                           ) : traceStatus.status === "success" && (
                                             <Icon as={CheckCircleIcon} color="green.500" boxSize={4} />
                                           )}
