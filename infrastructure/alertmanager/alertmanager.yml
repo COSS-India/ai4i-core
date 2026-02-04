@@ -1,184 +1,140 @@
 global:
   resolve_timeout: 5m
-  smtp_smarthost: 'smtp.gmail.com:587'
-  smtp_from: 'bharathia0704@gmail.com'
-  smtp_auth_username: 'bharathia0704@gmail.com'
-  smtp_auth_password: 'ypuaofsbatebvwye'
+  smtp_smarthost: smtp.gmail.com:587
+  smtp_from: bharathia0704@gmail.com
+  smtp_auth_username: bharathia0704@gmail.com
+  smtp_auth_password: ypuaofsbatebvwye
   smtp_require_tls: true
-
-# Define templates for better email formatting
-templates:
-  - '/etc/alertmanager/templates/*.tmpl'
-
-# Routing configuration
 route:
-  receiver: 'default'
-  group_by: ['alertname', 'category', 'severity', 'service']
+  group_by:
+  - alertname
+  - category
+  - severity
+  - organization
   group_wait: 10s
   group_interval: 10s
   repeat_interval: 12h
-  
-  # Child routes for different categories and severities
+  receiver: bashadaan-warning-application
   routes:
-    # Critical application alerts - high urgency
-    - match:
-        category: application
-        severity: critical
-      receiver: 'critical-application-alerts'
-      group_wait: 5s
-      repeat_interval: 5m
-      continue: false
-    
-    # Warning application alerts - medium urgency
-    - match:
-        category: application
-        severity: warning
-      receiver: 'warning-application-alerts'
-      group_wait: 10s
-      repeat_interval: 1h
-      continue: false
-    
-    # Critical infrastructure alerts - high urgency
-    - match:
-        category: infrastructure
-        severity: critical
-      receiver: 'critical-infrastructure-alerts'
-      group_wait: 5s
-      repeat_interval: 5m
-      continue: false
-    
-    # Warning infrastructure alerts - medium urgency
-    - match:
-        category: infrastructure
-        severity: warning
-      receiver: 'warning-infrastructure-alerts'
-      group_wait: 10s
-      repeat_interval: 1h
-      continue: false
-    
-    # Info-level alerts
-    - match:
-        severity: info
-      receiver: 'info-alerts'
-      group_wait: 30s
-      repeat_interval: 24h
-      continue: false
-
-# Receivers with different email subjects and formatting
+  - match:
+      organization: bashadaan
+      severity: warning
+      category: application
+    receiver: bashadaan-warning-application
+    group_wait: 10s
+    group_interval: 10s
+    repeat_interval: 12h
+    continue: false
+    group_by:
+    - alertname
+    - category
+    - severity
+    - organization
+  - match:
+      organization: beml
+      severity: warning
+      category: application
+    receiver: beml-warning-application
+    group_wait: 10s
+    group_interval: 10s
+    repeat_interval: 12h
+    continue: false
+    group_by:
+    - alertname
+    - category
+    - severity
+    - organization
+  - match:
+      organization: irctc
+      severity: warning
+      category: application
+    receiver: irctc-warning-application
+    group_wait: 10s
+    group_interval: 10s
+    repeat_interval: 12h
+    continue: false
+    group_by:
+    - alertname
+    - category
+    - severity
+    - organization
+  - match:
+      organization: kisanmitra
+      severity: warning
+      category: application
+    receiver: kisanmitra-warning-application
+    group_wait: 12s
+    group_interval: 10s
+    repeat_interval: 12h
+    continue: false
+    group_by:
+    - alertname
+    - category
+    - severity
+    - organization
 receivers:
-  - name: 'default'
-    email_configs:
-      - to: 'bharathia6@gmail.com'
-        send_resolved: true
-        headers:
-          Subject: '[ALERT] {{ .GroupLabels.alertname }}'
-  
-  - name: 'critical-application-alerts'
-    email_configs:
-      - to: 'bharathia6@gmail.com'
-        send_resolved: true
-        headers:
-          Subject: '[CRITICAL] [APPLICATION] {{ .GroupLabels.alertname }} - {{ .GroupLabels.service }}'
-        html: |
-          <h2 style="color: red;">🔴 CRITICAL APPLICATION ALERT</h2>
-          <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
-          <p><strong>Service:</strong> {{ .GroupLabels.service }}</p>
-          <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
-          <p><strong>Urgency:</strong> {{ .CommonLabels.urgency }}</p>
-          <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
-          <p><strong>Type:</strong> {{ .CommonLabels.alert_type }}</p>
-          <p><strong>Scope:</strong> {{ .CommonLabels.scope }}</p>
-          <hr>
-          {{ range .Alerts }}
-          <h3>{{ .Annotations.summary }}</h3>
-          <p>{{ .Annotations.description }}</p>
-          <p><strong>Impact:</strong> {{ .Annotations.impact }}</p>
-          <p><strong>Action:</strong> {{ .Annotations.action }}</p>
-          <p><strong>Fired at:</strong> {{ .StartsAt }}</p>
-          {{ if .EndsAt }}<p><strong>Resolved at:</strong> {{ .EndsAt }}</p>{{ end }}
-          <hr>
-          {{ end }}
-  
-  - name: 'warning-application-alerts'
-    email_configs:
-      - to: 'bharathia6@gmail.com'
-        send_resolved: true
-        headers:
-          Subject: '[WARNING] [APPLICATION] {{ .GroupLabels.alertname }} - {{ .GroupLabels.service }}'
-        html: |
-          <h2 style="color: orange;">⚠️ WARNING APPLICATION ALERT</h2>
-          <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
-          <p><strong>Service:</strong> {{ .GroupLabels.service }}</p>
-          <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
-          <p><strong>Urgency:</strong> {{ .CommonLabels.urgency }}</p>
-          <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
-          <hr>
-          {{ range .Alerts }}
-          <h3>{{ .Annotations.summary }}</h3>
-          <p>{{ .Annotations.description }}</p>
-          <p><strong>Impact:</strong> {{ .Annotations.impact }}</p>
-          <p><strong>Action:</strong> {{ .Annotations.action }}</p>
-          {{ end }}
-  
-  - name: 'critical-infrastructure-alerts'
-    email_configs:
-      - to: 'bharathia6@gmail.com'
-        send_resolved: true
-        headers:
-          Subject: '[CRITICAL] [INFRASTRUCTURE] {{ .GroupLabels.alertname }}'
-        html: |
-          <h2 style="color: red;">🔴 CRITICAL INFRASTRUCTURE ALERT</h2>
-          <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
-          <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
-          <p><strong>Urgency:</strong> {{ .CommonLabels.urgency }}</p>
-          <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
-          <p><strong>Type:</strong> {{ .CommonLabels.alert_type }}</p>
-          <hr>
-          {{ range .Alerts }}
-          <h3>{{ .Annotations.summary }}</h3>
-          <p>{{ .Annotations.description }}</p>
-          <p><strong>Impact:</strong> {{ .Annotations.impact }}</p>
-          <p><strong>Action:</strong> {{ .Annotations.action }}</p>
-          {{ end }}
-  
-  - name: 'warning-infrastructure-alerts'
-    email_configs:
-      - to: 'bharathia6@gmail.com'
-        send_resolved: true
-        headers:
-          Subject: '[WARNING] [INFRASTRUCTURE] {{ .GroupLabels.alertname }}'
-        html: |
-          <h2 style="color: orange;">⚠️ WARNING INFRASTRUCTURE ALERT</h2>
-          <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
-          <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
-          <p><strong>Urgency:</strong> {{ .CommonLabels.urgency }}</p>
-          <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
-          <hr>
-          {{ range .Alerts }}
-          <h3>{{ .Annotations.summary }}</h3>
-          <p>{{ .Annotations.description }}</p>
-          {{ end }}
-  
-  - name: 'info-alerts'
-    email_configs:
-      - to: 'bharathia6@gmail.com'
-        send_resolved: true
-        headers:
-          Subject: '[INFO] {{ .GroupLabels.alertname }}'
-
-# Inhibition rules - suppress dependent alerts
+- name: bashadaan-warning-application
+  email_configs:
+  - to: bharathia6@gmail.com
+    send_resolved: true
+    headers:
+      Subject: '[{{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.organization }}'
+    html: |
+      <h2 style="color: {{ if eq .GroupLabels.severity "critical" }}#d32f2f{{ else if eq .GroupLabels.severity "warning" }}#f57c00{{ else }}#1976d2{{ end }};">
+        {{ if eq .GroupLabels.severity "critical" }}🚨 CRITICAL{{ else if eq .GroupLabels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
+      </h2>
+      <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
+      <p><strong>Organization:</strong> {{ .GroupLabels.organization }}</p>
+      <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
+      <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
+- name: beml-warning-application
+  email_configs:
+  - to: bharathicoldplay@gmail.com
+    send_resolved: true
+    headers:
+      Subject: '[{{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.organization }}'
+    html: |
+      <h2 style="color: {{ if eq .GroupLabels.severity "critical" }}#d32f2f{{ else if eq .GroupLabels.severity "warning" }}#f57c00{{ else }}#1976d2{{ end }};">
+        {{ if eq .GroupLabels.severity "critical" }}🚨 CRITICAL{{ else if eq .GroupLabels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
+      </h2>
+      <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
+      <p><strong>Organization:</strong> {{ .GroupLabels.organization }}</p>
+      <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
+      <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
+- name: irctc-warning-application
+  email_configs:
+  - to: bharathicoldplay@gmail.com
+    send_resolved: true
+    headers:
+      Subject: '[{{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.organization }}'
+    html: |
+      <h2 style="color: {{ if eq .GroupLabels.severity "critical" }}#d32f2f{{ else if eq .GroupLabels.severity "warning" }}#f57c00{{ else }}#1976d2{{ end }};">
+        {{ if eq .GroupLabels.severity "critical" }}🚨 CRITICAL{{ else if eq .GroupLabels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
+      </h2>
+      <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
+      <p><strong>Organization:</strong> {{ .GroupLabels.organization }}</p>
+      <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
+      <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
+- name: kisanmitra-warning-application
+  email_configs:
+  - to: bharathia6@gmail.com
+    send_resolved: true
+    headers:
+      Subject: '[{{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.organization }}'
+    html: |
+      <h2 style="color: {{ if eq .GroupLabels.severity "critical" }}#d32f2f{{ else if eq .GroupLabels.severity "warning" }}#f57c00{{ else }}#1976d2{{ end }};">
+        {{ if eq .GroupLabels.severity "critical" }}🚨 CRITICAL{{ else if eq .GroupLabels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
+      </h2>
+      <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
+      <p><strong>Organization:</strong> {{ .GroupLabels.organization }}</p>
+      <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
+      <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
 inhibit_rules:
-  # Suppress warning if critical is firing for same service
-  - source_match:
-      severity: 'critical'
-    target_match:
-      severity: 'warning'
-    equal: ['alertname', 'service', 'category']
-  
-  # Suppress per-service alerts if all-services alert is firing
-  - source_match:
-      scope: 'all_services'
-      severity: 'critical'
-    target_match:
-      scope: 'per_service'
-    equal: ['category', 'alert_type']
+- source_match:
+    severity: critical
+  target_match:
+    severity: warning
+  equal:
+  - alertname
+  - organization
+  - category

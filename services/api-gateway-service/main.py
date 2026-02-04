@@ -2221,6 +2221,27 @@ load_balancer = None
 route_manager = None
 health_monitor_task = None
 
+# Import alert management module
+try:
+    from alert_management import (
+        RoutingRuleTimingUpdate,
+        init_db_pool, close_db_pool,
+        extract_organization, validate_organization,
+        AlertDefinitionCreate, AlertDefinitionUpdate, AlertDefinitionResponse,
+        NotificationReceiverCreate, NotificationReceiverUpdate, NotificationReceiverResponse,
+        RoutingRuleCreate, RoutingRuleUpdate, RoutingRuleResponse,
+        create_alert_definition, get_alert_definition_by_id, list_alert_definitions,
+        update_alert_definition, delete_alert_definition, toggle_alert_definition,
+        create_notification_receiver, get_notification_receiver_by_id, list_notification_receivers,
+        update_notification_receiver, delete_notification_receiver,
+        create_routing_rule, get_routing_rule_by_id, list_routing_rules,
+        update_routing_rule, delete_routing_rule, update_routing_rule_timing
+    )
+    ALERT_MANAGEMENT_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Alert management module not available: {e}")
+    ALERT_MANAGEMENT_AVAILABLE = False
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections and components on startup"""
@@ -2235,6 +2256,14 @@ async def startup_event():
         route_manager = RouteManager(redis_client=None if not redis_client else redis_client)
         await route_manager.load_routes_from_redis()  # Try to load from Redis if available
         logger.info("Route manager initialized")
+        
+        # Initialize alert management database pool
+        if ALERT_MANAGEMENT_AVAILABLE:
+            try:
+                await init_db_pool()
+                logger.info("Alert management database pool initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize alert management database pool: {e}")
         
         logger.info("API Gateway initialized successfully (using direct service URLs)")
         
@@ -2251,6 +2280,14 @@ async def shutdown_event():
     if http_client:
         await http_client.aclose()
         logger.info("HTTP client closed")
+    
+    # Close alert management database pool
+    if ALERT_MANAGEMENT_AVAILABLE:
+        try:
+            await close_db_pool()
+            logger.info("Alert management database pool closed")
+        except Exception as e:
+            logger.warning(f"Error closing alert management database pool: {e}")
 
 @app.get("/")
 async def root():
@@ -2834,7 +2871,679 @@ async def get_all_users(
     """
     return await proxy_to_auth_service(request, "/api/v1/auth/users")
 
-    # ASR Service Endpoints (Proxy to ASR Service)
+# Alert Management Endpoints (Dynamic Alert Configuration)
+if ALERT_MANAGEMENT_AVAILABLE:
+    @app.post("/api/v1/alerts/definitions", response_model=AlertDefinitionResponse, tags=["Alerts"])
+    async def create_alert_definition_endpoint(
+        payload: AlertDefinitionCreate,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Create a new alert definition
+        
+        - Regular users: organization is automatically extracted from API key or X-Organization header
+        - Admin users: Can specify organization as query parameter to create alerts for any organization
+        
+        Requires: alerts.create permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.create", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            # Admin explicitly specified organization - use it
+            validate_organization(organization)
+            target_organization = organization
+        else:
+            # Regular user or admin didn't specify - extract from request
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await create_alert_definition(target_organization, payload, username)
+    
+    @app.get("/api/v1/alerts/definitions", response_model=List[AlertDefinitionResponse], tags=["Alerts"])
+    async def list_alert_definitions_endpoint(
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        enabled_only: bool = Query(False, description="Only return enabled alerts")
+    ):
+        """
+        List alert definitions.
+        
+        - Regular users: See only alerts for their organization (determined by API key or X-Organization header)
+        - Admin users: See all alerts across all organizations (requires "alerts.admin" permission or "ADMIN" role)
+        
+        Requires: alerts.read permission (alerts.admin for viewing all alerts)
+        """
+        await check_permission("alerts.read", request, credentials)
+        
+        # Check if user is admin (has alerts.admin permission or ADMIN role)
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload = await auth_middleware.verify_token(token)
+            if payload:
+                user_permissions = payload.get("permissions", [])
+                user_roles = payload.get("roles", [])
+                # Check for admin permission or role
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # If admin, return all alerts (organization=None)
+        # Otherwise, return only alerts for the user's organization
+        if is_admin:
+            organization = None  # None means return all alerts
+        else:
+            organization = extract_organization(request)
+        
+        return await list_alert_definitions(organization, enabled_only)
+    
+    @app.get("/api/v1/alerts/definitions/{alert_id}", response_model=AlertDefinitionResponse, tags=["Alerts"])
+    async def get_alert_definition_endpoint(
+        alert_id: int,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Get a specific alert definition by ID
+        
+        - Regular users: Can only get alerts for their organization
+        - Admin users: Can get alerts for any organization by specifying organization, or omit to get any alert
+        
+        Requires: alerts.read permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.read", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin:
+            # Admin can access any alert - pass None to skip organization check
+            if organization:
+                validate_organization(organization)
+                return await get_alert_definition_by_id(alert_id, organization)
+            else:
+                # Admin didn't specify organization - allow access to any alert
+                return await get_alert_definition_by_id(alert_id, None)
+        else:
+            # Regular user - only their organization
+            target_organization = extract_organization(request)
+            return await get_alert_definition_by_id(alert_id, target_organization)
+    
+    @app.put("/api/v1/alerts/definitions/{alert_id}", response_model=AlertDefinitionResponse, tags=["Alerts"])
+    async def update_alert_definition_endpoint(
+        alert_id: int,
+        payload: AlertDefinitionUpdate,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Update an alert definition
+        
+        - Regular users: Can only update alerts for their organization
+        - Admin users: Can update alerts for any organization by specifying organization
+        
+        Requires: alerts.update permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.update", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            # Admin explicitly specified organization - use it
+            validate_organization(organization)
+            target_organization = organization
+        elif is_admin:
+            # Admin didn't specify - allow update of any alert (will be checked in update function)
+            target_organization = None
+        else:
+            # Regular user - only their organization
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await update_alert_definition(alert_id, target_organization, payload, username)
+    
+    @app.delete("/api/v1/alerts/definitions/{alert_id}", tags=["Alerts"])
+    async def delete_alert_definition_endpoint(
+        alert_id: int,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Delete an alert definition
+        
+        - Regular users: Can only delete alerts for their organization
+        - Admin users: Can delete alerts for any organization by specifying organization
+        
+        Requires: alerts.delete permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.delete", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            # Admin explicitly specified organization - use it
+            validate_organization(organization)
+            target_organization = organization
+        elif is_admin:
+            # Admin didn't specify - allow delete of any alert
+            target_organization = None
+        else:
+            # Regular user - only their organization
+            target_organization = extract_organization(request)
+        
+        await delete_alert_definition(alert_id, target_organization)
+        return {"message": "Alert definition deleted successfully"}
+    
+    @app.patch("/api/v1/alerts/definitions/{alert_id}/enabled", response_model=AlertDefinitionResponse, tags=["Alerts"])
+    async def toggle_alert_definition_endpoint(
+        alert_id: int,
+        request: Request,
+        enabled: bool = Body(..., description="Enable or disable the alert"),
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Enable or disable an alert definition
+        
+        - Regular users: Can only toggle alerts for their organization (determined by API key or X-Organization header)
+        - Admin users: Can toggle alerts for any organization by specifying organization, or omit to toggle any alert
+        
+        Requires: alerts.update permission (alerts.admin for cross-organization operations)
+        """
+        await check_permission("alerts.update", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload = await auth_middleware.verify_token(token)
+            if payload:
+                user_permissions = payload.get("permissions", [])
+                user_roles = payload.get("roles", [])
+                # Check for admin permission or role
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine target organization
+        if is_admin:
+            if organization:
+                # Admin explicitly specified organization - use it
+                validate_organization(organization)
+                target_organization = organization
+            else:
+                # Admin didn't specify - allow toggling any alert (pass None)
+                target_organization = None
+        else:
+            # Regular user - extract from request
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await toggle_alert_definition(alert_id, target_organization, enabled, username)
+
+    
+    @app.post("/api/v1/alerts/receivers", response_model=NotificationReceiverResponse, tags=["Alerts"])
+    async def create_notification_receiver_endpoint(
+        payload: NotificationReceiverCreate,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Create a new notification receiver
+        
+        - Regular users: organization is automatically extracted from API key or X-Organization header
+        - Admin users: Can specify organization as query parameter to create receivers for any organization
+        
+        Requires: alerts.create permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.create", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            validate_organization(organization)
+            target_organization = organization
+        else:
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await create_notification_receiver(target_organization, payload, username)
+    
+    @app.get("/api/v1/alerts/receivers", response_model=List[NotificationReceiverResponse], tags=["Alerts"])
+    async def list_notification_receivers_endpoint(
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        enabled_only: bool = Query(False, description="Only return enabled receivers")
+    ):
+        """
+        List notification receivers
+        
+        - Regular users: See only receivers for their organization
+        - Admin users: See all receivers across all organizations
+        
+        Requires: alerts.read permission (alerts.admin for viewing all receivers)
+        """
+        await check_permission("alerts.read", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # If admin, return all receivers (organization=None)
+        if is_admin:
+            organization = None
+        else:
+            organization = extract_organization(request)
+        
+        return await list_notification_receivers(organization, enabled_only)
+    
+    @app.get("/api/v1/alerts/receivers/{receiver_id}", response_model=NotificationReceiverResponse, tags=["Alerts"])
+    async def get_notification_receiver_endpoint(
+        receiver_id: int,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Get a specific notification receiver by ID
+        
+        - Regular users: Can only get receivers for their organization
+        - Admin users: Can get receivers for any organization by specifying organization, or omit to get any receiver
+        
+        Requires: alerts.read permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.read", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin:
+            if organization:
+                validate_organization(organization)
+                return await get_notification_receiver_by_id(receiver_id, organization)
+            else:
+                return await get_notification_receiver_by_id(receiver_id, None)
+        else:
+            target_organization = extract_organization(request)
+            return await get_notification_receiver_by_id(receiver_id, target_organization)
+    
+    @app.put("/api/v1/alerts/receivers/{receiver_id}", response_model=NotificationReceiverResponse, tags=["Alerts"])
+    async def update_notification_receiver_endpoint(
+        receiver_id: int,
+        payload: NotificationReceiverUpdate,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Update a notification receiver
+        
+        - Regular users: Can only update receivers for their organization
+        - Admin users: Can update receivers for any organization by specifying organization
+        
+        Requires: alerts.update permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.update", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            validate_organization(organization)
+            target_organization = organization
+        elif is_admin:
+            target_organization = None
+        else:
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await update_notification_receiver(receiver_id, target_organization, payload, username)
+    
+    @app.delete("/api/v1/alerts/receivers/{receiver_id}", tags=["Alerts"])
+    async def delete_notification_receiver_endpoint(
+        receiver_id: int,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Delete a notification receiver
+        
+        - Regular users: Can only delete receivers for their organization
+        - Admin users: Can delete receivers for any organization by specifying organization
+        
+        Requires: alerts.delete permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.delete", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            validate_organization(organization)
+            target_organization = organization
+        elif is_admin:
+            target_organization = None
+        else:
+            target_organization = extract_organization(request)
+        
+        await delete_notification_receiver(receiver_id, target_organization)
+        return {"message": "Notification receiver deleted successfully"}
+    
+    @app.post("/api/v1/alerts/routing-rules", response_model=RoutingRuleResponse, tags=["Alerts"])
+    async def create_routing_rule_endpoint(
+        payload: RoutingRuleCreate,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Create a new routing rule
+        
+        - Regular users: organization is automatically extracted from API key or X-Organization header
+        - Admin users: Can specify organization as query parameter to create rules for any organization
+        
+        Requires: alerts.create permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.create", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            validate_organization(organization)
+            target_organization = organization
+        else:
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await create_routing_rule(target_organization, payload, username)
+    
+    @app.get("/api/v1/alerts/routing-rules", response_model=List[RoutingRuleResponse], tags=["Alerts"])
+    async def list_routing_rules_endpoint(
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        enabled_only: bool = Query(False, description="Only return enabled rules")
+    ):
+        """
+        List routing rules
+        
+        - Regular users: See only rules for their organization
+        - Admin users: See all rules across all organizations
+        
+        Requires: alerts.read permission (alerts.admin for viewing all rules)
+        """
+        await check_permission("alerts.read", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # If admin, return all rules (organization=None)
+        if is_admin:
+            organization = None
+        else:
+            organization = extract_organization(request)
+        
+        return await list_routing_rules(organization, enabled_only)
+    
+    @app.get("/api/v1/alerts/routing-rules/{rule_id}", response_model=RoutingRuleResponse, tags=["Alerts"])
+    async def get_routing_rule_endpoint(
+        rule_id: int,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Get a specific routing rule by ID
+        
+        - Regular users: Can only get rules for their organization
+        - Admin users: Can get rules for any organization by specifying organization, or omit to get any rule
+        
+        Requires: alerts.read permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.read", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin:
+            if organization:
+                validate_organization(organization)
+                return await get_routing_rule_by_id(rule_id, organization)
+            else:
+                return await get_routing_rule_by_id(rule_id, None)
+        else:
+            target_organization = extract_organization(request)
+            return await get_routing_rule_by_id(rule_id, target_organization)
+    
+    @app.put("/api/v1/alerts/routing-rules/{rule_id}", response_model=RoutingRuleResponse, tags=["Alerts"])
+    async def update_routing_rule_endpoint(
+        rule_id: int,
+        payload: RoutingRuleUpdate,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Update a routing rule
+        
+        - Regular users: Can only update rules for their organization
+        - Admin users: Can update rules for any organization by specifying organization
+        
+        Requires: alerts.update permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.update", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            validate_organization(organization)
+            target_organization = organization
+        elif is_admin:
+            target_organization = None
+        else:
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await update_routing_rule(rule_id, target_organization, payload, username)
+    
+    @app.delete("/api/v1/alerts/routing-rules/{rule_id}", tags=["Alerts"])
+    async def delete_routing_rule_endpoint(
+        rule_id: int,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Delete a routing rule
+        
+        - Regular users: Can only delete rules for their organization
+        - Admin users: Can delete rules for any organization by specifying organization
+        
+        Requires: alerts.delete permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.delete", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            validate_organization(organization)
+            target_organization = organization
+        elif is_admin:
+            target_organization = None
+        else:
+            target_organization = extract_organization(request)
+        
+        await delete_routing_rule(rule_id, target_organization)
+        return {"message": "Routing rule deleted successfully"}
+    
+    @app.patch("/api/v1/alerts/routing-rules/timing", tags=["Alerts"])
+    async def update_routing_rule_timing_endpoint(
+        payload: RoutingRuleTimingUpdate,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Update timing parameters (group_wait, group_interval, repeat_interval) for routing rules
+        matching the specified criteria.
+        
+        This endpoint updates all routing rules that match:
+        - organization (if specified, or all for admin)
+        - category
+        - severity
+        - alert_type (if specified)
+        - priority (if specified)
+        
+        - Regular users: Can only update rules for their organization
+        - Admin users: Can update rules for any organization by specifying organization, or all organizations if not specified
+        
+        Requires: alerts.update permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.update", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            validate_organization(organization)
+            target_organization = organization
+        elif is_admin:
+            target_organization = None  # Admin can update across all organizations
+        else:
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await update_routing_rule_timing(target_organization, payload, username)
+
+# ASR Service Endpoints (Proxy to ASR Service)
 
 @app.post("/api/v1/asr/transcribe", response_model=ASRInferenceResponse, tags=["ASR"])
 async def transcribe_audio(

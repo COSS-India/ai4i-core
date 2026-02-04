@@ -16,6 +16,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.41b0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.20.0",
     "elasticsearch>=8.10.0",  # Compatible with OpenSearch
+    "packaging>=23.0",  # Required by opentelemetry-instrumentation-fastapi
 ]
 
 [project.optional-dependencies]
