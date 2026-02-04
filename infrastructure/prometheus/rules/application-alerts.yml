@@ -1,120 +1,56 @@
 groups:
-  - name: application-latency-alerts
-    interval: 30s
-    rules:
-      # Average latency across all services (all endpoints)
-      - alert: HighAverageLatencyAllServices
-        expr: |
-          histogram_quantile(
-            0.5,
-            sum(rate(telemetry_obsv_request_duration_seconds_bucket[5m])) by (le)
-          ) > 0.15
-        for: 5m
-        labels:
-          severity: warning
-          urgency: medium
-          category: application
-          alert_type: latency
-          scope: all_services
-        annotations:
-          summary: "High average latency across all services"
-          description: "Average latency across all services is {{ $value | humanize }}s (threshold: 0.15s)"
-          impact: "Users may experience slow response times"
-          action: "Check service health and resource utilization"
-
-      # Per-service median latency
-      - alert: HighMedianLatencyPerService
-        expr: |
-          histogram_quantile(
-            0.5,
-            sum by (le, service) (
-              rate(telemetry_obsv_request_duration_seconds_bucket{
-                service=~"nmt-service|tts-service|asr-service"
-              }[5m])
-            )
-          ) > 0.1
-        for: 2m
-        labels:
-          severity: warning
-          urgency: medium
-          category: application
-          alert_type: latency
-          scope: per_service
-        annotations:
-          summary: "High median latency for {{ $labels.service }}"
-          description: "Median latency for {{ $labels.service }} is {{ $value | humanize }}s (threshold: 0.1s)"
-          impact: "{{ $labels.service }} users experiencing degraded performance"
-          action: "Investigate {{ $labels.service }} performance metrics"
-
-  - name: application-error-alerts
-    interval: 30s
-    rules:
-      # Overall error rate across all services and endpoints (5m window)
-      - alert: HighErrorRateAllServices
-        expr: |
-          100 * (
-            (
-              sum(max_over_time(telemetry_obsv_errors_total[5m]))
-              - 
-              (
-                (sum(telemetry_obsv_errors_total offset 5m) != bool sum(max_over_time(telemetry_obsv_errors_total[5m])))
-                * sum(telemetry_obsv_errors_total offset 5m)
-              )
-            )
-            /
-            (
-              sum(max_over_time(telemetry_obsv_requests_total[5m]))
-              -
-              (
-                (sum(telemetry_obsv_requests_total offset 5m) != bool sum(max_over_time(telemetry_obsv_requests_total[5m])))
-                * sum(telemetry_obsv_requests_total offset 5m)
-              )
-            )
-          ) > 1
-        for: 5m
-        labels:
-          severity: critical
-          urgency: high
-          category: application
-          alert_type: error_rate
-          scope: all_services
-        annotations:
-          summary: "High error rate across all services"
-          description: "Overall error rate is {{ $value | humanizePercentage }} (threshold: 1%)"
-          impact: "Multiple services experiencing errors - platform-wide issue"
-          action: "Check infrastructure and shared dependencies"
-
-      # Per-service error rate (5m window)
-      - alert: HighErrorRatePerService
-        expr: |
-          100 * (
-            (
-              sum by (service) (max_over_time(telemetry_obsv_errors_total{service=~"nmt-service|tts-service|asr-service"}[5m]))
-              -
-              (
-                (sum by (service) (telemetry_obsv_errors_total{service=~"nmt-service|tts-service|asr-service"} offset 5m) != bool sum by (service) (max_over_time(telemetry_obsv_errors_total{service=~"nmt-service|tts-service|asr-service"}[5m])))
-                * sum by (service) (telemetry_obsv_errors_total{service=~"nmt-service|tts-service|asr-service"} offset 5m)
-              )
-            )
-            /
-            (
-              sum by (service) (max_over_time(telemetry_obsv_requests_total{service=~"nmt-service|tts-service|asr-service"}[5m]))
-              -
-              (
-                (sum by (service) (telemetry_obsv_requests_total{service=~"nmt-service|tts-service|asr-service"} offset 5m) != bool sum by (service) (max_over_time(telemetry_obsv_requests_total{service=~"nmt-service|tts-service|asr-service"}[5m])))
-                * sum by (service) (telemetry_obsv_requests_total{service=~"nmt-service|tts-service|asr-service"} offset 5m)
-              )
-            )
-          ) > 0.5
-        for: 2m
-        labels:
-          severity: critical
-          urgency: high
-          category: application
-          alert_type: error_rate
-          scope: per_service
-        annotations:
-          summary: "High error rate for {{ $labels.service }}"
-          description: "Error rate for {{ $labels.service }} is {{ $value | humanizePercentage }} (threshold: 0.5%)"
-          impact: "Users of {{ $labels.service }} experiencing failures"
-          action: "Check {{ $labels.service }} logs and error traces"
+- name: application-alerts
+  interval: 30s
+  rules:
+  - alert: HighMedianLatencyPerService_bashadaan
+    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="bashadaan"}[5m]))) > 0.15
+    for: 2m
+    labels:
+      organization: bashadaan
+      severity: warning
+      urgency: medium
+      category: application
+      alert_type: latency
+      scope: per_endpoint
+    annotations:
+      summary: HighMedianLatencyPerService for bashadaan
+      description: High median latency for specific inference endpoints
+  - alert: HighMedianLatencyPerService_beml
+    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="beml"}[5m]))) > 0.18
+    for: 2m
+    labels:
+      organization: beml
+      severity: warning
+      urgency: medium
+      category: application
+      alert_type: latency
+      scope: per_endpoint
+    annotations:
+      summary: HighMedianLatencyPerService for beml
+      description: High median latency for specific inference endpoints
+  - alert: HighMedianLatencyPerService_irctc
+    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="irctc"}[5m]))) > 0.17
+    for: 2m
+    labels:
+      organization: irctc
+      severity: warning
+      urgency: medium
+      category: application
+      alert_type: latency
+      scope: per_endpoint
+    annotations:
+      summary: HighMedianLatencyPerService for irctc
+      description: High median latency for specific inference endpoints
+  - alert: HighMedianLatencyPerService_kisanmitra
+    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="kisanmitra"}[5m]))) > 0.1
+    for: 1m
+    labels:
+      organization: kisanmitra
+      severity: critical
+      urgency: high
+      category: application
+      alert_type: latency
+      scope: per_endpoint
+    annotations:
+      summary: HighMedianLatencyPerService for kisanmitra
+      description: High median latency for specific inference endpoints - requires immediate attention
