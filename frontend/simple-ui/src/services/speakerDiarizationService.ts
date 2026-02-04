@@ -124,7 +124,7 @@ export const performSpeakerDiarizationInference = async (
     };
   } catch (error) {
     console.error('Speaker diarization inference error:', error);
-    throw new Error('Failed to perform speaker diarization inference');
+    throw error;
   }
 };
 

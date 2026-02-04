@@ -113,7 +113,7 @@ export const performLLMInference = async (
     };
   } catch (error) {
     console.error('LLM inference error:', error);
-    throw new Error('Failed to perform LLM inference');
+    throw error;
   }
 };
 

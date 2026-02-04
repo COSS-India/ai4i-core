@@ -123,7 +123,7 @@ export const performLanguageDiarizationInference = async (
     };
   } catch (error) {
     console.error('Language diarization inference error:', error);
-    throw new Error('Failed to perform language diarization inference');
+    throw error;
   }
 };
 

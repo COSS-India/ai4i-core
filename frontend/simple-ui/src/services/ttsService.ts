@@ -115,7 +115,7 @@ export const performTTSInference = async (
     };
   } catch (error) {
     console.error('TTS inference error:', error);
-    throw new Error('Failed to perform TTS inference');
+    throw error;
   }
 };
 
