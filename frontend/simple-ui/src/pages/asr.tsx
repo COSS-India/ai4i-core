@@ -155,6 +155,26 @@ const ASRPage: React.FC = () => {
                       );
                     })}
                   </Select>
+                  {serviceId && asrServices && (
+                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                      {(() => {
+                        const selectedService = asrServices.find((s) => s.service_id === serviceId);
+                        return selectedService ? (
+                          <>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Service ID:</strong> {selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Description:</strong> {selectedService.description || "No description available"}
+                            </Text>
+                          </>
+                        ) : null;
+                      })()}
+                    </Box>
+                  )}
                 </FormControl>
 
                 {/* Language Selection */}
