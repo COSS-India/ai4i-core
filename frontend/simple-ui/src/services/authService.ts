@@ -16,6 +16,7 @@ import {
   LogoutResponse,
   APIKeyCreate,
   APIKeyResponse,
+  APIKeyListResponse,
   AdminAPIKeyWithUserResponse,
   APIKeyUpdate,
   OAuth2Provider,
@@ -214,6 +215,12 @@ class AuthService {
     this.setAccessToken(response.access_token, rememberMe);
     this.setRefreshToken(response.refresh_token, rememberMe);
 
+    // Clear any previous user's API key so this user starts with no key until they set/select one
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('api_key');
+      localStorage.removeItem('selected_api_key_id');
+    }
+
     return response;
   }
 
@@ -302,6 +309,11 @@ class AuthService {
     const clearLocalState = () => {
       this.clearTokens();
       this.clearStoredUser();
+      // Clear API key so next user doesn't inherit previous user's key
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('api_key');
+        localStorage.removeItem('selected_api_key_id');
+      }
     };
 
     if (!refreshToken) {
@@ -507,8 +519,28 @@ class AuthService {
     });
   }
 
-  async listApiKeys(): Promise<APIKeyResponse[]> {
-    return this.request<APIKeyResponse[]>('/api-keys');
+  async listApiKeys(): Promise<APIKeyListResponse> {
+    const data = await this.request<APIKeyListResponse | APIKeyResponse[]>('/api-keys');
+    // Backend may return { api_keys, selected_api_key_id } or a plain array (legacy)
+    if (Array.isArray(data)) {
+      return { api_keys: data, selected_api_key_id: null };
+    }
+    const normalized = data as APIKeyListResponse;
+    return {
+      api_keys: Array.isArray(normalized.api_keys) ? normalized.api_keys : [],
+      selected_api_key_id: normalized.selected_api_key_id ?? null,
+    };
+  }
+
+  /** Persist the selected API key for the current user (used to restore selection on next login). */
+  async selectApiKey(apiKeyId: number): Promise<{ selected_api_key_id: number }> {
+    return this.request<{ selected_api_key_id: number }>('/api-keys/select', {
+      method: 'POST',
+      body: JSON.stringify({ api_key_id: apiKeyId }),
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
+    });
   }
 
   async listAllApiKeys(): Promise<AdminAPIKeyWithUserResponse[]> {
