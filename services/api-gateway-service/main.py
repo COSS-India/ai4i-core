@@ -1255,6 +1255,10 @@ class APIKeyUpdateBody(BaseModel):
         description="Set to true to activate the key, or false to deactivate (soft revoke) the key",
     )
 
+class APIKeySelectBody(BaseModel):
+    """Request body for selecting an API key."""
+    api_key_id: int = Field(..., description="ID of the API key to select")
+
 class AssignRoleBody(BaseModel):
     user_id: int = Field(..., description="ID of the user to assign role to")
     role_name: str = Field(..., description="Name of the role to assign (e.g., 'USER', 'ADMIN', 'MODERATOR', 'GUEST')")
@@ -3028,6 +3032,33 @@ async def create_api_key(
     return await proxy_to_service(
         None,
         "/api/v1/auth/api-keys",
+        "auth-service",
+        method="POST",
+        body=payload,
+        headers=headers
+    )
+
+@app.post("/api/v1/auth/api-keys/select", tags=["Authentication"])
+async def select_api_key(
+    body: APIKeySelectBody,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Select an API key for the current user"""
+    import json
+    # Convert body to dict
+    body_dict = body.dict(exclude_none=True)
+    
+    # Encode request body as JSON
+    payload = json.dumps(body_dict).encode('utf-8')
+    
+    # Prepare headers - preserve Authorization, remove Content-Length
+    headers = build_auth_headers(request, credentials, None)
+    headers['Content-Type'] = 'application/json'
+    
+    return await proxy_to_service(
+        None,
+        "/api/v1/auth/api-keys/select",
         "auth-service",
         method="POST",
         body=payload,
