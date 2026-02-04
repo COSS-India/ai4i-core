@@ -172,14 +172,14 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
             </FormControl>
             
             {selectedService && (
-              <Box mt={2} p={3} bg="gray.50" borderRadius="md">
-                <Text fontSize="sm" color="gray.600" mb={1}>
+              <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                <Text fontSize="sm" color="gray.700" mb={1}>
                   <strong>Service ID:</strong> {selectedService.service_id}
                 </Text>
-                <Text fontSize="sm" color="gray.600" mb={1}>
+                <Text fontSize="sm" color="gray.700" mb={1}>
                   <strong>Name:</strong> {selectedService.name || selectedService.service_id}
                 </Text>
-                <Text fontSize="sm" color="gray.600" mb={1}>
+                <Text fontSize="sm" color="gray.700" mb={1}>
                   <strong>Description:</strong> {selectedService.serviceDescription || selectedService.description || 'No description available'}
                 </Text>
               </Box>
@@ -257,11 +257,11 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
             </HStack>
 
             {/* Current Selection Display */}
-            <Box textAlign="center" p={3} bg="orange.50" borderRadius="md">
-              <Text fontSize="sm" color="orange.700" fontWeight="medium">
+            <Box textAlign="center" p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+              <Text fontSize="sm" color="gray.700" fontWeight="medium">
                 {getLanguageLabel(languagePair.sourceLanguage)} → {getLanguageLabel(languagePair.targetLanguage)}
               </Text>
-              <Text fontSize="xs" color="orange.600" mt={1}>
+              <Text fontSize="xs" color="gray.700" mt={1}>
                 {languagePair.sourceLanguage} → {languagePair.targetLanguage}
               </Text>
             </Box>
