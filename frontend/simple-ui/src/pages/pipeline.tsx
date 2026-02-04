@@ -172,10 +172,10 @@ const PipelinePage: React.FC = () => {
               w="full"
             >
               <Box flex={1} textAlign="center">
-                <Heading size="lg" color="gray.800" mb={1}>
+                <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
                   Speech to Speech
                 </Heading>
-                <Text color="gray.600" fontSize="sm">
+                <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
                   Chain Speech, Translation, and Voice models for end-to-end speech
                   conversion.
                 </Text>

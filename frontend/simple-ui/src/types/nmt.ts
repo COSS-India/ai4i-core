@@ -232,5 +232,4 @@ export interface NMTServiceDetailsResponse {
     targetScriptCode?: string;
   }>;
   modelVersion?: string;
-  model_version?: string;
 }
