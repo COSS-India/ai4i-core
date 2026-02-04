@@ -16,7 +16,8 @@ RUN apt-get update && apt-get install -y \
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 
 # Copy requirements and install Python dependencies
-COPY services/telemetry-service/requirements.txt .
+COPY requirements.txt .
+# COPY services/telemetry-service/requirements.txt .
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir --user -r requirements.txt
 
@@ -44,18 +45,23 @@ RUN useradd --create-home --shell /bin/bash app
 # Copy Python packages from builder stage
 COPY --from=builder /root/.local /home/app/.local
 
+# # Make sure scripts in .local are usable
+# ENV PATH=/home/app/.local/bin:$PATH
+
 # Copy application code FIRST
 COPY services/telemetry-service /app
-
+# COPY . .
 # Create libs directory and copy library AFTER app code (to ensure it's not overwritten)
 RUN mkdir -p /app/libs
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 
 # Verify library was copied
 RUN test -d /app/libs/ai4icore_telemetry && test -f /app/libs/ai4icore_telemetry/ai4icore_telemetry/__init__.py || (echo "ERROR: Library directory or __init__.py not found!" && ls -la /app/libs/ 2>&1 && exit 1)
-
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash app
+# Create non-root user first
 # Change ownership to app user
-RUN chown -R app:app /app /home/app/.local
+# RUN chown -R app:app /app /home/app/.local
 
 # Switch to app user
 USER app
@@ -84,4 +90,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8084/health || exit 1
 
 # Run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8084"]
+# CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8084"]
+ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8084"]
