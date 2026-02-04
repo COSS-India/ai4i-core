@@ -152,20 +152,35 @@ export function extractErrorInfo(error: any): ErrorInfo {
     else if (data.message) {
       errorMessage = String(data.message);
     }
-  } 
+  }
+  // Handle API key missing or invalid (from backend or when no key set)
+  const detailStr = typeof error?.response?.data?.detail === 'string' ? error.response.data.detail : '';
+  if (
+    error?.response?.data?.detail?.message?.toLowerCase().includes('api key') ||
+    error?.response?.data?.detail?.error === 'API_KEY_MISSING' ||
+    error?.message?.toLowerCase().includes('api key') ||
+    detailStr.toLowerCase().includes('api key')
+  ) {
+    if (detailStr.toLowerCase().includes('invalid') && detailStr.toLowerCase().includes('api key')) {
+      errorMessage = detailStr; // e.g. "Invalid API key"
+    } else if (!errorMessage || errorMessage === 'An unexpected error occurred. Please try again.') {
+      errorMessage = 'API key is required to access this service.';
+    }
+    return { title: errorTitle, message: errorMessage, showOnlyMessage: true };
+  }
   // Handle 401 authentication errors
-  else if (error?.response?.status === 401 || error?.status === 401 || error?.message?.includes('401')) {
+  if (error?.response?.status === 401 || error?.status === 401 || error?.message?.includes('401')) {
     errorTitle = 'Authentication Failed';
     if (error?.message?.includes('API key') || error?.message?.includes('api key')) {
-      errorMessage = 'API key is missing or invalid. Please set a valid API key in your profile.';
+      errorMessage = 'API key is required to access this service.';
     } else if (error?.message?.includes('token') || error?.message?.includes('Token')) {
       errorMessage = 'Your session has expired. Please sign in again.';
     } else {
       errorMessage = 'Authentication failed. Please check your API key and login status, then try again.';
     }
-  } 
-  // Handle standard error message
-  else if (error?.message) {
+  }
+  // Use error.message only when we didn't get a message from response.data (e.g. avoid overwriting "Invalid API key" with "Request failed with status code 403")
+  else if (error?.message && errorMessage === 'An unexpected error occurred. Please try again.') {
     errorMessage = error.message;
   }
 
