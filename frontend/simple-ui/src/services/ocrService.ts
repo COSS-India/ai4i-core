@@ -135,7 +135,7 @@ export const performOCRInference = async (
     };
   } catch (error) {
     console.error('OCR inference error:', error);
-    throw new Error('Failed to perform OCR inference');
+    throw error;
   }
 };
 

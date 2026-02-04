@@ -112,9 +112,9 @@ export const performAudioLanguageDetectionInference = async (
       data: response.data,
       responseTime
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Audio language detection inference error:', error);
-    throw new Error('Failed to perform audio language detection inference');
+    throw error;
   }
 };
 

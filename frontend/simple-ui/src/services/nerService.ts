@@ -119,7 +119,7 @@ export const performNERInference = async (
     };
   } catch (error) {
     console.error('NER inference error:', error);
-    throw new Error('Failed to perform NER inference');
+    throw error;
   }
 };
 

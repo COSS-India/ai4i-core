@@ -126,7 +126,7 @@ export const performLanguageDetectionInference = async (
     };
   } catch (error) {
     console.error('Language detection inference error:', error);
-    throw new Error('Failed to perform language detection inference');
+    throw error;
   }
 };
 

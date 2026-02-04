@@ -132,7 +132,7 @@ export const performTransliterationInference = async (
     };
   } catch (error) {
     console.error('Transliteration inference error:', error);
-    throw new Error('Failed to perform transliteration inference');
+    throw error;
   }
 };
 
