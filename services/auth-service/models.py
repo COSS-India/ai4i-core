@@ -245,6 +245,10 @@ class APIKeyUpdate(BaseModel):
     permissions: Optional[List[str]] = None
     is_active: Optional[bool] = None
 
+class APIKeySelectRequest(BaseModel):
+    """Request to select an API key for the current user."""
+    api_key_id: int
+
 class APIKeyResponse(BaseModel):
     id: int
     key_name: str

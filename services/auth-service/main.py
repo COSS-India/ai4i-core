@@ -24,7 +24,7 @@ from models import (
     APIKeyUpdate, APIKeyResponse, OAuth2Provider, OAuth2Callback, Role, UserRole,
     APIKeyValidationRequest, APIKeyValidationResponse, Permission,
     UserDetailResponse, PermissionResponse, UserListResponse,
-    AdminAPIKeyWithUserResponse,
+    AdminAPIKeyWithUserResponse, APIKeySelectRequest,
 )
 from pydantic import BaseModel
 from auth_utils import AuthUtils, ACCESS_TOKEN_EXPIRE_MINUTES
@@ -1256,6 +1256,44 @@ async def list_all_api_keys_with_users(
         )
 
     return api_keys
+
+@app.post("/api/v1/auth/api-keys/select")
+async def select_api_key(
+    select_request: APIKeySelectRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Select an API key for the current user.
+    
+    This stores the selected API key ID in the user's preferences,
+    allowing the frontend to restore the selection on next login.
+    """
+    # Verify that the API key exists and belongs to the current user
+    result = await db.execute(
+        select(APIKey).where(
+            APIKey.id == select_request.api_key_id,
+            APIKey.user_id == current_user.id,
+            APIKey.is_active.is_(True)
+        )
+    )
+    api_key = result.scalar_one_or_none()
+    
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found or does not belong to you"
+        )
+    
+    # Update user preferences to store the selected API key ID
+    if current_user.preferences is None:
+        current_user.preferences = {}
+    
+    current_user.preferences["selected_api_key_id"] = select_request.api_key_id
+    await db.commit()
+    
+    logger.info(f"User {current_user.email} selected API key: {select_request.api_key_id}")
+    return {"selected_api_key_id": select_request.api_key_id}
 
 @app.delete("/api/v1/auth/api-keys/{key_id}")
 async def revoke_api_key(
