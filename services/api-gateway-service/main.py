@@ -5711,7 +5711,7 @@ async def view_tenant_user(
 
 @app.get("/api/v1/multi-tenant/list/tenants", response_model=ListTenantsResponse, tags=["Multi-Tenant"])
 async def list_tenants(
-    request: Request = None,
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
@@ -5733,7 +5733,7 @@ async def list_tenants(
 
 @app.get("/api/v1/multi-tenant/list/users", response_model=ListUsersResponse, tags=["Multi-Tenant"])
 async def list_users(
-    request: Request = None,
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
