@@ -15,10 +15,12 @@ import { listServices } from './modelManagementService';
 export interface ASRServiceDetails {
   service_id: string;
   model_id: string;
+  model_version?: string;
   name: string;
   description: string;
   endpoint: string;
   languages?: string[];
+  modelVersion?: string;
 }
 
 /**
@@ -103,9 +105,18 @@ export const transcribeAudio = async (
       data: response.data,
       responseTime
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error('ASR transcription error:', error);
-    throw new Error('Failed to transcribe audio');
+    // Preserve backend error message for display in UI
+    const data = error?.response?.data;
+    const detail = data?.detail;
+    const message =
+      (typeof detail === 'object' && detail?.message && String(detail.message)) ||
+      (typeof detail === 'string' && detail) ||
+      data?.message ||
+      error?.message ||
+      'Failed to transcribe audio';
+    throw new Error(message);
   }
 };
 
@@ -160,10 +171,12 @@ export const listASRServices = async (): Promise<ASRServiceDetails[]> => {
       return {
         service_id: service.serviceId || service.service_id,
         model_id: service.modelId || service.model_id,
+        model_version: service.modelVersion || service.model_version || '',
         name: service.name || service.serviceId || service.service_id || '',
         description: service.serviceDescription || service.description || '',
         endpoint: endpoint,
         languages: Array.from(new Set(supportedLanguages)), // Remove duplicates
+        modelVersion: service.modelVersion || service.model_version,
       } as ASRServiceDetails;
     });
 

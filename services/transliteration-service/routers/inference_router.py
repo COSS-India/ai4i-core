@@ -9,6 +9,9 @@ from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+from ai4icore_logging import get_correlation_id
 
 from models.transliteration_request import TransliterationInferenceRequest
 from models.transliteration_response import TransliterationInferenceResponse
@@ -16,17 +19,49 @@ from repositories.transliteration_repository import TransliterationRepository
 from services.transliteration_service import TransliterationService
 from services.text_service import TextService
 from utils.triton_client import TritonClient
+from utils.auth_utils import extract_auth_headers
 from utils.validation_utils import (
     validate_language_pair, validate_service_id, validate_batch_size,
     InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError
 )
 from middleware.auth_provider import AuthProvider
-from middleware.exceptions import AuthenticationError, AuthorizationError
+from middleware.tenant_db_dependency import get_tenant_db_session
+from middleware.exceptions import (
+    AuthenticationError, 
+    AuthorizationError,
+    TritonInferenceError,
+    ModelNotFoundError,
+    ServiceUnavailableError,
+    TextProcessingError,
+    ErrorDetail
+)
 
-# Observability: Dhruva plugin automatically extracts metrics from request body
-# No manual recording needed - metrics are tracked automatically by middleware!
+from services.constants.error_messages import (
+    NO_TEXT_INPUT,
+    NO_TEXT_INPUT_MESSAGE,
+    TEXT_TOO_SHORT,
+    TEXT_TOO_SHORT_MESSAGE,
+    TEXT_TOO_LONG,
+    TEXT_TOO_LONG_MESSAGE,
+    INVALID_CHARACTERS,
+    INVALID_CHARACTERS_MESSAGE,
+    EMPTY_INPUT,
+    EMPTY_INPUT_MESSAGE,
+    SERVICE_UNAVAILABLE,
+    SERVICE_UNAVAILABLE_MESSAGE,
+    PROCESSING_FAILED,
+    PROCESSING_FAILED_MESSAGE,
+    MODEL_UNAVAILABLE,
+    MODEL_UNAVAILABLE_MESSAGE,
+    INVALID_REQUEST,
+    INVALID_REQUEST_MESSAGE,
+    INTERNAL_SERVER_ERROR,
+    INTERNAL_SERVER_ERROR_MESSAGE
+)
 
 logger = logging.getLogger(__name__)
+# Use service name to get the same tracer instance as main.py
+tracer = trace.get_tracer("transliteration-service")
 
 # Create router
 inference_router = APIRouter(
@@ -37,7 +72,7 @@ inference_router = APIRouter(
 
 
 async def get_db_session(request: Request) -> AsyncSession:
-    """Dependency to get database session"""
+    """Dependency to get database session (legacy - use get_tenant_db_session for tenant routing)"""
     return request.app.state.db_session_factory()
 
 
@@ -48,56 +83,98 @@ def create_triton_client(triton_url: str, api_key: str) -> TritonClient:
 
 async def get_transliteration_service(
     request: Request,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = Depends(get_tenant_db_session),
 ) -> TransliterationService:
     """
     Dependency to get configured transliteration service.
-
+    
     REQUIRES Model Management database resolution - no environment variable fallback.
     Request must include config.serviceId for Model Management to resolve endpoint and model.
     """
     repository = TransliterationRepository(db)
     text_service = TextService()
-
+    
     triton_endpoint = getattr(request.state, "triton_endpoint", None)
-    triton_api_key = getattr(request.app.state, "triton_api_key", "")
-
+    triton_api_key = getattr(request.state, "triton_api_key", None)
+    
     if not triton_endpoint:
         service_id = getattr(request.state, "service_id", None)
+        model_mgmt_error = getattr(request.state, "model_management_error", None)
+        
         if service_id:
+            error_detail = (
+                f"Model Management did not resolve serviceId: {service_id} and no default endpoint is allowed. "
+                f"Please ensure the service is registered in Model Management database."
+            )
+            if model_mgmt_error:
+                error_detail += f" Error: {model_mgmt_error}"
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=(
-                    f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
-                    f"Please ensure the service is registered in Model Management database."
-                ),
+                status_code=500,
+                detail=error_detail,
             )
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail=(
                 "Request must include config.serviceId. "
                 "Transliteration service requires Model Management database resolution."
             ),
         )
-
+    
+    model_name = getattr(request.state, "triton_model_name", None)
+    
+    if not model_name or model_name == "unknown":
+        service_id = getattr(request.state, "service_id", None)
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Model Management did not resolve model name for serviceId: {service_id}. "
+                f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+            ),
+        )
+    
     logger.info(
-        "Using endpoint=%s from Model Management for serviceId=%s",
+        "Using Triton endpoint=%s model_name=%s for serviceId=%s from Model Management",
         triton_endpoint,
+        model_name,
         getattr(request.state, "service_id", "unknown"),
     )
-
-    default_triton_client = TritonClient(triton_endpoint, triton_api_key or None)
-
-    # Factory function to create Triton clients for different endpoints (kept for flexibility)
+    
+    # Factory function to create Triton clients for different endpoints
     def get_triton_client_for_endpoint(endpoint: str) -> TritonClient:
         """Create Triton client for specific endpoint"""
-        return TritonClient(triton_url=endpoint, api_key=triton_api_key or None)
-
+        # Strip http:// or https:// scheme from URL if present
+        triton_url = endpoint
+        if triton_url.startswith(('http://', 'https://')):
+            triton_url = triton_url.split('://', 1)[1]
+        return TritonClient(
+            triton_url=triton_url,
+            api_key=triton_api_key
+        )
+    
+    # Get Redis client and Model Management client from app state
+    redis_client = getattr(request.app.state, "redis_client", None)
+    model_management_client = getattr(request.app.state, "model_management_client", None)
+    
+    if not model_management_client:
+        raise HTTPException(
+            status_code=500,
+            detail="Model Management client not available. Service configuration error."
+        )
+    
+    # Get cache TTL from Model Management client config
+    cache_ttl_seconds = getattr(model_management_client, "cache_ttl_seconds", 300)
+    
+    # Create default Triton client with the resolved endpoint
+    default_triton_client = get_triton_client_for_endpoint(triton_endpoint)
+    
     return TransliterationService(
-        repository,
-        text_service,
-        default_triton_client,
-        get_triton_client_for_endpoint,
+        repository=repository, 
+        text_service=text_service,
+        get_triton_client_func=get_triton_client_for_endpoint,
+        model_management_client=model_management_client,
+        redis_client=redis_client,
+        cache_ttl_seconds=cache_ttl_seconds,
+        default_triton_client=default_triton_client
     )
 
 
@@ -112,61 +189,210 @@ async def run_inference(
     http_request: Request,
     transliteration_service: TransliterationService = Depends(get_transliteration_service)
 ) -> TransliterationInferenceResponse:
-    """Run transliteration inference on the given request"""
-    try:
-        # Validate request
-        validate_service_id(request.config.serviceId)
-        validate_language_pair(
-            request.config.language.sourceLanguage,
-            request.config.language.targetLanguage
-        )
-        validate_batch_size(len(request.input), max_size=100)
-        
-        # Validate top_k for sentence level
-        if request.config.numSuggestions > 0 and request.config.isSentence:
-            raise HTTPException(
-                status_code=400, 
-                detail="numSuggestions (top_k) is not valid for sentence level transliteration"
-            )
-        
-        # Extract auth context from request.state
-        user_id = getattr(http_request.state, 'user_id', None)
-        api_key_id = getattr(http_request.state, 'api_key_id', None)
-        session_id = getattr(http_request.state, 'session_id', None)
-        
-        # Log incoming request
-        logger.info(f"Processing transliteration inference request with {len(request.input)} texts")
-        
-        # Run inference
-        # Note: Dhruva Observability Plugin automatically extracts and records:
-        # - Transliteration characters from request body
-        # - Organization/app from JWT token or headers
-        # - Request duration and status
-        # No manual metric recording needed!
-        response = await transliteration_service.run_inference(
-            request=request,
-            user_id=user_id,
-            api_key_id=api_key_id,
-            session_id=session_id
-        )
-        
-        logger.info(f"Transliteration inference completed successfully")
-        return response
-        
-    except (InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError) as e:
-        logger.warning(f"Validation error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+    """
+    Run transliteration inference on the given request.
     
-    except Exception as e:
-        logger.error(f"Transliteration inference failed: {e}", exc_info=True)
-        # Return more detailed error in development, generic in production
-        import traceback
-        error_detail = {
-            "message": str(e),
-            "type": type(e).__name__,
-            "traceback": traceback.format_exc() if logger.level <= logging.DEBUG else None
-        }
-        raise HTTPException(status_code=500, detail=error_detail)
+    Creates detailed trace spans for the entire inference operation.
+    """
+    # Create a span for the entire inference operation
+    # This will be a child of the FastAPI auto-instrumented span
+    if not tracer:
+        # Fallback if tracing not available
+        return await _run_transliteration_inference_impl(request, http_request, transliteration_service)
+    
+    with tracer.start_as_current_span("transliteration.inference") as span:
+        try:
+            # Extract auth context from request.state (if middleware is configured)
+            user_id = getattr(http_request.state, "user_id", None)
+            api_key_id = getattr(http_request.state, "api_key_id", None)
+            session_id = getattr(http_request.state, "session_id", None)
+            
+            # Get correlation ID for log/trace correlation
+            correlation_id = get_correlation_id(http_request) or getattr(http_request.state, "correlation_id", None)
+            if correlation_id:
+                span.set_attribute("correlation.id", correlation_id)
+
+            # Add request metadata to span
+            span.set_attribute("transliteration.input_count", len(request.input))
+            span.set_attribute("transliteration.service_id", request.config.serviceId)
+            span.set_attribute("transliteration.source_language", request.config.language.sourceLanguage)
+            span.set_attribute("transliteration.target_language", request.config.language.targetLanguage)
+            span.set_attribute("transliteration.is_sentence", request.config.isSentence)
+            span.set_attribute("transliteration.num_suggestions", request.config.numSuggestions)
+            
+            # Track request size (approximate)
+            try:
+                import json
+                request_size = len(json.dumps(request.dict()).encode('utf-8'))
+                span.set_attribute("http.request.size_bytes", request_size)
+            except Exception:
+                pass
+            
+            if user_id:
+                span.set_attribute("user.id", str(user_id))
+            if api_key_id:
+                span.set_attribute("api_key.id", str(api_key_id))
+            if session_id:
+                span.set_attribute("session.id", str(session_id))
+            
+            # Add span event for request start
+            span.add_event("transliteration.inference.started", {
+                "input_count": len(request.input),
+                "service_id": request.config.serviceId,
+                "source_language": request.config.language.sourceLanguage,
+                "target_language": request.config.language.targetLanguage,
+                "is_sentence": request.config.isSentence
+            })
+
+            logger.info(
+                "Processing Transliteration inference request with %d text input(s), user_id=%s api_key_id=%s session_id=%s",
+                len(request.input),
+                user_id,
+                api_key_id,
+                session_id,
+            )
+
+            # Run inference
+            response = await transliteration_service.run_inference(
+                request=request,
+                user_id=user_id,
+                api_key_id=api_key_id,
+                session_id=session_id,
+                auth_headers=extract_auth_headers(http_request)
+            )
+            
+            # Add response metadata
+            span.set_attribute("transliteration.output_count", len(response.output))
+            span.set_attribute("http.status_code", 200)
+            
+            # Track response size (approximate)
+            try:
+                import json
+                response_size = len(json.dumps(response.dict()).encode('utf-8'))
+                span.set_attribute("http.response.size_bytes", response_size)
+            except Exception:
+                pass
+            
+            # Add span event for successful completion
+            span.add_event("transliteration.inference.completed", {
+                "output_count": len(response.output),
+                "status": "success"
+            })
+            span.set_status(Status(StatusCode.OK))
+            logger.info("Transliteration inference completed successfully")
+            return response
+
+        except (InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError) as exc:
+            span.set_attribute("error", True)
+            span.set_attribute("error.type", type(exc).__name__)
+            span.set_attribute("error.message", str(exc))
+            span.set_attribute("http.status_code", 400)
+            span.add_event("transliteration.inference.failed", {
+                "error_type": type(exc).__name__,
+                "error_message": str(exc)
+            })
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
+            logger.warning("Validation error in Transliteration inference: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=ErrorDetail(code=INVALID_REQUEST, message=INVALID_REQUEST_MESSAGE).dict()
+            ) from exc
+
+        except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as exc:
+            span.set_attribute("error", True)
+            span.set_attribute("error.type", type(exc).__name__)
+            span.set_attribute("error.message", str(exc))
+            span.set_attribute("http.status_code", getattr(exc, 'status_code', 503))
+            span.add_event("transliteration.inference.failed", {
+                "error_type": type(exc).__name__,
+                "error_message": str(exc)
+            })
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
+            # Re-raise service-specific errors (they will be handled by error handler middleware)
+            raise
+
+        except Exception as exc:
+            span.set_attribute("error", True)
+            span.set_attribute("error.type", type(exc).__name__)
+            span.set_attribute("error.message", str(exc))
+            span.set_attribute("http.status_code", 500)
+            span.add_event("transliteration.inference.failed", {
+                "error_type": type(exc).__name__,
+                "error_message": str(exc)
+            })
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
+            logger.error("Transliteration inference failed: %s", exc, exc_info=True)
+            
+            # Extract context from request state for better error messages
+            service_id = getattr(http_request.state, "service_id", None)
+            triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+            model_name = getattr(http_request.state, "triton_model_name", None)
+            
+            # Return appropriate error based on exception type
+            if "Triton" in str(exc) or "triton" in str(exc).lower():
+                error_code = MODEL_UNAVAILABLE if model_name else SERVICE_UNAVAILABLE
+                error_message = MODEL_UNAVAILABLE_MESSAGE if model_name else SERVICE_UNAVAILABLE_MESSAGE
+                raise HTTPException(
+                    status_code=503,
+                    detail=ErrorDetail(code=error_code, message=error_message).dict()
+                ) from exc
+            elif "transliteration" in str(exc).lower() or "failed" in str(exc).lower():
+                raise HTTPException(
+                    status_code=500,
+                    detail=ErrorDetail(code=PROCESSING_FAILED, message=PROCESSING_FAILED_MESSAGE).dict()
+                ) from exc
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=ErrorDetail(code=INTERNAL_SERVER_ERROR, message=INTERNAL_SERVER_ERROR_MESSAGE).dict()
+                ) from exc
+
+
+async def _run_transliteration_inference_impl(
+    request: TransliterationInferenceRequest,
+    http_request: Request,
+    transliteration_service: TransliterationService,
+) -> TransliterationInferenceResponse:
+    """Fallback implementation when tracing is not available."""
+    # Validate request
+    validate_service_id(request.config.serviceId)
+    validate_language_pair(
+        request.config.language.sourceLanguage,
+        request.config.language.targetLanguage
+    )
+    validate_batch_size(len(request.input), max_size=100)
+    
+    # Validate top_k for sentence level
+    if request.config.numSuggestions > 0 and request.config.isSentence:
+        raise HTTPException(
+            status_code=400, 
+            detail="numSuggestions (top_k) is not valid for sentence level transliteration"
+        )
+    
+    user_id = getattr(http_request.state, "user_id", None)
+    api_key_id = getattr(http_request.state, "api_key_id", None)
+    session_id = getattr(http_request.state, "session_id", None)
+
+    logger.info(
+        "Processing Transliteration inference request with %d text input(s), user_id=%s api_key_id=%s session_id=%s",
+        len(request.input),
+        user_id,
+        api_key_id,
+        session_id,
+    )
+
+    response = await transliteration_service.run_inference(
+        request=request,
+        user_id=user_id,
+        api_key_id=api_key_id,
+        session_id=session_id,
+        auth_headers=extract_auth_headers(http_request)
+    )
+    logger.info("Transliteration inference completed successfully")
+    return response
 
 
 @inference_router.get(

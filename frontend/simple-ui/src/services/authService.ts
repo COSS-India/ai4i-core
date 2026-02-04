@@ -16,6 +16,7 @@ import {
   LogoutResponse,
   APIKeyCreate,
   APIKeyResponse,
+  APIKeyListResponse,
   AdminAPIKeyWithUserResponse,
   APIKeyUpdate,
   OAuth2Provider,
@@ -153,7 +154,7 @@ class AuthService {
     } else {
       sessionStorage.setItem('access_token', token);
     }
-    // Store login timestamp for session expiry tracking (24 hours)
+    // Store login timestamp for session expiry tracking (7 days if remember_me, else 24 hours)
     this.setLoginTimestamp();
   }
 
@@ -213,6 +214,12 @@ class AuthService {
     const rememberMe = data.remember_me ?? true; // Default to true for backward compatibility
     this.setAccessToken(response.access_token, rememberMe);
     this.setRefreshToken(response.refresh_token, rememberMe);
+
+    // Clear any previous user's API key so this user starts with no key until they set/select one
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('api_key');
+      localStorage.removeItem('selected_api_key_id');
+    }
 
     return response;
   }
@@ -302,6 +309,11 @@ class AuthService {
     const clearLocalState = () => {
       this.clearTokens();
       this.clearStoredUser();
+      // Clear API key so next user doesn't inherit previous user's key
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('api_key');
+        localStorage.removeItem('selected_api_key_id');
+      }
     };
 
     if (!refreshToken) {
@@ -507,8 +519,28 @@ class AuthService {
     });
   }
 
-  async listApiKeys(): Promise<APIKeyResponse[]> {
-    return this.request<APIKeyResponse[]>('/api-keys');
+  async listApiKeys(): Promise<APIKeyListResponse> {
+    const data = await this.request<APIKeyListResponse | APIKeyResponse[]>('/api-keys');
+    // Backend may return { api_keys, selected_api_key_id } or a plain array (legacy)
+    if (Array.isArray(data)) {
+      return { api_keys: data, selected_api_key_id: null };
+    }
+    const normalized = data as APIKeyListResponse;
+    return {
+      api_keys: Array.isArray(normalized.api_keys) ? normalized.api_keys : [],
+      selected_api_key_id: normalized.selected_api_key_id ?? null,
+    };
+  }
+
+  /** Persist the selected API key for the current user (used to restore selection on next login). */
+  async selectApiKey(apiKeyId: number): Promise<{ selected_api_key_id: number }> {
+    return this.request<{ selected_api_key_id: number }>('/api-keys/select', {
+      method: 'POST',
+      body: JSON.stringify({ api_key_id: apiKeyId }),
+      headers: {
+        'x-auth-source': 'AUTH_TOKEN',
+      },
+    });
   }
 
   async listAllApiKeys(): Promise<AdminAPIKeyWithUserResponse[]> {
@@ -734,7 +766,7 @@ class AuthService {
     }
   }
 
-  // Session expiry tracking (24 hours)
+  // Session expiry tracking (7 days if remember_me, else 24 hours)
   /**
    * Store the login timestamp
    */
@@ -763,7 +795,9 @@ class AuthService {
   }
 
   /**
-   * Check if the session has expired (24 hours)
+   * Check if the session has expired
+   * - 7 days if remember_me is true
+   * - 24 hours if remember_me is false
    */
   public isSessionExpired(): boolean {
     const loginTimestamp = this.getLoginTimestamp();
@@ -772,12 +806,17 @@ class AuthService {
       return true;
     }
     const now = Date.now();
-    const twentyFourHoursInMs = 24 * 60 * 60 * 1000; // 24 hours
-    return (now - loginTimestamp) >= twentyFourHoursInMs;
+    const rememberMe = localStorage.getItem('remember_me') === 'true';
+    const sessionDurationMs = rememberMe 
+      ? 7 * 24 * 60 * 60 * 1000  // 7 days
+      : 24 * 60 * 60 * 1000;      // 24 hours
+    return (now - loginTimestamp) >= sessionDurationMs;
   }
 
   /**
    * Get time remaining until session expiry in milliseconds
+   * - 7 days if remember_me is true
+   * - 24 hours if remember_me is false
    */
   public getTimeUntilSessionExpiry(): number | null {
     const loginTimestamp = this.getLoginTimestamp();
@@ -785,8 +824,11 @@ class AuthService {
       return null;
     }
     const now = Date.now();
-    const twentyFourHoursInMs = 24 * 60 * 60 * 1000;
-    const timeRemaining = twentyFourHoursInMs - (now - loginTimestamp);
+    const rememberMe = localStorage.getItem('remember_me') === 'true';
+    const sessionDurationMs = rememberMe 
+      ? 7 * 24 * 60 * 60 * 1000  // 7 days
+      : 24 * 60 * 60 * 1000;      // 24 hours
+    const timeRemaining = sessionDurationMs - (now - loginTimestamp);
     return timeRemaining > 0 ? timeRemaining : 0;
   }
 }

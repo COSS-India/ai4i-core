@@ -23,7 +23,7 @@ const getServiceIdForLanguage = (language: string): string => {
   return 'indic-tts-coqui-misc';
 };
 
-export const useTTS = (): UseTTSReturn => {
+export const useTTS = (serviceId?: string): UseTTSReturn => {
   // State
   const [language, setLanguage] = useState<string>(DEFAULT_TTS_CONFIG.language);
   const [gender, setGender] = useState<Gender>(DEFAULT_TTS_CONFIG.gender);
@@ -48,9 +48,12 @@ export const useTTS = (): UseTTSReturn => {
   // TTS inference mutation
   const ttsMutation = useMutation({
     mutationFn: async (text: string) => {
+      // Use the provided serviceId if available, otherwise fall back to language-based service ID
+      const effectiveServiceId = serviceId || getServiceIdForLanguage(language);
+      
       const config: TTSInferenceRequest['config'] = {
         language: { sourceLanguage: language },
-        serviceId: getServiceIdForLanguage(language),
+        serviceId: effectiveServiceId,
         gender,
         samplingRate,
         audioFormat,
@@ -90,12 +93,12 @@ export const useTTS = (): UseTTSReturn => {
       console.error('TTS inference error:', error);
       
       // Use centralized error handler
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(error);
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
       
       setError(errorMessage);
       setFetching(false);
       toast({
-        title: errorTitle,
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: 'error',
         duration: 7000,
@@ -128,6 +131,19 @@ export const useTTS = (): UseTTSReturn => {
       return;
     }
 
+    // Validate that a service is selected
+    const effectiveServiceId = serviceId || getServiceIdForLanguage(language);
+    if (!effectiveServiceId) {
+      toast({
+        title: 'Service Required',
+        description: 'Please select a TTS service.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     try {
       setFetching(true);
       setError(null);
@@ -136,7 +152,7 @@ export const useTTS = (): UseTTSReturn => {
     } catch (err) {
       console.error('Inference error:', err);
     }
-  }, [ttsMutation, toast]);
+  }, [ttsMutation, toast, serviceId, language]);
 
   // Set input text with validation
   const setInputTextWithValidation = useCallback((text: string) => {

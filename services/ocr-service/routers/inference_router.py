@@ -16,9 +16,10 @@ from ai4icore_logging import get_correlation_id
 from models.ocr_request import OCRInferenceRequest
 from models.ocr_response import OCRInferenceResponse
 from services.ocr_service import OCRService
+from repositories.ocr_repository import OCRRepository, get_db_session
 from utils.triton_client import TritonClient, TritonInferenceError
 from middleware.auth_provider import AuthProvider
-from middleware.auth_provider import AuthProvider
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 # Use service name to get the same tracer instance as main.py
@@ -31,18 +32,17 @@ inference_router = APIRouter(
 )
 
 
-def get_ocr_service(request: Request) -> OCRService:
+async def get_ocr_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db_session)
+) -> OCRService:
     """
-    Dependency to construct OCRService with configured Triton client.
+    Dependency to construct OCRService with configured Triton client and repository.
 
     REQUIRES Model Management database resolution - no environment variable fallback.
     Request must include config.serviceId for Model Management to resolve endpoint and model.
-    REQUIRES Model Management database resolution - no environment variable fallback.
-    Request must include config.serviceId for Model Management to resolve endpoint and model.
     """
-    # Get middleware-resolved endpoint from Model Management database
-    triton_endpoint = getattr(request.state, "triton_endpoint", None)
-    triton_api_key = getattr(request.app.state, "triton_api_key", "")
+    repository = OCRRepository(db)
     
     # Get middleware-resolved endpoint from Model Management database
     triton_endpoint = getattr(request.state, "triton_endpoint", None)
@@ -118,7 +118,7 @@ def get_ocr_service(request: Request) -> OCRService:
     
     # Create OCR-specific TritonClient (has OCR-specific methods like run_ocr_batch)
     ocr_triton_client = TritonClient(triton_endpoint, triton_api_key or None, model_name=model_name)
-    return OCRService(triton_client=ocr_triton_client, model_name=model_name)
+    return OCRService(repository=repository, triton_client=ocr_triton_client, model_name=model_name)
 
 
 @inference_router.post(
@@ -202,7 +202,12 @@ async def run_inference(
             )
 
             # Run inference (Triton + Surya OCR)
-            response = ocr_service.run_inference(request_body)
+            response = await ocr_service.run_inference(
+                request_body,
+                user_id=user_id,
+                api_key_id=api_key_id,
+                session_id=session_id
+            )
             
             # Add response metadata
             span.set_attribute("ocr.output_count", len(response.output))
@@ -330,7 +335,12 @@ async def _run_inference_impl(
         session_id,
     )
 
-    response = ocr_service.run_inference(request_body)
+    response = await ocr_service.run_inference(
+        request_body,
+        user_id=user_id,
+        api_key_id=api_key_id,
+        session_id=session_id
+    )
     logger.info("OCR inference completed successfully")
     return response
 

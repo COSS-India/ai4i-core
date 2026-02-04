@@ -1,10 +1,16 @@
 // NMT service testing page with language pair selection and translation
 
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
   Box,
+  Button,
   Grid,
   GridItem,
   Heading,
+  HStack,
   Progress,
   Text,
   useToast,
@@ -12,20 +18,29 @@ import {
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
-import React from "react";
+import { useRouter } from "next/router";
+import React, { useEffect, useState } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import LoadingSpinner from "../components/common/LoadingSpinner";
 import ModelLanguageSelector from "../components/nmt/ModelLanguageSelector";
 import TextTranslator from "../components/nmt/TextTranslator";
 import TranslationResults from "../components/nmt/TranslationResults";
+import { useAuth } from "../hooks/useAuth";
 import { useNMT } from "../hooks/useNMT";
+import { INDICTRANS_ANONYMOUS_SERVICE_ID } from "../data/indictransAnonymousService";
 import {
   getSupportedLanguagePairsForService,
   listNMTServices,
 } from "../services/nmtService";
+import { getRemainingTryItRequests, shouldWarnAboutRateLimit } from "../services/tryItService";
 
 const NMTPage: React.FC = () => {
   const toast = useToast();
+  const router = useRouter();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const [showRateLimitWarning, setShowRateLimitWarning] = useState(false);
+  const [remainingRequests, setRemainingRequests] = useState(5);
+  
   const {
     languagePair,
     selectedServiceId,
@@ -44,6 +59,29 @@ const NMTPage: React.FC = () => {
     clearResults,
     swapLanguages,
   } = useNMT();
+  
+  // Set hardcoded service ID for anonymous users (try-it mode)
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated && !selectedServiceId) {
+      setSelectedServiceId(INDICTRANS_ANONYMOUS_SERVICE_ID);
+    }
+  }, [isAuthenticated, authLoading, selectedServiceId, setSelectedServiceId]);
+  
+  // Check if user is anonymous and update rate limit info
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      setShowRateLimitWarning(shouldWarnAboutRateLimit());
+      setRemainingRequests(getRemainingTryItRequests());
+    }
+  }, [isAuthenticated, authLoading, fetched]);
+  
+  // Update remaining requests after each translation
+  useEffect(() => {
+    if (!isAuthenticated && fetched) {
+      setRemainingRequests(getRemainingTryItRequests());
+      setShowRateLimitWarning(shouldWarnAboutRateLimit());
+    }
+  }, [isAuthenticated, fetched]);
 
   // Fetch available services
   const { data: services, isLoading: servicesLoading } = useQuery({
@@ -93,13 +131,47 @@ const NMTPage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               Neural Machine Translation
             </Heading>
-            <Text color="gray.600" fontSize="lg">
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
               Translate text between languages with high accuracy
             </Text>
           </Box>
+
+          {/* Anonymous User Alert */}
+          {!authLoading && !isAuthenticated && (
+            <Alert
+              status={showRateLimitWarning ? "warning" : "info"}
+              variant="left-accent"
+              borderRadius="md"
+              maxW="1200px"
+              w="full"
+            >
+              <AlertIcon />
+              <Box flex="1">
+                <AlertTitle>
+                  {showRateLimitWarning
+                    ? "Rate Limit Warning"
+                    : "Try Neural Machine Translation"}
+                </AlertTitle>
+                <AlertDescription fontSize="sm">
+                  {showRateLimitWarning ? (
+                    <>
+                      You have approximately <strong>{remainingRequests} translation{remainingRequests !== 1 ? 's' : ''}</strong> remaining.
+                      Sign in to get unlimited access to all services.
+                    </>
+                  ) : (
+                    <>
+                      You&apos;re using NMT without an account. You can try up to{" "}
+                      <strong>5 translations per hour</strong>. Sign in for unlimited access.
+                    </>
+                  )}
+                </AlertDescription>
+              </Box>
+              
+            </Alert>
+          )}
 
           <Grid
             templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
@@ -111,7 +183,7 @@ const NMTPage: React.FC = () => {
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
-                {/* Service and Language Selector */}
+                {/* Service and Language Selector - same layout for all; service dropdown disabled for anonymous */}
                 <Box>
                   <ModelLanguageSelector
                     languagePair={languagePair}
@@ -120,6 +192,8 @@ const NMTPage: React.FC = () => {
                     loading={pairsLoading || servicesLoading}
                     selectedServiceId={selectedServiceId}
                     onServiceChange={setSelectedServiceId}
+                    hideServiceSelector={false}
+                    serviceDropdownDisabled={!authLoading && !isAuthenticated}
                   />
                 </Box>
 

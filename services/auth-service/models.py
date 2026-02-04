@@ -22,6 +22,7 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
     is_superuser = Column(Boolean, default=False)
+    is_tenant = Column(Boolean, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     last_login = Column(DateTime(timezone=True), nullable=True)
@@ -32,6 +33,7 @@ class User(Base):
     phone_number = Column(String(20), nullable=True)
     timezone = Column(String(50), default="UTC")
     language = Column(String(10), default="en")
+    selected_api_key_id = Column(Integer, ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True)
     
     # Relationships
     user_roles = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
@@ -42,8 +44,8 @@ class UserSession(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, nullable=False, index=True)
-    session_token = Column(String(255), unique=True, index=True, nullable=False)
-    refresh_token = Column(String(255), unique=True, index=True, nullable=True)
+    session_token = Column(Text, unique=True, index=True, nullable=False)
+    refresh_token = Column(Text, unique=True, index=True, nullable=True)
     device_info = Column(JSON, nullable=True)
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
@@ -154,6 +156,11 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str = Field(..., min_length=8, max_length=100)
     confirm_password: str = Field(..., min_length=8, max_length=100)
+    # Indicates whether this user is a tenant admin (owns a tenant) or a regular user.
+    # This is used by multi-tenant service when creating tenant admins and tenant users.
+    is_tenant: Optional[bool] = Field(None,
+        description="True for tenant admin users created during tenant onboarding; False for regular tenant users.and None for non-tenant users.",
+    )
 
 class UserUpdate(BaseModel):
     full_name: Optional[str] = Field(None, max_length=255)
@@ -239,6 +246,9 @@ class APIKeyUpdate(BaseModel):
     permissions: Optional[List[str]] = None
     is_active: Optional[bool] = None
 
+class APIKeySelectRequest(BaseModel):
+    api_key_id: int = Field(..., description="API key ID to mark as selected for the current user.")
+
 class APIKeyResponse(BaseModel):
     id: int
     key_name: str
@@ -251,6 +261,11 @@ class APIKeyResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class APIKeyListResponse(BaseModel):
+    selected_api_key_id: Optional[int]
+    api_keys: List[APIKeyResponse]
 
 
 class AdminAPIKeyWithUserResponse(APIKeyResponse):

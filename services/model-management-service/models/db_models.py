@@ -16,7 +16,7 @@ class Model(AppDBBase):
     __tablename__ = "models"
     # __table_args__ = {'schema': DB_SCHEMA}
     __table_args__ = (
-        UniqueConstraint('model_id', 'version', name='uq_model_id_version'),
+        UniqueConstraint('name', 'version', name='uq_name_version'),
     )
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -36,6 +36,8 @@ class Model(AppDBBase):
     inference_endpoint = Column(JSONB, nullable=False)
     benchmarks = Column(JSONB)
     submitter = Column(JSONB, nullable=False)
+    created_by = Column(String(255), nullable=True) 
+    updated_by = Column(String(255), nullable=True)  
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
@@ -49,10 +51,12 @@ class Model(AppDBBase):
 
 class Service(AppDBBase):
     __tablename__ = "services"
-    # __table_args__ = {'schema': DB_SCHEMA}
+    __table_args__ = (
+        UniqueConstraint('model_id', 'model_version', 'name', name='uq_model_id_version_service_name'),
+    )
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    service_id = Column(String(255), unique=True, nullable=False)
+    service_id = Column(String(255), unique=True, nullable=False)  # Hash of (model_name, model_version, service_name)
     name = Column(String(255), nullable=False)
     service_description = Column(Text)
     hardware_description = Column(Text)
@@ -66,12 +70,13 @@ class Service(AppDBBase):
     is_published = Column(Boolean, nullable=False, default=False)
     published_at = Column(BigInteger, default=None)
     unpublished_at = Column(BigInteger, default=None)
+    created_by = Column(String(255), nullable=True)  
+    updated_by = Column(String(255), nullable=True) 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
     # Note: Foreign key constraint on composite (model_id, version) will be handled at application level
-    # since SQLAlchemy doesn't easily support composite foreign keys to composite unique constraints
     model = relationship(
         "Model",
         back_populates="services",

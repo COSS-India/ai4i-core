@@ -6,7 +6,6 @@ Provides batch audio language detection inference using Triton Inference Server.
 """
 
 import asyncio
-import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -23,6 +22,13 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
+from ai4icore_logging import (
+    get_logger,
+    CorrelationMiddleware,
+    configure_logging,
+)
+from ai4icore_telemetry import setup_tracing
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
 from routers import inference_router
@@ -31,13 +37,51 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
+from middleware.tenant_middleware import TenantMiddleware
+from middleware.tenant_schema_router import TenantSchemaRouter
 from utils.triton_client import TritonClient
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+# Configure structured logging
+# This also configures uvicorn loggers to use our formatter and disables access logs
+configure_logging(
+    service_name=os.getenv("SERVICE_NAME", "audio-lang-detection-service"),
+    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
 )
-logger = logging.getLogger(__name__)
+
+# Aggressively disable uvicorn access logger BEFORE uvicorn starts
+# This must happen before uvicorn imports/creates its loggers
+import logging
+uvicorn_access = logging.getLogger("uvicorn.access")
+uvicorn_access.handlers.clear()
+uvicorn_access.propagate = False
+uvicorn_access.disabled = True
+uvicorn_access.setLevel(logging.CRITICAL + 1)  # Set above CRITICAL to ensure nothing logs
+
+# Also disable at root level by filtering out uvicorn.access messages
+class UvicornAccessFilter(logging.Filter):
+    """Filter to block uvicorn.access log messages."""
+    def filter(self, record):
+        # Block uvicorn.access logger
+        if record.name == "uvicorn.access":
+            return False
+        # Also block messages that look like uvicorn access logs
+        # Format: "INFO: IP:PORT "METHOD PATH HTTP/1.1" STATUS"
+        message = str(record.getMessage())
+        if 'HTTP/1.1"' in message:
+            import re
+            # Match uvicorn access log pattern: INFO: IP:PORT "METHOD PATH HTTP/1.1" STATUS
+            if re.search(r'INFO:\s+\d+\.\d+\.\d+\.\d+:\d+\s+"(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+.*HTTP/1\.1"\s+\d+', message):
+                return False
+        return True
+
+# Add filter to root logger to catch any uvicorn.access messages
+root_logger = logging.getLogger()
+uvicorn_filter = UvicornAccessFilter()
+for handler in root_logger.handlers:
+    handler.addFilter(uvicorn_filter)
+
+# Get logger instance
+logger = get_logger(__name__)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
@@ -47,6 +91,12 @@ REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db",
+)
+
+# Multi-tenant database URL (for tenant schema routing)
+MULTI_TENANT_DB_URL = os.getenv(
+    "MULTI_TENANT_DB_URL",
+    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/multi_tenant_db",
 )
 
 # NOTE: Triton endpoint/model MUST come from Model Management for inference.
@@ -65,6 +115,16 @@ registered_instance_id: Optional[str] = None
 async def lifespan(app: FastAPI):
     global redis_client, db_engine, db_session_factory, registry_client, registered_instance_id
 
+    # Disable uvicorn access logger AFTER uvicorn has started
+    # This ensures it stays disabled even if uvicorn recreates loggers
+    import logging
+    uvicorn_access = logging.getLogger("uvicorn.access")
+    uvicorn_access.handlers.clear()
+    uvicorn_access.propagate = False
+    uvicorn_access.disabled = True
+    uvicorn_access.setLevel(logging.CRITICAL)  # Extra safety - set to highest level
+
+    ########################################################################
     logger.info("Starting Audio Language Detection Service...")
 
     # Redis
@@ -154,6 +214,19 @@ async def lifespan(app: FastAPI):
     app.state.triton_api_key = TRITON_API_KEY
     app.state.triton_timeout = TRITON_TIMEOUT
 
+    # Initialize tenant schema router for multi-tenant routing
+    # Use MULTI_TENANT_DB_URL for tenant schema routing (different from auth DATABASE_URL)
+    if not MULTI_TENANT_DB_URL:
+        logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
+        multi_tenant_db_url = DATABASE_URL
+    else:
+        multi_tenant_db_url = MULTI_TENANT_DB_URL
+
+    logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")  # Mask password in logs
+    tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
+    app.state.tenant_schema_router = tenant_schema_router
+    logger.info("Tenant schema router initialized with multi-tenant database")
+
     # Service registry
     try:
         registry_client = ServiceRegistryHttpClient()
@@ -206,6 +279,11 @@ async def lifespan(app: FastAPI):
         if db_engine:
             await db_engine.dispose()
             logger.info("PostgreSQL connection closed")
+
+        # Close tenant schema router connections
+        if hasattr(app.state, 'tenant_schema_router') and app.state.tenant_schema_router:
+            await app.state.tenant_schema_router.close_all()
+            logger.info("Tenant schema router connections closed")
     except Exception as e:
         logger.error("Error during shutdown: %s", e)
 
@@ -236,25 +314,31 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Observability
-obs_config = PluginConfig.from_env()
-obs_config.enabled = True
-if not obs_config.customers:
-    obs_config.customers = []
-if not obs_config.apps:
-    obs_config.apps = ["audio-lang-detection"]
+# Observability (MUST be added AFTER RequestLoggingMiddleware)
+# FastAPI middleware runs in REVERSE order, so this will run FIRST
+# This ensures organization is extracted and set in context before RequestLoggingMiddleware logs
+config = PluginConfig.from_env()
+config.enabled = True  # Enable plugin
+config.debug = False  # Disable debug print statements - use structured logging instead
+if not config.customers:
+    config.customers = []  # Will be extracted from JWT/headers automatically
+if not config.apps:
+    config.apps = ["audio-lang-detection"]  # Service name
 
-observability_plugin = ObservabilityPlugin(obs_config)
-observability_plugin.register_plugin(app)
-logger.info("AI4ICore Observability Plugin initialized for Audio Language Detection service")
+plugin = ObservabilityPlugin(config)
+plugin.register_plugin(app)
+logger.info("✅ AI4ICore Observability Plugin initialized for Audio Language Detection service")
 
-# Model Management Plugin - single source of truth for Triton endpoint/model (no env fallback)
+# Model Management Plugin - registered AFTER Observability
+# so that Model Management runs first and Observability can use cached body
 try:
+    from ai4icore_model_management import ModelManagementConfig
     mm_config = ModelManagementConfig(
         model_management_service_url=os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"),
         model_management_api_key=None,
         cache_ttl_seconds=300,
         triton_endpoint_cache_ttl=300,
+        # Explicitly disable default Triton fallback – Model Management must resolve everything
         default_triton_endpoint="",
         default_triton_api_key="",
         middleware_enabled=True,
@@ -262,10 +346,21 @@ try:
         request_timeout=10.0,
     )
     model_mgmt_plugin = ModelManagementPlugin(config=mm_config)
-    model_mgmt_plugin.register_plugin(app, redis_client=None)
+    model_mgmt_plugin.register_plugin(app, redis_client=redis_client)
     logger.info("✅ Model Management Plugin initialized for Audio Language Detection service")
 except Exception as e:
     logger.warning(f"Failed to initialize Model Management Plugin: {e}")
+
+# Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+tracer = setup_tracing("audio-lang-detection-service")
+if tracer:
+    logger.info("✅ Distributed tracing initialized for Audio Language Detection service")
+    # Instrument FastAPI to automatically create spans for all requests
+    FastAPIInstrumentor.instrument_app(app)
+    logger.info("✅ FastAPI instrumentation enabled for tracing")
+else:
+    logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
 
 # CORS
 app.add_middleware(
@@ -276,8 +371,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Request logging
+# Correlation middleware (MUST be before RequestLoggingMiddleware)
+# This extracts X-Correlation-ID from headers and sets it in logging context
+app.add_middleware(CorrelationMiddleware)
+
+# Request logging (added BEFORE ObservabilityMiddleware)
+# FastAPI middleware runs in REVERSE order, so this will run AFTER ObservabilityMiddleware
+# This ensures organization is set in context before logging
 app.add_middleware(RequestLoggingMiddleware)
+
+# Tenant middleware (marks requests for tenant context extraction)
+app.add_middleware(TenantMiddleware)
 
 # Rate limiting (Redis client will be picked from app.state)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
@@ -364,4 +468,3 @@ if __name__ == "__main__":
         log_level=log_level,
         reload=False,
     )
-

@@ -44,33 +44,57 @@ class CorrelationMiddleware(BaseHTTPMiddleware):
         Returns:
             Response object
         """
-        # Extract correlation ID from headers
-        correlation_id = request.headers.get(self.header_name)
-        
-        # Generate if missing
-        if not correlation_id:
-            correlation_id = generate_trace_id()
-        
-        # Store in request.state for application use
-        request.state.correlation_id = correlation_id
-        request.state.trace_id = correlation_id  # Alias for compatibility
-        
-        # Set in logging context (so it appears in all logs)
-        set_trace_id(correlation_id)
+        # Try to create a span for correlation middleware
+        try:
+            from opentelemetry import trace
+            tracer = trace.get_tracer(__name__)
+            span_context = tracer.start_as_current_span("middleware.correlation")
+        except Exception:
+            tracer = None
+            span_context = None
         
         try:
-            # Process request
-            response = await call_next(request)
+            # Extract correlation ID from headers
+            correlation_id = request.headers.get(self.header_name)
             
-            # Add correlation ID to response headers
-            response.headers[self.header_name] = correlation_id
+            # Generate if missing
+            if not correlation_id:
+                correlation_id = generate_trace_id()
             
-            return response
+            # Add to span
+            if span_context:
+                span = trace.get_current_span()
+                if span:
+                    span.set_attribute("correlation.id", correlation_id)
+                    span.set_attribute("correlation.header", self.header_name)
+                    span.set_attribute("correlation.generated", correlation_id not in request.headers)
+            
+            # Store in request.state for application use
+            request.state.correlation_id = correlation_id
+            request.state.trace_id = correlation_id  # Alias for compatibility
+            
+            # Set in logging context (so it appears in all logs)
+            set_trace_id(correlation_id)
+            
+            try:
+                # Process request
+                response = await call_next(request)
+                
+                # Add correlation ID to response headers
+                response.headers[self.header_name] = correlation_id
+                
+                return response
+            finally:
+                # Clear trace ID from context after request (optional, but good practice)
+                # Note: This is optional since each request gets a new thread context
+                # But it's good to clean up
+                pass
         finally:
-            # Clear trace ID from context after request (optional, but good practice)
-            # Note: This is optional since each request gets a new thread context
-            # But it's good to clean up
-            pass
+            if span_context:
+                try:
+                    span_context.__exit__(None, None, None)
+                except Exception:
+                    pass
 
 
 def get_correlation_id(request: Request) -> Optional[str]:

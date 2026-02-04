@@ -16,7 +16,7 @@ const DEFAULT_LLM_CONFIG = {
   outputLanguage: 'hi',
 };
 
-export const useLLM = (): UseLLMReturn => {
+export const useLLM = (serviceId?: string): UseLLMReturn => {
   // State
   const [selectedModelId, setSelectedModelId] = useState<string>('llm');
   const [inputLanguage, setInputLanguage] = useState<string>('en');
@@ -40,8 +40,11 @@ export const useLLM = (): UseLLMReturn => {
   // LLM inference mutation
   const llmMutation = useMutation({
     mutationFn: async (text: string) => {
+      // Use the provided serviceId if available, otherwise fall back to selectedModelId
+      const effectiveServiceId = serviceId || selectedModelId;
+      
       const config: LLMInferenceRequest['config'] = {
-        serviceId: selectedModelId,
+        serviceId: effectiveServiceId,
         inputLanguage: inputLanguage,
         outputLanguage: outputLanguage,
       };
@@ -70,12 +73,12 @@ export const useLLM = (): UseLLMReturn => {
       console.error('LLM inference error:', error);
       
       // Use centralized error handler
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(error);
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
       
       setError(errorMessage);
       setFetching(false);
       toast({
-        title: errorTitle,
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: 'error',
         duration: 7000,
@@ -108,6 +111,19 @@ export const useLLM = (): UseLLMReturn => {
       return;
     }
 
+    // Validate that a service is selected
+    const effectiveServiceId = serviceId || selectedModelId;
+    if (!effectiveServiceId) {
+      toast({
+        title: 'Service Required',
+        description: 'Please select an LLM service.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     try {
       setIsDualMode(false);
       setFetching(true);
@@ -118,7 +134,7 @@ export const useLLM = (): UseLLMReturn => {
     } catch (err) {
       console.error('Inference error:', err);
     }
-  }, [llmMutation, toast]);
+  }, [llmMutation, toast, serviceId, selectedModelId]);
 
   // Perform dual inference (LLM + NMT)
   const performDualInference = useCallback(async (text: string) => {
@@ -144,6 +160,19 @@ export const useLLM = (): UseLLMReturn => {
       return;
     }
 
+    // Validate that a service is selected
+    const effectiveServiceId = serviceId || selectedModelId;
+    if (!effectiveServiceId) {
+      toast({
+        title: 'Service Required',
+        description: 'Please select an LLM service.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     try {
       setIsDualMode(true);
       setFetching(true);
@@ -153,7 +182,7 @@ export const useLLM = (): UseLLMReturn => {
       // Call both LLM and NMT in parallel
       const [llmResponse, nmtResponse] = await Promise.all([
         performLLMInference(text, {
-          serviceId: selectedModelId,
+          serviceId: effectiveServiceId,
           inputLanguage: inputLanguage,
           outputLanguage: outputLanguage,
         }),
@@ -193,7 +222,7 @@ export const useLLM = (): UseLLMReturn => {
         isClosable: true,
       });
     }
-  }, [selectedModelId, inputLanguage, outputLanguage, toast]);
+  }, [serviceId, selectedModelId, inputLanguage, outputLanguage, toast]);
 
   // Set input text with validation
   const setInputTextWithValidation = useCallback((text: string) => {
