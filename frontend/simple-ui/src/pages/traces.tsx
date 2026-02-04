@@ -624,6 +624,34 @@ const formatRelativeTime = (milliseconds: number) => {
   return `${(milliseconds / 1000).toFixed(2)}s`;
 };
 
+// Format tag values with units based on key name
+const formatTagValue = (key: string, value: any): string => {
+  const keyLower = key.toLowerCase();
+  const numValue = typeof value === 'number' ? value : parseFloat(String(value));
+  
+  // Check for milliseconds - look for _ms, .ms, or keys ending with ms
+  if (keyLower.includes('_ms') || keyLower.includes('.ms') || 
+      keyLower.endsWith('ms') || keyLower.includes('audio_length_ms') ||
+      keyLower.includes('length_ms') || keyLower.includes('duration_ms')) {
+    if (!isNaN(numValue)) {
+      return `${numValue} ms`;
+    }
+  }
+  
+  // Check for seconds - look for _seconds, .seconds, or keys ending with seconds
+  if (keyLower.includes('_seconds') || keyLower.includes('.seconds') || 
+      keyLower.endsWith('seconds') || keyLower.includes('audio_length_seconds') ||
+      keyLower.includes('length_seconds') || keyLower.includes('duration_seconds') ||
+      keyLower.includes('total_duration')) {
+    if (!isNaN(numValue)) {
+      return `${numValue} s`;
+    }
+  }
+  
+  // Default: return value as string
+  return String(value);
+};
+
 // Generate user-friendly description for spans
 const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
   const tags = processed.span.tags || [];
@@ -1462,7 +1490,7 @@ const TracesPage: React.FC = () => {
                                                       wordBreak="break-word"
                                                       flex={1}
                                                     >
-                                                      {String(tag.value)}
+                                                      {formatTagValue(tag.key, tag.value)}
                                               </Text>
                                           </HStack>
                                                 </Box>
