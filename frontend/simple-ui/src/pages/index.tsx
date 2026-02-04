@@ -1,5 +1,8 @@
 // pages/index.tsx  (or wherever your HomePage lives)
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
   Box,
   Button,
   Card,
@@ -15,6 +18,7 @@ import {
 import Head from "next/head";
 import { useRouter } from "next/router";
 import React from "react";
+import { useToast } from "@chakra-ui/react";
 import { FaMicrophone } from "react-icons/fa";
 import {
   IoGitMergeOutline,
@@ -143,19 +147,15 @@ const getColor = (service: { id?: string; color?: string }, shade: 50 | 300 | 40
 
 const HomePage: React.FC = () => {
   const router = useRouter();
+  const toast = useToast();
   const { isAuthenticated, isLoading } = useAuth();
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
 
-  const handleServiceClick = async (path: string) => {
+  const handleServiceClick = async (path: string, serviceName: string) => {
     if (isLoading) return;
-    if (!isAuthenticated) {
-      if (typeof window !== "undefined") {
-        sessionStorage.setItem("redirectAfterAuth", path);
-      }
-      router.push("/auth");
-      return;
-    }
+    
+    // Navigate to the service (no auth check needed here, handled by button logic)
     router.push(path);
   };
 
@@ -300,13 +300,31 @@ const services = [
         <VStack spacing={10} w="full" h="full" justify="center" align="center">
           {/* Hero Section */}
           <Box textAlign="center" w="full">
-            <Heading size="lg" fontWeight="bold" color="gray.800" mb={2}>
+            <Heading size="lg" fontWeight="bold" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               AI Accessibility Studio
             </Heading>
-            <Text fontSize="sm" color="gray.600" maxW="600px" mx="auto">
+            <Text fontSize="sm" color="gray.600" maxW="600px" mx="auto" userSelect="none" cursor="default">
               Test and explore NLP and LLM models
             </Text>
           </Box>
+
+          {/* Anonymous User Info Alert */}
+          {!isLoading && !isAuthenticated && (
+            <Alert
+              status="info"
+              variant="left-accent"
+              borderRadius="md"
+              maxW="1800px"
+              w="full"
+              mx="auto"
+            >
+              <AlertIcon />
+              <AlertDescription fontSize="sm">
+                Try <strong>Neural Machine Translation</strong> without signing in! Please login to access other services{" "}
+                
+              </AlertDescription>
+            </Alert>
+          )}
 
           {/* Service Cards Grid */}
           <SimpleGrid
@@ -317,7 +335,11 @@ const services = [
             mx="auto"
             justifyItems="center"
           >
-            {services.map((service) => (
+            {services.map((service) => {
+              // Check if service is disabled for anonymous users
+              const isDisabledForAnonymous = !isAuthenticated && service.id !== "nmt" && !isLoading;
+              
+              return (
               <Card
                 key={service.id}
                 bg={cardBg}
@@ -326,6 +348,7 @@ const services = [
                 borderRadius="xl"
                 boxShadow="lg"
                 overflow="hidden"
+                opacity={isDisabledForAnonymous ? 0.5 : 1}
                 _hover={{
                   transform: "translateY(-6px)",
                   boxShadow: "2xl",
@@ -337,6 +360,7 @@ const services = [
                 position="relative"
                 display="flex"
                 flexDirection="column"
+                cursor="pointer"
               >
                 {/* Colored top border accent */}
                 <Box
@@ -346,30 +370,40 @@ const services = [
                   right={0}
                   h="4px"
                   bgGradient={`linear(to-r, ${getColor(service, 400)}, ${getColor(service, 600)})`}
+                  opacity={isDisabledForAnonymous ? 0.3 : 1}
                 />
 
                 <CardHeader textAlign="center" pb={2} pt={4} px={4} flexShrink={0}>
                   <VStack spacing={2} align="center" w="full">
-                    <Box
-                      p={3}
-                      borderRadius="full"
-                      bg={getColor(service, 50)}
-                      _dark={{ bg: getColor(service, 600) }}
-                      display="flex"
-                      alignItems="center"
-                      justifyContent="center"
-                      flexShrink={0}
-                    >
-                      <Icon as={service.icon} boxSize={7} color={getColor(service, 600)} />
+                    <Box position="relative">
+                      <Box
+                        p={3}
+                        borderRadius="full"
+                        bg={getColor(service, 50)}
+                        _dark={{ bg: getColor(service, 600) }}
+                        display="flex"
+                        alignItems="center"
+                        justifyContent="center"
+                        flexShrink={0}
+                      >
+                        <Icon 
+                          as={service.icon} 
+                          boxSize={7} 
+                          color={getColor(service, 600)}
+                          opacity={isDisabledForAnonymous ? 0.4 : 1}
+                        />
+                      </Box>
                     </Box>
                     <Heading
                       size="sm"
-                      color="gray.800"
+                      color={isDisabledForAnonymous ? "gray.500" : "gray.800"}
                       fontWeight="semibold"
                       textAlign="center"
                       noOfLines={3}
                       wordBreak="break-word"
                       whiteSpace="pre-line"
+                      userSelect="none"
+                      cursor="default"
                     >
                       {service.title}
                     </Heading>
@@ -386,7 +420,7 @@ const services = [
                   overflow="hidden"
                 >
                   <Text
-                    color="gray.600"
+                    color={isDisabledForAnonymous ? "gray.400" : "gray.600"}
                     textAlign="center"
                     lineHeight="1"
                     fontSize="sm"
@@ -408,30 +442,54 @@ const services = [
                     size="md"
                     w="full"
                     fontWeight="semibold"
-                    bg={getColor(service, 300)}
-                    borderColor={getColor(service, 300)}
+                    bg={isDisabledForAnonymous ? "gray.200" : getColor(service, 300)}
+                    borderColor={isDisabledForAnonymous ? "gray.300" : getColor(service, 300)}
                     borderWidth="1px"
-                    color="black"
+                    color={isDisabledForAnonymous ? "gray.500" : "black"}
                     _hover={{
                       transform: "translateY(-2px)",
                       boxShadow: "md",
-                      bg: getColor(service, 400),
-                      color: "black",
-                      borderColor: getColor(service, 400),
+                      bg: isDisabledForAnonymous ? "gray.300" : getColor(service, 400),
+                      color: isDisabledForAnonymous ? "gray.600" : "black",
+                      borderColor: isDisabledForAnonymous ? "gray.400" : getColor(service, 400),
                     }}
                     onClick={(e) => {
                       e.preventDefault();
-                      handleServiceClick(service.path);
+                      if (isDisabledForAnonymous) {
+                        // Show toast and redirect to signup
+                        toast({
+                          title: "Sign In Required",
+                          description: "Please login to access other services.",
+                          status: "warning",
+                          duration: 4000,
+                          isClosable: true,
+                          position: "top",
+                        });
+                        
+                        // Store redirect path
+                        if (typeof window !== "undefined") {
+                          sessionStorage.setItem("redirectAfterAuth", service.path);
+                        }
+                        
+                        // Redirect to auth page
+                        setTimeout(() => {
+                          router.push("/auth");
+                        }, 500);
+                      } else {
+                        handleServiceClick(service.path, service.title);
+                      }
                     }}
                     transition="all 0.2s"
                     flexShrink={0}
                     mt="auto"
+                    cursor="pointer"
                   >
-                    Try it now
+                    {isDisabledForAnonymous ? "Sign in required" : "Try it now"}
                   </Button>
                 </CardBody>
               </Card>
-            ))}
+              );
+            })}
           </SimpleGrid>
         </VStack>
       </ContentLayout>

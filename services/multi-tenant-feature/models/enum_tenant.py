@@ -2,14 +2,16 @@ from enum import Enum
 
 class TenantStatus(str, Enum):
     PENDING = "PENDING"          # waiting for email verification 
-    IN_PROGRESS = "IN_PROGRESS"  # 
+    IN_PROGRESS = "IN_PROGRESS"  
     ACTIVE = "ACTIVE"            # once email verified
     SUSPENDED = "SUSPENDED"
+    DEACTIVATED = "DEACTIVATED"
     # ARCHIVED = "ARCHIVED"
     
 class TenantUserStatus(str, Enum):
     ACTIVE = "ACTIVE"            # user created and approved by tenant admin
     SUSPENDED = "SUSPENDED"
+    DEACTIVATED = "DEACTIVATED"
 
 
 class SubscriptionType(str, Enum):
@@ -17,7 +19,7 @@ class SubscriptionType(str, Enum):
     ASR = "asr"
     NMT = "nmt"
     LLM = "llm"
-    PIPELINE = "speech_to_speech_pipeline"
+    PIPELINE = "pipeline"
     OCR = "ocr"
     NER = "ner"
 
@@ -36,11 +38,14 @@ class BillingStatus(str, Enum):
     UNPAID = "UNPAID"
     OVERDUE = "OVERDUE"
     PENDING = "PENDING"
+    DEACTIVATED = "DEACTIVATED"
 
 class AuditAction(str, Enum):
     tenant_created = "tenant_created"
+    tenant_activated = "tenant_activated"
     tenant_updated = "tenant_updated"
     tenant_suspended = "tenant_suspended"
+    tenant_deactivated = "tenant_deactivated"
     tenant_reactivated = "tenant_reactivated"
     manual_action = "manual_action"
 

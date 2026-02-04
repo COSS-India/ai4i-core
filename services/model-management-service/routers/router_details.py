@@ -49,7 +49,9 @@ async def view_model_request(payload: ModelViewRequest):
 @router_details.get("/list_models" , response_model=List[ModelViewResponse])
 async def list_models_request(
     task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
-    include_deprecated: bool = Query(True, description="Include deprecated versions. Set to false to show only ACTIVE versions.")
+    include_deprecated: bool = Query(True, description="Include deprecated versions. Set to false to show only ACTIVE versions."),
+    model_name: Optional[str] = Query(None, description="Filter by model name. Returns all versions of models matching this name."),
+    created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the model.")
 ):
     try:
         if not task_type or task_type.lower() == "none":
@@ -57,7 +59,7 @@ async def list_models_request(
         else:
             task_type_enum = TaskTypeEnum(task_type)
 
-        data = await list_all_models(task_type_enum, include_deprecated=include_deprecated)
+        data = await list_all_models(task_type_enum, include_deprecated=include_deprecated, model_name=model_name, created_by=created_by)
         if data is None:
             return []  # Return empty list instead of 404
 
@@ -100,7 +102,8 @@ async def view_service_request(payload: ServiceViewRequest):
 @router_details.get("/list_services" , response_model=List[ServiceListResponse])
 async def list_services_request(
     task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
-    is_published: Optional[bool] = Query(None, description="Filter by publish status. True = published only, False = unpublished only, None = all services")
+    is_published: Optional[bool] = Query(None, description="Filter by publish status. True = published only, False = unpublished only, None = all services"),
+    created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the service.")
 ):
     try:
         if not task_type or task_type.lower() == "none":
@@ -108,7 +111,7 @@ async def list_services_request(
         else:
             task_type_enum = TaskTypeEnum(task_type)
 
-        data = await list_all_services(task_type_enum, is_published=is_published)
+        data = await list_all_services(task_type_enum, is_published=is_published, created_by=created_by)
 
         if data is None:
             return []  # Return empty list instead of 404

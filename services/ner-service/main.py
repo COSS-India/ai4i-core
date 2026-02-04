@@ -23,30 +23,73 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from ai4icore_observability import ObservabilityPlugin, PluginConfig
+# Observability imports (optional)
+OBSERVABILITY_AVAILABLE = False
+ObservabilityPlugin = None
+PluginConfig = None
+try:
+    from ai4icore_observability import ObservabilityPlugin, PluginConfig
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    pass
+
+# Model Management imports (required)
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
+
+# Telemetry imports (optional)
+TELEMETRY_AVAILABLE = False
+setup_tracing = None
+FastAPIInstrumentor = None
+try:
+    from ai4icore_telemetry import setup_tracing
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    TELEMETRY_AVAILABLE = True
+except ImportError:
+    pass  # Will be handled below
+
+# Logging imports
+LOGGING_AVAILABLE = False
+configure_logging = None
+get_logger = None
+CorrelationMiddleware = None
+try:
+    from ai4icore_logging import configure_logging, get_logger, CorrelationMiddleware
+    LOGGING_AVAILABLE = True
+except ImportError:
+    pass
 
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
+from middleware.tenant_middleware import TenantMiddleware
+from middleware.tenant_schema_router import TenantSchemaRouter
 from models import database_models
 from models import auth_models  # Import to ensure auth tables are created
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
-
-# Observability plugin (optional)
-try:
-    from ai4icore_observability import ObservabilityPlugin, PluginConfig
-    OBSERVABILITY_AVAILABLE = True
-except ImportError:
-    OBSERVABILITY_AVAILABLE = False
-    logger.warning("AI4ICore Observability Plugin not available - continuing without it")
+# Configure structured logging (to OpenSearch, with correlation IDs)
+if LOGGING_AVAILABLE:
+    configure_logging(
+        service_name=os.getenv("SERVICE_NAME", "ner-service"),
+        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
+    )
+    logger = get_logger(__name__)
+    
+    # Aggressively disable uvicorn access logger BEFORE uvicorn starts
+    # This must happen before uvicorn imports/creates its loggers
+    uvicorn_access = logging.getLogger("uvicorn.access")
+    uvicorn_access.handlers.clear()
+    uvicorn_access.propagate = False
+    uvicorn_access.disabled = True
+    uvicorn_access.setLevel(logging.CRITICAL + 1)  # Set above CRITICAL to ensure nothing logs
+else:
+    # Fallback to standard logging if ai4icore_logging is not available
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO"),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+    logger = logging.getLogger(__name__)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
@@ -56,6 +99,12 @@ REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db",
+)
+
+# Multi-tenant database URL (for tenant schema routing)
+MULTI_TENANT_DB_URL = os.getenv(
+    "MULTI_TENANT_DB_URL",
+    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/multi_tenant_db",
 )
 
 # NOTE: Triton endpoint/model MUST come from Model Management for inference.
@@ -163,6 +212,19 @@ async def lifespan(app: FastAPI):
     # Triton endpoint/model resolved via Model Management middleware - no hardcoded fallback
     app.state.triton_api_key = TRITON_API_KEY
 
+    # Initialize tenant schema router for multi-tenant routing
+    # Use MULTI_TENANT_DB_URL for tenant schema routing (different from auth DATABASE_URL)
+    if not MULTI_TENANT_DB_URL:
+        logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
+        multi_tenant_db_url = DATABASE_URL
+    else:
+        multi_tenant_db_url = MULTI_TENANT_DB_URL
+
+    logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")  # Mask password in logs
+    tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
+    app.state.tenant_schema_router = tenant_schema_router
+    logger.info("Tenant schema router initialized with multi-tenant database")
+
     # Service registry
     try:
         registry_client = ServiceRegistryHttpClient()
@@ -215,6 +277,11 @@ async def lifespan(app: FastAPI):
         if db_engine:
             await db_engine.dispose()
             logger.info("PostgreSQL connection closed")
+
+        # Close tenant schema router connections
+        if hasattr(app.state, 'tenant_schema_router') and app.state.tenant_schema_router:
+            await app.state.tenant_schema_router.close_all()
+            logger.info("Tenant schema router connections closed")
     except Exception as e:
         logger.error("Error during shutdown: %s", e)
 
@@ -246,7 +313,7 @@ app = FastAPI(
 )
 
 # Observability (optional)
-if OBSERVABILITY_AVAILABLE:
+if OBSERVABILITY_AVAILABLE and ObservabilityPlugin:
     try:
         config = PluginConfig.from_env()
         config.enabled = True
@@ -260,6 +327,29 @@ if OBSERVABILITY_AVAILABLE:
         logger.info("AI4ICore Observability Plugin initialized for NER service")
     except Exception as e:
         logger.warning(f"Failed to initialize Observability Plugin: {e}")
+
+# Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+if TELEMETRY_AVAILABLE and setup_tracing:
+    try:
+        tracer = setup_tracing("ner-service")
+        if tracer:
+            logger.info("✅ Distributed tracing initialized for NER service")
+            # Instrument FastAPI to automatically create spans for all requests
+            # Exclude health check endpoints to reduce span noise
+            if FastAPIInstrumentor:
+                FastAPIInstrumentor.instrument_app(
+                    app,
+                    excluded_urls="/health,/metrics,/enterprise/metrics,/docs,/redoc,/openapi.json"
+                )
+                logger.info("✅ FastAPI instrumentation enabled for tracing")
+        else:
+            logger.warning("⚠️ Tracing setup returned None - traces may not be exported to Jaeger")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to setup tracing: {e}")
+        logger.warning("⚠️ Traces will not be exported to Jaeger - check OpenTelemetry installation and Jaeger endpoint")
+else:
+    logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
 
 # Initialize Redis client early for middleware (synchronous for Model Management Plugin)
 redis_client_sync = None
@@ -315,8 +405,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Correlation middleware (MUST be before RequestLoggingMiddleware)
+# This extracts X-Correlation-ID from headers and sets it in logging context
+if CorrelationMiddleware:
+    app.add_middleware(CorrelationMiddleware)
+
 # Request logging
 app.add_middleware(RequestLoggingMiddleware)
+
+# Tenant middleware (marks NER requests for tenant context extraction)
+app.add_middleware(TenantMiddleware)
 
 # Rate limiting (Redis client will be picked from app.state)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))

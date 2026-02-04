@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.tts_request import TTSInferenceRequest
 from models.tts_response import TTSInferenceResponse
-from repositories.tts_repository import TTSRepository, get_db_session
+from repositories.tts_repository import TTSRepository
 from services.tts_service import TTSService
 from services.audio_service import AudioService
 from services.text_service import TextService
@@ -70,12 +70,22 @@ from services.constants.error_messages import (
 )
 from middleware.exceptions import AuthenticationError, AuthorizationError
 from middleware.auth_provider import AuthProvider
+from middleware.tenant_db_dependency import get_tenant_db_session
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from ai4icore_logging import get_correlation_id
 
 logger = logging.getLogger(__name__)
+
+
+def count_words(text: str) -> int:
+    """Count words in text"""
+    try:
+        words = [word for word in text.split() if word.strip()]
+        return len(words)
+    except Exception:
+        return 0
 # Use service name to get the same tracer instance as main.py
 tracer = trace.get_tracer("tts-service")
 
@@ -88,7 +98,7 @@ inference_router = APIRouter(
 )
 
 
-async def get_tts_service(db: AsyncSession = Depends(get_db_session)) -> TTSService:
+async def get_tts_service(request: Request, db: AsyncSession = Depends(get_tenant_db_session)) -> TTSService:
     """Dependency to get configured TTS service."""
     try:
         # Create repository
@@ -233,12 +243,37 @@ async def run_inference(
                 "gender": request.config.gender.value
             })
 
+            # Calculate input metrics (character length and word count)
+            input_texts = [text_input.source for text_input in request.input]
+            total_input_characters = sum(len(text) for text in input_texts)
+            total_input_words = sum(count_words(text) for text in input_texts)
+            
+            # Store input details in request.state for middleware to access
+            http_request.state.input_details = {
+                "character_length": total_input_characters,
+                "word_count": total_input_words,
+                "input_count": len(request.input)
+            }
+            
             logger.info(
-                "Processing TTS inference request with %d text input(s), user_id=%s api_key_id=%s session_id=%s",
+                "Processing TTS inference request with %d text input(s), input_characters=%d, input_words=%d, user_id=%s api_key_id=%s session_id=%s",
                 len(request.input),
+                total_input_characters,
+                total_input_words,
                 user_id,
                 api_key_id,
                 session_id,
+                extra={
+                    # Common input/output details structure (general fields for all services)
+                    "input_details": {
+                        "character_length": total_input_characters,
+                        "word_count": total_input_words,
+                        "input_count": len(request.input)
+                    },
+                    # Service metadata (for filtering)
+                    "service_id": request.config.serviceId,
+                    "source_language": request.config.language.sourceLanguage,
+                }
             )
 
             # Run inference
@@ -261,13 +296,64 @@ async def run_inference(
             except Exception:
                 pass
             
+            # Calculate output metrics (audio duration) for successful responses
+            total_output_audio_duration = 0.0
+            total_output_audio_size = 0
+            if response.audio:
+                import base64
+                for audio_output in response.audio:
+                    try:
+                        audio_bytes = base64.b64decode(audio_output.audioContent)
+                        total_output_audio_size += len(audio_bytes)
+                        # Estimate duration: assume 2 bytes per sample for 16-bit audio at target sample rate
+                        target_sr = request.config.samplingRate or 22050
+                        total_samples = len(audio_bytes) / 2
+                        total_output_audio_duration += total_samples / target_sr
+                    except Exception:
+                        pass
+            
+            # Store output details in request.state for middleware to access
+            http_request.state.output_details = {
+                "audio_length_seconds": total_output_audio_duration,
+                "audio_length_ms": total_output_audio_duration * 1000.0,
+                "output_count": len(response.audio)
+            }
+            
+            # Add output audio length to trace span
+            span.set_attribute("tts.output.audio_length_seconds", total_output_audio_duration)
+            span.set_attribute("tts.output.audio_length_ms", total_output_audio_duration * 1000.0)
+            if total_output_audio_size > 0:
+                span.set_attribute("tts.output.audio_size_bytes", total_output_audio_size)
+            
             # Add span event for successful completion
             span.add_event("tts.inference.completed", {
                 "output_count": len(response.audio),
+                "output_audio_duration": total_output_audio_duration,
+                "output_audio_length_seconds": total_output_audio_duration,
                 "status": "success"
             })
             span.set_status(Status(StatusCode.OK))
-            logger.info("TTS inference completed successfully")
+            logger.info(
+                "TTS inference completed successfully, output_audio_duration=%.2fs",
+                total_output_audio_duration,
+                extra={
+                    # Common input/output details structure (general fields for all services)
+                    "input_details": {
+                        "character_length": total_input_characters,
+                        "word_count": total_input_words,
+                        "input_count": len(request.input)
+                    },
+                    "output_details": {
+                        "audio_length_seconds": total_output_audio_duration,
+                        "audio_length_ms": total_output_audio_duration * 1000.0,
+                        "output_count": len(response.audio)
+                    },
+                    # Service metadata (for filtering)
+                    "service_id": request.config.serviceId,
+                    "source_language": request.config.language.sourceLanguage,
+                    "http_status_code": 200,
+                }
+            )
             return response
 
         except ValueError as exc:
