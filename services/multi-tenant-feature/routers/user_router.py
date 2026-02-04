@@ -19,7 +19,7 @@ from middleware.auth_provider import AuthProvider
 router = APIRouter(
     prefix="/user",
     tags=["User Subscriptions"],
-    # dependencies=[Depends(AuthProvider)],
+    dependencies=[Depends(AuthProvider)],
 )
 
 
