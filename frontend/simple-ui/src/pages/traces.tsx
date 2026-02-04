@@ -676,9 +676,26 @@ const formatTagValue = (key: string, value: any): string => {
   if (keyLower.includes('_seconds') || keyLower.includes('.seconds') || 
       keyLower.endsWith('seconds') || keyLower.includes('audio_length_seconds') ||
       keyLower.includes('length_seconds') || keyLower.includes('duration_seconds') ||
-      keyLower.includes('total_duration')) {
+      keyLower.includes('total_duration') || keyLower.includes('processing_time_seconds')) {
     if (!isNaN(numValue)) {
       return `${numValue} s`;
+    }
+  }
+  
+  // Check for bytes - look for _bytes, .bytes, or keys ending with bytes
+  if (keyLower.includes('_bytes') || keyLower.includes('.bytes') || 
+      keyLower.endsWith('bytes') || keyLower.includes('size_bytes')) {
+    if (!isNaN(numValue)) {
+      // Format bytes with appropriate unit (B, KB, MB, GB)
+      if (numValue < 1024) {
+        return `${numValue} B`;
+      } else if (numValue < 1024 * 1024) {
+        return `${(numValue / 1024).toFixed(2)} KB`;
+      } else if (numValue < 1024 * 1024 * 1024) {
+        return `${(numValue / (1024 * 1024)).toFixed(2)} MB`;
+      } else {
+        return `${(numValue / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+      }
     }
   }
   
@@ -934,6 +951,29 @@ const TracesPage: React.FC = () => {
   const traceStatus = useMemo(() => {
     if (!traceDetails) return { status: "success" as const, message: "Completed" };
     return getTraceStatus(traceDetails);
+  }, [traceDetails]);
+
+  // Build span map and parent-child relationships for tag merging
+  const spanRelationships = useMemo(() => {
+    if (!traceDetails || !traceDetails.spans) {
+      return { spanMap: new Map<string, Span>(), spanToParent: new Map<string, string>() };
+    }
+    
+    const spanMap = new Map<string, Span>();
+    const spanToParent = new Map<string, string>();
+    
+    traceDetails.spans.forEach((span: Span) => {
+      spanMap.set(span.spanID, span);
+      
+      if (span.references && span.references.length > 0) {
+        const parentRef = span.references.find(ref => ref.refType === "CHILD_OF");
+        if (parentRef) {
+          spanToParent.set(span.spanID, parentRef.spanID);
+        }
+      }
+    });
+    
+    return { spanMap, spanToParent };
   }, [traceDetails]);
 
   // Extract primary error message from the most descriptive failed span
@@ -1426,17 +1466,136 @@ const TracesPage: React.FC = () => {
                           {processedSpans && processedSpans.length > 0 ? (
                             processedSpans.map((processed: ProcessedSpan, idx: number) => {
                             const duration = formatDuration(processed.span.duration);
-                            const tags = processed.span.tags || [];
-                            const relevantTags = tags.filter((t: { key: string; value: any }) => {
+                            
+                            // Merge tags from current span and all ancestor spans
+                            // Parent tags are useful for input-related info (e.g., nmt.input.* on parent nmt.inference)
+                            // But filter out redundant tags to avoid repetition
+                            let allTags = [...(processed.span.tags || [])];
+                            const childTagKeys = new Set(allTags.map(t => t.key.toLowerCase()));
+                            
+                            // Tags to exclude from parent spans (redundant HTTP metadata)
+                            const redundantHttpTags = new Set([
+                              'http.host', 'http.method', 'http.route', 'http.server_name', 
+                              'http.target', 'http.url', 'http.user_agent', 'correlation.header'
+                            ]);
+                            
+                            // Helper function to determine if a parent tag should be included
+                            const shouldIncludeParentTag = (tagKey: string, spanCategory: string): boolean => {
+                              // Always exclude redundant HTTP metadata from parent spans
+                              if (redundantHttpTags.has(tagKey)) return false;
+                              
+                              // For processing spans, include input/output data from parents
+                              if (spanCategory === 'processing') {
+                                return tagKey.includes('.input.') || 
+                                       tagKey.includes('input_count') || 
+                                       tagKey.includes('input_size') ||
+                                       tagKey.includes('request.size') ||
+                                       tagKey.startsWith('http.request') ||
+                                       tagKey.startsWith('nmt.') ||
+                                       tagKey.startsWith('ocr.') ||
+                                       tagKey.startsWith('tts.') ||
+                                       tagKey.startsWith('asr.') ||
+                                       tagKey === 'correlation.id' ||
+                                       tagKey === 'organization' ||
+                                       tagKey.startsWith('user.');
+                              }
+                              
+                              // For auth spans, include auth-related and organization tags
+                              if (spanCategory === 'auth') {
+                                return tagKey.startsWith('auth.') ||
+                                       tagKey === 'organization' ||
+                                       tagKey.startsWith('user.') ||
+                                       tagKey === 'correlation.id';
+                              }
+                              
+                              // For other spans, only include essential tags
+                              return tagKey === 'correlation.id' ||
+                                     tagKey === 'organization' ||
+                                     tagKey.startsWith('user.') ||
+                                     tagKey.includes('.input.') ||
+                                     tagKey.includes('input_count');
+                            };
+                            
+                            // Traverse up the parent chain to collect tags from all ancestors
+                            let currentParentId = spanRelationships.spanToParent.get(processed.span.spanID);
+                            const visitedParents = new Set<string>(); // Prevent infinite loops
+                            
+                            while (currentParentId && !visitedParents.has(currentParentId)) {
+                              visitedParents.add(currentParentId);
+                              const parentSpan = spanRelationships.spanMap.get(currentParentId);
+                              
+                              if (parentSpan && parentSpan.tags) {
+                                // Add parent tags that don't exist in child and are relevant
+                                parentSpan.tags.forEach((parentTag: { key: string; value: any }) => {
+                                  const tagKey = parentTag.key.toLowerCase();
+                                  if (!childTagKeys.has(tagKey) && 
+                                      shouldIncludeParentTag(tagKey, processed.category)) {
+                                    allTags.push(parentTag);
+                                    childTagKeys.add(tagKey); // Track added tags to avoid duplicates
+                                  }
+                                });
+                              }
+                              
+                              // Move to next parent level
+                              currentParentId = spanRelationships.spanToParent.get(currentParentId);
+                            }
+                            
+                            const relevantTags = allTags.filter((t: { key: string; value: any }) => {
                               const key = t.key.toLowerCase();
-                              return !key.includes("otel.") && 
-                                     !key.includes("telemetry.") &&
-                                     !key.includes("http.flavor") &&
-                                     !key.includes("http.scheme") &&
-                                     !key.includes("net.") &&
-                                     !key.includes("correlation.generated") &&
-                                     key !== "span.kind";
-                            }).slice(0, 6);
+                              // Filter out truly irrelevant tags
+                              if (key.includes("telemetry.") ||
+                                  key.includes("http.flavor") ||
+                                  key.includes("http.scheme") ||
+                                  key.includes("net.") ||
+                                  key.includes("correlation.generated") ||
+                                  key === "span.kind") {
+                                return false;
+                              }
+                              
+                              // For non-top-level spans, filter out redundant HTTP metadata
+                              // Keep essential HTTP tags: status_code, request/response size_bytes
+                              // Remove verbose HTTP metadata: host, method, route, server_name, target, url, user_agent
+                              // But only if this is not a top-level processing span (which should show full HTTP context)
+                              if (!processed.isTopLevel && key.startsWith("http.") && 
+                                  key !== "http.status_code" &&
+                                  key !== "http.request.size_bytes" &&
+                                  key !== "http.response.size_bytes") {
+                                return false;
+                              }
+                              
+                              // Keep otel.status_code and otel.scope.name, filter out other otel.*
+                              if (key.includes("otel.") && 
+                                  key !== "otel.status_code" && 
+                                  key !== "otel.scope.name") {
+                                return false;
+                              }
+                              
+                              return true;
+                            });
+                            
+                            // Sort tags to prioritize important ones first
+                            relevantTags.sort((a: { key: string; value: any }, b: { key: string; value: any }) => {
+                              const aKey = a.key.toLowerCase();
+                              const bKey = b.key.toLowerCase();
+                              
+                              // Priority order: input tags > service-specific tags (nmt, ocr, etc.) > http status > organization > correlation.id > user.id > otel scope > others
+                              const getPriority = (key: string): number => {
+                                // Highest priority: input-related tags (most important for understanding the request)
+                                if (key.includes(".input.") || key.includes("input_count") || key.includes("input_size") || 
+                                    key.includes("request.size") || key.startsWith("http.request")) return 0;
+                                // High priority: service-specific tags
+                                if (key.startsWith("nmt.") || key.startsWith("ocr.") || key.startsWith("tts.") || key.startsWith("asr.")) return 1;
+                                if (key === "http.status_code" || key === "otel.status_code") return 2;
+                                if (key === "organization") return 3;
+                                if (key === "correlation.id") return 4;
+                                if (key.startsWith("user.")) return 5;
+                                if (key.startsWith("http.")) return 6;
+                                if (key === "otel.scope.name") return 7;
+                                return 8;
+                              };
+                              
+                              return getPriority(aKey) - getPriority(bKey);
+                            });
 
                             return (
                               <Card
