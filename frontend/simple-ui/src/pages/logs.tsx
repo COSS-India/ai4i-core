@@ -37,7 +37,7 @@ import {
   AlertDescription,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeftIcon, ChevronRightIcon, SearchIcon, RepeatIcon } from "@chakra-ui/icons";
 import ContentLayout from "../components/common/ContentLayout";
@@ -58,7 +58,8 @@ const LogsPage: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [page, setPage] = useState(1);
-  const [size, setSize] = useState(50);
+  const [size, setSize] = useState(10);
+  const [clientPage, setClientPage] = useState(1); // Client-side pagination for filtered logs
   const [service, setService] = useState<string>("");
   const [level, setLevel] = useState<string>("");
   const [searchText, setSearchText] = useState<string>("");
@@ -140,30 +141,103 @@ const LogsPage: React.FC = () => {
   } = useQuery({
     queryKey: [
       "logs-search",
-      page,
-      size,
       service,
       level,
       searchText,
       startTime,
       endTime,
+      size, // Include size in query key since we use it for fetch size
     ],
     queryFn: async () => {
-      const result = await searchLogs({
-        page,
-        size,
-        service: service || undefined,
-        level: level || undefined,
-        search_text: searchText || undefined,
-        start_time: startTime || undefined,
-        end_time: endTime || undefined,
+      // API has a maximum limit of 100 for size parameter
+      // Fetch multiple pages to get all available logs, then filter and paginate client-side
+      const fetchSize = 100; // API maximum limit
+      
+      // Prepare API parameters
+      const apiService = service && service.trim() !== "" ? service : undefined;
+      const apiLevel = level && level.trim() !== "" ? level : undefined;
+      
+      console.log('Fetching logs with filters:', {
+        service: apiService || 'All Services',
+        level: apiLevel || 'All Levels',
+        fetchSize,
+        startTime: startTime || 'not set',
+        endTime: endTime || 'not set',
       });
+      
+      // First, fetch page 1 to get total count
+      const firstPage = await searchLogs({
+        page: 1,
+        size: fetchSize,
+        service: apiService,
+        level: apiLevel,
+        search_text: searchText && searchText.trim() !== "" ? searchText : undefined,
+        start_time: startTime && startTime.trim() !== "" ? startTime : undefined,
+        end_time: endTime && endTime.trim() !== "" ? endTime : undefined,
+      });
+      
       // Ensure logs is always an array
-      if (result && !Array.isArray(result.logs)) {
-        console.warn('API returned non-array logs, converting:', result);
-        result.logs = [];
+      if (firstPage && !Array.isArray(firstPage.logs)) {
+        console.warn('API returned non-array logs, converting:', firstPage);
+        firstPage.logs = [];
       }
-      return result;
+      
+      const allLogs = firstPage.logs || [];
+      const totalPages = firstPage.total_pages || 1;
+      
+      console.log('First page fetched:', {
+        total: firstPage.total,
+        logsCount: allLogs.length,
+        totalPages,
+      });
+      
+      // Fetch all remaining pages to get all available logs
+      if (totalPages > 1) {
+        console.log(`Fetching all ${totalPages} pages to get all available logs...`);
+        
+        // Fetch pages in parallel batches to speed up loading
+        const batchSize = 5; // Fetch 5 pages at a time to avoid overwhelming the API
+        for (let batchStart = 2; batchStart <= totalPages; batchStart += batchSize) {
+          const batchEnd = Math.min(batchStart + batchSize - 1, totalPages);
+          const batchPromises = [];
+          
+          for (let page = batchStart; page <= batchEnd; page++) {
+            batchPromises.push(
+              searchLogs({
+                page,
+                size: fetchSize,
+                service: apiService,
+                level: apiLevel,
+                search_text: searchText && searchText.trim() !== "" ? searchText : undefined,
+                start_time: startTime && startTime.trim() !== "" ? startTime : undefined,
+                end_time: endTime && endTime.trim() !== "" ? endTime : undefined,
+              }).catch((error) => {
+                console.error(`Error fetching page ${page}:`, error);
+                return { logs: [] }; // Return empty logs on error
+              })
+            );
+          }
+          
+          const batchResults = await Promise.all(batchPromises);
+          batchResults.forEach((pageResult) => {
+            if (pageResult && Array.isArray(pageResult.logs)) {
+              allLogs.push(...pageResult.logs);
+            }
+          });
+          
+          console.log(`Fetched pages ${batchStart}-${batchEnd}: ${allLogs.length} total logs so far (${Math.round((batchEnd / totalPages) * 100)}% complete)`);
+        }
+        
+        console.log(`Completed fetching: ${allLogs.length} total logs from ${totalPages} pages`);
+      }
+      
+      // Return combined result
+      return {
+        ...firstPage,
+        logs: allLogs,
+        total: allLogs.length, // Use actual fetched count
+        total_pages: Math.ceil(allLogs.length / fetchSize),
+      };
     },
     enabled: isAuthenticated,
     staleTime: 30 * 1000, // 30 seconds
@@ -249,6 +323,7 @@ const LogsPage: React.FC = () => {
         page: logsData.page,
         total_pages: logsData.total_pages,
         hasLogs: !!logsData.logs,
+        service: service || 'All Services',
         sampleLog: Array.isArray(logsData.logs) ? logsData.logs[0] : null,
         fullData: JSON.stringify(logsData).substring(0, 500),
       });
@@ -261,7 +336,7 @@ const LogsPage: React.FC = () => {
         services: services,
       });
     }
-  }, [logsData, services]);
+  }, [logsData, services, service]);
 
   // Debug: Log authentication state
   useEffect(() => {
@@ -301,6 +376,7 @@ const LogsPage: React.FC = () => {
 
   const handleSearch = () => {
     setPage(1);
+    setClientPage(1);
     refetchLogs();
   };
 
@@ -313,6 +389,7 @@ const LogsPage: React.FC = () => {
     setEndTime(now.toISOString().slice(0, 16));
     setStartTime(oneHourAgo.toISOString().slice(0, 16));
     setPage(1);
+    setClientPage(1);
   };
 
   const getLevelColor = (level: string) => {
@@ -331,6 +408,144 @@ const LogsPage: React.FC = () => {
       return timestamp;
     }
   };
+
+  // Filter out irrelevant health check, metrics endpoint, infrastructure errors, and Jaeger trace URLs
+  const shouldFilterLog = (log: LogEntry): boolean => {
+    const message = (log.message || '').toLowerCase();
+    
+    // Filter patterns for health/metrics endpoints
+    const healthMetricsPatterns = [
+      // Patterns for /enterprise/metrics and /metrics endpoints
+      /\bget\s+\/enterprise\/metrics\b/i,
+      /\bget\s+\/metrics\b/i,
+      // Patterns for /health endpoints (including /api/v1/*/health)
+      /\bget\s+.*\/health\b/i, // Matches /health, /api/v1/llm/health, etc.
+      // Patterns for these paths at start of line or after whitespace
+      /\/enterprise\/metrics(\s|$|\?|#|\d|-\s*\d)/i,
+      /\/metrics(\s|$|\?|#|\d|-\s*\d)/i,
+      /\/health(\s|$|\?|#|\d|-\s*\d)/i, // Matches /health anywhere in path
+      // Patterns in HTTP log format: "GET /api/v1/llm/health - 200" or "GET /health - 200"
+      /\b(get|post|put|delete|patch)\s+.*\/enterprise\/metrics\s+-\s+\d+/i,
+      /\b(get|post|put|delete|patch)\s+.*\/metrics\s+-\s+\d+/i,
+      /\b(get|post|put|delete|patch)\s+.*\/health\s+-\s+\d+/i, // Matches any path ending in /health
+    ];
+    
+    // Filter patterns for Jaeger trace URLs
+    const jaegerPatterns = [
+      /\/jaeger\/api\/traces\//i, // Matches /jaeger/api/traces/...
+      /jaeger.*trace/i, // Matches any mention of jaeger trace
+    ];
+    
+    // Filter patterns for infrastructure/health check errors
+    const infrastructureErrorPatterns = [
+      /failed to check server readiness/i,
+      /redis health check failed/i,
+      /connection closed by server/i,
+      /network is unreachable/i,
+      /health check failed/i,
+      /server readiness/i,
+      /connection.*closed/i,
+      /network.*unreachable/i,
+    ];
+    
+    // Filter patterns for feature-flags endpoint
+    const featureFlagsPatterns = [
+      /\/api\/v1\/feature-flags\/evaluate/i,
+      /feature-flags\/evaluate/i,
+      /\b(get|post|put|delete|patch)\s+.*\/feature-flags\/evaluate/i,
+    ];
+    
+    // Check if message matches any filter pattern
+    return healthMetricsPatterns.some(pattern => pattern.test(message)) ||
+           jaegerPatterns.some(pattern => pattern.test(message)) ||
+           infrastructureErrorPatterns.some(pattern => pattern.test(message)) ||
+           featureFlagsPatterns.some(pattern => pattern.test(message));
+  };
+
+  // Step 1: First filter out noise (health, metrics, infrastructure errors, feature-flags, etc.)
+  // Service/level filters are already applied at API level, so we just need to remove noise
+  const allFilteredLogs = useMemo(() => {
+    if (!logsData || !logsData.logs || !Array.isArray(logsData.logs)) {
+      console.log('No logs data available for filtering');
+      return [];
+    }
+    
+    console.log('Filtering logs:', {
+      totalFromAPI: logsData.logs.length,
+      service: service || 'All Services',
+      level: level || 'All Levels',
+    });
+    
+    const filtered = logsData.logs.filter((log: LogEntry) => !shouldFilterLog(log));
+    
+    // Debug logging
+    if (logsData.logs.length > 0) {
+      const filteredCount = logsData.logs.length - filtered.length;
+      console.log(`Filtered logs result:`, {
+        originalCount: logsData.logs.length,
+        filteredCount: filtered.length,
+        noiseRemoved: filteredCount,
+        service: service || 'All Services',
+        level: level || 'All Levels',
+      });
+      
+      if (filtered.length === 0 && logsData.logs.length > 0) {
+        console.warn('All logs were filtered out as noise! Sample log messages:', 
+          logsData.logs.slice(0, 3).map((log: LogEntry) => log.message?.substring(0, 100))
+        );
+      }
+    }
+    
+    return filtered;
+  }, [logsData, service, level]);
+
+  // Calculate filtered statistics for display
+  const filteredStats = useMemo(() => {
+    const stats = {
+      total: allFilteredLogs.length,
+      error: 0,
+      warn: 0,
+      info: 0,
+    };
+    
+    allFilteredLogs.forEach((log: LogEntry) => {
+      const logLevel = (log.level || '').toUpperCase();
+      if (logLevel === 'ERROR') stats.error++;
+      else if (logLevel === 'WARN' || logLevel === 'WARNING') stats.warn++;
+      else if (logLevel === 'INFO') stats.info++;
+    });
+    
+    return stats;
+  }, [allFilteredLogs]);
+
+  // Calculate pagination for filtered logs
+  const totalFilteredLogs = allFilteredLogs.length;
+  const totalFilteredPages = Math.ceil(totalFilteredLogs / size);
+  
+  // Step 2: Get the current page of filtered logs (client-side pagination)
+  const filteredLogs = useMemo(() => {
+    const startIndex = (clientPage - 1) * size;
+    const endIndex = startIndex + size;
+    return allFilteredLogs.slice(startIndex, endIndex);
+  }, [allFilteredLogs, clientPage, size]);
+
+  // Reset client page when filters change
+  useEffect(() => {
+    setClientPage(1);
+  }, [service, level, searchText, startTime, endTime, size]);
+
+  // Debug: Log filtered results
+  useEffect(() => {
+    if (logsData && logsData.logs && Array.isArray(logsData.logs) && logsData.logs.length > 0) {
+      console.log('Filtered logs:', {
+        page: logsData.page,
+        totalLogs: logsData.logs.length,
+        filteredLogs: filteredLogs.length,
+        filteredOut: logsData.logs.length - filteredLogs.length,
+        service: service || 'All Services',
+      });
+    }
+  }, [logsData, filteredLogs, service]);
 
   return (
     <>
@@ -489,7 +704,7 @@ const LogsPage: React.FC = () => {
                   <Stat>
                     <StatLabel fontSize="sm" color="gray.600" fontWeight="medium">Total Logs</StatLabel>
                     <StatNumber fontSize="2xl" fontWeight="bold" color="gray.800">
-                      {aggregations.total?.toLocaleString() || 0}
+                      {filteredStats.total.toLocaleString()}
                     </StatNumber>
                   </Stat>
                 </CardBody>
@@ -506,7 +721,7 @@ const LogsPage: React.FC = () => {
                   <Stat>
                     <StatLabel fontSize="sm" color="gray.600" fontWeight="medium">Errors</StatLabel>
                     <StatNumber fontSize="2xl" fontWeight="bold" color="red.500">
-                      {aggregations.error_count?.toLocaleString() || 0}
+                      {filteredStats.error.toLocaleString()}
                     </StatNumber>
                   </Stat>
                 </CardBody>
@@ -523,7 +738,7 @@ const LogsPage: React.FC = () => {
                   <Stat>
                     <StatLabel fontSize="sm" color="gray.600" fontWeight="medium">Warnings</StatLabel>
                     <StatNumber fontSize="2xl" fontWeight="bold" color="orange.500">
-                      {aggregations.warning_count?.toLocaleString() || 0}
+                      {filteredStats.warn.toLocaleString()}
                     </StatNumber>
                   </Stat>
                 </CardBody>
@@ -540,7 +755,7 @@ const LogsPage: React.FC = () => {
                   <Stat>
                     <StatLabel fontSize="sm" color="gray.600" fontWeight="medium">Info</StatLabel>
                     <StatNumber fontSize="2xl" fontWeight="bold" color="blue.500">
-                      {(aggregations.by_level?.INFO || aggregations.info_count || 0).toLocaleString()}
+                      {filteredStats.info.toLocaleString()}
                     </StatNumber>
                   </Stat>
                 </CardBody>
@@ -562,11 +777,16 @@ const LogsPage: React.FC = () => {
                 <FormControl>
                   <FormLabel fontWeight="medium">Service</FormLabel>
                   <Select
-                    placeholder="All Services"
-                    value={service}
-                    onChange={(e) => setService(e.target.value)}
+                    value={service || ""}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setService(value === "" ? "" : value);
+                      setPage(1);
+                      setClientPage(1); // Reset to first page when service changes
+                    }}
                     bg="white"
                   >
+                    <option value="">All Services</option>
                     {Array.isArray(services) && services.map((svc) => (
                       <option key={svc} value={svc}>
                         {svc}
@@ -578,11 +798,15 @@ const LogsPage: React.FC = () => {
                 <FormControl>
                   <FormLabel fontWeight="medium">Level</FormLabel>
                   <Select
-                    placeholder="All Levels"
-                    value={level}
-                    onChange={(e) => setLevel(e.target.value)}
+                    value={level || ""}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setLevel(value === "" ? "" : value);
+                      setClientPage(1); // Reset to first page when level changes
+                    }}
                     bg="white"
                   >
+                    <option value="">All Levels</option>
                     <option value="ERROR">ERROR</option>
                     <option value="WARN">WARN</option>
                     <option value="INFO">INFO</option>
@@ -630,9 +854,11 @@ const LogsPage: React.FC = () => {
                     onChange={(e) => {
                       setSize(Number(e.target.value));
                       setPage(1);
+                      setClientPage(1);
                     }}
                     bg="white"
                   >
+                    <option value={10}>10</option>
                     <option value={25}>25</option>
                     <option value={50}>50</option>
                     <option value={100}>100</option>
@@ -704,8 +930,18 @@ const LogsPage: React.FC = () => {
                     Retry
                   </Button>
                 </VStack>
-              ) : logsData && logsData.logs && Array.isArray(logsData.logs) && logsData.logs.length > 0 ? (
+              ) : logsData && logsData.logs && Array.isArray(logsData.logs) ? (
+                totalFilteredLogs > 0 ? (
                 <>
+                  {logsData.logs.length > allFilteredLogs.length && (
+                    <Alert status="info" borderRadius="md" mb={4}>
+                      <AlertIcon />
+                      <AlertDescription fontSize="sm">
+                        Showing {filteredLogs.length} logs on page {clientPage} of {totalFilteredPages} ({totalFilteredLogs.toLocaleString()} total filtered logs). 
+                        Health check, metrics endpoint, feature-flags, infrastructure errors, and Jaeger trace URL logs are hidden.
+                      </AlertDescription>
+                    </Alert>
+                  )}
                   <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
                     <CardBody p={0}>
                       <TableContainer w="full" overflowX="auto">
@@ -716,11 +952,11 @@ const LogsPage: React.FC = () => {
                               <Th fontWeight="semibold" color="gray.700">Level</Th>
                               <Th fontWeight="semibold" color="gray.700">Service</Th>
                               <Th fontWeight="semibold" color="gray.700">Message</Th>
-                              <Th fontWeight="semibold" color="gray.700">Jaeger Trace</Th>
+                              <Th fontWeight="semibold" color="gray.700">Trace</Th>
                             </Tr>
                           </Thead>
                           <Tbody>
-                            {(Array.isArray(logsData.logs) ? logsData.logs : []).map((log: LogEntry, index: number) => {
+                            {filteredLogs.map((log: LogEntry, index: number) => {
                               // Normalize timestamp field (OpenSearch uses @timestamp, we use timestamp)
                           const timestamp = log.timestamp || log['@timestamp'] || log.time || '';
                           // Normalize level field
@@ -812,33 +1048,33 @@ const LogsPage: React.FC = () => {
                     </CardBody>
                   </Card>
 
-                  {/* Pagination */}
-                  {logsData.total_pages > 1 && (
+                  {/* Pagination - based on filtered logs */}
+                  {totalFilteredPages > 1 && (
                     <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" mt={4} w="full">
                       <CardBody py={3}>
                         <Flex justify="space-between" align="center" w="full">
                           <Text fontSize="sm" color="gray.600" fontWeight="medium">
-                            Page {logsData.page} of {logsData.total_pages} ({logsData.total?.toLocaleString() || 0} total logs)
+                            Page {clientPage} of {totalFilteredPages} ({totalFilteredLogs.toLocaleString()} filtered logs)
                           </Text>
                           <HStack spacing={2}>
                             <IconButton
                               aria-label="Previous page"
                               icon={<ChevronLeftIcon />}
-                              onClick={() => setPage((p) => Math.max(1, p - 1))}
-                              isDisabled={page === 1}
+                              onClick={() => setClientPage((p) => Math.max(1, p - 1))}
+                              isDisabled={clientPage === 1}
                               size="sm"
                               variant="outline"
                             />
                             <Text fontSize="sm" fontWeight="bold" color="gray.700" minW="30px" textAlign="center">
-                              {page}
+                              {clientPage}
                             </Text>
                             <IconButton
                               aria-label="Next page"
                               icon={<ChevronRightIcon />}
                               onClick={() =>
-                                setPage((p) => Math.min(logsData.total_pages, p + 1))
+                                setClientPage((p) => Math.min(totalFilteredPages, p + 1))
                               }
-                              isDisabled={page === logsData.total_pages}
+                              isDisabled={clientPage === totalFilteredPages}
                               size="sm"
                               variant="outline"
                             />
@@ -848,6 +1084,42 @@ const LogsPage: React.FC = () => {
                     </Card>
                   )}
                 </>
+                ) : logsData.logs.length > 0 ? (
+                  <VStack spacing={2} py={8}>
+                    <Text textAlign="center" color="gray.500" fontWeight="medium">
+                      All logs were filtered out (health checks and metrics endpoints are hidden).
+                    </Text>
+                    <Text fontSize="sm" color="gray.400">
+                      {logsData.logs.length} logs were fetched, but all were filtered. 
+                      Try adjusting your filters or time range.
+                    </Text>
+                    <HStack spacing={2} justify="center" mt={2}>
+                      <Button size="xs" variant="outline" onClick={handleClear}>
+                        Clear Filters
+                      </Button>
+                      <Button size="xs" variant="outline" onClick={() => refetchLogs()}>
+                        Refresh
+                      </Button>
+                    </HStack>
+                  </VStack>
+                ) : (
+                  <VStack spacing={2} py={8}>
+                    <Text textAlign="center" color="gray.500" fontWeight="medium">
+                      No logs found on this page.
+                    </Text>
+                    <Text fontSize="sm" color="gray.400">
+                      Try adjusting your filters or navigating to another page.
+                    </Text>
+                    <HStack spacing={2} justify="center" mt={2}>
+                      <Button size="xs" variant="outline" onClick={handleClear}>
+                        Clear Filters
+                      </Button>
+                      <Button size="xs" variant="outline" onClick={() => refetchLogs()}>
+                        Refresh
+                      </Button>
+                    </HStack>
+                  </VStack>
+                )
               ) : logsData && logsData.total === 0 ? (
                 <VStack spacing={2} py={8}>
                   <Text textAlign="center" color="gray.500" fontWeight="medium">

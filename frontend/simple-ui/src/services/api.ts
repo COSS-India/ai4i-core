@@ -355,10 +355,27 @@ apiClient.interceptors.request.use(
           config.headers['X-API-Key'] = apiKey;
           config.headers['x-auth-source'] = 'BOTH';
           config.headers['X-Auth-Source'] = 'BOTH';
+          console.log('🔐 Model-management: Sending BOTH JWT + API key', {
+            url: config.url,
+            hasJWT: !!jwtToken,
+            hasAPIKey: !!apiKey,
+            apiKeyLength: apiKey?.length || 0,
+          });
         } else if (jwtToken) {
           // Only JWT token present - use AUTH_TOKEN
           config.headers['Authorization'] = `Bearer ${jwtToken}`;
           config.headers['x-auth-source'] = 'AUTH_TOKEN';
+          config.headers['X-Auth-Source'] = 'AUTH_TOKEN';
+          console.log('🔐 Model-management: Sending JWT only (AUTH_TOKEN)', {
+            url: config.url,
+            hasJWT: !!jwtToken,
+            hasAPIKey: false,
+            jwtLength: jwtToken?.length || 0,
+          });
+        } else {
+          console.error('❌ Model-management: No JWT token available!', {
+            url: config.url,
+          });
         }
       } 
       
