@@ -498,26 +498,16 @@ const ProfilePage: React.FC = () => {
     setIsFetchingApiKey(true);
     setIsLoadingApiKeys(true);
     try {
-      const fetchedApiKeys = await authService.listApiKeys();
-      console.log('Profile: API keys fetched successfully:', fetchedApiKeys);
-      setApiKeys(fetchedApiKeys);
-      
-      // If there's at least one API key, use the first one (or most recent)
-      if (fetchedApiKeys.length > 0) {
-        // Find the most recent active API key
-        const activeKey = fetchedApiKeys
-          .filter(key => key.is_active)
-          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
-        
-        if (activeKey && activeKey.key_value) {
-          // If key_value is available (only on creation), store it
-          setApiKey(activeKey.key_value);
-        }
-      }
+      const response = await authService.listApiKeys();
+      console.log('Profile: API keys fetched successfully:', response);
+      const keys = Array.isArray(response.api_keys) ? response.api_keys : [];
+      setApiKeys(keys);
+      // Restore server-persisted selection so the correct key stays checked after login
+      setSelectedApiKeyId(response.selected_api_key_id ?? null);
       
       toast({
         title: "API Keys Loaded",
-        description: `Found ${fetchedApiKeys.length} API key(s)`,
+        description: `Found ${keys?.length} API key(s)`,
         status: "success",
         duration: 2000,
         isClosable: true,
@@ -565,7 +555,7 @@ const ProfilePage: React.FC = () => {
       
       toast({
         title: "API Keys Loaded",
-        description: `Loaded ${allKeys.length} API key(s)`,
+        description: `Loaded ${allKeys?.length} API key(s)`,
         status: "success",
         duration: 2000,
         isClosable: true,
@@ -789,7 +779,7 @@ const ProfilePage: React.FC = () => {
           py={8} 
           px={4}
         >
-          <Heading size="xl" mb={8} color="gray.800">
+          <Heading size="xl" mb={8} color="gray.800" userSelect="none" cursor="default" tabIndex={-1}>
             Profile
           </Heading>
 
@@ -851,7 +841,7 @@ const ProfilePage: React.FC = () => {
                   <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                     <CardHeader>
                       <HStack justify="space-between">
-                        <Heading size="md" color="gray.700">
+                        <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                           User Details
                         </Heading>
                         {!isEditingUser ? (
@@ -1033,7 +1023,7 @@ const ProfilePage: React.FC = () => {
                 <TabPanel px={0} pt={6}>
                   <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                     <CardHeader>
-                      <Heading size="md" color="gray.700">
+                      <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                         Organization Details
                       </Heading>
                     </CardHeader>
@@ -1082,7 +1072,7 @@ const ProfilePage: React.FC = () => {
                   <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                     <CardHeader>
                       <HStack justify="space-between">
-                        <Heading size="md" color="gray.700">
+                        <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                           API Key
                         </Heading>
                         {isFetchingApiKey && (
@@ -1146,7 +1136,7 @@ const ProfilePage: React.FC = () => {
                       {/* Display fetched API keys list */}
                       {apiKeys.length > 0 ? (
                         <Box>
-                          <Heading size="sm" mb={4} color="gray.700">
+                          <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
                             Your API Keys ({apiKeys.length})
                           </Heading>
                           <Text fontSize="sm" color="gray.600" mb={3}>
@@ -1170,33 +1160,33 @@ const ProfilePage: React.FC = () => {
                                       <HStack spacing={3} flex={1}>
                                         <Checkbox
                                           isChecked={selectedApiKeyId === key.id}
-                                          onChange={(e) => {
+                                          onChange={async (e) => {
                                             if (e.target.checked) {
-                                              // User explicitly selected this key - persist it
-                                              setSelectedApiKeyId(key.id);
-                                              // If key_value is available, set it as the current API key
-                                              if (key.key_value) {
-                                                setApiKey(key.key_value);
+                                              try {
+                                                await authService.selectApiKey(key.id);
+                                                setSelectedApiKeyId(key.id);
+                                                if (key.key_value) {
+                                                  setApiKey(key.key_value);
+                                                }
                                                 toast({
                                                   title: "API Key Selected",
-                                                  description: `API key "${key.key_name}" has been set as your current key`,
-                                                  status: "success",
-                                                  duration: 3000,
+                                                  description: key.key_value
+                                                    ? `API key "${key.key_name}" has been set as your current key`
+                                                    : `API key "${key.key_name}" is now selected. Key value is not available (only shown once on creation).`,
+                                                  status: key.key_value ? "success" : "info",
+                                                  duration: key.key_value ? 3000 : 4000,
                                                   isClosable: true,
                                                 });
-                                              } else {
-                                                // Key value not available (only shown once on creation)
-                                                // Still persist the selection even without the value
+                                              } catch (err) {
                                                 toast({
-                                                  title: "API Key Selected",
-                                                  description: `API key "${key.key_name}" is now selected. Key value is not available (only shown once on creation).`,
-                                                  status: "info",
-                                                  duration: 4000,
+                                                  title: "Error",
+                                                  description: err instanceof Error ? err.message : "Failed to save selected API key",
+                                                  status: "error",
+                                                  duration: 5000,
                                                   isClosable: true,
                                                 });
                                               }
                                             } else {
-                                              // User explicitly deselected - clear selection
                                               setSelectedApiKeyId(null);
                                             }
                                           }}
@@ -1270,7 +1260,7 @@ const ProfilePage: React.FC = () => {
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
                         <HStack justify="space-between">
-                        <Heading size="md" color="gray.700">
+                        <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                           Role-Based Access Control (RBAC)
                         </Heading>
                           {(user?.roles?.includes('MODERATOR') && !user?.roles?.includes('ADMIN') && !user?.is_superuser) && (
@@ -1323,7 +1313,7 @@ const ProfilePage: React.FC = () => {
 
                           {/* User Selection */}
                           <Box>
-                            <Heading size="sm" mb={4} color="gray.700">
+                            <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
                               Select User
                             </Heading>
                             <FormControl>
@@ -1381,7 +1371,7 @@ const ProfilePage: React.FC = () => {
                           {/* Current User Roles */}
                           {selectedUser && (
                             <Box>
-                              <Heading size="sm" mb={4} color="gray.700">
+                              <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
                                 Current Roles for {selectedUser.username}
                               </Heading>
                               {isLoadingUserRoles ? (
@@ -1412,7 +1402,7 @@ const ProfilePage: React.FC = () => {
                           {/* Assign Role Section - Only visible to ADMIN */}
                           {selectedUser && roles.length > 0 && (user?.roles?.includes('ADMIN') || user?.is_superuser) && (
                             <Box>
-                              <Heading size="sm" mb={4} color="gray.700">
+                              <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
                                 Assign Role to {selectedUser.username}
                               </Heading>
                               <VStack spacing={4} align="stretch">
@@ -1490,7 +1480,7 @@ const ProfilePage: React.FC = () => {
                           {/* Available Roles List */}
                           {roles.length > 0 && (
                             <Box>
-                              <Heading size="sm" mb={4} color="gray.700">
+                              <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
                                 Available Roles
                               </Heading>
                               <TableContainer>
@@ -1540,7 +1530,7 @@ const ProfilePage: React.FC = () => {
                   <TabPanel px={0} pt={6}>
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
-                        <Heading size="md" color="gray.700">
+                        <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                           Permissions Management
                         </Heading>
                       </CardHeader>
@@ -1587,7 +1577,7 @@ const ProfilePage: React.FC = () => {
 
                           {/* User Selection */}
                           <Box>
-                            <Heading size="sm" mb={4} color="gray.700">
+                            <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
                               Select User
                             </Heading>
                             <FormControl>
@@ -1626,7 +1616,7 @@ const ProfilePage: React.FC = () => {
                           {/* Current User Permissions */}
                           {selectedUserForPermissions && (
                             <Box>
-                              <Heading size="sm" mb={4} color="gray.700">
+                              <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
                                 Current Permissions for {selectedUserForPermissions.username}
                               </Heading>
                               {selectedUserPermissions.length > 0 ? (
@@ -1670,7 +1660,7 @@ const ProfilePage: React.FC = () => {
                           {/* Create API Key for User Section */}
                           {selectedUserForPermissions && permissions.length > 0 && (
                             <Box>
-                              <Heading size="sm" mb={4} color="gray.700">
+                              <Heading size="sm" mb={4} color="gray.700" userSelect="none" cursor="default">
                                 Create API Key for {selectedUserForPermissions.username}
                               </Heading>
                               <VStack spacing={4} align="stretch">
@@ -1817,21 +1807,11 @@ const ProfilePage: React.FC = () => {
                                         user_id: payload.userId, // TypeScript interface uses user_id, but payload will have userId
                                       });
                                       
-                                      // If the created key has a key_value, set it in the API key box
-                                      if (createdKey.key_value) {
-                                        setApiKey(createdKey.key_value);
-                                        // Set the newly created key as selected
-                                        setSelectedApiKeyId(createdKey.id);
-                                      }
-                                      
-                                      // Refresh API keys list to include the new key
+                                      // Refresh API keys list to include the new key (do not change selection)
                                       try {
-                                        const updatedApiKeys = await authService.listApiKeys();
-                                        setApiKeys(updatedApiKeys);
-                                        // Update selected key ID if we have it
-                                        if (createdKey.id) {
-                                          setSelectedApiKeyId(createdKey.id);
-                                        }
+                                        const listResponse = await authService.listApiKeys();
+                                        setApiKeys(Array.isArray(listResponse.api_keys) ? listResponse.api_keys : []);
+                                        setSelectedApiKeyId(listResponse.selected_api_key_id ?? null);
                                       } catch (error) {
                                         console.error("Failed to refresh API keys list:", error);
                                       }
@@ -1895,7 +1875,7 @@ const ProfilePage: React.FC = () => {
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
                         <HStack justify="space-between">
-                          <Heading size="md" color="gray.700">
+                          <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                             API Key Management
                           </Heading>
                           <Button
@@ -1914,7 +1894,7 @@ const ProfilePage: React.FC = () => {
                           {/* Filters */}
                           <Box>
                             <HStack justify="space-between" mb={4}>
-                              <Heading size="sm" color="gray.700">Filters</Heading>
+                              <Heading size="sm" color="gray.700" userSelect="none" cursor="default">Filters</Heading>
                               <Button
                                 size="sm"
                                 variant="outline"

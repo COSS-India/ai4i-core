@@ -21,7 +21,8 @@ from models import (
     LoginRequest, LoginResponse, TokenRefreshRequest, TokenRefreshResponse,
     TokenValidationResponse, PasswordChangeRequest, PasswordResetRequest,
     PasswordResetConfirm, LogoutRequest, LogoutResponse, APIKeyCreate,
-    APIKeyUpdate, APIKeyResponse, OAuth2Provider, OAuth2Callback, Role, UserRole,
+    APIKeyUpdate, APIKeyResponse, APIKeyListResponse, APIKeySelectRequest,
+    OAuth2Provider, OAuth2Callback, Role, UserRole,
     APIKeyValidationRequest, APIKeyValidationResponse, Permission,
     UserDetailResponse, PermissionResponse, UserListResponse,
     AdminAPIKeyWithUserResponse,
@@ -606,8 +607,8 @@ async def login(
             "tenant_id": tenant_info["tenant_id"],
             "tenant_uuid": tenant_info["tenant_uuid"],
             "schema_name": tenant_info["schema_name"],
-            "subscriptions": tenant_info.get("subscriptions", []),
-            "user_subscriptions": tenant_info.get("user_subscriptions", []),
+            # "subscriptions": tenant_info.get("subscriptions", []), # Add subscirptions if needed
+            # "user_subscriptions": tenant_info.get("user_subscriptions", []), # Add subscirptions if needed
         })
         logger.info(f"Added tenant info to JWT for user {user.id}: tenant_id={tenant_info['tenant_id']}, schema={tenant_info['schema_name']}")
     
@@ -771,8 +772,8 @@ async def refresh_token(
             "tenant_id": tenant_info["tenant_id"],
             "tenant_uuid": tenant_info["tenant_uuid"],
             "schema_name": tenant_info["schema_name"],
-            "subscriptions": tenant_info.get("subscriptions", []),
-            "user_subscriptions": tenant_info.get("user_subscriptions", []),
+            # "subscriptions": tenant_info.get("subscriptions", []), # Add subscirptions if needed
+            # "user_subscriptions": tenant_info.get("user_subscriptions", []), # Add subscirptions if needed
         })
     
     # Generate new access token
@@ -1180,7 +1181,7 @@ async def create_api_key(
         last_used=db_api_key.last_used
     )
 
-@app.get("/api/v1/auth/api-keys", response_model=List[APIKeyResponse])
+@app.get("/api/v1/auth/api-keys", response_model=APIKeyListResponse)
 async def list_api_keys(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
@@ -1200,19 +1201,56 @@ async def list_api_keys(
     )
     api_keys = result.scalars().all()
     
-    return [
-        APIKeyResponse(
-            id=key.id,
-            key_name=key.key_name,
-            key_value=AuthUtils.decrypt_api_key(key.key_value_encrypted) or "***",  # Decrypt and return actual value
-            permissions=key.permissions,
-            is_active=key.is_active,
-            created_at=key.created_at,
-            expires_at=key.expires_at,
-            last_used=key.last_used
+    selected_id = current_user.selected_api_key_id
+    active_ids = {key.id for key in api_keys}
+    if selected_id not in active_ids:
+        selected_id = None
+
+    return APIKeyListResponse(
+        selected_api_key_id=selected_id,
+        api_keys=[
+            APIKeyResponse(
+                id=key.id,
+                key_name=key.key_name,
+                key_value=AuthUtils.decrypt_api_key(key.key_value_encrypted) or "***",  # Decrypt and return actual value
+                permissions=key.permissions,
+                is_active=key.is_active,
+                created_at=key.created_at,
+                expires_at=key.expires_at,
+                last_used=key.last_used
+            )
+            for key in api_keys
+        ]
+    )
+
+
+@app.post("/api/v1/auth/api-keys/select")
+async def select_api_key(
+    payload: APIKeySelectRequest,
+    current_user: User = Depends(require_permission("apiKey", "update")),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Mark an API key as the selected key for the current user.
+    """
+    result = await db.execute(
+        select(APIKey).where(
+            APIKey.id == payload.api_key_id,
+            APIKey.user_id == current_user.id,
+            APIKey.is_active.is_(True),
         )
-        for key in api_keys
-    ]
+    )
+    api_key = result.scalar_one_or_none()
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found or inactive"
+        )
+
+    current_user.selected_api_key_id = api_key.id
+    await db.commit()
+
+    return {"selected_api_key_id": api_key.id}
 
 
 @app.get(
@@ -1497,8 +1535,8 @@ async def google_callback(
                 "tenant_id": tenant_info["tenant_id"],
                 "tenant_uuid": tenant_info["tenant_uuid"],
                 "schema_name": tenant_info["schema_name"],
-                "subscriptions": tenant_info.get("subscriptions", []),
-                "user_subscriptions": tenant_info.get("user_subscriptions", []),
+                # "subscriptions": tenant_info.get("subscriptions", []), # Add subscirptions if needed
+                # "user_subscriptions": tenant_info.get("user_subscriptions", []), # Add subscirptions if needed
             })
         
         # 7. Generate JWT tokens

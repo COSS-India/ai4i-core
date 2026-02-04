@@ -18,7 +18,8 @@ echo "Waiting for OpenSearch Dashboards to be ready..."
 max_attempts=30
 attempt=0
 while [ $attempt -lt $max_attempts ]; do
-    if curl -s -f "$OPENSEARCH_DASHBOARDS_URL/api/status" > /dev/null 2>&1; then
+    # Check if port is listening (simpler than checking API endpoints which may require auth)
+    if nc -z localhost 5602 2>/dev/null || curl -s -o /dev/null -w "%{http_code}" "$OPENSEARCH_DASHBOARDS_URL" | grep -qE "^(200|302|401|403)"; then
         echo "OpenSearch Dashboards is ready!"
         break
     fi
@@ -28,8 +29,8 @@ while [ $attempt -lt $max_attempts ]; do
 done
 
 if [ $attempt -eq $max_attempts ]; then
-    echo "ERROR: OpenSearch Dashboards is not responding. Please check if it's running."
-    exit 1
+    echo "WARNING: Could not verify OpenSearch Dashboards is ready, but continuing anyway..."
+    echo "If the script fails, please ensure OpenSearch Dashboards is running on $OPENSEARCH_DASHBOARDS_URL"
 fi
 
 # Get the index pattern ID for logs*
@@ -128,14 +129,19 @@ try:
     
     # Configure jaeger_trace_url formatter with URL template
     # jaeger_trace_url field now contains only the trace_id
-    # URL template constructs: http://localhost:16686/trace/{trace_id}
+    # URL template constructs: {JAEGER_UI_URL}/jaeger/trace/{trace_id}
     # This ensures OpenSearch Dashboards treats it as external absolute URL
+    # Get JAEGER_UI_URL from environment or use default
+    import os
+    jaeger_ui_url = os.getenv("JAEGER_UI_URL", "http://localhost:16686")
+    # In f-string, {{ becomes literal {, so {{{{value}}}} becomes {{value}} for OpenSearch template
+    url_template = f"{jaeger_ui_url}/jaeger/trace/{{{{value}}}}"
     field_formats['jaeger_trace_url'] = {
         "id": "url",
         "params": {
             # Base URL + trace_id value from the field
             # {{value}} will be replaced with the trace_id stored in jaeger_trace_url
-            "urlTemplate": "http://localhost:16686/trace/{{value}}",
+            "urlTemplate": url_template,
             "labelTemplate": "View Trace in Jaeger"
         }
     }

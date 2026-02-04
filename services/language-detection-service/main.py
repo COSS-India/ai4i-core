@@ -30,6 +30,8 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
+from middleware.tenant_schema_router import TenantSchemaRouter
+from middleware.tenant_middleware import TenantMiddleware
 
 from models import database_models, auth_models
 
@@ -84,6 +86,8 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db"
 )
+# Multi-tenant database URL for tenant schema routing
+MULTI_TENANT_DB_URL = os.getenv("MULTI_TENANT_DB_URL")
 # NOTE: Triton endpoint/model MUST come from Model Management for inference.
 # No environment variable fallback - all resolution via Model Management database.
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
@@ -162,7 +166,18 @@ async def lifespan(app: FastAPI):
     app.state.db_session_factory = db_session_factory
     # Triton endpoint/model resolved via Model Management middleware - no hardcoded fallback
     app.state.triton_api_key = TRITON_API_KEY
-    
+
+    # Initialize tenant schema router for multi-tenant routing
+    if not MULTI_TENANT_DB_URL:
+        logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
+        multi_tenant_db_url = DATABASE_URL
+    else:
+        multi_tenant_db_url = MULTI_TENANT_DB_URL
+    logger.info("Using MULTI_TENANT_DB_URL: %s", (multi_tenant_db_url or "").split("@")[0] + "@***" if multi_tenant_db_url else "not set")
+    tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
+    app.state.tenant_schema_router = tenant_schema_router
+    logger.info("Tenant schema router initialized with multi-tenant database")
+
     # Service registry
     try:
         registry_client = ServiceRegistryHttpClient()
@@ -204,6 +219,10 @@ async def lifespan(app: FastAPI):
     if db_engine:
         await db_engine.dispose()
         logger.info("PostgreSQL connection closed")
+    tenant_router = getattr(app.state, "tenant_schema_router", None)
+    if tenant_router:
+        await tenant_router.close_all()
+        logger.info("Tenant schema router connections closed")
     logger.info("Language Detection Service shutdown complete")
 
 
@@ -270,6 +289,10 @@ try:
     logger.info("✅ Model Management Plugin initialized for Language Detection service")
 except Exception as e:
     logger.warning(f"Failed to initialize Model Management Plugin: {e}")
+
+# Add tenant middleware (after auth, before routes)
+# This extracts tenant context from JWT or user_id
+app.add_middleware(TenantMiddleware)
 
 # Distributed Tracing (Jaeger)
 # IMPORTANT: Setup tracing BEFORE instrumenting FastAPI

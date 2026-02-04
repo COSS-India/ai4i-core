@@ -113,10 +113,10 @@ const LLMPage: React.FC = () => {
         <VStack spacing={6} w="full">
           {/* Page Header */}
           <Box textAlign="center" mb={2}>
-            <Heading size="lg" color="gray.800" mb={1}>
+            <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
               Large Language Model
             </Heading>
-            <Text color="gray.600" fontSize="sm">
+            <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
               Translate and generate text
             </Text>
           </Box>

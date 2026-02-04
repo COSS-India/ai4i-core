@@ -111,6 +111,7 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
         request.state.api_key_name = None
         request.state.user_email = email
         request.state.is_authenticated = True
+        request.state.jwt_payload = payload  # Store JWT payload for tenant resolution
 
         return {
             "user_id": int(user_id) if isinstance(user_id, (str, int)) else user_id,
