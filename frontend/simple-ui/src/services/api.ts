@@ -27,19 +27,13 @@ const getAuthToken = (): string | null => {
   return null;
 };
 
-// Get API key from localStorage (user-provided) or environment variable (fallback)
-// Priority: localStorage > env file
+// Get API key from localStorage only (user-provided via "manage API key")
+// Do not use env - API key must be set by the user
 const getApiKey = (): string | null => {
   if (typeof window !== 'undefined') {
-    // First check localStorage (user-provided via "manage API key")
     const storedApiKey = localStorage.getItem('api_key');
     if (storedApiKey && storedApiKey.trim() !== '') {
       return storedApiKey.trim();
-    }
-    // Fallback to environment variable if no API key is provided
-    const envApiKey = process.env.NEXT_PUBLIC_API_KEY;
-    if (envApiKey && envApiKey.trim() !== '' && envApiKey !== 'your_api_key_here') {
-      return envApiKey.trim();
     }
   }
   return null;
