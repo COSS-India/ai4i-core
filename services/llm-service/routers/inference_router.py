@@ -15,6 +15,7 @@ from repositories.llm_repository import LLMRepository
 from services.llm_service import LLMService
 from utils.triton_client import TritonClient
 from middleware.auth_provider import AuthProvider
+from middleware.tenant_db_dependency import get_tenant_db_session
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +27,8 @@ inference_router = APIRouter(
 )
 
 
-async def get_db_session(request: Request) -> AsyncSession:
-    """Dependency to get database session"""
-    return request.app.state.db_session_factory()
 
-
-async def get_llm_service(request: Request, db: AsyncSession = Depends(get_db_session)) -> LLMService:
+async def get_llm_service(request: Request, db: AsyncSession = Depends(get_tenant_db_session)) -> LLMService:
     """Dependency to get configured LLM service"""
     repository = LLMRepository(db)
     triton_client = TritonClient(
