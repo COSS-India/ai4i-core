@@ -793,8 +793,8 @@ const ProfilePage: React.FC = () => {
                 // If API Key Management tab is clicked, fetch all API keys
                 const isAdmin = user?.roles?.includes('ADMIN') || user?.is_superuser;
                 const isModerator = user?.roles?.includes('MODERATOR');
-                // Calculate tab index: User Details(0), Organization(1), API Key(2), Roles(3 if admin), Create API Key(4 if admin), API Key Management(5 if admin, 3 if moderator only)
-                const apiKeyManagementTabIndex = isAdmin ? 5 : (isModerator ? 3 : -1);
+                // Tab indices: User Details(0), API Key(1), Roles(2 if admin), Create API Key(3 if admin), API Key Management(4 if admin, 2 if moderator only). Organization tab is hidden.
+                const apiKeyManagementTabIndex = isAdmin ? 4 : (isModerator ? 2 : -1);
                 if (index === apiKeyManagementTabIndex) {
                   console.log('Profile: API Key Management tab clicked, fetching all API keys');
                   handleFetchAllApiKeys();
@@ -803,10 +803,9 @@ const ProfilePage: React.FC = () => {
                     authService.getAllPermissions().then(setPermissions).catch(console.error);
                   }
                 }
-                // Calculate tab indices
-                // Tabs: 0=User Details, 1=Organization, 2=API Key, 3=Roles (if admin), 4=Permissions (if admin)
-                const apiKeyTabIndex = 2;
-                const permissionsTabIndex = (user?.roles?.includes('ADMIN') || user?.is_superuser) ? 4 : -1;
+                // Tab indices (Organization tab hidden)
+                const apiKeyTabIndex = 1;
+                const permissionsTabIndex = (user?.roles?.includes('ADMIN') || user?.is_superuser) ? 3 : -1;
                 console.log('Profile: Tab changed to index', index, 'API Key tab index is', apiKeyTabIndex, 'Permissions tab index is', permissionsTabIndex);
                 // When API Key tab is clicked, fetch API keys
                 if (index === apiKeyTabIndex) {
@@ -822,7 +821,6 @@ const ProfilePage: React.FC = () => {
             >
               <TabList>
                 <Tab fontWeight="semibold">User Details</Tab>
-                <Tab fontWeight="semibold">Organization</Tab>
                 <Tab fontWeight="semibold">API Key</Tab>
                 {(user?.roles?.includes('ADMIN') || user?.is_superuser) && (
                   <>
@@ -1019,53 +1017,8 @@ const ProfilePage: React.FC = () => {
                 </Card>
                 </TabPanel>
 
-                {/* Organization Details Tab */}
-                <TabPanel px={0} pt={6}>
-                  <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
-                    <CardHeader>
-                      <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-                        Organization Details
-                      </Heading>
-                    </CardHeader>
-                    <CardBody>
-                <VStack spacing={4} align="stretch">
-                  <Alert status="info" borderRadius="md">
-                    <AlertIcon />
-                    <AlertDescription>
-                      Organization management features are coming soon. You will be able to view and manage your organization details here.
-                    </AlertDescription>
-                  </Alert>
-                  
-                  <FormControl>
-                    <FormLabel fontWeight="semibold">Organization Name</FormLabel>
-                    <Input
-                      value="Not Available"
-                      isReadOnly
-                      bg={inputReadOnlyBg}
-                    />
-                  </FormControl>
-
-                  <FormControl>
-                    <FormLabel fontWeight="semibold">Organization ID</FormLabel>
-                    <Input
-                      value="Not Available"
-                      isReadOnly
-                      bg={inputReadOnlyBg}
-                    />
-                  </FormControl>
-
-                  <FormControl>
-                    <FormLabel fontWeight="semibold">Role</FormLabel>
-                    <Input
-                      value="Not Available"
-                      isReadOnly
-                      bg={inputReadOnlyBg}
-                    />
-                  </FormControl>
-                    </VStack>
-                  </CardBody>
-                </Card>
-                </TabPanel>
+                {/* Organization Details Tab - hidden for now */}
+                {/* <TabPanel> ... </TabPanel> */}
 
                 {/* API Key Tab */}
                 <TabPanel px={0} pt={6}>
