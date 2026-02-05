@@ -1,6 +1,7 @@
 import time
 import logging
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import Counter, Histogram, make_asgi_app
 from app.models import PolicyRequest, PolicyResponse, LatencyPolicy, CostPolicy, AccuracyPolicy
 from app.engine import evaluate_rules, FALLBACK_FLAGS
@@ -15,6 +16,16 @@ POLICY_LATENCY = Histogram('smr_policy_latency_seconds', 'Evaluation time')
 POLICY_ERRORS = Counter('smr_policy_errors_total', 'Total errors')
 
 app = FastAPI(title="AI4I Policy Engine", version="1.7.0")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.mount("/metrics", make_asgi_app())
 
 # Define current version constant
