@@ -6,7 +6,7 @@ import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestCo
 // For production this should be set to the browser-facing API gateway URL
 // (for example, https://dev.ai4inclusion.org or a dedicated API domain).
 // Default to localhost:8080 for local development if not set.
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 // Debug: Log the API base URL in development
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
