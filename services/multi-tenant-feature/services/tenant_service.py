@@ -1977,7 +1977,7 @@ async def view_tenant_details(tenant_id: str, db: AsyncSession) -> TenantViewRes
     response = TenantViewResponse(
         id=tenant.id,
         tenant_id=tenant.tenant_id,
-        user_id=tenant.user_id or 0,  # Handle None case
+        user_id=tenant.user_id or None,
         organization_name=tenant.organization_name,
         email=tenant.contact_email,
         domain=tenant.domain,
