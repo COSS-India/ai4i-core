@@ -5456,7 +5456,7 @@ async def update_tenant_user_for_multi_tenant(
 ):
     """
     Update tenant user information (username, email, is_approved) via API Gateway.
-    Proxies to multi-tenant-service /admin/update/user.
+    Supports partial updates - only provided fields will be updated..
     """
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
@@ -5500,7 +5500,6 @@ async def view_tenant(
 ):
     """
     View tenant details by tenant_id via API Gateway.
-    Proxies to multi-tenant-service /admin/view/tenant.
     """
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
@@ -5524,7 +5523,6 @@ async def view_tenant_user(
 ):
     """
     View tenant user details by user_id via API Gateway.
-    Proxies to multi-tenant-service /admin/view/user.
     """
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
@@ -5547,7 +5545,6 @@ async def list_tenants(
     """
     List all tenants with their details via API Gateway.
     Returns a list of all tenants registered in the system.
-    Proxies to multi-tenant-service /admin/list/tenants.
     """
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
@@ -5569,7 +5566,6 @@ async def list_users(
     """
     List all tenant users across all tenants via API Gateway.
     Returns a list of all users registered under any tenant.
-    Proxies to multi-tenant-service /admin/list/users.
     """
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
