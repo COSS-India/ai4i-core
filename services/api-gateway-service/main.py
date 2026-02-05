@@ -1621,6 +1621,37 @@ class ListUsersResponse(BaseModel):
     users: List[TenantUserViewResponse] = Field(..., description="List of user details")
 
 
+class TenantUserUpdateRequest(BaseModel):
+    """Request model for updating tenant user information."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="Auth user id for tenant user")
+    username: Optional[str] = Field(None,min_length=3,max_length=100,description="Username for the tenant user")
+    email: Optional[EmailStr] = Field(None,description="Email address for the tenant user")
+    is_approved: Optional[bool] = Field(None,description="Whether the tenant user is approved by the tenant admin")
+
+
+class TenantUserUpdateResponse(BaseModel):
+    """Response model for tenant user update."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="Auth user id for tenant user")
+    message: str = Field(..., description="Update message")
+    changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
+    updated_fields: List[str] = Field(..., description="List of updated field names")
+
+
+class TenantUserDeleteRequest(BaseModel):
+    """Request model for deleting a tenant user."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="User ID")
+
+
+class TenantUserDeleteResponse(BaseModel):
+    """Response model for tenant user deletion."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="User ID")
+    message: str = Field(..., description="Deletion message")
+
+
 
 class ServiceRegistry:
     """Redis-based service instance management"""
@@ -5552,7 +5583,7 @@ async def register_tenant(
     )
 
 @app.post("/api/v1/multi-tenant/register/users", response_model=UserRegisterResponse, tags=["Multi-Tenant"], status_code=201)
-async def register_user_multi_tenant(
+async def register_user_for_multi_tenant(
     payload: UserRegisterRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
@@ -5620,6 +5651,27 @@ async def update_tenant(
         headers=headers
     )
 
+@app.delete("/api/v1/multi-tenant/delete/user", response_model=TenantUserDeleteResponse, tags=["Multi-Tenant"])
+async def delete_tenant_user(
+    payload: TenantUserDeleteRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Delete a tenant user"""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/admin/delete/user",
+        "multi-tenant-service",
+        method="DELETE",
+        body=body,
+        headers=headers
+    )
+
 @app.patch("/api/v1/multi-tenant/update/users/status", response_model=TenantUserStatusUpdateResponse, tags=["Multi-Tenant"])
 async def update_tenant_user_status(
     payload: TenantUserStatusUpdateRequest,
@@ -5640,6 +5692,31 @@ async def update_tenant_user_status(
         method="PATCH",
         body=body,
         headers=headers
+    )
+
+
+@app.patch("/api/v1/multi-tenant/update/user", response_model=TenantUserUpdateResponse, tags=["Multi-Tenant"])
+async def update_tenant_user_for_multi_tenant(
+    payload: TenantUserUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    Update tenant user information (username, email, is_approved) via API Gateway.
+    Proxies to multi-tenant-service /admin/update/user.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_unset=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/admin/update/user",
+        "multi-tenant-service",
+        method="PATCH",
+        body=body,
+        headers=headers,
     )
 
 @app.get("/api/v1/multi-tenant/email/verify", tags=["Multi-Tenant"])
