@@ -32,6 +32,8 @@ import {
   IoPricetagOutline,
   IoAppsOutline,
   IoChevronDownOutline,
+  IoAnalyticsOutline,
+  IoPulseOutline,
 } from "react-icons/io5";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
@@ -123,6 +125,18 @@ const safeColorMap = {
     400: "#4DD0E1",
     600: "#00ACC1",
   },
+  "logs": { // Green → Pastel Green
+    50:  "#E8F5E9",
+    300: "#81C784",
+    400: "#66BB6A",
+    600: "#43A047",
+  },
+  "traces": { // Purple → Pastel Purple
+    50:  "#F3E5F5",
+    300: "#BA68C8",
+    400: "#AB47BC",
+    600: "#8E24AA",
+  },
 };
 
 const getColor = (serviceId: string, shade: 50 | 300 | 400 | 600) => {
@@ -178,6 +192,24 @@ const topNavItems: NavItem[] = [
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
     featureFlag: "services-management-enabled",
+  },
+  {
+    id: "logs",
+    label: "Logs Dashboard",
+    path: "/logs",
+    icon: IoDocumentTextOutline,
+    iconSize: 10,
+    iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
+  },
+  {
+    id: "traces",
+    label: "Traces Dashboard",
+    path: "/traces",
+    icon: IoPulseOutline,
+    iconSize: 10,
+    iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
   },
 ];
 
