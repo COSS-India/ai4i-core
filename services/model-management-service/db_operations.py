@@ -1758,7 +1758,7 @@ async def create_experiment(payload, created_by: str = None) -> str:
             status=ExperimentStatus.DRAFT,
             task_type=payload.task_type,
             languages=payload.languages,
-            start_date=start_date,
+            start_date=payload.start_date,
             end_date=payload.end_date,
             created_by=created_by
         )
@@ -2525,13 +2525,24 @@ async def select_experiment_variant(
             )
         )
         
-        # Filter by language if provided and experiment has language filter
+        # Filter by language
+        # - If language is provided: match experiments with languages=None, languages=[], or languages containing the language
+        # - If language is None (services without language concept): only match experiments with languages=None or languages=[]
         if language:
+            # Language provided: match experiments that accept this language
             query = query.where(
                 or_(
                     Experiment.languages.is_(None),
                     Experiment.languages == [],
                     Experiment.languages.contains([language])
+                )
+            )
+        else:
+            # Language not provided (service doesn't use language): only match experiments without language filter
+            query = query.where(
+                or_(
+                    Experiment.languages.is_(None),
+                    Experiment.languages == []
                 )
             )
         
