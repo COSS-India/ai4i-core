@@ -269,7 +269,18 @@ class AuthService {
           errorMessage = errorData;
         } else if (errorData?.detail) {
           // Extract the detail field which contains the error message
+          // Handle nested detail objects (e.g., { detail: { message: "..." } })
+          if (typeof errorData.detail === 'string') {
+            errorMessage = errorData.detail;
+          } else if (typeof errorData.detail === 'object' && errorData.detail !== null) {
+            // If detail is an object, try to extract message from it
+            errorMessage = errorData.detail.message || 
+                          errorData.detail.error || 
+                          errorData.detail.detail ||
+                          JSON.stringify(errorData.detail);
+          } else {
           errorMessage = String(errorData.detail);
+          }
         } else if (errorData?.message) {
           errorMessage = String(errorData.message);
         } else if (Array.isArray(errorData)) {
@@ -277,10 +288,14 @@ class AuthService {
           errorMessage = errorData.map((err: any) => 
             err.detail || err.message || String(err)
           ).join(', ');
-        } else if (typeof errorData === 'object' && Object.keys(errorData).length > 0) {
+        } else if (typeof errorData === 'object' && errorData !== null && Object.keys(errorData).length > 0) {
           // Try to extract meaningful error from object
           const errorText = errorData.detail || errorData.message || errorData.error;
-          errorMessage = errorText ? String(errorText) : JSON.stringify(errorData);
+          if (errorText) {
+            errorMessage = typeof errorText === 'string' ? errorText : JSON.stringify(errorText);
+          } else {
+            errorMessage = JSON.stringify(errorData);
+          }
         }
         
         // Add status code to error for better debugging
@@ -294,8 +309,22 @@ class AuthService {
       console.error('Auth service request failed:', error);
       // Re-throw as Error if it's not already one, with proper message
       if (error instanceof Error) {
+        // If error message is "[object Object]", try to extract meaningful info
+        if (error.message === '[object Object]' || error.message.includes('[object Object]')) {
+          // Try to get more info from the error object
+          const errorInfo = (error as any).response?.data || (error as any).data || error;
+          if (typeof errorInfo === 'object' && errorInfo !== null) {
+            const extractedMsg = errorInfo.detail || errorInfo.message || errorInfo.error || JSON.stringify(errorInfo);
+            throw new Error(typeof extractedMsg === 'string' ? extractedMsg : JSON.stringify(extractedMsg));
+          }
+        }
         throw error;
       } else {
+        // If it's not an Error instance, try to extract meaningful message
+        if (typeof error === 'object' && error !== null) {
+          const extractedMsg = (error as any).detail || (error as any).message || (error as any).error || JSON.stringify(error);
+          throw new Error(typeof extractedMsg === 'string' ? extractedMsg : JSON.stringify(extractedMsg));
+        }
         throw new Error(String(error));
       }
     }
