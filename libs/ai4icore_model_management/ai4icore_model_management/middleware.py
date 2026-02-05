@@ -60,6 +60,35 @@ def extract_service_id_from_body(body: bytes) -> Optional[str]:
     return None
 
 
+def extract_task_type_from_path(path: str) -> Optional[str]:
+    """Extract task type from URL path (e.g. /api/v1/asr/inference -> asr)."""
+    parts = path.strip("/").split("/")
+    # Expect ... /api/v1/<task_type>/... or ... /<task_type>/...
+    for i, p in enumerate(parts):
+        if p in ("asr", "nmt", "tts", "ocr", "ner", "transliteration", "llm", "pipeline"):
+            return p
+    return None
+
+
+def extract_language_from_body(body: bytes) -> Optional[str]:
+    """Extract primary language from request body (config.language.sourceLanguage or similar)."""
+    try:
+        data = json.loads(body.decode('utf-8'))
+        if not isinstance(data, dict):
+            return None
+        config = data.get("config") or {}
+        if not isinstance(config, dict):
+            return None
+        lang = config.get("language")
+        if isinstance(lang, dict):
+            return lang.get("sourceLanguage") or lang.get("targetLanguage") or lang.get("language")
+        if isinstance(lang, str):
+            return lang
+        return None
+    except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+        return None
+
+
 class ModelResolutionMiddleware(BaseHTTPMiddleware):
     """Middleware that resolves serviceId to Triton endpoint and model_name"""
     
@@ -271,7 +300,8 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         return None, None, None
         
     async def dispatch(self, request: Request, call_next):
-        """Process request and resolve service if needed"""
+        """Process request and resolve service if needed. Supports A/B testing via select-variant."""
+        start_time = time.time()
         try:
             # Only process enabled paths
             if not self._should_process(request.url.path):
@@ -282,17 +312,14 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             
             # For POST requests, try to extract serviceId from body
             service_id = None
+            body = None
             if request.method == "POST":
                 # Check if body was already read by another middleware (e.g., Observability)
                 body_was_cached = hasattr(request, '_body') and request._body is not None
                 
                 if body_was_cached:
-                    # Use cached body - another middleware already read it
                     body = request._body
                 else:
-                    # Read the body - FastAPI caches it automatically in request._body
-                    # FastAPI also automatically restores the receive callable, so we don't need to do it manually
-                    # This avoids conflicts with Starlette's disconnect listener
                     body = await request.body()
                 
                 service_id = extract_service_id_from_body(body)
@@ -302,13 +329,47 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 else:
                     logger.warning(f"No serviceId found in request body for {request.url.path}")
             
-            # If we found a serviceId, resolve it
+            # A/B testing: check for experiment variant and optionally override service_id
+            if service_id and body is not None:
+                task_type = extract_task_type_from_path(request.url.path)
+                language = extract_language_from_body(body)
+                if task_type:
+                    try:
+                        variant = await self.model_management_client.select_experiment_variant(
+                            task_type=task_type,
+                            language=language,
+                            request_id=None,
+                            auth_headers=extract_auth_headers(request)
+                        )
+                        if variant and variant.get("service_id"):
+                            logger.info(
+                                f"A/B experiment active: using variant {variant.get('variant_name')} "
+                                f"(service_id={variant.get('service_id')})"
+                            )
+                            request.state.service_id = variant["service_id"]
+                            request.state.experiment_info = variant
+                            if variant.get("endpoint") and (variant.get("model_id") or variant.get("model_name")):
+                                request.state.triton_endpoint = (
+                                    variant["endpoint"].replace("http://", "").replace("https://", "")
+                                )
+                                request.state.triton_model_name = (
+                                    variant.get("model_id") or variant.get("model_name") or "unknown"
+                                )
+                                if variant.get("api_key") is not None:
+                                    request.state.triton_api_key = variant.get("api_key")
+                                response = await call_next(request)
+                                await self._track_experiment_metric(request, response, start_time)
+                                return response
+                            service_id = variant["service_id"]
+                    except Exception as e:
+                        logger.debug("A/B select-variant failed, using default service: %s", e)
+            
+            # If we found a serviceId, resolve it (normal path or variant service_id)
             if service_id:
                 logger.info(f"Resolving serviceId: {service_id} via Model Management")
                 auth_headers = extract_auth_headers(request)
                 endpoint, model_name, triton_client = await self._resolve_service(service_id, auth_headers)
                 
-                # Attach to request state
                 request.state.service_id = service_id
                 if endpoint:
                     request.state.triton_endpoint = endpoint
@@ -327,8 +388,9 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             else:
                 logger.debug("No serviceId found, skipping Model Management resolution")
             
-            # Call next middleware/route handler
             response = await call_next(request)
+            if getattr(request.state, "experiment_info", None):
+                await self._track_experiment_metric(request, response, start_time)
             return response
             
         except HTTPException as e:
@@ -337,3 +399,22 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             logger.error(f"Critical error in Model Resolution Middleware: {e}", exc_info=True)
             raise
+    
+    async def _track_experiment_metric(self, request: Request, response: Response, start_time: float) -> None:
+        """Track experiment metric after response (best-effort)."""
+        info = getattr(request.state, "experiment_info", None)
+        if not info or not info.get("experiment_id") or not info.get("variant_id"):
+            return
+        try:
+            status = getattr(response, "status_code", 500)
+            success = 200 <= status < 400
+            latency_ms = int((time.time() - start_time) * 1000)
+            await self.model_management_client.track_experiment_metric(
+                experiment_id=info["experiment_id"],
+                variant_id=info["variant_id"],
+                success=success,
+                latency_ms=latency_ms,
+                auth_headers=extract_auth_headers(request)
+            )
+        except Exception as e:
+            logger.debug("Experiment metric tracking failed: %s", e)

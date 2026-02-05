@@ -193,6 +193,15 @@ class ExperimentMetricsResponse(BaseModel):
     metric_date: datetime
 
 
+class ExperimentMetricTrackRequest(BaseModel):
+    """Request model for tracking a single experiment metric (from services)"""
+    experiment_id: str = Field(..., description="Experiment UUID")
+    variant_id: str = Field(..., description="Variant UUID")
+    success: bool = Field(..., description="Whether the request succeeded")
+    latency_ms: int = Field(..., ge=0, description="Request latency in milliseconds")
+    custom_metrics: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Optional service-specific metrics")
+
+
 class ExperimentVariantSelectionRequest(BaseModel):
     """Request model for selecting a variant for a given request"""
     task_type: str = Field(..., description="Task type (e.g., 'asr', 'tts')")

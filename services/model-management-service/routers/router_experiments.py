@@ -7,7 +7,8 @@ from models.ab_testing import (
     ExperimentResponse,
     ExperimentListResponse,
     ExperimentVariantSelectionRequest,
-    ExperimentVariantSelectionResponse
+    ExperimentVariantSelectionResponse,
+    ExperimentMetricTrackRequest,
 )
 from db_operations import (
     create_experiment,
@@ -16,7 +17,8 @@ from db_operations import (
     update_experiment,
     update_experiment_status,
     delete_experiment,
-    select_experiment_variant
+    select_experiment_variant,
+    track_experiment_metric,
 )
 from middleware.auth_provider import AuthProvider
 from logger import logger
@@ -281,3 +283,22 @@ async def select_variant_endpoint(payload: ExperimentVariantSelectionRequest):
         logger.exception("Error while selecting experiment variant.")
         # Return no experiment rather than failing
         return ExperimentVariantSelectionResponse(is_experiment=False)
+
+
+@router_experiments_public.post("/track-metric", status_code=status.HTTP_204_NO_CONTENT)
+async def track_experiment_metric_endpoint(payload: ExperimentMetricTrackRequest):
+    """
+    Track a single request metric for an experiment variant.
+    Called by services/middleware after processing a request that was routed through an A/B variant.
+    """
+    try:
+        await track_experiment_metric(
+            experiment_id=payload.experiment_id,
+            variant_id=payload.variant_id,
+            success=payload.success,
+            latency_ms=payload.latency_ms,
+            custom_metrics=payload.custom_metrics or None,
+        )
+    except Exception as err:
+        logger.warning("track_experiment_metric endpoint failed: %s", err)
+    return None
