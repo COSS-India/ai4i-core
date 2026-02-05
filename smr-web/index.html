@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMR - Smart Router TTS Service</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #b3d9ff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .main-container {
+            display: grid;
+            grid-template-columns: 60% 40%;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+            height: calc(100vh - 40px);
+            min-height: 600px;
+        }
+
+        .left-panel {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            overflow-y: auto;
+        }
+
+        .right-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            height: 100%;
+        }
+
+        .policy-info {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 25px;
+            flex-shrink: 0;
+        }
+
+        .tracker-panel {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 25px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+            text-align: left;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 0.9em;
+        }
+
+        .panel-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .policy-mapping {
+            display: grid;
+            gap: 12px;
+        }
+
+        .policy-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px;
+            background: #f9f9f9;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .policy-label {
+            font-weight: 600;
+            color: #555;
+        }
+
+        .policy-value {
+            color: #333;
+            font-weight: 500;
+        }
+
+        .policy-value.free {
+            color: #ff8c00;
+            font-weight: 600;
+        }
+
+        .policy-value.paid {
+            color: #007bff;
+            font-weight: 600;
+        }
+
+        .policy-value.enterprise {
+            color: #28a745;
+            font-weight: 600;
+        }
+
+        .tracker-content {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 0.9em;
+            flex: 1;
+            overflow: hidden;
+            min-height: 300px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .tracker-empty {
+            color: #888;
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .tracker-entry {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #252526;
+            border-radius: 5px;
+            border-left: 3px solid #007acc;
+        }
+
+        .tracker-timestamp {
+            color: #888;
+            font-size: 0.8em;
+            margin-bottom: 5px;
+        }
+
+        .tracker-data {
+            color: #d4d4d4;
+        }
+
+        .tracker-key {
+            color: #4ec9b0;
+        }
+
+        .tracker-value {
+            color: #ce9178;
+        }
+
+        .tracker-string {
+            color: #ce9178;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+            font-size: 0.95em;
+        }
+
+        select, input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+            background: #f9f9f9;
+        }
+
+        select:focus, input[type="text"]:focus, input[type="number"]:focus {
+            outline: none;
+            border-color: #667eea;
+            background: white;
+        }
+
+        textarea {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            min-height: 100px;
+            resize: vertical;
+            font-family: inherit;
+            transition: border-color 0.3s;
+            background: #f9f9f9;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            background: white;
+        }
+
+        .execute-btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 10px;
+        }
+
+        .execute-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .execute-btn:active {
+            transform: translateY(0);
+        }
+
+        .execute-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .response-section {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .response-section.show {
+            display: block;
+        }
+
+        .response-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .response-content {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            word-wrap: break-word;
+        }
+
+        .success {
+            color: #28a745;
+        }
+
+        .error {
+            color: #dc3545;
+        }
+
+        .loading {
+            text-align: center;
+            color: #667eea;
+            font-weight: 600;
+            margin-top: 20px;
+        }
+
+        .audio-player {
+            margin-top: 15px;
+        }
+
+        .audio-player audio {
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        @media (max-width: 1200px) {
+            .main-container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 600px) {
+            .row {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <!-- Left Panel: Form -->
+        <div class="left-panel">
+            <h1>🎤 SMR TTS Service</h1>
+            <p class="subtitle">Smart Router - Text to Speech</p>
+
+            <form id="ttsForm">
+                <div class="form-group">
+                    <label for="routingPolicy">Routing Policy *</label>
+                    <select id="routingPolicy" required>
+                        <option value="">Select Routing Policy</option>
+                        <option value="Free">Free</option>
+                        <option value="Paid">Paid</option>
+                        <option value="Enterprise">Enterprise</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="sourceLanguage">Source Language *</label>
+                    <select id="sourceLanguage" required>
+                        <option value="">Select Language</option>
+                        <option value="en">English</option>
+                        <option value="ta">Tamil</option>
+                        <option value="hi">Hindi</option>
+                        <option value="te">Telugu</option>
+                        <option value="ml">Malayalam</option>
+                    </select>
+                </div>
+
+                <div class="row">
+                    <div class="form-group">
+                        <label for="gender">Gender *</label>
+                        <select id="gender" required>
+                            <option value="">Select Gender</option>
+                            <option value="female">Female</option>
+                            <option value="male">Male</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="samplingRate">Sampling Rate *</label>
+                        <input type="number" id="samplingRate" placeholder="e.g., 22050" value="22050" required>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="audioFormat">Audio Format *</label>
+                    <select id="audioFormat" required>
+                        <option value="">Select Format</option>
+                        <option value="wav">WAV</option>
+                        <option value="mp3">MP3</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="inputText">Input Text *</label>
+                    <textarea id="inputText" placeholder="Enter text to convert to speech..." required></textarea>
+                </div>
+
+                <button type="submit" class="execute-btn" id="executeBtn">Execute</button>
+            </form>
+
+            <div id="loading" class="loading" style="display: none;">
+                Processing... Please wait
+            </div>
+
+            <div id="responseSection" class="response-section">
+                <div class="response-title" id="responseTitle"></div>
+                <div class="response-content" id="responseContent"></div>
+                <div class="audio-player" id="audioPlayer"></div>
+            </div>
+        </div>
+
+        <!-- Right Panel: Policy Info & Tracker -->
+        <div class="right-panel">
+            <!-- Policy Info Panel -->
+            <div class="policy-info">
+                <div class="panel-title">📋 Policy Mapping</div>
+                <div class="policy-mapping" id="policyMapping">
+                    <div class="policy-item">
+                        <span class="policy-label">Select a routing policy to view mappings</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Tracker Panel -->
+            <div class="tracker-panel">
+                <div class="panel-title">📊 Live Tracker</div>
+                <div class="tracker-content" id="trackerContent">
+                    <div class="tracker-empty">Waiting for policy engine response...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('ttsForm');
+        const executeBtn = document.getElementById('executeBtn');
+        const loading = document.getElementById('loading');
+        const responseSection = document.getElementById('responseSection');
+        const responseTitle = document.getElementById('responseTitle');
+        const responseContent = document.getElementById('responseContent');
+        const audioPlayer = document.getElementById('audioPlayer');
+        const routingPolicySelect = document.getElementById('routingPolicy');
+        const policyMapping = document.getElementById('policyMapping');
+        const trackerContent = document.getElementById('trackerContent');
+
+        // Policy mappings
+        const policyMappings = {
+            'Free': {
+                latency_policy: 'high',
+                cost_policy: 'tier_1',
+                accuracy_policy: 'sensitive'
+            },
+            'Paid': {
+                latency_policy: 'medium',
+                cost_policy: 'tier_2',
+                accuracy_policy: 'sensitive'
+            },
+            'Enterprise': {
+                latency_policy: 'low',
+                cost_policy: 'tier_3',
+                accuracy_policy: 'standard'
+            }
+        };
+
+        // Function to format policy value (remove underscores)
+        function formatPolicyValue(value) {
+            if (!value) return value;
+            return value.replace(/_/g, ' ');
+        }
+
+        // Update policy mapping display when routing policy changes
+        routingPolicySelect.addEventListener('change', (e) => {
+            const selectedPolicy = e.target.value;
+            if (selectedPolicy && policyMappings[selectedPolicy]) {
+                const mapping = policyMappings[selectedPolicy];
+                policyMapping.innerHTML = `
+                    <div class="policy-item">
+                        <span class="policy-label">Latency:</span>
+                        <span class="policy-value ${selectedPolicy.toLowerCase()}">${formatPolicyValue(mapping.latency_policy)}</span>
+                    </div>
+                    <div class="policy-item">
+                        <span class="policy-label">Cost:</span>
+                        <span class="policy-value ${selectedPolicy.toLowerCase()}">${formatPolicyValue(mapping.cost_policy)}</span>
+                    </div>
+                    <div class="policy-item">
+                        <span class="policy-label">Accuracy:</span>
+                        <span class="policy-value ${selectedPolicy.toLowerCase()}">${formatPolicyValue(mapping.accuracy_policy)}</span>
+                    </div>
+                `;
+            } else {
+                policyMapping.innerHTML = `
+                    <div class="policy-item">
+                        <span class="policy-label">Select a routing policy to view mappings</span>
+                    </div>
+                `;
+            }
+        });
+
+        // Function to map model_family to serviceID variant
+        function getServiceIdVariant(modelFamily) {
+            if (!modelFamily) return 'N/A';
+            const mf = modelFamily.toLowerCase();
+            if (mf === 'distilled') {
+                return 'indic-tts-coqui-indo_aryan_1';
+            } else if (mf === 'balanced') {
+                return 'indic-tts-coqui-indo_aryan_2';
+            } else if (mf.includes('state') || mf.includes('art')) {
+                return 'indic-tts-coqui-indo_aryan_3';
+            }
+            return 'indic-tts-coqui-indo_aryan_1 (default)';
+        }
+
+        // Function to format human-readable text
+        function formatHumanReadable(key, value) {
+            const formatMap = {
+                'model_family': 'Model Family',
+                'model_variant': 'Model Variant',
+                'priority': 'Priority',
+                'routing_strategy': 'Routing Strategy',
+                'max_cost_usd': 'Max Cost (USD)',
+                'policy_id': 'Policy ID',
+                'policy_version': 'Policy Version',
+                'fallback_applied': 'Fallback Applied'
+            };
+            return formatMap[key] || key;
+        }
+
+        // Function to format value for display
+        function formatValue(key, value) {
+            if (value === null || value === undefined) return 'Not specified';
+            if (key === 'fallback_applied') return value ? 'Yes' : 'No';
+            if (key === 'max_cost_usd') return `$${value.toFixed(2)}`;
+            if (key === 'priority') return `Level ${value}`;
+            if (key === 'routing_strategy') {
+                const strategies = {
+                    'strict_cost_limit': 'Strict Cost Limit',
+                    'balanced': 'Balanced',
+                    'performance': 'Performance Optimized'
+                };
+                return strategies[value] || value;
+            }
+            if (key === 'model_family') {
+                const families = {
+                    'distilled': 'Distilled (Lightweight)',
+                    'balanced': 'Balanced (Standard)',
+                    'state_of_art': 'State-of-the-Art (Premium)',
+                    'state_of_the_art': 'State-of-the-Art (Premium)'
+                };
+                return families[value] || value;
+            }
+            return value;
+        }
+
+        // Function to add entry to tracker
+        function addTrackerEntry(data, isError = false, routingPolicy = null) {
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'tracker-entry';
+            
+            if (isError) {
+                entry.innerHTML = `
+                    <div class="tracker-timestamp" style="color: #f48771;">⚠️ [${timestamp}] Error Occurred</div>
+                    <div class="tracker-data" style="color: #f48771; margin-top: 8px;">
+                        ${data.error ? `<strong>Error:</strong> ${data.error}` : 'An error occurred while calling the policy engine.'}
+                        ${data.details ? `<br><small style="color: #888;">${data.details}</small>` : ''}
+                    </div>
+                `;
+            } else {
+                let html = `<div class="tracker-timestamp" style="color: #4ec9b0;">✅ [${timestamp}] Policy Decision Received</div>`;
+                html += `<div class="tracker-data" style="margin-top: 12px;">`;
+                
+                // Routing Policy
+                if (routingPolicy) {
+                    html += `<div style="margin-bottom: 12px; padding: 8px; background: #252526; border-radius: 4px; border-left: 3px solid #4ec9b0;">`;
+                    html += `<div style="font-weight: 600; color: #4ec9b0; margin-bottom: 4px;">Selected Plan:</div>`;
+                    html += `<div style="font-size: 1.1em; color: #fff;">${routingPolicy}</div>`;
+                    html += `</div>`;
+                }
+                
+                // Policy Information
+                html += `<div style="margin-bottom: 12px; padding: 8px; background: #252526; border-radius: 4px; border-left: 3px solid #007acc;">`;
+                html += `<div style="font-weight: 600; color: #007acc; margin-bottom: 6px;">Policy Information</div>`;
+                if (data.policy_id) {
+                    html += `<div style="margin: 4px 0;"><span style="color: #888;">Policy ID:</span> <span style="color: #ce9178;">${data.policy_id}</span></div>`;
+                }
+                if (data.policy_version) {
+                    html += `<div style="margin: 4px 0;"><span style="color: #888;">Version:</span> <span style="color: #ce9178;">${data.policy_version}</span></div>`;
+                }
+                html += `</div>`;
+                
+                // Model Selection
+                if (data.routing_flags) {
+                    const modelFamily = data.routing_flags.model_family || 'N/A';
+                    const serviceIdVariant = getServiceIdVariant(modelFamily);
+                    
+                    html += `<div style="margin-bottom: 12px; padding: 8px; background: #252526; border-radius: 4px; border-left: 3px solid #ce9178;">`;
+                    html += `<div style="font-weight: 600; color: #ce9178; margin-bottom: 6px;">Model Selection</div>`;
+                    html += `<div style="margin: 4px 0;"><span style="color: #888;">Model Type:</span> <span style="color: #fff; font-weight: 500;">${formatValue('model_family', modelFamily)}</span></div>`;
+                    html += `<div style="margin: 4px 0;"><span style="color: #888;">Model Variant:</span> <span style="color: #ce9178;">${data.routing_flags.model_variant || 'N/A'}</span></div>`;
+                    html += `</div>`;
+                    
+                    // Service ID Information
+                    html += `<div style="margin-bottom: 12px; padding: 8px; background: #1e4d72; border-radius: 4px; border-left: 3px solid #4ec9b0;">`;
+                    html += `<div style="font-weight: 600; color: #4ec9b0; margin-bottom: 6px;">Service ID Configuration</div>`;
+                    html += `<div style="margin: 4px 0;"><span style="color: #888;">ServiceID:</span> <span style="color: #fff; font-weight: 500;">${serviceIdVariant}</span></div>`;
+                    html += `</div>`;
+                    
+                    // Routing Details
+                    html += `<div style="margin-bottom: 12px; padding: 8px; background: #252526; border-radius: 4px; border-left: 3px solid #dcdcaa;">`;
+                    html += `<div style="font-weight: 600; color: #dcdcaa; margin-bottom: 6px;">Routing Configuration</div>`;
+                    if (data.routing_flags.priority !== undefined) {
+                        html += `<div style="margin: 4px 0;"><span style="color: #888;">Priority:</span> <span style="color: #dcdcaa;">${formatValue('priority', data.routing_flags.priority)}</span></div>`;
+                    }
+                    if (data.routing_flags.routing_strategy) {
+                        html += `<div style="margin: 4px 0;"><span style="color: #888;">Strategy:</span> <span style="color: #dcdcaa;">${formatValue('routing_strategy', data.routing_flags.routing_strategy)}</span></div>`;
+                    }
+                    if (data.routing_flags.max_cost_usd !== undefined) {
+                        html += `<div style="margin: 4px 0;"><span style="color: #888;">Max Cost:</span> <span style="color: #dcdcaa;">${formatValue('max_cost_usd', data.routing_flags.max_cost_usd)}</span></div>`;
+                    }
+                    html += `</div>`;
+                }
+                
+                // Fallback Status
+                if (data.fallback_applied !== undefined) {
+                    html += `<div style="margin-top: 8px; padding: 6px; background: ${data.fallback_applied ? '#4a1e1e' : '#1e4a1e'}; border-radius: 4px;">`;
+                    html += `<span style="color: ${data.fallback_applied ? '#f48771' : '#4ec9b0'};">${data.fallback_applied ? '⚠️ Fallback policy applied' : '✅ Standard policy applied'}</span>`;
+                    html += `</div>`;
+                }
+                
+                html += `</div>`;
+                entry.innerHTML = html;
+            }
+            
+            // Remove empty message if exists
+            const emptyMsg = trackerContent.querySelector('.tracker-empty');
+            if (emptyMsg) {
+                emptyMsg.remove();
+            }
+            
+            // Clear all existing entries and show only the latest one
+            // This prevents scrolling - new entry overrides previous ones
+            trackerContent.innerHTML = '';
+            trackerContent.appendChild(entry);
+        }
+
+        // Function to call policy engine
+        async function callPolicyEngine(routingPolicy) {
+            if (!routingPolicy || !policyMappings[routingPolicy]) {
+                return null;
+            }
+
+            const mapping = policyMappings[routingPolicy];
+            
+            try {
+                const payload = {
+                    user_id: "anonymous",
+                    tenant_id: null,
+                    latency_policy: mapping.latency_policy,
+                    cost_policy: mapping.cost_policy,
+                    accuracy_policy: mapping.accuracy_policy
+                };
+
+                // Try direct policy engine first, fallback to API Gateway proxy
+                let response;
+                try {
+                    response = await fetch('http://localhost:8100/v1/policy/evaluate', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(payload)
+                    });
+                } catch (directError) {
+                    // If direct call fails (CORS), try through API Gateway
+                    console.log('Direct call failed, trying API Gateway...');
+                    response = await fetch('http://localhost:8080/api/v1/policy/evaluate', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(payload)
+                    });
+                }
+
+                if (response.ok) {
+                    const data = await response.json();
+                    addTrackerEntry(data, false, routingPolicy);
+                    return data;
+                } else {
+                    const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}: ${response.statusText}` }));
+                    addTrackerEntry(errorData, true, routingPolicy);
+                    return null;
+                }
+            } catch (error) {
+                const errorMsg = error.message || 'Network error - check if services are running';
+                addTrackerEntry({ error: errorMsg, details: 'Make sure API Gateway (port 8080) or Policy Engine (port 8100) is accessible' }, true, routingPolicy);
+                return null;
+            }
+        }
+
+        // Call policy engine when routing policy changes
+        routingPolicySelect.addEventListener('change', async (e) => {
+            const selectedPolicy = e.target.value;
+            if (selectedPolicy) {
+                await callPolicyEngine(selectedPolicy);
+            }
+        });
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            // Get form values
+            const routingPolicy = document.getElementById('routingPolicy').value;
+            const sourceLanguage = document.getElementById('sourceLanguage').value;
+            const gender = document.getElementById('gender').value;
+            const samplingRate = parseInt(document.getElementById('samplingRate').value);
+            const audioFormat = document.getElementById('audioFormat').value;
+            const inputText = document.getElementById('inputText').value.trim();
+
+            // Validate
+            if (!routingPolicy || !sourceLanguage || !gender || !samplingRate || !audioFormat || !inputText) {
+                alert('Please fill in all required fields');
+                return;
+            }
+
+            // Disable button and show loading
+            executeBtn.disabled = true;
+            loading.style.display = 'block';
+            responseSection.classList.remove('show');
+            audioPlayer.innerHTML = '';
+
+            // Call policy engine first (will show in tracker)
+            await callPolicyEngine(routingPolicy);
+
+            try {
+                // Prepare request payload
+                const payload = {
+                    config: {
+                        language: {
+                            sourceLanguage: sourceLanguage
+                        },
+                        gender: gender,
+                        samplingRate: samplingRate,
+                        audioFormat: audioFormat
+                    },
+                    input: [
+                        {
+                            source: inputText
+                        }
+                    ],
+                    controlConfig: {
+                        dataTracking: false
+                    },
+                    routing_service: routingPolicy
+                };
+
+                // Make API call
+                const response = await fetch('http://localhost:8080/api/v1/tts/inference', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                // Hide loading
+                loading.style.display = 'none';
+                executeBtn.disabled = false;
+
+                // Show response
+                responseSection.classList.add('show');
+
+                if (response.ok && data.audio && data.audio.length > 0) {
+                    // Success
+                    responseTitle.textContent = '✅ Success!';
+                    responseTitle.className = 'response-title success';
+                    
+                    // Display response info
+                    const audioData = data.audio[0];
+                    const config = data.config || {};
+                    
+                    let responseText = `Status: Success\n`;
+                    responseText += `Language: ${config.language?.sourceLanguage || sourceLanguage}\n`;
+                    responseText += `Audio Format: ${config.audioFormat || audioFormat}\n`;
+                    responseText += `Sampling Rate: ${config.samplingRate || samplingRate} Hz\n`;
+                    if (config.audioDuration) {
+                        responseText += `Duration: ${config.audioDuration.toFixed(2)} seconds\n`;
+                    }
+                    responseText += `\nAudio data received (${audioData.audioContent ? audioData.audioContent.length : 0} characters)`;
+                    
+                    responseContent.textContent = responseText;
+                    responseContent.className = 'response-content success';
+
+                    // Create audio player if audio content exists
+                    if (audioData.audioContent) {
+                        const audioBlob = base64ToBlob(audioData.audioContent, `audio/${audioFormat}`);
+                        const audioUrl = URL.createObjectURL(audioBlob);
+                        
+                        audioPlayer.innerHTML = `
+                            <strong>Audio Player:</strong>
+                            <audio controls>
+                                <source src="${audioUrl}" type="audio/${audioFormat}">
+                                Your browser does not support the audio element.
+                            </audio>
+                            <br>
+                            <a href="${audioUrl}" download="tts_output.${audioFormat}" style="color: #667eea; text-decoration: none; margin-top: 10px; display: inline-block;">
+                                📥 Download Audio
+                            </a>
+                        `;
+                    }
+                } else {
+                    // Error
+                    responseTitle.textContent = '❌ Error';
+                    responseTitle.className = 'response-title error';
+                    responseContent.textContent = JSON.stringify(data, null, 2);
+                    responseContent.className = 'response-content error';
+                }
+            } catch (error) {
+                // Hide loading
+                loading.style.display = 'none';
+                executeBtn.disabled = false;
+
+                // Show error
+                responseSection.classList.add('show');
+                responseTitle.textContent = '❌ Error';
+                responseTitle.className = 'response-title error';
+                responseContent.textContent = `Error: ${error.message}\n\nPlease check:\n- API Gateway is running on http://localhost:8080\n- All services are running\n- CORS is enabled`;
+                responseContent.className = 'response-content error';
+            }
+        });
+
+        // Helper function to convert base64 to Blob
+        function base64ToBlob(base64, mimeType) {
+            const byteCharacters = atob(base64);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            return new Blob([byteArray], { type: mimeType });
+        }
+    </script>
+</body>
+</html>

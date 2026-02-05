@@ -408,6 +408,25 @@ async def AuthProvider(
     Emits a high-level OpenTelemetry span (`request.authorize`) so that authentication
     decisions are visible in Jaeger, similar to OCR/NMT.
     """
+    # Check if auth is disabled or anonymous access is allowed
+    auth_enabled = os.getenv("AUTH_ENABLED", "true").lower() == "true"
+    allow_anonymous = os.getenv("ALLOW_ANONYMOUS_ACCESS", "false").lower() == "true"
+    
+    # Bypass authentication if disabled or anonymous access is allowed
+    if not auth_enabled or allow_anonymous:
+        logger.debug(f"Authentication bypassed for {request.url.path} (AUTH_ENABLED={auth_enabled}, ALLOW_ANONYMOUS={allow_anonymous})")
+        request.state.user_id = None
+        request.state.api_key_id = None
+        request.state.api_key_name = None
+        request.state.user_email = None
+        request.state.is_authenticated = False
+        return {
+            "user_id": None,
+            "api_key_id": None,
+            "user": None,
+            "api_key": None,
+        }
+    
     auth_source = (x_auth_source or "API_KEY").upper()
 
     if not tracer:

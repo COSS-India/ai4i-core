@@ -547,6 +547,9 @@ services:
       - "8088:8088"
     environment:
       - ENV_FILE=.env
+      - AUTH_ENABLED=false
+      - REQUIRE_API_KEY=false
+      - ALLOW_ANONYMOUS_ACCESS=true
       - TRITON_ENDPOINT=http://13.200.133.97:9000
     env_file:
       - ./services/tts-service/.env
