@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional
 import os
 import hashlib
 
-from models.db_models import Model , Service, VersionStatus, Experiment, ExperimentVariant, ExperimentStatus
+from models.db_models import Model , Service, VersionStatus, Experiment, ExperimentVariant, ExperimentMetrics, ExperimentStatus
 from models.cache_models_services import ModelCache , ServiceCache
 from models.model_create import ModelCreateRequest
 from models.model_update import ModelUpdateRequest
@@ -23,7 +23,7 @@ from uuid import UUID
 from logger import logger
 import json
 import time
-from datetime import datetime
+from datetime import datetime, date, timezone
 
 MAX_ACTIVE_VERSIONS_PER_MODEL = int(os.getenv("MAX_ACTIVE_VERSIONS_PER_MODEL", "5"))
 ALLOW_DEPRECATED_MODEL_CHANGES = os.getenv("ALLOW_DEPRECATED_MODEL_CHANGES", "true").lower() == "true"
@@ -2617,9 +2617,73 @@ async def select_experiment_variant(
             "is_experiment": True
         }
         
-    except Exception as e:
-        logger.exception(f"Error while selecting experiment variant for task_type={task_type}, language={language}")
+    except Exception as err:
+        logger.exception("Error while selecting experiment variant for task_type=%s language=%s", task_type, language)
         # Don't fail the request, just return None (no experiment)
         return None
+    finally:
+        await db.close()
+
+
+async def track_experiment_metric(
+    experiment_id: str,
+    variant_id: str,
+    success: bool,
+    latency_ms: int,
+    custom_metrics: Optional[Dict[str, Any]] = None
+) -> None:
+    """
+    Track a single request metric for an experiment variant (best-effort).
+    Aggregates into daily buckets per (experiment_id, variant_id, metric_date).
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        today = datetime.now(timezone.utc).date()
+        metric_date = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
+
+        result = await db.execute(
+            select(ExperimentMetrics).where(
+                ExperimentMetrics.experiment_id == UUID(experiment_id),
+                ExperimentMetrics.variant_id == UUID(variant_id),
+                ExperimentMetrics.metric_date == metric_date
+            )
+        )
+        metric_row = result.scalars().first()
+
+        if not metric_row:
+            metric_row = ExperimentMetrics(
+                experiment_id=UUID(experiment_id),
+                variant_id=UUID(variant_id),
+                metric_date=metric_date,
+                request_count=0,
+                success_count=0,
+                error_count=0,
+                custom_metrics=custom_metrics or {}
+            )
+            db.add(metric_row)
+            await db.flush()
+
+        metric_row.request_count = (metric_row.request_count or 0) + 1
+        if success:
+            metric_row.success_count = (metric_row.success_count or 0) + 1
+        else:
+            metric_row.error_count = (metric_row.error_count or 0) + 1
+
+        n = metric_row.request_count
+        prev_avg = metric_row.avg_latency_ms
+        metric_row.avg_latency_ms = int(((prev_avg or 0) * (n - 1) + latency_ms) / n)
+
+        if custom_metrics:
+            if metric_row.custom_metrics is None:
+                metric_row.custom_metrics = dict(custom_metrics)
+            else:
+                for k, v in custom_metrics.items():
+                    metric_row.custom_metrics[k] = v
+            flag_modified(metric_row, "custom_metrics")
+
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.warning("track_experiment_metric failed: %s", e)
     finally:
         await db.close()
