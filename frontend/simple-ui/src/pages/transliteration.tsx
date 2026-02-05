@@ -145,10 +145,10 @@ const TransliterationPage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               Transliteration Service
             </Heading>
-            <Text color="gray.600" fontSize="lg">
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
               Convert text from one script to another while keeping pronunciation intact
             </Text>
           </Box>
@@ -202,16 +202,12 @@ const TransliterationPage: React.FC = () => {
                             <Text fontSize="sm" color="gray.700" mb={1}>
                               <strong>Service ID:</strong> {selectedService.service_id}
                             </Text>
-                            {selectedService.serviceDescription && (
-                              <Text fontSize="sm" color="gray.700" mb={1}>
-                                <strong>Description:</strong> {selectedService.serviceDescription}
-                              </Text>
-                            )}
-                            {selectedService.supported_languages.length > 0 && (
-                              <Text fontSize="sm" color="gray.700">
-                                <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
-                              </Text>
-                            )}
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                            </Text>
                           </>
                         ) : null;
                       })()}

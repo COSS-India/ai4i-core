@@ -177,10 +177,10 @@ const PipelineBuilderPage: React.FC = () => {
               Back
             </Button>
             <Box textAlign="center">
-              <Heading size="xl" color="gray.800" mb={2}>
+              <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
                 Customize Pipeline
               </Heading>
-              <Text color="gray.600" fontSize="lg">
+              <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
                 Configure and test custom AI pipelines
               </Text>
             </Box>
@@ -291,8 +291,8 @@ const PipelineBuilderPage: React.FC = () => {
             <GridItem minW="0">
               <VStack spacing={6} align="stretch" w="100%">
                 <Box>
-                  <Heading size="md" mb={2}>Pipeline Results</Heading>
-                  <Text fontSize="sm" color="gray.600">
+                  <Heading size="md" mb={2} userSelect="none" cursor="default" tabIndex={-1}>Pipeline Results</Heading>
+                  <Text fontSize="sm" color="gray.600" userSelect="none" cursor="default">
                     View translated text, audio output, and raw API response
                   </Text>
                 </Box>
