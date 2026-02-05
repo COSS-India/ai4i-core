@@ -67,6 +67,7 @@ create_database_if_not_exists "auth_db"
 create_database_if_not_exists "config_db"
 create_database_if_not_exists "model_management_db"
 create_database_if_not_exists "unleash"
+create_database_if_not_exists "alerting_db"
 
 # Grant privileges
 echo -e "${GREEN}Granting privileges...${NC}"
@@ -75,11 +76,13 @@ GRANT ALL PRIVILEGES ON DATABASE auth_db TO $DB_USER;
 GRANT ALL PRIVILEGES ON DATABASE config_db TO $DB_USER;
 GRANT ALL PRIVILEGES ON DATABASE model_management_db TO $DB_USER;
 GRANT ALL PRIVILEGES ON DATABASE unleash TO $DB_USER;
+GRANT ALL PRIVILEGES ON DATABASE alerting_db TO $DB_USER;
 
 COMMENT ON DATABASE auth_db IS 'Authentication & Authorization Service database';
 COMMENT ON DATABASE config_db IS 'Configuration Management Service database';
 COMMENT ON DATABASE model_management_db IS 'Model Management Service database - stores AI models and services registry';
 COMMENT ON DATABASE unleash IS 'Unleash feature flag management database';
+COMMENT ON DATABASE alerting_db IS 'Alerting Service database - stores dynamic alert configurations and notification settings';
 EOF
 
 # Now run the SQL schema initialization script
