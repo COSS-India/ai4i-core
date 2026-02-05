@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.asr_request import ASRInferenceRequest
 from models.asr_response import ASRInferenceResponse
-from repositories.asr_repository import ASRRepository, get_db_session
+from repositories.asr_repository import ASRRepository
 from services.asr_service import ASRService
 from services.audio_service import AudioService
 from utils.triton_client import TritonClient
@@ -39,6 +39,7 @@ from utils.validation_utils import (
 )
 from middleware.exceptions import AuthenticationError, AuthorizationError, ErrorDetail
 from middleware.auth_provider import AuthProvider
+from middleware.tenant_db_dependency import get_tenant_db_session
 from services.constants.error_messages import (
     LANGUAGE_NOT_SUPPORTED,
     LANGUAGE_NOT_SUPPORTED_MESSAGE,
@@ -95,7 +96,7 @@ inference_router = APIRouter(
 
 async def get_asr_service(
     request: Request,
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_tenant_db_session)
 ) -> ASRService:
     """
     Dependency to get configured ASR service.

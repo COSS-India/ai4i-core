@@ -105,9 +105,18 @@ export const transcribeAudio = async (
       data: response.data,
       responseTime
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error('ASR transcription error:', error);
-    throw new Error('Failed to transcribe audio');
+    // Preserve backend error message for display in UI
+    const data = error?.response?.data;
+    const detail = data?.detail;
+    const message =
+      (typeof detail === 'object' && detail?.message && String(detail.message)) ||
+      (typeof detail === 'string' && detail) ||
+      data?.message ||
+      error?.message ||
+      'Failed to transcribe audio';
+    throw new Error(message);
   }
 };
 
