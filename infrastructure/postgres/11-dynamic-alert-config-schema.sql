@@ -2,6 +2,16 @@
 -- This schema enables customer-specific alert configuration via API instead of manual YAML editing
 -- Connect to alerting_db and create tables for dynamic alert management
 
+-- Allow execution to continue even if database already exists
+\set ON_ERROR_STOP off
+
+-- Create alerting_db if it doesn't exist
+-- Note: Must be connected to a template database (e.g., postgres) to create a new database
+\c postgres;
+CREATE DATABASE alerting_db;
+\set ON_ERROR_STOP on
+
+-- Now connect to alerting_db to create the schema
 \c alerting_db;
 
 -- Alert Definitions Table
