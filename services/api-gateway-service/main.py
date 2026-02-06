@@ -46,6 +46,13 @@ from ai4icore_logging import (
 )
 from ai4icore_telemetry import setup_tracing
 from middleware.request_logging import RequestLoggingMiddleware
+from smr import (
+    call_policy_engine_for_smr,
+    fetch_candidate_services_for_task,
+    select_service_deterministically,
+    get_downstream_for_task,
+    inject_service_id_if_missing,
+)
 
 # OpenTelemetry for distributed tracing
 try:
@@ -107,6 +114,9 @@ except ImportError:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
+# Auth service base URL (also used by SMR for auth metadata if needed)
+AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
+
 # Pydantic models for ASR endpoints
 class AudioInput(BaseModel):
     """Audio input for ASR processing."""
@@ -119,7 +129,7 @@ class LanguageConfig(BaseModel):
 
 class ASRInferenceConfig(BaseModel):
     """Configuration for ASR inference."""
-    serviceId: str = Field(..., description="ASR service/model ID")
+    serviceId: Optional[str] = Field(None, description="ASR service/model ID (optional; Smart Router will assign if omitted)")
     language: LanguageConfig = Field(..., description="Language configuration")
     audioFormat: str = Field(default="wav", description="Audio format")
     samplingRate: int = Field(default=16000, description="Audio sampling rate")
@@ -155,7 +165,7 @@ class NMTTextInput(BaseModel):
 
 class NMTInferenceConfig(BaseModel):
     """Configuration for NMT inference."""
-    serviceId: str = Field(..., description="Identifier for NMT service/model")
+    serviceId: Optional[str] = Field(None, description="Identifier for NMT service/model (optional; Smart Router will assign if omitted)")
     language: NMTLanguagePair = Field(..., description="Language pair configuration")
 
 class NMTInferenceRequest(BaseModel):
@@ -198,7 +208,7 @@ class TTSTextInput(BaseModel):
 
 class TTSInferenceConfig(BaseModel):
     """Configuration for TTS inference."""
-    serviceId: str = Field(..., description="TTS service/model ID")
+    serviceId: Optional[str] = Field(None, description="TTS service/model ID (optional; Smart Router will assign if omitted)")
     language: TTSLanguageConfig = Field(..., description="Language configuration")
     gender: Gender = Field(default=Gender.FEMALE, description="Voice gender")
     audioFormat: AudioFormat = Field(default=AudioFormat.WAV, description="Output audio format")
@@ -294,10 +304,9 @@ class OCRInferenceConfig(BaseModel):
 
 
 
-    serviceId: str = Field(
-
-        ..., description="OCR service/model ID (e.g., ai4bharat/surya-ocr-v1--gpu--t4)"
-
+    serviceId: Optional[str] = Field(
+        None,
+        description="OCR service/model ID (optional; Smart Router will assign if omitted)",
     )
 
     language: OCRLanguageConfig = Field(..., description="Language configuration")
@@ -385,8 +394,8 @@ class NERTextInput(BaseModel):
 
 class NERInferenceConfig(BaseModel):
     """Configuration for NER inference."""
-    serviceId: str = Field(
-        ..., description="NER service/model ID (e.g., Dhruva NER)"
+    serviceId: Optional[str] = Field(
+        None, description="NER service/model ID (optional; Smart Router will assign if omitted)"
     )
     language: NERLanguageConfig = Field(..., description="Language configuration")
 
@@ -465,7 +474,10 @@ class TransliterationTextInput(BaseModel):
 
 class TransliterationInferenceConfig(BaseModel):
     """Transliteration inference configuration."""
-    serviceId: str = Field(..., description="Identifier for transliteration service/model")
+    serviceId: Optional[str] = Field(
+        None,
+        description="Identifier for transliteration service/model (optional; Smart Router will assign if omitted)",
+    )
     language: TransliterationLanguagePair = Field(..., description="Language pair configuration")
     isSentence: bool = Field(True, description="True for sentence-level, False for word-level transliteration")
     numSuggestions: int = Field(
@@ -498,7 +510,10 @@ class LanguageDetectionTextInput(BaseModel):
 
 class LanguageDetectionInferenceConfig(BaseModel):
     """Configuration for language detection inference."""
-    serviceId: str = Field(..., description="Language detection service/model ID")
+    serviceId: Optional[str] = Field(
+        None,
+        description="Language detection service/model ID (optional; Smart Router will assign if omitted)",
+    )
 
 
 class LanguageDetectionInferenceRequest(BaseModel):
@@ -524,7 +539,10 @@ class SpeakerDiarizationControlConfig(BaseModel):
 
 class SpeakerDiarizationConfig(BaseModel):
     """Configuration for speaker diarization inference."""
-    serviceId: str = Field(..., description="Identifier for speaker diarization service/model")
+    serviceId: Optional[str] = Field(
+        None,
+        description="Identifier for speaker diarization service/model (optional; Smart Router will assign if omitted)",
+    )
 
 class SpeakerDiarizationAudioInput(BaseModel):
     """Audio input for speaker diarization."""
@@ -832,7 +850,77 @@ class Task(BaseModel):
     """Task type."""
     type: str = Field(..., description="Task type")
 
-#pydantic models for model management
+# Pydantic models for Smart Model Router / Policy Engine integration
+
+
+class SMRPolicyInput(BaseModel):
+    """Optional policy overrides for Smart Model Router."""
+
+    latency: Optional[str] = Field(
+        None, description="Desired latency profile (low, medium, high)"
+    )
+    cost: Optional[str] = Field(
+        None, description="Desired cost profile (tier_1, tier_2, tier_3)"
+    )
+    accuracy: Optional[str] = Field(
+        None, description="Desired accuracy profile (sensitive, standard)"
+    )
+
+
+class SMRInferenceRequest(BaseModel):
+    """
+    Generic Smart Model Routing request.
+
+    - Client sends original inference request body without serviceId.
+    - Gateway calls Policy Engine for latency/cost/accuracy policy.
+    - Gateway queries Model Management and deterministically selects a serviceId.
+    - Gateway injects serviceId into config.serviceId and forwards the inference call.
+    """
+
+    task_type: "ModelTaskTypeEnum" = Field(
+        ...,
+        description="Task type to route for (asr, nmt, tts, llm, ocr, transliteration, etc.)",
+    )
+    request_body: Dict[str, Any] = Field(
+        ..., description="Original inference request body (without serviceId)"
+    )
+    tenant_id: Optional[str] = Field(
+        None, description="Tenant identifier used for policy lookup"
+    )
+    user_id: Optional[str] = Field(
+        None, description="User identifier used for policy evaluation"
+    )
+    language: Optional[str] = Field(
+        None,
+        description="Preferred language code for routing (used to prefer matching benchmarks when available)",
+    )
+    policy: Optional[SMRPolicyInput] = Field(
+        None, description="Optional policy overrides for latency/cost/accuracy"
+    )
+    service_id: Optional[str] = Field(
+        None,
+        description="Explicit service ID. If provided, router will skip selection and use this directly.",
+    )
+
+
+class SMRSelectedService(BaseModel):
+    """Details of the selected service used for routing (for observability/debugging)."""
+
+    service_id: str = Field(..., description="Selected service identifier")
+    model_id: Optional[str] = Field(None, description="Associated model identifier")
+    name: Optional[str] = Field(None, description="Service name")
+    task_type: Optional["ModelTaskTypeEnum"] = Field(
+        None, description="Task type of the selected service"
+    )
+    policy_id: Optional[str] = Field(
+        None, description="Policy ID returned by policy-engine"
+    )
+    policy_version: Optional[str] = Field(
+        None, description="Policy version returned by policy-engine"
+    )
+
+
+# pydantic models for model management
 
 class ModelTaskTypeEnum(str, Enum):
     
@@ -847,6 +935,11 @@ class ModelTaskTypeEnum(str, Enum):
     language_diarization = "language-diarization"
     ocr = "ocr"
     ner = "ner"
+
+
+# Resolve forward references for SMR models that reference ModelTaskTypeEnum
+SMRInferenceRequest.model_rebuild()
+SMRSelectedService.model_rebuild()
 
 class VersionStatus(str, Enum):
     """Model version status."""
@@ -1724,6 +1817,7 @@ class RouteManager:
                 logger.info(f"Loaded {len(self.routes)} routes from Redis")
         except Exception as e:
             logger.warning(f"Failed to load routes from Redis: {e}")
+
 
 # OpenAPI Tags Metadata for organizing endpoints by service
 tags_metadata = [
@@ -2821,6 +2915,52 @@ async def health_check():
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail="Service unhealthy")
 
+
+def _get_downstream_for_task(task_type: ModelTaskTypeEnum) -> Tuple[str, str]:
+    """
+    Map task_type to (service_name, inference_path) for downstream call.
+
+    This keeps Smart Model Router generic while reusing existing inference endpoints.
+    """
+    mapping: Dict[ModelTaskTypeEnum, Tuple[str, str]] = {
+        ModelTaskTypeEnum.asr: ("asr-service", "/api/v1/asr/inference"),
+        ModelTaskTypeEnum.nmt: ("nmt-service", "/api/v1/nmt/inference"),
+        ModelTaskTypeEnum.tts: ("tts-service", "/api/v1/tts/inference"),
+        ModelTaskTypeEnum.ocr: ("ocr-service", "/api/v1/ocr/inference"),
+        ModelTaskTypeEnum.llm: ("llm-service", "/api/v1/llm/inference"),
+        ModelTaskTypeEnum.transliteration: (
+            "transliteration-service",
+            "/api/v1/transliteration/inference",
+        ),
+        ModelTaskTypeEnum.language_detection: (
+            "language-detection-service",
+            "/api/v1/language-detection/inference",
+        ),
+        ModelTaskTypeEnum.speaker_diarization: (
+            "speaker-diarization-service",
+            "/api/v1/speaker-diarization/inference",
+        ),
+        ModelTaskTypeEnum.language_diarization: (
+            "language-diarization-service",
+            "/api/v1/language-diarization/inference",
+        ),
+        ModelTaskTypeEnum.audio_lang_detection: (
+            "audio-lang-detection-service",
+            "/api/v1/audio-lang-detection/inference",
+        ),
+        ModelTaskTypeEnum.ner: ("ner-service", "/api/v1/ner/inference"),
+    }
+
+    if task_type not in mapping:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "UNSUPPORTED_TASK",
+                "message": f"Smart routing does not support task_type '{task_type.value}'",
+            },
+        )
+    return mapping[task_type]
+
 @app.get("/api/v1/status", tags=["Status"])
 async def api_status():
     """API status endpoint - Get information about all available services"""
@@ -2848,6 +2988,135 @@ async def api_status():
             "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8090"),
             "multi-tenant": os.getenv("MULTI_TENANT_SERVICE_URL", "http://multi-tenant-service:8001")
         }
+    }
+
+
+@app.post(
+    "/api/v1/smr/inference",
+    tags=["Smart Routing"],
+    response_model=Dict[str, Any],
+)
+async def smart_model_routed_inference(
+    payload: SMRInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    Deterministic Smart Model Routed inference entrypoint.
+
+    - Accepts an inference request body without serviceId (wrapped in request_body).
+    - Calls Policy Engine to evaluate latency/cost/accuracy policies.
+    - Fetches candidate services from Model Management for the given task_type.
+    - Deterministically selects a serviceId using benchmark latency and health.
+    - Injects the selected serviceId into request_body.config.serviceId.
+    - Forwards the call to the appropriate downstream inference endpoint.
+    """
+    # Enforce authentication (same semantics as other inference endpoints)
+    await ensure_authenticated_for_request(request, credentials, api_key)
+
+    # Reuse global HTTP client and tracing
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+
+    # Short-circuit: explicit service_id provided -> skip policy/model-management
+    selected_service_id: Optional[str] = payload.service_id
+    policy_result: Optional[Dict[str, Any]] = None
+
+    if not selected_service_id:
+        # 1. Evaluate policy using Policy Engine
+        policy_result = await call_policy_engine_for_smr(
+            http_client=http_client,
+            user_id=payload.user_id,
+            tenant_id=payload.tenant_id,
+            latency_policy=payload.policy.latency if payload.policy else None,
+            cost_policy=payload.policy.cost if payload.policy else None,
+            accuracy_policy=payload.policy.accuracy if payload.policy else None,
+        )
+
+        # 2. Fetch candidate services for the given task_type
+        candidate_services = await fetch_candidate_services_for_task(
+            http_client=http_client,
+            task_type=payload.task_type.value,
+        )
+
+        if not candidate_services:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "NO_CANDIDATE_SERVICES",
+                    "message": "No candidate services found for the given task type.",
+                },
+            )
+
+        # 3. Deterministically select best service based on tenant policy and benchmarks/health
+        selected_service = select_service_deterministically(
+            candidate_services,
+            preferred_language=payload.language,
+            latency_policy=payload.policy.latency if payload.policy else None,
+            cost_policy=payload.policy.cost if payload.policy else None,
+            accuracy_policy=payload.policy.accuracy if payload.policy else None,
+        )
+        selected_service_id = str(selected_service.get("serviceId"))
+
+    # 4. Inject selected serviceId into request body under config.serviceId
+    body_dict = json.loads(json.dumps(payload.request_body))
+    if not isinstance(body_dict, dict):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_REQUEST_BODY",
+                "message": "request_body must be a JSON object.",
+            },
+        )
+
+    config_obj = body_dict.get("config") or {}
+    if not isinstance(config_obj, dict):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_CONFIG",
+                "message": "request_body.config must be an object.",
+            },
+        )
+    config_obj["serviceId"] = selected_service_id
+    body_dict["config"] = config_obj
+
+    # 5. Determine downstream service and inference path based on task_type
+    service_name, inference_path = get_downstream_for_task(payload.task_type.value)
+
+    # 6. Build headers (reuse auth headers helper) and proxy to downstream
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    downstream_body = json.dumps(body_dict).encode("utf-8")
+
+    # Forward to downstream inference endpoint
+    downstream_response = await proxy_to_service(
+        None,
+        inference_path,
+        service_name,
+        method="POST",
+        body=downstream_body,
+        headers=headers,
+    )
+
+    # Attach routing metadata in response headers for observability
+    if isinstance(downstream_response, Response):
+        downstream_response.headers["X-SMR-ServiceId"] = selected_service_id or ""
+        if policy_result:
+            downstream_response.headers["X-SMR-PolicyId"] = str(
+                policy_result.get("policy_id", "")
+            )
+            downstream_response.headers["X-SMR-PolicyVersion"] = str(
+                policy_result.get("policy_version", "")
+            )
+        return downstream_response
+
+    # Fallback: ensure we always return a JSON-like object
+    return {
+        "detail": "Inference completed via Smart Model Router.",
+        "serviceId": selected_service_id,
     }
 
 # Authentication Endpoints (Proxy to Auth Service)
@@ -4095,14 +4364,43 @@ async def asr_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Perform batch ASR inference on audio inputs"""
+    """Perform batch ASR inference on audio inputs.
+
+    If config.serviceId is omitted, Smart Model Router will select the best ASR service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     await ensure_authenticated_for_request(request, credentials, api_key)
     import json
-    # Convert Pydantic model to JSON for proxy
-    body = json.dumps(payload.dict()).encode()
-    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+
+    # Convert Pydantic model to dict for routing logic
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+
+    # Derive user/tenant context for policy evaluation
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
+
+    # Ensure serviceId via Smart Model Router if missing
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="asr",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
     headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/asr/inference", "asr-service", method="POST", body=body, headers=headers)
+    return await proxy_to_service(
+        None,
+        "/api/v1/asr/inference",
+        "asr-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
 
 @app.get("/api/v1/asr/streaming/info", response_model=StreamingInfo, tags=["ASR"])
 async def get_streaming_info(
@@ -4179,14 +4477,39 @@ async def tts_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Perform batch TTS inference on text inputs"""
+    """Perform batch TTS inference on text inputs.
+
+    If config.serviceId is omitted, Smart Model Router will select the best TTS service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     await ensure_authenticated_for_request(request, credentials, api_key)
     import json
-    # Convert Pydantic model to JSON for proxy
-    body = json.dumps(payload.dict()).encode()
-    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="tts",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
     headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/tts/inference", "tts-service", method="POST", body=body, headers=headers)
+    return await proxy_to_service(
+        None,
+        "/api/v1/tts/inference",
+        "tts-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
 
 @app.get("/api/v1/tts/models", tags=["TTS"])
 async def get_tts_models(
@@ -4381,16 +4704,86 @@ async def nmt_inference(
     payload: NMTInferenceRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
+    api_key: Optional[str] = Security(api_key_scheme),
 ):
-    """Perform NMT inference"""
+    """Perform NMT inference.
+
+    If config.serviceId is omitted, Smart Model Router will select the best NMT service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     ensure_authenticated_for_request(request, credentials, api_key)
     import json
-    # Convert Pydantic model to JSON for proxy
-    body = json.dumps(payload.dict()).encode()
-    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    # Prefer tenant_id from auth middleware (JWT), fall back to incoming headers if present
+    tenant_id = getattr(request.state, "tenant_id", None) or \
+        request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
+
+    # TEMPORARY: Hardcode tenant_id when none is resolved (for testing)
+    if not tenant_id:
+        tenant_id = "tenant-b"
+
+    # Log incoming request for SMR flow
+    logger.info(
+        "NMT inference request received",
+        extra={
+            "context": {
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "request_body": body_dict,
+            }
+        },
+    )
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    selected_service_id, body_dict, policy_result = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="nmt",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+    )
+
+    # Log final routing decision before calling downstream NMT
+    logger.info(
+        "NMT inference routing decision",
+        extra={
+            "context": {
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "selected_service_id": selected_service_id,
+                "policy_result": policy_result,
+                "final_request_body": body_dict,
+            }
+        },
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
     headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/nmt/inference", "nmt-service", method="POST", body=body, headers=headers)
+    downstream_response = await proxy_to_service(
+        None,
+        "/api/v1/nmt/inference",
+        "nmt-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+    # Attach SMR debug metadata in response headers for observability
+    if isinstance(downstream_response, Response):
+        downstream_response.headers["X-SMR-ServiceId"] = selected_service_id or ""
+        downstream_response.headers["X-SMR-TenantId"] = tenant_id or ""
+        if policy_result:
+            downstream_response.headers["X-SMR-PolicyId"] = str(
+                policy_result.get("policy_id", "")
+            )
+            downstream_response.headers["X-SMR-PolicyVersion"] = str(
+                policy_result.get("policy_version", "")
+            )
+    return downstream_response
 
 @app.post("/api/v1/nmt/batch-translate", tags=["NMT"])
 async def batch_translate(
@@ -4508,12 +4901,31 @@ async def ocr_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
-    """Perform OCR inference on one or more images"""
+    """Perform OCR inference on one or more images.
+
+    If config.serviceId is omitted, Smart Model Router will select the best OCR service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     ensure_authenticated_for_request(request, credentials, api_key)
 
     import json
 
-    body = json.dumps(payload.dict()).encode()
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="ocr",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
 
     headers: Dict[str, str] = {}
     if credentials and credentials.credentials:
@@ -4547,7 +4959,11 @@ async def ner_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
-    """Perform NER inference on one or more text inputs"""
+    """Perform NER inference on one or more text inputs.
+
+    If config.serviceId is omitted, Smart Model Router will select the best NER service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     try:
         ensure_authenticated_for_request(request, credentials, api_key)
     except Exception as e:
@@ -4555,9 +4971,23 @@ async def ner_inference(
 
     import json
 
-    body = json.dumps(payload.dict()).encode()
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
 
-    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="ner",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
+
     headers = build_auth_headers(request, credentials, api_key)
 
     result = await proxy_to_service(
@@ -4578,13 +5008,31 @@ async def transliteration_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Perform transliteration inference"""
+    """Perform transliteration inference.
+
+    If config.serviceId is omitted, Smart Model Router will select the best transliteration
+    service based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
-    body = json.dumps(
-        payload.model_dump(mode="json", exclude_none=True)
-    ).encode("utf-8")
+
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="transliteration",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
     return await proxy_to_service(
         None,
         "/api/v1/transliteration/inference",
@@ -4650,14 +5098,32 @@ async def language_detection_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Perform language detection inference"""
+    """Perform language detection inference.
+
+    If config.serviceId is omitted, Smart Model Router will select the best language
+    detection service based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     # Ensure authentication/authorization with tracing spans (gateway.authenticate, gateway.authorize, etc.)
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
-    body = json.dumps(
-        payload.model_dump(mode="json", exclude_none=True)
-    ).encode("utf-8")
+
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="language-detection",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
     return await proxy_to_service(
         None,
         "/api/v1/language-detection/inference",
