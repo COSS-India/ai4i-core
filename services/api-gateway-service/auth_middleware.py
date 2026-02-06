@@ -116,7 +116,13 @@ class AuthMiddleware:
                     "sub": str(data.get("user_id")),
                     "username": data.get("username"),
                     "permissions": data.get("permissions", []),
-                    "roles": data.get("roles", [])
+                    "roles": data.get("roles", []),
+                    # Optional multi-tenant context fields (if auth-service returns them)
+                    "tenant_id": data.get("tenant_id"),
+                    "tenant_uuid": data.get("tenant_uuid"),
+                    "schema_name": data.get("schema_name"),
+                    "subscriptions": data.get("subscriptions", []),
+                    "user_subscriptions": data.get("user_subscriptions", []),
                 }
             else:
                 logger.warning(f"Auth service validation failed with status {response.status_code}")
@@ -142,7 +148,12 @@ class AuthMiddleware:
         return {
             "user_id": payload.get("sub"),
             "username": payload.get("username"),
-            "permissions": payload.get("permissions", [])
+            "permissions": payload.get("permissions", []),
+            "tenant_id": payload.get("tenant_id"),
+            "tenant_uuid": payload.get("tenant_uuid"),
+            "schema_name": payload.get("schema_name"),
+            "subscriptions": payload.get("subscriptions", []),
+            "user_subscriptions": payload.get("user_subscriptions", []),
         }
     
     async def require_auth(self, request: Request) -> Dict[str, Any]:
