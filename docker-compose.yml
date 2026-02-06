@@ -1233,10 +1233,11 @@ volumes:
     # Note: Removed bind mount to Linux-specific path for Windows compatibility
     # Data will persist in Docker's managed volume location
     # To use a custom path on Linux, uncomment and adjust the driver_opts below:
-    # driver_opts:
-    #   type: "none"
-    #   o: "bind"
-    #   device: "/path/to/your/persistent/storage"
+    driver_opts:
+      type: "none"
+      o: "bind"
+      device: "/home/ubuntu/ai4i-v/volumes/pg_data"
+      
   postgres-konga-data:
     driver: local
   redis-data:
