@@ -11,11 +11,19 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy AI4I Core libraries
+COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
+COPY libs/ai4icore_logging /app/libs/ai4icore_logging
+
 # Copy requirements from build context
 COPY services/auth-service/requirements.txt .
 
 # Install Python dependencies (NO --user)
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install AI4I Core libraries in editable mode
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_telemetry
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_logging
 
 # ---------------- Final stage ----------------
 FROM python:3.11-slim
@@ -33,6 +41,10 @@ RUN useradd --create-home --shell /bin/bash app
 
 # Copy installed Python packages
 COPY --from=builder /usr/local /usr/local
+
+# Copy AI4I Core libraries from builder
+COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
+COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 
 # Copy constants folder (from repo root) - this creates services/constants
 COPY services/constants /app/services/constants
