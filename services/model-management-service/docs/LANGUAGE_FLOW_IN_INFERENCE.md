@@ -114,9 +114,11 @@ POST /experiments/select-variant
 {
   "task_type": "asr",           # Extracted from service type
   "language": "hi",             # ← Language from user's request
-  "request_id": "optional-id"   # For consistent routing
+  "request_id": "optional-id",  # Used for hashing when user_id absent (e.g. anonymous)
+  "user_id": "optional-id"      # When set, same user => same variant (sticky assignment)
 }
 ```
+Routing: when `user_id` is provided, the same user always gets the same variant; otherwise `request_id` or a random value is used for the hash.
 
 **What happens:**
 1. Model Management Service checks for active A/B testing experiments

@@ -6,6 +6,7 @@ FastAPI middleware for automatic serviceId → endpoint + model_name resolution
 import json
 import logging
 import time
+import uuid
 from typing import Optional, Dict, Tuple, Any
 
 from fastapi import Request, HTTPException
@@ -333,12 +334,26 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             if service_id and body is not None:
                 task_type = extract_task_type_from_path(request.url.path)
                 language = extract_language_from_body(body)
+                # request_id and user_id for variant hashing (when user_id present, same user => same variant)
+                request_id = (
+                    request.headers.get("X-Request-ID") or request.headers.get("x-request-id")
+                    or request.headers.get("X-Correlation-ID") or request.headers.get("x-correlation-id")
+                ) or str(uuid.uuid4())
+                # User ID for consistent variant per user (from auth middleware or gateway header)
+                user_id = (
+                    getattr(request.state, "user_id", None)
+                    or request.headers.get("X-User-Id") or request.headers.get("x-user-id")
+                )
+                if user_id is not None:
+                    user_id = str(user_id)
                 if task_type:
                     try:
                         variant = await self.model_management_client.select_experiment_variant(
                             task_type=task_type,
                             language=language,
-                            request_id=None,
+                            request_id=request_id,
+                            user_id=user_id,
+                            service_id=service_id,
                             auth_headers=extract_auth_headers(request)
                         )
                         if variant and variant.get("service_id"):

@@ -396,6 +396,8 @@ class ModelManagementClient:
         task_type: str,
         language: Optional[str] = None,
         request_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        service_id: Optional[str] = None,
         auth_headers: Optional[Dict[str, str]] = None
     ) -> Optional[Dict[str, Any]]:
         """Select an experiment variant for A/B testing. Returns variant dict or None."""
@@ -403,7 +405,13 @@ class ModelManagementClient:
             client = await self._get_client()
             url = f"{self.base_url}/experiments/select-variant"
             headers = self._get_headers(auth_headers)
-            payload = {"task_type": task_type, "language": language, "request_id": request_id}
+            payload = {
+                "task_type": task_type,
+                "language": language,
+                "request_id": request_id,
+                "user_id": user_id,
+                "service_id": service_id
+            }
             response = await client.post(url, headers=headers, json=payload)
             if response.status_code != 200:
                 return None

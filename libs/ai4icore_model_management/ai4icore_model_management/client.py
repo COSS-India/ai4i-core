@@ -367,6 +367,8 @@ class ModelManagementClient:
         task_type: str,
         language: Optional[str] = None,
         request_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        service_id: Optional[str] = None,
         auth_headers: Optional[Dict[str, str]] = None
     ) -> Optional[Dict[str, Any]]:
         """
@@ -377,10 +379,12 @@ class ModelManagementClient:
             task_type: Task type (e.g., "asr", "nmt", "tts")
             language: Optional language code (e.g., "hi", "en")
             request_id: Optional request ID for consistent routing
+            user_id: Optional user ID so same user gets same variant
+            service_id: Optional; when set, only experiments that include this service as a variant are considered
             auth_headers: Optional auth headers from incoming request
 
         Returns:
-            Variant dict with service_id, endpoint, model_id, api_key, experiment_id, variant_id, etc.,
+            Variant dict with service_id, endpoint, model_id, experiment_id, variant_id, etc. (api_key omitted from API response for security),
             or None if no active experiment matches.
         """
         try:
@@ -390,7 +394,9 @@ class ModelManagementClient:
             payload = {
                 "task_type": task_type,
                 "language": language,
-                "request_id": request_id
+                "request_id": request_id,
+                "user_id": user_id,
+                "service_id": service_id
             }
             response = await client.post(url, headers=headers, json=payload)
             if response.status_code != 200:

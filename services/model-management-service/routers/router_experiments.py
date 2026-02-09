@@ -6,6 +6,8 @@ from models.ab_testing import (
     ExperimentStatusUpdateRequest,
     ExperimentResponse,
     ExperimentListResponse,
+    ExperimentDeleteResponse,
+    ExperimentDeleteDetail,
     ExperimentVariantSelectionRequest,
     ExperimentVariantSelectionResponse,
     ExperimentMetricTrackRequest,
@@ -113,7 +115,7 @@ async def get_experiment_endpoint(experiment_id: str):
         if not experiment_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Experiment with ID '{experiment_id}' not found"
+                detail={"kind": "NotFound", "message": f"Experiment with ID '{experiment_id}' not found"}
             )
         
         return experiment_data
@@ -146,7 +148,7 @@ async def update_experiment_endpoint(
         if result == 0:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Experiment with ID '{experiment_id}' not found"
+                detail={"kind": "NotFound", "message": f"Experiment with ID '{experiment_id}' not found"}
             )
         
         # Fetch and return updated experiment
@@ -193,7 +195,7 @@ async def update_experiment_status_endpoint(
         if result == 0:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Experiment with ID '{experiment_id}' not found"
+                detail={"kind": "NotFound", "message": f"Experiment with ID '{experiment_id}' not found"}
             )
         
         experiment_data = await get_experiment(experiment_id)
@@ -210,7 +212,7 @@ async def update_experiment_status_endpoint(
         )
 
 
-@router_experiments.delete("/{experiment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router_experiments.delete("/{experiment_id}", response_model=ExperimentDeleteResponse, status_code=status.HTTP_200_OK)
 async def delete_experiment_endpoint(experiment_id: str):
     """
     Delete an experiment.
@@ -223,11 +225,17 @@ async def delete_experiment_endpoint(experiment_id: str):
         if result == 0:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Experiment with ID '{experiment_id}' not found"
+                detail={"kind": "NotFound", "message": f"Experiment with ID '{experiment_id}' not found"}
             )
         
         logger.info(f"Experiment {experiment_id} deleted successfully.")
-        return None
+        return ExperimentDeleteResponse(
+            detail=ExperimentDeleteDetail(
+                message="Experiment deleted successfully.",
+                code="DELETED",
+                experiment_id=experiment_id,
+            )
+        )
         
     except HTTPException:
         raise
@@ -261,7 +269,9 @@ async def select_variant_endpoint(payload: ExperimentVariantSelectionRequest):
         variant_data = await select_experiment_variant(
             task_type=payload.task_type,
             language=payload.language,
-            request_id=payload.request_id
+            request_id=payload.request_id,
+            user_id=payload.user_id,
+            service_id=payload.service_id
         )
         
         if not variant_data:
@@ -274,8 +284,6 @@ async def select_variant_endpoint(payload: ExperimentVariantSelectionRequest):
             service_id=variant_data.get("service_id"),
             model_id=variant_data.get("model_id"),
             model_version=variant_data.get("model_version"),
-            endpoint=variant_data.get("endpoint"),
-            api_key=variant_data.get("api_key"),
             is_experiment=True
         )
         

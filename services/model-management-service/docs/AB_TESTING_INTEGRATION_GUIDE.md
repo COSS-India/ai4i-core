@@ -49,17 +49,20 @@ async def select_experiment_variant(
     task_type: str,
     language: Optional[str] = None,
     request_id: Optional[str] = None,
+    user_id: Optional[str] = None,
     auth_headers: Optional[Dict[str, str]] = None
 ) -> Optional[Dict[str, Any]]:
     """
     Select an experiment variant for a given request.
-    
+    When user_id is provided, the same user always gets the same variant (sticky assignment).
+
     Args:
         task_type: Task type (e.g., "asr", "nmt", "tts")
         language: Optional language code (e.g., "hi", "en")
-        request_id: Optional request ID for consistent routing
+        request_id: Optional; used for hashing only when user_id is absent (e.g. anonymous)
+        user_id: Optional; when set, same user => same variant (recommended for authenticated callers)
         auth_headers: Optional auth headers from incoming request
-        
+
     Returns:
         Dictionary with variant details if experiment active, None otherwise
         {
@@ -78,11 +81,12 @@ async def select_experiment_variant(
         client = await self._get_client()
         url = f"{self.base_url}/experiments/select-variant"
         headers = self._get_headers(auth_headers)
-        
+
         payload = {
             "task_type": task_type,
             "language": language,
-            "request_id": request_id
+            "request_id": request_id,
+            "user_id": user_id
         }
         
         response = await client.post(url, headers=headers, json=payload)
@@ -130,24 +134,27 @@ async def resolve_service_with_ab_testing(
     task_type: str,
     language: Optional[str] = None,
     request_id: Optional[str] = None,
+    user_id: Optional[str] = None,
     auth_headers: Optional[Dict[str, str]] = None
 ) -> Tuple[str, Optional[str], Optional[str], Optional[Dict[str, Any]]]:
     """
     Resolve service details with A/B testing support.
-    
+    When user_id is provided, the same user always gets the same variant (sticky assignment).
+
     This function:
     1. Checks for active A/B test experiments
     2. Returns variant service details if experiment active
     3. Falls back to original service if no experiment
-    
+
     Args:
         model_management_client: ModelManagementClient instance
         original_service_id: Original service ID from request
         task_type: Task type (e.g., "asr", "nmt", "tts")
         language: Optional language code
-        request_id: Optional request ID for consistent routing
+        request_id: Optional; used for hashing when user_id is absent
+        user_id: Optional; when set, same user => same variant (recommended for authenticated callers)
         auth_headers: Optional auth headers
-        
+
     Returns:
         Tuple of:
         - resolved_service_id: Service ID to use (original or variant)
@@ -162,11 +169,12 @@ async def resolve_service_with_ab_testing(
                 ...
             }
     """
-    # Check for A/B test variant
+    # Check for A/B test variant (user_id gives sticky assignment when present)
     variant_data = await model_management_client.select_experiment_variant(
         task_type=task_type,
         language=language,
         request_id=request_id,
+        user_id=user_id,
         auth_headers=auth_headers
     )
     
@@ -228,6 +236,7 @@ class NMTService:
                         task_type="nmt",  # or extract from service type
                         language=source_lang,  # Use source language for filtering
                         request_id=str(request_id) if request_id else None,
+                        user_id=str(user_id) if user_id else None,
                         auth_headers=auth_headers
                     )
                 
@@ -309,10 +318,7 @@ Based on the `experiment_metrics` table schema, collect:
 2. **Success Count** - Successful requests (HTTP 200-299)
 3. **Error Count** - Failed requests (HTTP 400+ or exceptions)
 4. **Latency Metrics**:
-   - `avg_latency_ms` - Average latency
-   - `p50_latency_ms` - 50th percentile
-   - `p95_latency_ms` - 95th percentile
-   - `p99_latency_ms` - 99th percentile
+   - `avg_latency_ms` - Average latency (ms)
 5. **Custom Metrics** (JSONB) - Service-specific metrics:
    - For ASR: `output_characters`, `output_words`
    - For NMT: `input_characters`, `output_characters`, `bleu_score` (if available)
@@ -423,7 +429,7 @@ async def track_experiment_metric(
     
     This function:
     1. Finds or creates today's metric record
-    2. Updates counters and latency percentiles
+    2. Updates counters and average latency
     3. Stores custom metrics
     """
     from datetime import datetime, date
@@ -464,8 +470,7 @@ async def track_experiment_metric(
         else:
             metric.error_count += 1
         
-        # Update latency (simplified - in production, use proper percentile calculation)
-        # For now, just update average
+        # Update average latency
         if metric.avg_latency_ms is None:
             metric.avg_latency_ms = latency_ms
         else:
@@ -551,7 +556,7 @@ class ASRService:
             original_service_id = request.config.serviceId
             language = request.config.language.sourceLanguage
             
-            # [A/B TESTING] Resolve service with A/B testing
+            # [A/B TESTING] Resolve service with A/B testing (user_id => same user, same variant)
             resolved_service_id, variant_endpoint, variant_model, experiment_info = \
                 await resolve_service_with_ab_testing(
                     model_management_client=self.model_management_client,
@@ -559,6 +564,7 @@ class ASRService:
                     task_type="asr",
                     language=language,
                     request_id=str(request_id) if request_id else None,
+                    user_id=str(user_id) if user_id else None,
                     auth_headers=None  # Add if available
                 )
             

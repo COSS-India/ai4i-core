@@ -1267,6 +1267,11 @@ class ExperimentVariantSelectionRequest(BaseModel):
     task_type: str = Field(..., description="Task type (e.g., 'asr', 'tts')")
     language: Optional[str] = Field(None, description="Language code (e.g., 'hi', 'en')")
     request_id: Optional[str] = Field(None, description="Optional request ID for consistent routing")
+    user_id: Optional[str] = Field(None, description="Optional user ID so same user gets same variant")
+    service_id: Optional[str] = Field(
+        None,
+        description="Optional service ID; when set, only experiments that include this service as a variant are considered"
+    )
 
 class ExperimentVariantSelectionResponse(BaseModel):
     """Response model for variant selection"""
@@ -2109,6 +2114,10 @@ def build_auth_headers(request: Request, credentials: Optional[HTTPAuthorization
         headers['Authorization'] = f"Bearer {credentials.credentials}"
     if api_key:
         headers['X-API-Key'] = api_key
+    # Forward user ID for downstream A/B variant sticky assignment (set by ensure_authenticated_for_request after JWT validation)
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is not None:
+        headers["X-User-Id"] = str(user_id)
     
     # Set X-Auth-Source based on what's present (API Gateway has already validated)
     # Always overwrite X-Auth-Source for services requiring both (don't trust incoming header)
@@ -2236,6 +2245,9 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             },
                             headers={"WWW-Authenticate": "Bearer"}
                         )
+                    # Set user identity on request for downstream (e.g. A/B variant sticky assignment via X-User-Id)
+                    req.state.user_id = payload.get("sub") or payload.get("user_id")
+                    req.state.jwt_payload = payload
                 except HTTPException:
                     raise
                 except Exception as e:
@@ -2429,6 +2441,9 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             },
                             headers={"WWW-Authenticate": "Bearer"}
                         )
+                    # Set user identity on request for downstream (e.g. A/B variant sticky assignment via X-User-Id)
+                    req.state.user_id = payload.get("sub") or payload.get("user_id")
+                    req.state.jwt_payload = payload
                     if auth_span:
                         auth_span.set_attribute("auth.authenticated", True)
                         auth_span.set_attribute("auth.authorized", True)  # Bearer token implies authorization
@@ -4476,11 +4491,11 @@ async def nmt_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Perform NMT inference"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
-    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    # Use build_auth_headers which automatically forwards all headers including X-User-Id for A/B sticky assignment
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/nmt/inference", "nmt-service", method="POST", body=body, headers=headers)
 

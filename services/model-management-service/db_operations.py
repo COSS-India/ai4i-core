@@ -1,6 +1,6 @@
 from fastapi import HTTPException, status
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import select , delete , update, func as sql_func, and_, case, desc, or_
+from sqlalchemy import select, delete, update, func as sql_func, and_, case, desc, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 from typing import Dict, Any, List, Optional
@@ -19,7 +19,7 @@ from models.service_health import ServiceHeartbeatRequest
 from models.type_enum import TaskTypeEnum
 
 from db_connection import AppDatabase
-from uuid import UUID
+from uuid import UUID, uuid4
 from logger import logger
 import json
 import time
@@ -2493,22 +2493,39 @@ async def delete_experiment(experiment_id: str) -> int:
 async def select_experiment_variant(
     task_type: str,
     language: Optional[str] = None,
-    request_id: Optional[str] = None
+    request_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    service_id: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """
     Select an experiment variant for a given request based on traffic distribution.
-    This implements deterministic routing using consistent hashing.
-    
+    Uses deterministic hashing so the same hash input always maps to the same variant.
+
+    Hash input priority (for sticky assignment):
+    1. When user_id is present: same user + task_type + language => same variant.
+    2. When only request_id is present: per-request distribution (e.g. anonymous).
+    3. Otherwise: random per call.
+
+    When service_id is provided, only experiments that include this service as one of
+    their variants are considered. This scopes A/B selection to experiments relevant
+    to the requested service (e.g. the service_id from the inference request).
+
     Args:
-        task_type: Task type (e.g., 'asr', 'tts')
+        task_type: Task type (e.g., 'asr', 'nmt', 'tts')
         language: Optional language code
-        request_id: Optional request ID for consistent routing
-        
+        request_id: Optional request ID (used for hashing only when user_id is absent)
+        user_id: Optional user ID; when set, used for hashing so same user gets same variant
+        service_id: Optional; when set, only experiments that have a variant with this service_id are considered
+
     Returns:
         Dictionary with variant and service details, or None if no active experiment matches
     """
     db: AsyncSession = AppDatabase()
     try:
+        logger.info(
+            "select_experiment_variant: task_type=%s language=%r request_id=%r user_id=%r service_id=%r",
+            task_type, language, request_id, user_id, service_id,
+        )
         # Find active experiments matching the criteria
         query = select(Experiment).where(
             Experiment.status == ExperimentStatus.RUNNING
@@ -2526,25 +2543,29 @@ async def select_experiment_variant(
         )
         
         # Filter by language
-        # - If language is provided: match experiments with languages=None, languages=[], or languages containing the language
-        # - If language is None (services without language concept): only match experiments with languages=None or languages=[]
+        # - If language is provided: match experiments with languages=None, JSONB null, [], or containing the language
+        # - If language is None: only match experiments without language filter (NULL, JSONB null, or [])
+        # Use explicit JSONB @> with a safe literal so containment is strict (avoids SQLAlchemy contains() matching languages not in the list).
+        _no_lang_filter = or_(
+            Experiment.languages.is_(None),
+            text("experiments.languages = 'null'::jsonb"),
+            Experiment.languages == []
+        )
         if language:
-            # Language provided: match experiments that accept this language
+            # Only allow safe language codes (letters, numbers, hyphen, underscore) to avoid injection
+            if isinstance(language, str) and language and all(c.isalnum() or c in "-_" for c in language):
+                _lang_json_escaped = json.dumps([language]).replace("'", "''")
+                _lang_contains = text(f"experiments.languages @> '{_lang_json_escaped}'::jsonb")
+            else:
+                _lang_contains = text("1 = 0")  # no match if language invalid
             query = query.where(
                 or_(
-                    Experiment.languages.is_(None),
-                    Experiment.languages == [],
-                    Experiment.languages.contains([language])
+                    _no_lang_filter,
+                    _lang_contains
                 )
             )
         else:
-            # Language not provided (service doesn't use language): only match experiments without language filter
-            query = query.where(
-                or_(
-                    Experiment.languages.is_(None),
-                    Experiment.languages == []
-                )
-            )
+            query = query.where(_no_lang_filter)
         
         # Check date range
         now = datetime.now()
@@ -2557,12 +2578,59 @@ async def select_experiment_variant(
         
         result = await db.execute(query)
         experiments = result.scalars().all()
+        logger.info(
+            "select_experiment_variant: after language/date filter found %s RUNNING experiment(s)",
+            len(experiments),
+        )
+        # Python-side language filter (safety net): exclude experiments whose non-empty languages list does not contain the request language
+        if language and experiments:
+            def _experiment_matches_language(exp: Experiment) -> bool:
+                lang_list = getattr(exp, "languages", None)
+                if lang_list is None:
+                    return True
+                if isinstance(lang_list, str):
+                    try:
+                        lang_list = json.loads(lang_list)
+                    except (json.JSONDecodeError, TypeError):
+                        return False
+                if isinstance(lang_list, list) and len(lang_list) == 0:
+                    return True
+                if isinstance(lang_list, list):
+                    return language in lang_list
+                return False
+            experiments = [e for e in experiments if _experiment_matches_language(e)]
+            logger.info(
+                "select_experiment_variant: after Python language filter %s experiment(s)",
+                len(experiments),
+            )
         
         if not experiments:
+            logger.info(
+                "select_experiment_variant: no RUNNING experiment for task_type=%s language=%s (check task_type match and language filter: if language is missing, only experiments with languages null/[] match)",
+                task_type, language
+            )
             return None
         
-        # For now, use the first matching experiment (can be enhanced for multiple experiments)
-        # In production, you might want to prioritize or combine experiments
+        # When service_id is provided, only consider experiments that include this service as a variant
+        if service_id:
+            exp_ids_with_service = await db.execute(
+                select(ExperimentVariant.experiment_id).where(
+                    ExperimentVariant.service_id == service_id
+                ).distinct()
+            )
+            allowed_experiment_ids = {row[0] for row in exp_ids_with_service.fetchall()}
+            experiments = [e for e in experiments if e.id in allowed_experiment_ids]
+            logger.info(
+                "select_experiment_variant: service_id=%s -> allowed_experiment_ids=%s, experiments after filter=%s",
+                service_id, allowed_experiment_ids, len(experiments),
+            )
+            if not experiments:
+                logger.info(
+                    "select_experiment_variant: no experiment has a variant with service_id=%s (ensure the experiment includes this service_id as one of its variants)",
+                    service_id
+                )
+                return None
+
         experiment = experiments[0]
         
         # Get variants
@@ -2576,9 +2644,15 @@ async def select_experiment_variant(
         if not variants:
             return None
         
-        # Deterministic variant selection using consistent hashing
-        # Use request_id if provided, otherwise generate a hash from task_type + language
-        hash_input = request_id if request_id else f"{task_type}:{language or 'none'}"
+        # Deterministic variant selection using consistent hashing.
+        # Prefer user_id when present so the same user always gets the same variant (sticky assignment).
+        # Use request_id only when user_id is absent (e.g. anonymous) for per-request distribution.
+        if user_id:
+            hash_input = f"{user_id}:{task_type}:{language or 'none'}"
+        elif request_id:
+            hash_input = request_id
+        else:
+            hash_input = f"{task_type}:{language or 'none'}:{uuid4()}"
         hash_value = int(hashlib.md5(hash_input.encode()).hexdigest(), 16)
         bucket = hash_value % 100  # 0-99 bucket
         
@@ -2612,8 +2686,6 @@ async def select_experiment_variant(
             "service_id": service.service_id,
             "model_id": service.model_id,
             "model_version": service.model_version,
-            "endpoint": service.endpoint,
-            "api_key": service.api_key,
             "is_experiment": True
         }
         

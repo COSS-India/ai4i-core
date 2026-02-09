@@ -184,6 +184,7 @@ curl -X POST "${BASE_URL}/api/v1/model-management/experiments/${EXPERIMENT_ID}/s
 ## 6. Select Experiment Variant
 
 Selects which variant to use for a given request. Used by services/gateway for routing.
+When `user_id` is provided, the same user always gets the same variant (sticky assignment).
 
 ```bash
 curl -X POST "${BASE_URL}/api/v1/model-management/experiments/select-variant" \
@@ -192,7 +193,8 @@ curl -X POST "${BASE_URL}/api/v1/model-management/experiments/select-variant" \
   -d '{
     "task_type": "asr",
     "language": "hi",
-    "request_id": "req-12345"
+    "request_id": "req-12345",
+    "user_id": "2"
   }'
 ```
 
@@ -291,7 +293,7 @@ curl -X POST "${BASE_URL}/api/v1/model-management/experiments/${EXPERIMENT_ID}/s
   -H "Authorization: Bearer ${TOKEN}" \
   -d '{"action": "start"}' | jq '.'
 
-# Step 6: Test variant selection
+# Step 6: Test variant selection (user_id gives same user => same variant)
 echo -e "\n=== Step 6: Select Variant ==="
 curl -X POST "${BASE_URL}/api/v1/model-management/experiments/select-variant" \
   -H "Content-Type: application/json" \
@@ -299,7 +301,8 @@ curl -X POST "${BASE_URL}/api/v1/model-management/experiments/select-variant" \
   -d '{
     "task_type": "asr",
     "language": "hi",
-    "request_id": "test-request-123"
+    "request_id": "test-request-123",
+    "user_id": "2"
   }' | jq '.'
 
 # Step 7: Pause the experiment

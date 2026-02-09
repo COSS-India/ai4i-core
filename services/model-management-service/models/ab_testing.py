@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
+import time
 from .type_enum import TaskTypeEnum
 
 
@@ -176,6 +177,19 @@ class ExperimentListResponse(BaseModel):
         }
 
 
+class ExperimentDeleteDetail(BaseModel):
+    """Detail payload for experiment delete success (matches error response shape)."""
+    message: str = Field(..., description="Success message")
+    code: str = Field(..., description="Response code (e.g. DELETED)")
+    timestamp: float = Field(default_factory=time.time, description="Response timestamp")
+    experiment_id: str = Field(..., description="ID of the deleted experiment")
+
+
+class ExperimentDeleteResponse(BaseModel):
+    """Standard response for experiment delete (detail.message, detail.code, detail.timestamp)."""
+    detail: ExperimentDeleteDetail
+
+
 class ExperimentMetricsResponse(BaseModel):
     """Response model for experiment metrics"""
     experiment_id: str
@@ -186,9 +200,6 @@ class ExperimentMetricsResponse(BaseModel):
     error_count: int
     success_rate: float
     avg_latency_ms: Optional[int] = None
-    p50_latency_ms: Optional[int] = None
-    p95_latency_ms: Optional[int] = None
-    p99_latency_ms: Optional[int] = None
     custom_metrics: Optional[Dict[str, Any]] = None
     metric_date: datetime
 
@@ -207,16 +218,19 @@ class ExperimentVariantSelectionRequest(BaseModel):
     task_type: str = Field(..., description="Task type (e.g., 'asr', 'tts')")
     language: Optional[str] = Field(None, description="Language code (e.g., 'hi', 'en')")
     request_id: Optional[str] = Field(None, description="Optional request ID for consistent routing")
+    user_id: Optional[str] = Field(None, description="Optional user ID so same user gets same variant")
+    service_id: Optional[str] = Field(
+        None,
+        description="Optional service ID from the request; when set, only experiments that include this service as a variant are considered"
+    )
 
 
 class ExperimentVariantSelectionResponse(BaseModel):
-    """Response model for variant selection"""
+    """Response model for variant selection (api_key and endpoint omitted for security)"""
     experiment_id: Optional[str] = None
     variant_id: Optional[str] = None
     variant_name: Optional[str] = None
     service_id: Optional[str] = None
     model_id: Optional[str] = None
     model_version: Optional[str] = None
-    endpoint: Optional[str] = None
-    api_key: Optional[str] = None
     is_experiment: bool = False
