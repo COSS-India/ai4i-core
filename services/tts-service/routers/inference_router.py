@@ -99,7 +99,7 @@ inference_router = APIRouter(
 
 
 async def get_tts_service(request: Request, db: AsyncSession = Depends(get_tenant_db_session)) -> TTSService:
-    """Dependency to get configured TTS service."""
+    """Dependency to get configured TTS service. Uses request.state from Model Management middleware when set (e.g. A/B variant)."""
     try:
         # Create repository
         repository = TTSRepository(db)
@@ -108,14 +108,18 @@ async def get_tts_service(request: Request, db: AsyncSession = Depends(get_tenan
         audio_service = AudioService()
         text_service = TextService()
         
-        # Create Triton client
+        # Triton endpoint: prefer middleware-resolved (A/B variant or service resolution)
         import os
-        triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-        # Strip http:// or https:// scheme from URL (like ASR service)
-        if triton_url.startswith(('http://', 'https://')):
-            triton_url = triton_url.split('://', 1)[1]
-        triton_api_key = os.getenv("TRITON_API_KEY")
-        triton_client = TritonClient(triton_url, triton_api_key)
+        triton_endpoint = getattr(request.state, "triton_endpoint", None)
+        triton_api_key = getattr(request.state, "triton_api_key", None)
+        if not triton_endpoint:
+            triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
+            if triton_url.startswith(('http://', 'https://')):
+                triton_url = triton_url.split('://', 1)[1]
+            triton_endpoint = triton_url
+            if triton_api_key is None:
+                triton_api_key = os.getenv("TRITON_API_KEY")
+        triton_client = TritonClient(triton_endpoint, triton_api_key)
         
         # Create TTS service
         tts_service = TTSService(repository, audio_service, text_service, triton_client)
