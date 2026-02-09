@@ -101,6 +101,13 @@ GET /experiments?status=RUNNING&task_type=asr&created_by=user123
 GET /experiments/{experiment_id}
 ```
 
+#### Get Experiment Metrics
+```
+GET /experiments/{experiment_id}/metrics
+```
+
+Returns a single object with `experiment_id` (once) and `metrics` (array). Each metric item has `variant_id`, `variant_name`, `request_count`, `success_count`, `error_count`, `success_rate`, `avg_latency_ms`, `custom_metrics`, `metric_date`. Returns 404 if the experiment does not exist; returns `metrics: []` if the experiment has no metrics yet.
+
 #### Update Experiment
 ```
 PATCH /experiments/{experiment_id}

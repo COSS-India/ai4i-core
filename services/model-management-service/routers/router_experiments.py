@@ -8,6 +8,7 @@ from models.ab_testing import (
     ExperimentListResponse,
     ExperimentDeleteResponse,
     ExperimentDeleteDetail,
+    ExperimentMetricsResponse,
     ExperimentVariantSelectionRequest,
     ExperimentVariantSelectionResponse,
     ExperimentMetricTrackRequest,
@@ -15,6 +16,7 @@ from models.ab_testing import (
 from db_operations import (
     create_experiment,
     get_experiment,
+    get_experiment_metrics,
     list_experiments,
     update_experiment,
     update_experiment_status,
@@ -111,15 +113,15 @@ async def get_experiment_endpoint(experiment_id: str):
     """
     try:
         experiment_data = await get_experiment(experiment_id)
-        
+
         if not experiment_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"kind": "NotFound", "message": f"Experiment with ID '{experiment_id}' not found"}
             )
-        
+
         return experiment_data
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -127,6 +129,36 @@ async def get_experiment_endpoint(experiment_id: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch experiment: {str(e)}"
+        )
+
+
+@router_experiments.get("/{experiment_id}/metrics", response_model=ExperimentMetricsResponse)
+async def get_experiment_metrics_endpoint(experiment_id: str):
+    """
+    Get metrics for an A/B experiment by ID.
+
+    Returns experiment_id once and a metrics array (per variant per day).
+    Returns 404 if the experiment does not exist; returns metrics: [] if the
+    experiment has no metrics yet.
+    """
+    try:
+        data = await get_experiment_metrics(experiment_id)
+
+        if data is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"kind": "NotFound", "message": f"Experiment with ID '{experiment_id}' not found"}
+            )
+
+        return data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error while fetching experiment metrics {experiment_id}.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch experiment metrics: {str(e)}"
         )
 
 

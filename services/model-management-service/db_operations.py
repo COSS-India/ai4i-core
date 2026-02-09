@@ -2697,6 +2697,83 @@ async def select_experiment_variant(
         await db.close()
 
 
+async def get_experiment_metrics(experiment_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get metrics for an experiment by ID.
+
+    Returns metrics per variant per metric_date (daily buckets). Returns None if
+    the experiment does not exist; returns {"experiment_id": ..., "metrics": []}
+    if the experiment exists but has no metrics yet.
+
+    Args:
+        experiment_id: Experiment UUID
+
+    Returns:
+        Dict with "experiment_id" (once) and "metrics" (list of variant-level
+        metric dicts without experiment_id). None if experiment not found.
+    """
+    db: AsyncSession = AppDatabase()
+    try:
+        # Verify experiment exists
+        result = await db.execute(
+            select(Experiment).where(Experiment.id == UUID(experiment_id))
+        )
+        if not result.scalars().first():
+            return None
+
+        # Query metrics joined with variant for variant_name
+        q = (
+            select(
+                ExperimentMetrics.variant_id,
+                ExperimentVariant.variant_name,
+                ExperimentMetrics.request_count,
+                ExperimentMetrics.success_count,
+                ExperimentMetrics.error_count,
+                ExperimentMetrics.avg_latency_ms,
+                ExperimentMetrics.custom_metrics,
+                ExperimentMetrics.metric_date,
+            )
+            .join(
+                ExperimentVariant,
+                ExperimentMetrics.variant_id == ExperimentVariant.id,
+            )
+            .where(ExperimentMetrics.experiment_id == UUID(experiment_id))
+            .order_by(ExperimentMetrics.metric_date.desc(), ExperimentVariant.variant_name)
+        )
+        rows_result = await db.execute(q)
+        rows = rows_result.all()
+
+        metrics = []
+        for r in rows:
+            req_count = r.request_count or 0
+            success_rate = (
+                (r.success_count or 0) / req_count if req_count > 0 else 0.0
+            )
+            metrics.append({
+                "variant_id": str(r.variant_id),
+                "variant_name": r.variant_name or "",
+                "request_count": req_count,
+                "success_count": r.success_count or 0,
+                "error_count": r.error_count or 0,
+                "success_rate": round(success_rate, 4),
+                "avg_latency_ms": r.avg_latency_ms,
+                "custom_metrics": r.custom_metrics,
+                "metric_date": r.metric_date,
+            })
+        return {"experiment_id": experiment_id, "metrics": metrics}
+    except ValueError:
+        # Invalid UUID
+        return None
+    except Exception as e:
+        logger.exception("Error while fetching experiment metrics for %s.", experiment_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch experiment metrics: {str(e)}",
+        ) from e
+    finally:
+        await db.close()
+
+
 async def track_experiment_metric(
     experiment_id: str,
     variant_id: str,
