@@ -3,11 +3,14 @@ from middleware.auth_provider import AuthProvider
 from models.model_view import ModelViewRequest , ModelViewResponse
 from models.service_view import ServiceViewRequest , ServiceViewResponse
 from models.service_list import ServiceListResponse
+from models.service_policy import ServicePolicyRequest, ServicePolicyResponse, ServicePolicyListResponse
 from db_operations import (
     get_model_details , 
     list_all_models , 
     get_service_details,
-    list_all_services
+    list_all_services,
+    get_service_policy,
+    list_services_with_policies
 )
 from logger import logger
 from typing import List , Union, Optional
@@ -124,5 +127,46 @@ async def list_services_request(
         raise HTTPException(
             status_code=500,
             detail={"kind": "DBError", "message": "Error listing service details"}
+        )
+
+
+#################################################### Policy apis ####################################################
+
+
+
+@router_details.get("/list/services/policies", response_model=ServicePolicyListResponse)
+async def list_services_policies_request(
+    task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.). Returns all services with their policies for the specified task type.")
+):
+    """
+    List all services with their policies, optionally filtered by task_type.
+    
+    When task_type is provided (e.g., "nmt", "transliteration"), returns all service IDs
+    along with their policy details for that task type.
+    
+    When service_id is needed, use /get/service/policy endpoint.
+    """
+    try:
+        if not task_type or task_type.lower() == "none":
+            task_type_enum = None
+        else:
+            task_type_enum = TaskTypeEnum(task_type)
+        
+        services_list = await list_services_with_policies(task_type_enum)
+        
+        # Convert to ServicePolicyResponse objects
+        services_with_policies = [
+            ServicePolicyResponse(**service) for service in services_list
+        ]
+        
+        return ServicePolicyListResponse(services=services_with_policies)
+        
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error while listing services with policies from DB.")
+        raise HTTPException(
+            status_code=500,
+            detail={"kind": "DBError", "message": "Error listing services with policies"}
         )
     
