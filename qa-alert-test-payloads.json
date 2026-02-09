@@ -1,0 +1,147 @@
+{
+  "description": "QA Test Payloads for Alert Management API",
+  "version": "1.0",
+  "note": "Use these payloads to test alert definition and notification receiver creation. Organization is automatically extracted from API key or X-Organization header.",
+  
+  "alert_definitions": [
+    {
+      "name": "HighMedianLatencyPerService",
+      "description": "High median latency for specific inference endpoints",
+      "promql_expr": "histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\"}[5m]))) > 0.15",
+      "category": "application",
+      "severity": "warning",
+      "urgency": "medium",
+      "alert_type": "latency",
+      "scope": "per_endpoint",
+      "evaluation_interval": "30s",
+      "for_duration": "2m",
+      "annotations": [
+        {
+          "key": "summary",
+          "value": "High median latency for endpoint {{ $labels.endpoint }}"
+        },
+        {
+          "key": "description",
+          "value": "Median latency for {{ $labels.endpoint }} is {{ $value | humanize }}s (threshold: 0.15s)"
+        }
+      ]
+    },
+    {
+      "name": "HighErrorRatePerService",
+      "description": "High error rate for specific inference endpoints",
+      "promql_expr": "sum by (endpoint) (rate(telemetry_obsv_http_requests_total{status!=\"200\", endpoint=~\"/.*inference.*\"}[5m])) / sum by (endpoint) (rate(telemetry_obsv_http_requests_total{endpoint=~\"/.*inference.*\"}[5m])) > 0.05",
+      "category": "application",
+      "severity": "warning",
+      "urgency": "medium",
+      "alert_type": "error_rate",
+      "scope": "per_endpoint",
+      "evaluation_interval": "30s",
+      "for_duration": "3m",
+      "annotations": [
+        {
+          "key": "summary",
+          "value": "High error rate for endpoint {{ $labels.endpoint }}"
+        },
+        {
+          "key": "description",
+          "value": "Error rate for {{ $labels.endpoint }} is {{ $value | humanizePercentage }} (threshold: 5%)"
+        }
+      ]
+    },
+    {
+      "name": "HighCPUUtilization",
+      "description": "High CPU utilization detected across system nodes",
+      "promql_expr": "100 * (1 - sum(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) / sum(rate(node_cpu_seconds_total[5m]))) > 20",
+      "category": "infrastructure",
+      "severity": "warning",
+      "urgency": "medium",
+      "alert_type": "resource_utilization",
+      "scope": "cluster_wide",
+      "evaluation_interval": "1m",
+      "for_duration": "5m",
+      "annotations": [
+        {
+          "key": "summary",
+          "value": "High CPU utilization detected ({{ $value | humanize }}%)"
+        },
+        {
+          "key": "description",
+          "value": "CPU utilization is {{ $value | humanize }}% (threshold: 20%)"
+        }
+      ]
+    },
+    {
+      "name": "HighMemoryUtilization",
+      "description": "High memory utilization detected across system nodes",
+      "promql_expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 20",
+      "category": "infrastructure",
+      "severity": "warning",
+      "urgency": "medium",
+      "alert_type": "resource_utilization",
+      "scope": "cluster_wide",
+      "evaluation_interval": "1m",
+      "for_duration": "5m",
+      "annotations": [
+        {
+          "key": "summary",
+          "value": "High memory utilization detected ({{ $value | humanize }}%)"
+        },
+        {
+          "key": "description",
+          "value": "Memory utilization is {{ $value | humanize }}% (threshold: 20%)"
+        }
+      ]
+    },
+    {
+      "name": "HighDiskUtilization",
+      "description": "High disk utilization detected on root filesystem",
+      "promql_expr": "100 * (1 - node_filesystem_avail_bytes{fstype=\"ext4\", mountpoint=\"/\"} / node_filesystem_size_bytes{fstype=\"ext4\", mountpoint=\"/\"}) > 20",
+      "category": "infrastructure",
+      "severity": "warning",
+      "urgency": "medium",
+      "alert_type": "resource_utilization",
+      "scope": "cluster_wide",
+      "evaluation_interval": "1m",
+      "for_duration": "5m",
+      "annotations": [
+        {
+          "key": "summary",
+          "value": "High disk utilization detected on root filesystem ({{ $value | humanize }}%)"
+        },
+        {
+          "key": "description",
+          "value": "Disk utilization is {{ $value | humanize }}% (threshold: 20%)"
+        }
+      ]
+    }
+  ],
+  
+  "notification_receiver": {
+    "category": "application",
+    "severity": "warning",
+    "email_to": ["bharathia6@gmail.com"]
+  },
+  
+  "usage_instructions": {
+    "base_url": "http://localhost:8000",
+    "endpoints": {
+      "create_alert_definition": "POST /api/v1/alerts/definitions",
+      "create_notification_receiver": "POST /api/v1/alerts/receivers"
+    },
+    "headers": {
+      "Content-Type": "application/json",
+      "X-API-Key": "your-api-key-here",
+      "X-Organization": "your-organization-name (optional - extracted from API key if not provided)"
+    },
+    "test_steps": [
+      "1. Create the notification receiver first using the 'notification_receiver' payload",
+      "2. Create each alert definition using payloads from the 'alert_definitions' array",
+      "3. Verify alerts appear in Prometheus rules and Alertmanager config",
+      "4. Test that alerts trigger and emails are sent to bharathia6@gmail.com"
+    ],
+    "curl_examples": {
+      "create_receiver": "curl -X POST http://localhost:8000/api/v1/alerts/receivers -H 'Content-Type: application/json' -H 'X-API-Key: your-api-key' -H 'X-Organization: bashadaan' -d '{\"category\":\"application\",\"severity\":\"warning\",\"email_to\":[\"bharathia6@gmail.com\"]}'",
+      "create_alert": "curl -X POST http://localhost:8000/api/v1/alerts/definitions -H 'Content-Type: application/json' -H 'X-API-Key: your-api-key' -H 'X-Organization: bashadaan' -d @alert_payload.json"
+    }
+  }
+}
