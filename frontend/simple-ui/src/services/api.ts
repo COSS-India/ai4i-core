@@ -312,6 +312,7 @@ apiClient.interceptors.request.use(
     const isLanguageDiarizationEndpoint = url.includes('/api/v1/language-diarization');
     const isAudioLangDetectionEndpoint = url.includes('/api/v1/audio-lang-detection');
     const isObservabilityEndpoint = url.includes('/api/v1/observability');
+    const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
     
@@ -321,7 +322,8 @@ apiClient.interceptors.request.use(
                         isAudioLangDetectionEndpoint || isLanguageDetectionEndpoint ||
                         isLanguageDiarizationEndpoint || isSpeakerDiarizationEndpoint ||
                         isNEREndpoint || isOCREndpoint || isTransliterationEndpoint ||
-                        isObservabilityEndpoint;
+                        isObservabilityEndpoint ||
+                        isMultiTenantEndpoint;
     
     // Proactively refresh token if it's expiring soon (skip for refresh and login endpoints)
     if ((requiresJWT || (isAuthEndpoint && !isAuthRefreshEndpoint)) && !isAuthRefreshEndpoint) {
@@ -449,6 +451,7 @@ apiClient.interceptors.response.use(
           if (typeof window !== 'undefined') {
             const url = (error.config?.url || '').toLowerCase();
             const isModelManagementEndpoint = url.includes('/model-management');
+            const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
             
             // Check if it's a service endpoint or model-management endpoint
             // These should NOT automatically logout - let the UI handle the error
@@ -465,9 +468,10 @@ apiClient.interceptors.response.use(
                                      url.includes('/api/v1/language-diarization') ||
                                      url.includes('/api/v1/audio-lang-detection') ||
                                      url.includes('/api/v1/observability') ||
-                                     isModelManagementEndpoint;
+                                     isModelManagementEndpoint ||
+                                     isMultiTenantEndpoint;
             
-            if (isServiceEndpoint || isModelManagementEndpoint) {
+            if (isServiceEndpoint || isModelManagementEndpoint || isMultiTenantEndpoint) {
               // For service endpoints and model-management endpoints
               // Check if it's a token expiration issue - if so, redirect to sign-in
               
