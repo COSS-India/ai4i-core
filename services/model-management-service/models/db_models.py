@@ -164,10 +164,7 @@ class ExperimentMetrics(AppDBBase):
     success_count = Column(BigInteger, nullable=False, default=0)
     error_count = Column(BigInteger, nullable=False, default=0)
     avg_latency_ms = Column(BigInteger, nullable=True)  # Average latency in milliseconds
-    p50_latency_ms = Column(BigInteger, nullable=True)
-    p95_latency_ms = Column(BigInteger, nullable=True)
-    p99_latency_ms = Column(BigInteger, nullable=True)
-    
+
     # Additional metrics (stored as JSONB for flexibility)
     custom_metrics = Column(JSONB, nullable=True)
     

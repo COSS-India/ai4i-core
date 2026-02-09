@@ -41,7 +41,7 @@ The A/B testing feature allows platform administrators to evaluate alternative m
    - `experiment_id` - Foreign key to experiments
    - `variant_id` - Foreign key to experiment_variants
    - `request_count`, `success_count`, `error_count`
-   - `avg_latency_ms`, `p50_latency_ms`, `p95_latency_ms`, `p99_latency_ms`
+   - `avg_latency_ms` - Average request latency (ms)
    - `custom_metrics` (JSONB) - Additional flexible metrics
    - `metric_date` - Date for daily aggregation
 
@@ -150,9 +150,17 @@ Content-Type: application/json
 {
   "task_type": "asr",
   "language": "hi",
-  "request_id": "optional-request-id"
+  "request_id": "optional-request-id",
+  "user_id": "optional-user-id",
+  "service_id": "optional-service-id"
 }
 ```
+
+- **task_type**: Required (e.g. `asr`, `nmt`, `tts`).
+- **language**: Optional; from request (e.g. source language). Omit or `null` for non-language services.
+- **request_id**: Optional; used for hashing only when `user_id` is not provided (e.g. anonymous traffic).
+- **user_id**: Optional; when provided, **same user always gets the same variant** (sticky assignment). Pass from auth (e.g. JWT `sub` or `X-User-Id`).
+- **service_id**: Optional; when provided, **only experiments that include this service as one of their variants** are considered. Use the service ID from the inference request (e.g. from the request body) so A/B selection is scoped to experiments that involve that service. When omitted, any matching experiment (by task_type, language, dates) may be chosen.
 
 **Response:**
 ```json
@@ -178,16 +186,23 @@ If no matching experiment:
 
 ## Traffic Routing Logic
 
-The variant selection uses **deterministic consistent hashing**:
+The variant selection uses **deterministic consistent hashing**. Hash input is chosen in this order:
 
-1. If `request_id` is provided, it's used for hashing (ensures same request always routes to same variant)
-2. Otherwise, a hash is generated from `task_type:language`
-3. The hash is mapped to a bucket (0-99)
-4. Variants are selected based on cumulative traffic percentages
+1. **When `user_id` is provided**: Hash input is `user_id:task_type:language`. The **same user always gets the same variant** (sticky assignment). Use this for logged-in users so metrics accumulate per variant consistently.
+2. **When only `request_id` is provided**: Hash input is `request_id`. Per-request distribution (e.g. anonymous traffic); each request can land on a different variant.
+3. **Otherwise**: Hash input includes a random component; each call can land on a different variant.
 
-**Example:**
-- Variant A: 30% traffic (buckets 0-29)
-- Variant B: 70% traffic (buckets 30-99)
+Then:
+- The hash is mapped to a bucket (0-99)
+- Variants are selected based on cumulative traffic percentages
+
+**Example (50/50 split):**
+- Variant A: 50% traffic (buckets 0-49)
+- Variant B: 50% traffic (buckets 50-99)
+
+**Recommendation:** Always pass `user_id` when the caller is authenticated so the same user is consistently routed to one variant and experiment metrics are meaningful.
+
+**Scoping by service:** When the caller already has a `service_id` (e.g. from the inference request body), passing it in select-variant ensures only experiments that include that service as a variant are considered. This avoids routing into an unrelated experiment and makes behaviour predictable when multiple experiments exist for the same task type.
 
 ## Experiment Lifecycle
 
@@ -268,8 +283,10 @@ To integrate A/B testing into your services:
        "http://model-management-service:8091/experiments/select-variant",
        json={
            "task_type": "asr",
-           "language": request.language,  # e.g., "hi", "en"
-           "request_id": request.id  # Optional, for consistent routing
+           "language": request.language,   # e.g., "hi", "en"
+           "request_id": request.id,       # Optional; used when user_id absent
+           "user_id": request.user_id,     # Optional; when set, same user => same variant
+           "service_id": request.service_id  # Optional; only consider experiments that include this service
        }
    )
    ```
@@ -280,8 +297,10 @@ To integrate A/B testing into your services:
        "http://model-management-service:8091/experiments/select-variant",
        json={
            "task_type": "ocr",
-           "language": None,  # Explicitly set to None for non-language services
-           "request_id": request.id  # Optional, for consistent routing
+           "language": None,                # Explicitly set to None for non-language services
+           "request_id": request.id,       # Optional; used when user_id absent
+           "user_id": request.user_id,     # Optional; when set, same user => same variant
+           "service_id": request.service_id  # Optional; only consider experiments that include this service
        }
    )
    ```
@@ -386,9 +405,8 @@ To integrate A/B testing into your services:
 1. **Start Small**: Begin with low traffic percentages (e.g., 10% to new variant)
 2. **Monitor Metrics**: Track latency, error rates, and custom metrics
 3. **Gradual Rollout**: Increase traffic percentage over time
-4. **Consistent Routing**: Use `request_id` for deterministic routing when needed
-5. **Clean Up**: Delete completed experiments to keep database clean
-6. **Language Filtering**: Use `null` for "all languages" experiments, specific lists only when needed
+4. **Sticky assignment**: Pass `user_id` when the caller is authenticated so the same user always gets the same variant
+5. **Language Filtering**: Use `null` for "all languages" experiments, specific lists only when needed
 
 ## Example Workflow
 
@@ -400,6 +418,23 @@ To integrate A/B testing into your services:
 6. After evaluation period, stop experiment
 7. Promote winning variant to production
 8. Delete experiment
+
+## Troubleshooting
+
+### No metrics in `experiment_metrics` when I run inference
+
+**Cause:** Metrics are only recorded when the request is actually routed into an A/B experiment. If the request does not match the experiment’s filters, no variant is selected and no metrics are written.
+
+**Common case – language filter:** Your experiment has a `languages` list (e.g. `["hi", "en"]`). The middleware uses the **request’s language** (for NMT: `config.language.sourceLanguage` from the body) to decide if the request matches the experiment. If you call NMT with e.g. `sourceLanguage: "ml"` (Malayalam) but the experiment has `languages: ["hi", "en"]`, the request does **not** match, so:
+
+- No A/B variant is selected (request uses the original `serviceId` from the body).
+- `experiment_info` is never set, so the middleware does **not** call the track-metric API.
+- No row is written or updated in `experiment_metrics` for that request.
+
+**What to do:**
+
+- To see metrics for your current experiment: send NMT requests whose **source language** is one of the experiment’s languages (e.g. `"hi"` or `"en"`).
+- Or update the experiment (e.g. add `"ml"` to `languages`, or set `languages` to `null`/`[]` to include all languages).
 
 ## Error Handling
 
