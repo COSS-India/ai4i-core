@@ -516,16 +516,55 @@ async def inject_service_id_if_missing(
         )
         return str(existing_service_id), body_dict, None
 
-    # 1. Determine policy values: prioritize headers, fall back to Policy Engine
-    # Check if any policy headers are provided (highest priority)
-    headers_provided = latency_policy is not None or cost_policy is not None or accuracy_policy is not None
-    
+    # 1. Determine policy values
+    # Priority:
+    #   a) If no tenant_id -> treat as "free user" and use fixed low-cost/low-accuracy/high-latency defaults
+    #   b) Else if policy headers are provided -> use them directly (skip Policy Engine)
+    #   c) Else -> call Policy Engine for tenant-specific policies
+    headers_provided = (
+        latency_policy is not None or cost_policy is not None or accuracy_policy is not None
+    )
+
     policy_result: Optional[Dict[str, Any]] = None
     actual_latency_policy: Optional[str] = None
     actual_cost_policy: Optional[str] = None
     actual_accuracy_policy: Optional[str] = None
-    
-    if headers_provided:
+
+    if tenant_id is None:
+        # a) No tenant_id in token -> free user path
+        # Do NOT call Policy Engine and ignore any policy headers.
+        # Use fixed defaults:
+        #   - latency: "high"      (we allow higher latency)
+        #   - cost:    "tier_1"    (lowest cost)
+        #   - accuracy:"standard"  (normal accuracy, not sensitive)
+        actual_latency_policy = "high"
+        actual_cost_policy = "tier_1"
+        actual_accuracy_policy = "standard"
+
+        policy_result = {
+            "policy_id": "pol_free_user_default",
+            "policy_version": "v1.0",
+            "latency_policy": actual_latency_policy,
+            "cost_policy": actual_cost_policy,
+            "accuracy_policy": actual_accuracy_policy,
+        }
+
+        logger.info(
+            "SMR: Free-user routing (no tenant_id) using fixed low-cost/low-accuracy/high-latency defaults",
+            extra={
+                "context": {
+                    "task_type": task_type,
+                    "user_id": user_id,
+                    "tenant_id": tenant_id,
+                    "latency_policy": actual_latency_policy,
+                    "cost_policy": actual_cost_policy,
+                    "accuracy_policy": actual_accuracy_policy,
+                    "decision": "free_user_defaults",
+                }
+            },
+        )
+
+    elif headers_provided:
         # Headers are present: use them directly, skip Policy Engine call
         logger.info(
             "SMR: Using policy headers directly (skipping Policy Engine)",

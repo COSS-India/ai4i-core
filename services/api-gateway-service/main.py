@@ -2241,25 +2241,21 @@ async def get_verified_tenant_id(request: Request) -> str:
     # Extract tenant_id from JWT token (set by auth middleware)
     tenant_id = getattr(request.state, "tenant_id", None)
     
-    # If tenant_id is missing from JWT, user is not associated with any tenant
+    # If tenant_id is missing from JWT, user is not associated with any tenant.
+    # For free-user flows we allow this and simply return None so that callers
+    # (e.g. SMR) can apply free-user routing logic without tenant context.
     if not tenant_id:
         logger.warning(
-            "Tenant verification: tenant_id missing from JWT token",
+            "Tenant verification: tenant_id missing from JWT token (treating as free user)",
             extra={
                 "context": {
                     "user_id": user_id,
                     "path": request.url.path,
-                    "message": "User is not associated with any tenant. Tenant ID is required for policy-based routing."
+                    "message": "No tenant_id in token; falling back to free-user routing.",
                 }
-            }
+            },
         )
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "TENANT_REQUIRED",
-                "message": "Tenant ID is required for this operation. Your account is not associated with any tenant. Please contact your administrator."
-            }
-        )
+        return None
     
     logger.debug(
         "Tenant verified from JWT",
@@ -2441,6 +2437,11 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                         req.state.is_authenticated = True
                         
                         # Extract tenant information using resolve_tenant_from_jwt
+                        # NOTE:
+                        #   - If tenant info is present, we treat this as a tenant-scoped request.
+                        #   - If tenant info is missing, we now allow "free user" flows (no tenant),
+                        #     so we DO NOT raise an error here. Downstream logic (SMR, services)
+                        #     can handle tenant_id=None appropriately.
                         tenant_context = resolve_tenant_from_jwt(payload)
                         if tenant_context:
                             req.state.tenant_id = tenant_context.get("tenant_id")
@@ -2448,19 +2449,6 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             req.state.schema_name = tenant_context.get("schema_name")
                             req.state.subscriptions = tenant_context.get("subscriptions", [])
                             req.state.user_subscriptions = tenant_context.get("user_subscriptions", [])
-                        else:
-                            # Tenant is required - return error if not present
-                            if auth_span:
-                                auth_span.set_attribute("error", True)
-                                auth_span.set_attribute("error.type", "TenantMissing")
-                                auth_span.set_status(Status(StatusCode.ERROR, "Tenant ID missing from token"))
-                            raise HTTPException(
-                                status_code=403,
-                                detail={
-                                    "code": "TENANT_REQUIRED",
-                                    "message": "Tenant ID is required for this operation. Your account is not associated with any tenant. Please contact your administrator."
-                                }
-                            )
                         
                 except HTTPException:
                     raise
@@ -5189,7 +5177,8 @@ async def nmt_inference(
     # Attach SMR debug metadata in response headers for observability
     if isinstance(downstream_response, Response):
         downstream_response.headers["X-SMR-ServiceId"] = selected_service_id or ""
-        downstream_response.headers["X-SMR-TenantId"] = tenant_id or ""
+        # If no tenant_id in token, mark as "free_user" for observability
+        downstream_response.headers["X-SMR-TenantId"] = tenant_id or "free_user"
         if policy_result:
             downstream_response.headers["X-SMR-PolicyId"] = str(
                 policy_result.get("policy_id", "")
