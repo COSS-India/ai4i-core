@@ -67,6 +67,7 @@ class Service(AppDBBase):
     api_key = Column(String(255))
     health_status = Column(JSONB)
     benchmarks = Column(JSONB)
+    policy = Column(JSONB)  # Policy data (latency, cost, accuracy)
     is_published = Column(Boolean, nullable=False, default=False)
     published_at = Column(BigInteger, default=None)
     unpublished_at = Column(BigInteger, default=None)
