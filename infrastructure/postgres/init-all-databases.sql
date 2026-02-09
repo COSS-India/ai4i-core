@@ -880,7 +880,16 @@ COMMENT ON COLUMN services.is_published IS 'Whether the service is published and
 COMMENT ON COLUMN services.published_at IS 'Unix timestamp when the service was published';
 COMMENT ON COLUMN services.unpublished_at IS 'Unix timestamp when the service was unpublished';
 
-
+-- Ensure experiment_status enum includes PAUSED, COMPLETED, CANCELLED (experiments table is created by model-management-service;
+-- if the enum was created with older values like STOPPED, add the values the app expects so stop/cancel work)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'experiment_status') THEN
+        ALTER TYPE experiment_status ADD VALUE IF NOT EXISTS 'PAUSED';
+        ALTER TYPE experiment_status ADD VALUE IF NOT EXISTS 'COMPLETED';
+        ALTER TYPE experiment_status ADD VALUE IF NOT EXISTS 'CANCELLED';
+    END IF;
+END $$;
 
 -- ============================================================================
 -- STEP 5: Multi Tenant Feature Schema (multi_tenant_db)
@@ -1840,7 +1849,12 @@ INSERT INTO permissions (name, resource, action) VALUES
 ('service.update', 'services', 'update'),
 ('service.delete', 'services', 'delete'),
 ('service.publish', 'services', 'publish'),
-('service.unpublish', 'services', 'unpublish')
+('service.unpublish', 'services', 'unpublish'),
+-- API Key management permissions
+('apiKey.create', 'apiKey', 'create'),
+('apiKey.read', 'apiKey', 'read'),
+('apiKey.update', 'apiKey', 'update'),
+('apiKey.delete', 'apiKey', 'delete')
 ON CONFLICT (name) DO NOTHING;
 
 -- Assign permissions to ADMIN role
@@ -1855,7 +1869,7 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'USER' 
-AND p.name IN ('users.read', 'users.update', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read', 'model.read', 'service.read')
+AND p.name IN ('users.read', 'users.update', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read', 'model.read', 'service.read', 'apiKey.update')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- Assign permissions to GUEST role + model/service read permissions
@@ -1863,7 +1877,7 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'GUEST' 
-AND p.name IN ('users.read', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.read', 'model.read', 'service.read')
+AND p.name IN ('users.read', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.read', 'model.read', 'service.read', 'apiKey.update')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- Assign permissions to MODERATOR role + all model/service permissions
@@ -1871,7 +1885,7 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'MODERATOR' 
-AND p.name IN ('users.read', 'users.update', 'configs.read', 'configs.update', 'metrics.read', 'alerts.read', 'alerts.update', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read', 'model.create', 'model.read', 'model.update', 'model.delete', 'model.publish', 'model.unpublish', 'service.create', 'service.read', 'service.update', 'service.delete')
+AND p.name IN ('users.read', 'users.update', 'configs.read', 'configs.update', 'metrics.read', 'alerts.read', 'alerts.update', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read', 'model.create', 'model.read', 'model.update', 'model.delete', 'model.publish', 'model.unpublish', 'service.create', 'service.read', 'service.update', 'service.delete', 'apiKey.update')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- ============================================================================

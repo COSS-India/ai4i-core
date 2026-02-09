@@ -654,6 +654,8 @@ services:
                 - GET
                 - POST
                 - PUT
+                - PATCH
+                - DELETE
                 - OPTIONS
               credentials: true
               max_age: 3600

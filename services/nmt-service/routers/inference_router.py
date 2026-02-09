@@ -284,7 +284,8 @@ async def run_inference(
                 user_id=user_id,
                 api_key_id=api_key_id,
                 session_id=session_id,
-                auth_headers=extract_auth_headers(http_request)
+                auth_headers=extract_auth_headers(http_request),
+                http_request=http_request,
             )
             
             # Calculate output metrics (character length and word count) for successful responses
@@ -448,7 +449,8 @@ async def _run_nmt_inference_impl(
         user_id=user_id,
         api_key_id=api_key_id,
         session_id=session_id,
-        auth_headers=extract_auth_headers(http_request)
+        auth_headers=extract_auth_headers(http_request),
+        http_request=http_request,
     )
     logger.info("NMT inference completed successfully")
     return response
