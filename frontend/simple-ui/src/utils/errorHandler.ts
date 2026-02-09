@@ -135,6 +135,11 @@ export function extractErrorInfo(error: any): ErrorInfo {
         }
       }
       
+      // Append hint when present (e.g. multi-tenant "set MULTI_TENANT_SERVICE_URL=...")
+      if (data.detail.hint && typeof data.detail.hint === 'string') {
+        errorMessage = errorMessage + (errorMessage.endsWith('.') ? ' ' : '. ') + data.detail.hint;
+      }
+
       // If we have both code/error and message, show only the message in toast
       if ((data.detail.error || data.detail.code) && data.detail.message) {
         return {
@@ -175,8 +180,13 @@ export function extractErrorInfo(error: any): ErrorInfo {
     }
     return { title: errorTitle, message: errorMessage, showOnlyMessage: true };
   }
+  // Handle 500/503 service unavailable (e.g. backend or multi-tenant service down)
+  const status = error?.response?.status;
+  if ((status === 500 || status === 503) && typeof errorMessage === 'string' && errorMessage.toLowerCase().includes('unavailable')) {
+    errorTitle = 'Service Unavailable';
+  }
   // Handle 401 authentication errors
-  if (error?.response?.status === 401 || error?.status === 401 || error?.message?.includes('401')) {
+  if (status === 401 || error?.status === 401 || error?.message?.includes('401')) {
     errorTitle = 'Authentication Failed';
     if (error?.message?.includes('API key') || error?.message?.includes('api key')) {
       errorMessage = 'API key is required to access this service.';
