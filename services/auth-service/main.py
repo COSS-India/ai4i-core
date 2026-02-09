@@ -15,6 +15,7 @@ import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError, OperationalError, DBAPIError
 
 from models import (
     User, UserSession, APIKey, UserCreate, UserResponse, UserUpdate,
@@ -59,9 +60,28 @@ except ImportError:
     UNAUTHORIZED = "UNAUTHORIZED"
     UNAUTHORIZED_MESSAGE = "You don't have permission to access this service. Please contact your administrator."
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configure logging with ai4icore_logging
+try:
+    from ai4icore_logging import get_logger
+    logger = get_logger(__name__)
+    logger.info("✅ Using ai4icore_logging for structured logging")
+except ImportError:
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    logger.warning("⚠️ ai4icore_logging not available, using standard logging")
+
+# Import telemetry and tracing
+try:
+    from ai4icore_telemetry.tracing import setup_tracing, TRACING_AVAILABLE
+    from opentelemetry import trace
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+    from opentelemetry.instrumentation.redis import RedisInstrumentor
+    TELEMETRY_AVAILABLE = True
+    logger.info("✅ Telemetry libraries loaded successfully")
+except ImportError as e:
+    TELEMETRY_AVAILABLE = False
+    logger.warning(f"⚠️ Telemetry not available: {e}")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -95,6 +115,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Setup Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+if TELEMETRY_AVAILABLE and TRACING_AVAILABLE:
+    try:
+        # Setup tracing and get tracer instance
+        tracer = setup_tracing("auth-service")
+        if tracer:
+            logger.info("✅ Distributed tracing initialized for Auth service")
+            
+            # Instrument FastAPI with OpenTelemetry
+            # Exclude health check and docs endpoints to reduce span noise
+            FastAPIInstrumentor.instrument_app(
+                app,
+                excluded_urls="/health,/ready,/docs,/redoc,/openapi.json"
+            )
+            logger.info("✅ FastAPI instrumented for distributed tracing")
+        else:
+            logger.warning("⚠️ Tracing setup returned None")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to setup tracing: {e}")
+else:
+    logger.warning("⚠️ Telemetry not available - traces will not be exported to Jaeger")
 
 # Global variables for connections
 redis_client = None
@@ -312,6 +355,25 @@ async def startup_event():
             expire_on_commit=False
         )
         logger.info("Connected to PostgreSQL")
+        
+        # Instrument SQLAlchemy for tracing
+        if TELEMETRY_AVAILABLE:
+            try:
+                SQLAlchemyInstrumentor().instrument(
+                    engine=db_engine.sync_engine,
+                    enable_commenter=True,
+                )
+                logger.info("✅ SQLAlchemy instrumented for distributed tracing")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to instrument SQLAlchemy: {e}")
+        
+        # Instrument Redis for tracing
+        if TELEMETRY_AVAILABLE and redis_client:
+            try:
+                RedisInstrumentor().instrument()
+                logger.info("✅ Redis instrumented for distributed tracing")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to instrument Redis: {e}")
         
         # Initialize multi-tenant database connection
         multi_tenant_db_url = os.getenv(
@@ -622,124 +684,204 @@ async def login(
     db: AsyncSession = Depends(get_db),
     multi_tenant_db: Optional[AsyncSession] = Depends(get_multi_tenant_db)
 ):
-    """Authenticate user and return tokens"""
-    # Get user by email
-    user = await AuthUtils.get_user_by_email(db, login_data.email)
-    if not user or not AuthUtils.verify_password(login_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    """Authenticate user and return tokens with comprehensive error handling and logging"""
+    client_ip = request.client.host if request.client else "unknown"
     
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    # 🔍 Step 1: Log login attempt
+    logger.info(f"🔐 Login attempt started: email={login_data.email}, ip={client_ip}")
     
-    # Get user roles
-    user_roles = await AuthUtils.get_user_roles(db, user.id)
-    
-    # Get tenant information
-    tenant_info = await get_tenant_info(user.id, multi_tenant_db , user.is_tenant)
+    try:
+        # 🔍 Step 2: Retrieve user
+        logger.debug(f"Fetching user from database: {login_data.email}")
+        user = await AuthUtils.get_user_by_email(db, login_data.email)
+        
+        if not user or not AuthUtils.verify_password(login_data.password, user.hashed_password):
+            logger.warning(f"❌ Login failed - invalid credentials: email={login_data.email}, ip={client_ip}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        if not user.is_active:
+            logger.warning(f"❌ Login failed - inactive user: email={login_data.email}, user_id={user.id}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # 🔍 Step 3: Get user roles
+        logger.debug(f"Fetching roles for user_id={user.id}")
+        user_roles = await AuthUtils.get_user_roles(db, user.id)
+        logger.debug(f"User roles retrieved: {user_roles}")
+        
+        # 🔍 Step 4: Get tenant information
+        logger.debug(f"Fetching tenant info for user_id={user.id}")
+        tenant_info = await get_tenant_info(user.id, multi_tenant_db, user.is_tenant)
 
-    token_data = {
-        "sub": str(user.id),
-        "email": user.email,
-        "username": user.username
-    }
-    
-    # Add tenant info if available
-    if tenant_info:
-        token_data.update({
-            "tenant_id": tenant_info["tenant_id"],
-            "tenant_uuid": tenant_info["tenant_uuid"],
-            "schema_name": tenant_info["schema_name"],
-            # "subscriptions": tenant_info.get("subscriptions", []), # Add subscirptions if needed
-            # "user_subscriptions": tenant_info.get("user_subscriptions", []), # Add subscirptions if needed
-        })
-        logger.info(f"Added tenant info to JWT for user {user.id}: tenant_id={tenant_info['tenant_id']}, schema={tenant_info['schema_name']}")
-    
-    # Generate tokens
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    refresh_token_expires = (
-        timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-        if login_data.remember_me
-        else timedelta(hours=REFRESH_TOKEN_EXPIRE_HOURS)
-    )
-    
-    access_token = AuthUtils.create_access_token(
-        data=token_data,
-        expires_delta=access_token_expires,
-        roles=user_roles
-    )
-    
-    refresh_token = AuthUtils.create_refresh_token(
-        data=token_data,  # Include tenant info in refresh token too
-        expires_delta=refresh_token_expires,
-        roles=user_roles
-    )
-    
-    # Create session using raw SQL to avoid async ORM issues
-    session_token = AuthUtils.generate_session_token()
-    device_info = {
-        "ip_address": request.client.host if request.client else None,
-        "user_agent": request.headers.get("user-agent"),
-        "remember_me": login_data.remember_me
-    }
-    
-    # Insert session row (Core insert) and update last_login in same commit
-    from sqlalchemy import insert as sa_insert
-    now = datetime.utcnow()
-    expires_at = now + refresh_token_expires
-    await db.execute(
-        sa_insert(UserSession.__table__).values(
-            user_id=user.id,
-            session_token=session_token,
+        token_data = {
+            "sub": str(user.id),
+            "email": user.email,
+            "username": user.username
+        }
+        
+        # Add tenant info if available
+        if tenant_info:
+            token_data.update({
+                "tenant_id": tenant_info["tenant_id"],
+                "tenant_uuid": tenant_info["tenant_uuid"],
+                "schema_name": tenant_info["schema_name"],
+            })
+            logger.debug(f"Tenant info added to token: tenant_id={tenant_info['tenant_id']}, schema={tenant_info['schema_name']}")
+        
+        # 🔍 Step 5: Generate tokens
+        logger.debug(f"Generating tokens for user_id={user.id}")
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        refresh_token_expires = (
+            timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+            if login_data.remember_me
+            else timedelta(hours=REFRESH_TOKEN_EXPIRE_HOURS)
+        )
+        
+        access_token = AuthUtils.create_access_token(
+            data=token_data,
+            expires_delta=access_token_expires,
+            roles=user_roles
+        )
+        
+        refresh_token = AuthUtils.create_refresh_token(
+            data=token_data,
+            expires_delta=refresh_token_expires,
+            roles=user_roles
+        )
+        logger.debug(f"✅ Tokens generated for user_id={user.id}")
+        
+        # 🔍 Step 6: Create session with retry logic for concurrent access
+        session_token = AuthUtils.generate_session_token()
+        device_info = {
+            "ip_address": client_ip,
+            "user_agent": request.headers.get("user-agent"),
+            "remember_me": login_data.remember_me
+        }
+        
+        from sqlalchemy import insert as sa_insert
+        now = datetime.utcnow()
+        expires_at = now + refresh_token_expires
+        
+        # Retry logic for database constraint violations (concurrent login issue)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                logger.debug(f"Creating session for user_id={user.id} (attempt {attempt + 1}/{max_retries})")
+                
+                await db.execute(
+                    sa_insert(UserSession.__table__).values(
+                        user_id=user.id,
+                        session_token=session_token,
+                        refresh_token=refresh_token,
+                        device_info=device_info,
+                        ip_address=client_ip,
+                        user_agent=request.headers.get("user-agent"),
+                        is_active=True,
+                        expires_at=expires_at
+                    )
+                )
+                user.last_login = now
+                
+                await db.commit()
+                logger.debug(f"✅ Session created and committed for user_id={user.id}")
+                break  # Success, exit retry loop
+                
+            except IntegrityError as e:
+                await db.rollback()
+                error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+                
+                if attempt < max_retries - 1:
+                    # Retry with new tokens
+                    logger.warning(f"⚠️ IntegrityError on session creation (attempt {attempt + 1}/{max_retries}): {error_msg}")
+                    logger.warning(f"Regenerating tokens and retrying for user_id={user.id}")
+                    
+                    # Generate new unique tokens
+                    session_token = AuthUtils.generate_session_token()
+                    refresh_token = AuthUtils.create_refresh_token(
+                        data=token_data,
+                        expires_delta=refresh_token_expires,
+                        roles=user_roles
+                    )
+                    await asyncio.sleep(0.1 * (attempt + 1))  # Exponential backoff
+                else:
+                    # Final retry failed
+                    logger.error(f"❌ Failed to create session after {max_retries} attempts for user_id={user.id}: {error_msg}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Login failed due to concurrent access. Please try again."
+                    )
+                    
+            except OperationalError as e:
+                await db.rollback()
+                error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+                logger.error(f"❌ Database OperationalError during login for user_id={user.id}: {error_msg}")
+                
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.2 * (attempt + 1))
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Database temporarily unavailable. Please try again."
+                    )
+                    
+            except DBAPIError as e:
+                await db.rollback()
+                error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+                logger.error(f"❌ Database error during login for user_id={user.id}: {error_msg}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Login failed due to database error. Please contact support."
+                )
+        
+        # 🔍 Step 7: Refresh user object
+        await db.refresh(user)
+        
+        logger.info(f"✅ User logged in successfully: email={user.email}, user_id={user.id}, ip={client_ip}")
+        
+        # 🔍 Step 8: Build response
+        user_dict = {
+            "id": user.id,
+            "email": user.email,
+            "username": user.username,
+            "full_name": user.full_name,
+            "phone_number": user.phone_number,
+            "timezone": user.timezone,
+            "language": user.language,
+            "is_active": user.is_active,
+            "is_verified": user.is_verified,
+            "is_superuser": user.is_superuser,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+            "last_login": user.last_login,
+            "avatar_url": user.avatar_url,
+            "roles": user_roles,
+        }
+        
+        return LoginResponse(
+            access_token=access_token,
             refresh_token=refresh_token,
-            device_info=device_info,
-            ip_address=request.client.host if request.client else None,
-            user_agent=request.headers.get("user-agent"),
-            is_active=True,
-            expires_at=expires_at
+            token_type="bearer",
+            expires_in=int(access_token_expires.total_seconds()),
+            user=user_dict,
         )
-    )
-    user.last_login = now
-    
-    await db.commit()
-    # Refresh to avoid expired attributes after commit (async DB)
-    await db.refresh(user)
-    
-    logger.info(f"User logged in: {user.email}")
-
-    # Build user response with roles (same shape as /auth/me)
-    user_dict = {
-        "id": user.id,
-        "email": user.email,
-        "username": user.username,
-        "full_name": user.full_name,
-        "phone_number": user.phone_number,
-        "timezone": user.timezone,
-        "language": user.language,
-        "is_active": user.is_active,
-        "is_verified": user.is_verified,
-        "is_superuser": user.is_superuser,
-        "created_at": user.created_at,
-        "updated_at": user.updated_at,
-        "last_login": user.last_login,
-        "avatar_url": user.avatar_url,
-        "roles": user_roles,
-    }
-    
-    return LoginResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_type="bearer",
-        expires_in=int(access_token_expires.total_seconds()),
-        user=user_dict,
-    )
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions (already logged above)
+        raise
+    except Exception as e:
+        # Catch any unexpected errors
+        logger.error(f"❌ Unexpected error during login for email={login_data.email}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred during login. Please try again later."
+        )
 
 @app.post("/api/v1/auth/refresh", response_model=TokenRefreshResponse)
 async def refresh_token(

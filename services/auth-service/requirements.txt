@@ -32,6 +32,21 @@ authlib>=1.2.0
 # Authorization engine (RBAC with domains, tenant-ready)
 casbin>=1.33.0
 
+# Observability and Telemetry
+# ai4icore_telemetry  # Installed via Dockerfile from libs/
+# ai4icore_logging    # Installed via Dockerfile from libs/
+
+# OpenTelemetry for distributed tracing
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+opentelemetry-instrumentation-fastapi>=0.41b0
+opentelemetry-instrumentation-sqlalchemy>=0.41b0
+opentelemetry-instrumentation-redis>=0.41b0
+opentelemetry-exporter-otlp-proto-grpc>=1.20.0
+
+# Prometheus metrics
+prometheus-client>=0.19.0
+
 # Development dependencies (commented out for production)
 # pytest>=7.4.0
 # pytest-asyncio>=0.21.0
