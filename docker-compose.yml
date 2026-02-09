@@ -308,6 +308,11 @@ services:
       # Prod: point Swagger to public API Gateway URL
       - TRY_IT_LIMIT=5
       - TRY_IT_TTL_SECONDS=3600
+      # PostgreSQL Configuration (for alert management)
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     env_file:
       - ./services/api-gateway-service/.env
     depends_on:
@@ -998,8 +1003,8 @@ services:
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--storage.tsdb.retention.time=30d'
       - '--web.enable-lifecycle'
-      - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
-      # - '--web.external-url=http://localhost:9090'
+      # - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
+      - '--web.external-url=http://localhost:9090'
       - '--web.route-prefix=/'
     networks:
       - microservices-network
