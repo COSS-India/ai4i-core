@@ -1417,6 +1417,19 @@ async def list_all_services(
                 )
                 return None
             
+            # Get policy - access directly from service object (same approach as list_services_with_policies)
+            # JSONB columns should be accessible directly from the ORM object
+            service_policy = None
+            try:
+                # Access policy directly from the service object
+                if hasattr(service, 'policy') and service.policy is not None:
+                    # Convert to dict if it's not already (JSONB should auto-deserialize to dict)
+                    service_policy = dict(service.policy) if not isinstance(service.policy, dict) else service.policy
+                else:
+                    service_policy = None
+            except Exception as e:
+                logger.warning(f"[DB] Error accessing policy for {service.service_id}: {e}")
+                service_policy = None
             
             # Convert languages to List[dict] format - handle both string lists and dict lists
             languages_raw = getattr(model, "languages", []) if model else []
@@ -1457,6 +1470,7 @@ async def list_all_services(
                     endpoint=getattr(service, "endpoint", None),
                     healthStatus=getattr(service, "health_status", None),
                     benchmarks=getattr(service, "benchmarks", None),
+                    policy=service_policy,  # Use the policy we fetched above
                     # Publish status fields
                     isPublished=getattr(service, "is_published", False),
                     publishedAt=datetime.fromtimestamp(service.published_at).isoformat() if service.published_at else None,

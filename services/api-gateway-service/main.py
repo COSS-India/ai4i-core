@@ -5213,6 +5213,7 @@ async def nmt_inference(
         if isinstance(downstream_response, Response):
             downstream_response.headers["X-SMR-ContextAware"] = "true"
             downstream_response.headers["X-SMR-TenantId"] = tenant_id or "free_user"
+            downstream_response.headers["X-SMR-ServiceType"] = "llm"
 
         return downstream_response
 
