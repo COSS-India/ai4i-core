@@ -335,6 +335,57 @@ services:
               redis_ssl: false
               redis_ssl_verify: false
 
+  # Alerts Management Service (Alert Definitions, Receivers, Routing Rules)
+  - name: alerts-service
+    url: http://api-gateway-upstream
+    routes:
+      - name: alerts-route
+        paths:
+          - /api/v1/alerts
+        strip_path: false
+        # No methods filter = matches all HTTP methods including OPTIONS
+        plugins:
+          # CORS must be FIRST to handle OPTIONS preflight before authentication
+          - name: cors
+            config:
+              origins:
+                - "http://localhost:3000"
+              methods:
+                - GET
+                - POST
+                - PUT
+                - DELETE
+                - PATCH
+                - OPTIONS
+              credentials: true
+              max_age: 3600
+          - name: rate-limiting
+            config:
+              minute: 200
+              hour: 2000
+              limit_by: consumer
+              policy: redis
+              redis_host: redis
+              redis_port: 6379
+              redis_password: ${REDIS_PASSWORD}
+              redis_database: 1
+              redis_timeout: 2000
+              redis_ssl: false
+              redis_ssl_verify: false
+          - name: request-transformer
+            config:
+              add:
+                headers:
+                  - "X-Correlation-ID:$(uuid)"
+                  - "X-Request-ID:$(uuid)"
+                  - "X-Gateway-Timestamp:$(now)"
+          - name: response-transformer
+            config:
+              add:
+                headers:
+                  - "X-Served-By:Kong-Gateway"
+                  - "X-Service:Alerts-Service"
+
 
   # Dashboard Service
   - name: dashboard-service

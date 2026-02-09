@@ -78,6 +78,27 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
 
   // Check for errors in span
   const checkForErrors = () => {
+    // Debug: Log all tags for error spans (helpful for troubleshooting)
+    const hasErrorTag = tags.some(t => 
+      (t.key === "error" && t.value === true) ||
+      (t.key === "otel.status_code" && String(t.value) === "ERROR") ||
+      t.key.toLowerCase().includes("status_description")
+    );
+    
+    if (hasErrorTag) {
+      console.log(`[DEBUG ERROR SPAN] "${span.operationName}" from ${serviceName}:`, {
+        allTags: tags.map(t => ({ key: t.key, value: typeof t.value === 'string' && t.value.length > 100 ? t.value.substring(0, 100) + '...' : t.value })),
+        statusDescription: tags.find(t => t.key.toLowerCase().includes("status_description"))
+      });
+    }
+    
+    // Priority 0: Check for OpenTelemetry status description (MOST DETAILED - includes stack traces, SQL errors, etc)
+    const otelStatusDescription = tags.find(t => 
+      t.key.toLowerCase() === "otel.status_description" ||
+      t.key.toLowerCase().includes("status_description") ||
+      t.key.toLowerCase().includes("status.description")
+    );
+    
     // Priority 1: Check for reject.reason (most specific for rejections)
     const rejectReasonTag = tags.find(t => 
       t.key === "reject.reason" || 
@@ -97,14 +118,56 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       t.key.toLowerCase() === "error.reason"
     );
     
-    // Priority 3: Check for generic error tags
+    // Priority 3: Check for database error descriptions
+    const dbStatementTag = tags.find(t => t.key === "db.statement");
+    
+    // Priority 4: Check for generic error tags
     const errorTag = tags.find(t => t.key === "error" || (t.key.toLowerCase().includes("error") && !t.key.toLowerCase().includes("message") && !t.key.toLowerCase().includes("reason")));
     const statusCode = tags.find(t => t.key === "otel.status_code" || t.key === "http.status_code");
     const rejectTag = tags.find(t => t.key.toLowerCase().includes("reject") && t.key.toLowerCase() !== "reject.reason");
     const httpStatus = tags.find(t => t.key === "http.status_code");
     
+    // Priority 0: Use OpenTelemetry status description if available (HIGHEST PRIORITY - most detailed)
+    if (otelStatusDescription && String(otelStatusDescription.value) !== "OK") {
+      hasError = true;
+      const fullDescription = String(otelStatusDescription.value);
+      
+      // Extract the key parts of the error message
+      // Format is usually: "<class 'ExceptionType'>: error message\nDETAIL: additional details"
+      let cleanedMessage = fullDescription;
+      
+      // Remove the Python class prefix if present
+      cleanedMessage = cleanedMessage.replace(/^<class ['"]([^'"]+)['"]>:\s*/, '$1: ');
+      
+      // For database errors, extract the main error and detail
+      if (cleanedMessage.includes('DETAIL:')) {
+        const parts = cleanedMessage.split('DETAIL:');
+        const mainError = parts[0].trim();
+        const detail = parts[1]?.trim() || '';
+        
+        // Shorten long details (like JWT tokens) for display
+        if (detail.length > 200) {
+          const detailPreview = detail.substring(0, 200) + '...';
+          errorMessage = `${mainError}\n\nDetails: ${detailPreview}`;
+        } else {
+          errorMessage = `${mainError}\n\nDetails: ${detail}`;
+        }
+      } else {
+        errorMessage = cleanedMessage;
+      }
+      
+      // Add SQL statement context if this is a database error
+      if (dbStatementTag && (cleanedMessage.includes('duplicate key') || cleanedMessage.includes('constraint'))) {
+        const sqlStatement = String(dbStatementTag.value);
+        // Extract just the operation type and table for brevity
+        const sqlMatch = sqlStatement.match(/^(INSERT|UPDATE|DELETE|SELECT)\s+(?:INTO\s+)?(\w+)/i);
+        if (sqlMatch) {
+          errorMessage = `${errorMessage}\n\nOperation: ${sqlMatch[1]} on table "${sqlMatch[2]}"`;
+        }
+      }
+    }
     // Priority 1: Use reject.reason if available (most specific for rejections)
-    if (rejectReasonTag) {
+    else if (rejectReasonTag) {
       hasError = true;
       errorMessage = String(rejectReasonTag.value);
     }
@@ -117,10 +180,28 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
         errorMessage += ` (${errorReasonTag.value})`;
       }
     }
-    // Priority 3: Check for error tags
+    // Priority 3: Check for error tags (but skip boolean true values)
     else if (errorTag) {
-      hasError = true;
-      errorMessage = String(errorTag.value);
+      const errorValue = errorTag.value;
+      // Skip if it's just a boolean true - not helpful
+      if (errorValue !== true && errorValue !== "true" && String(errorValue).toLowerCase() !== "true") {
+        hasError = true;
+        errorMessage = String(errorValue);
+      } else {
+        // If error is just "true", check if there's an otel.status_description we missed
+        const statusDesc = tags.find(t => 
+          t.key.toLowerCase().includes("status") && 
+          t.key.toLowerCase().includes("description")
+        );
+        if (statusDesc && String(statusDesc.value) !== "OK") {
+          hasError = true;
+          errorMessage = String(statusDesc.value);
+        } else {
+          // Fall back to checking status codes
+          hasError = true;
+          errorMessage = "An error occurred during processing";
+        }
+      }
     } 
     // Priority 4: Check for non-OK status codes
     else if (statusCode && String(statusCode.value) !== "OK" && String(statusCode.value) !== "200") {
@@ -288,13 +369,53 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     displayName = "Model Resolution";
     description = "Determines which model/service to use for processing";
   }
-  // Database operations
-  else if (opName.includes("db") || opName.includes("database") || opName.includes("query")) {
+  // Database operations - IMPORTANT for auth-service or if there are errors
+  else if (opName.includes("db") || opName.includes("database") || opName.includes("query") || 
+           opName.includes("SELECT") || opName.includes("INSERT") || opName.includes("UPDATE") || 
+           opName.includes("connect") || opName.includes("commit")) {
     category = "database";
-    isImportant = false;
+    // ALWAYS mark as important for auth-service AND check for error tags
+    const hasDbError = tags.some(t => 
+      t.key === "error" && t.value === true ||
+      t.key === "otel.status_code" && String(t.value) === "ERROR" ||
+      t.key === "otel.status_description" && String(t.value) !== "OK"
+    );
+    isImportant = serviceName.includes("auth") || hasDbError;
     icon = FiDatabase;
-    displayName = "Database Query";
-    description = "Retrieves or stores data";
+    
+    // Debug logging for database spans
+    if (serviceName.includes("auth")) {
+      console.log(`[DEBUG] Auth-service database span: "${span.operationName}"`, {
+        serviceName,
+        isImportant,
+        hasDbError,
+        errorTags: tags.filter(t => t.key.includes("error") || t.key.includes("status"))
+      });
+    }
+    
+    // Better display names for different database operations
+    if (opName.includes("connect")) {
+      displayName = "Database Connection";
+      description = "Establishes connection to database";
+    } else if (opName.includes("SELECT")) {
+      displayName = "Database SELECT";
+      description = "Queries data from database";
+    } else if (opName.includes("INSERT")) {
+      displayName = "Database INSERT";
+      description = "Inserts new data into database";
+    } else if (opName.includes("UPDATE")) {
+      displayName = "Database UPDATE";
+      description = "Updates existing data in database";
+    } else if (opName.includes("DELETE")) {
+      displayName = "Database DELETE";
+      description = "Deletes data from database";
+    } else if (opName.includes("commit")) {
+      displayName = "Database Commit";
+      description = "Commits transaction to database";
+    } else {
+      displayName = "Database Query";
+      description = "Retrieves or stores data";
+    }
   }
   // HTTP requests - only show main API endpoint, not internal HTTP spans
   else if ((opName.includes("http") && opName.includes("receive")) || 
@@ -402,6 +523,23 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
       errorMessage = "Request was rejected during processing";
     }
   }
+  
+  // SPECIAL OVERRIDE: For auth-service, mark all auth-related operations as important
+  // This ensures we see the full authentication flow including database operations
+  if (serviceName.includes("auth")) {
+    if (opName.includes("login") || opName.includes("auth") || opName.includes("user") || 
+        opName.includes("session") || opName.includes("token") || category === "database") {
+      isImportant = true;
+      if (opName.includes("login") || opName.includes("POST") && opName.includes("auth")) {
+        isTopLevel = true; // Main auth endpoints are top-level
+      }
+    }
+  }
+  
+  // SPECIAL OVERRIDE: Any span with errors should be marked as important
+  if (hasError) {
+    isImportant = true;
+  }
 
   return {
     span,
@@ -496,6 +634,14 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       }
     }
     
+    // SPECIAL: Error spans should NEVER be deduplicated - always show them
+    // They contain critical debugging information
+    if (processedSpan.hasError) {
+      filtered.push(processedSpan);
+      console.log(`[DEBUG] Including error span (never deduplicated): ${processedSpan.displayName}`);
+      continue; // Skip deduplication logic
+    }
+    
     // Create a unique key for this operation (service + category + displayName)
     const operationKey = `${processedSpan.serviceName}:${processedSpan.category}:${processedSpan.displayName}`;
     const existing = seenOperations.get(operationKey);
@@ -506,10 +652,11 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       filtered.push(processedSpan);
     } else {
       // We've seen this operation before - keep the better one
-      // Prefer: top-level > longer duration (more comprehensive) > earlier start
+      // Prefer: ERROR SPANS > top-level > longer duration
       const shouldReplace = 
-        (processedSpan.isTopLevel && !existing.isTopLevel) ||
-        (!existing.isTopLevel && processedSpan.span.duration > existing.span.duration) ||
+        (processedSpan.hasError && !existing.hasError) || // ALWAYS prefer error spans!
+        (!existing.hasError && processedSpan.isTopLevel && !existing.isTopLevel) ||
+        (!existing.hasError && !existing.isTopLevel && processedSpan.span.duration > existing.span.duration) ||
         (processedSpan.isTopLevel === existing.isTopLevel && 
          processedSpan.span.duration > existing.span.duration * 1.5); // Significantly longer
       
@@ -663,6 +810,50 @@ const formatTagValue = (key: string, value: any): string => {
   const keyLower = key.toLowerCase();
   const numValue = typeof value === 'number' ? value : parseFloat(String(value));
   
+  // Special handling for database statements - make them more readable
+  if (keyLower === 'db.statement') {
+    const sqlStatement = String(value);
+    
+    // Truncate very long SQL statements
+    if (sqlStatement.length > 500) {
+      // Show first 500 chars with proper SQL formatting
+      const truncated = sqlStatement.substring(0, 500);
+      const formattedSql = truncated
+        .replace(/\s+/g, ' ') // Collapse multiple spaces
+        .replace(/(SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|ORDER BY|GROUP BY|VALUES|SET|AND|OR)/gi, '\n$1')
+        .trim();
+      return `${formattedSql}\n\n... (truncated, ${sqlStatement.length} total chars)`;
+    }
+    
+    // Format SQL for readability
+    return sqlStatement
+      .replace(/\s+/g, ' ') // Collapse multiple spaces
+      .replace(/(SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|ORDER BY|GROUP BY|VALUES|SET|AND|OR)/gi, '\n$1')
+      .trim();
+  }
+  
+  // Special handling for status descriptions - format for readability
+  if (keyLower === 'otel.status_description') {
+    let description = String(value);
+    
+    // Clean up the Python class prefix
+    description = description.replace(/^<class ['"]([^'"]+)['"]>:\s*/, '$1:\n');
+    
+    // Format DETAIL sections on new lines
+    description = description.replace(/\s+DETAIL:\s+/g, '\n\nDETAIL:\n  ');
+    
+    // Format constraint violations nicely
+    description = description.replace(/duplicate key value violates unique constraint/gi, 
+      'Duplicate key value violates unique constraint');
+    
+    return description.trim();
+  }
+  
+  // Special handling for error messages - preserve formatting
+  if (keyLower.includes('error') && (keyLower.includes('message') || keyLower.includes('description'))) {
+    return String(value);
+  }
+  
   // Check for milliseconds - look for _ms, .ms, or keys ending with ms
   if (keyLower.includes('_ms') || keyLower.includes('.ms') || 
       keyLower.endsWith('ms') || keyLower.includes('audio_length_ms') ||
@@ -703,6 +894,169 @@ const formatTagValue = (key: string, value: any): string => {
   return String(value);
 };
 
+// Parse error message into structured key-value pairs
+interface ErrorDetails {
+  errorType: string;
+  summary: string;
+  fields: { key: string; value: string }[];
+}
+
+const parseErrorDetails = (processed: ProcessedSpan): ErrorDetails | null => {
+  if (!processed.hasError || !processed.errorMessage) {
+    return null;
+  }
+
+  const errorMessage = processed.errorMessage;
+  const errorMsgLower = errorMessage.toLowerCase();
+  const fields: { key: string; value: string }[] = [];
+  let errorType = "";
+  let summary = "";
+
+  // Parse database constraint violation errors
+  if (errorMsgLower.includes("uniqueviolation") || errorMsgLower.includes("duplicate key")) {
+    errorType = "Database Constraint Violation";
+    summary = "Multiple users trying to login simultaneously generated the same session/refresh tokens.";
+
+    // Extract exception class
+    const exceptionMatch = errorMessage.match(/([A-Za-z]+Error|[A-Za-z]+Exception):/);
+    if (exceptionMatch) {
+      fields.push({ key: "Exception Type", value: exceptionMatch[1] });
+    }
+
+    // Extract constraint name
+    const constraintMatch = errorMessage.match(/unique constraint ["']([^"']+)["']/i);
+    if (constraintMatch) {
+      fields.push({ key: "Constraint Violated", value: constraintMatch[1] });
+    }
+
+    // Extract the duplicate key information from DETAIL
+    const detailMatch = errorMessage.match(/Details?:\s*(.+?)(?:\n|$)/i);
+    if (detailMatch) {
+      let detail = detailMatch[1].trim();
+      // Extract just the key part if it's formatted like "Key (column_name)=(value) already exists"
+      const keyMatch = detail.match(/Key \(([^)]+)\)=\(([^)]+)\)/);
+      if (keyMatch) {
+        fields.push({ key: "Duplicate Column", value: keyMatch[1] });
+        // Truncate long values (like tokens)
+        const value = keyMatch[2];
+        if (value.length > 50) {
+          fields.push({ key: "Duplicate Value", value: value.substring(0, 50) + "..." });
+        } else {
+          fields.push({ key: "Duplicate Value", value: value });
+        }
+      } else {
+        fields.push({ key: "Detail", value: detail });
+      }
+    }
+
+    // Extract SQL operation
+    const operationMatch = errorMessage.match(/Operation:\s*(\w+)\s+on\s+table\s+["']?(\w+)["']?/i);
+    if (operationMatch) {
+      fields.push({ key: "SQL Operation", value: `${operationMatch[1]} on table "${operationMatch[2]}"` });
+    }
+
+    // Extract SQL statement if available
+    const tags = processed.span.tags || [];
+    const dbStatement = tags.find(t => t.key === "db.statement");
+    if (dbStatement) {
+      const stmt = String(dbStatement.value);
+      const stmtMatch = stmt.match(/^(INSERT|UPDATE|DELETE|SELECT)\s+(?:INTO\s+)?(\w+)/i);
+      if (stmtMatch && !operationMatch) {
+        fields.push({ key: "SQL Operation", value: `${stmtMatch[1]} INTO ${stmtMatch[2]}` });
+      }
+    }
+
+  }
+  // Parse greenlet/async errors
+  else if (errorMsgLower.includes("greenlet_spawn") || errorMsgLower.includes("await_only")) {
+    errorType = "Async Operation Error";
+    summary = "Database accessed incorrectly after transaction rollback - this is a code bug.";
+
+    // Extract exception class
+    const exceptionMatch = errorMessage.match(/([A-Za-z]+Error|[A-Za-z]+Exception):/);
+    if (exceptionMatch) {
+      fields.push({ key: "Exception Type", value: exceptionMatch[1] });
+    }
+
+    fields.push({ key: "Root Cause", value: "Attempted to use database session after rollback" });
+    fields.push({ key: "Fix Required", value: "Move db.refresh() inside try block or use a new session" });
+
+    // Try to extract the specific error message
+    const msgMatch = errorMessage.match(/(?:Error|Exception):\s*(.+?)(?:\n|$)/);
+    if (msgMatch) {
+      fields.push({ key: "Error Message", value: msgMatch[1].trim() });
+    }
+  }
+  // Parse operational/connection errors
+  else if (errorMsgLower.includes("operationalerror") || errorMsgLower.includes("connection")) {
+    errorType = "Database Connection Error";
+    summary = "Failed to connect to or communicate with the database.";
+
+    // Extract exception class
+    const exceptionMatch = errorMessage.match(/([A-Za-z]+Error|[A-Za-z]+Exception):/);
+    if (exceptionMatch) {
+      fields.push({ key: "Exception Type", value: exceptionMatch[1] });
+    }
+
+    // Check for specific connection issues
+    if (errorMsgLower.includes("timeout")) {
+      fields.push({ key: "Cause", value: "Connection timeout" });
+    } else if (errorMsgLower.includes("refused")) {
+      fields.push({ key: "Cause", value: "Connection refused" });
+    } else {
+      fields.push({ key: "Cause", value: "Database operational issue" });
+    }
+
+    // Extract error message
+    const msgMatch = errorMessage.match(/(?:Error|Exception):\s*(.+?)(?:\n|$)/);
+    if (msgMatch) {
+      fields.push({ key: "Error Message", value: msgMatch[1].trim() });
+    }
+  }
+  // Parse authentication errors
+  else if (processed.category === "auth" || processed.displayName.includes("Authorization")) {
+    errorType = "Authentication Failure";
+    summary = "The provided credentials were invalid, expired, or insufficient.";
+
+    fields.push({ key: "Error", value: errorMessage });
+
+    // Check for specific auth error types
+    if (errorMsgLower.includes("expired")) {
+      fields.push({ key: "Reason", value: "Token or session has expired" });
+    } else if (errorMsgLower.includes("invalid")) {
+      fields.push({ key: "Reason", value: "Invalid credentials or token" });
+    } else if (errorMsgLower.includes("permission")) {
+      fields.push({ key: "Reason", value: "Insufficient permissions" });
+    }
+  }
+  // Generic error
+  else {
+    errorType = "Processing Error";
+    summary = "An error occurred during request processing.";
+
+    // Try to extract exception type
+    const exceptionMatch = errorMessage.match(/([A-Za-z]+Error|[A-Za-z]+Exception):/);
+    if (exceptionMatch) {
+      fields.push({ key: "Exception Type", value: exceptionMatch[1] });
+      errorType = exceptionMatch[1];
+    }
+
+    // Extract error message
+    const msgMatch = errorMessage.match(/(?:Error|Exception):\s*(.+?)(?:\n|$)/);
+    if (msgMatch) {
+      fields.push({ key: "Error Message", value: msgMatch[1].trim() });
+    } else {
+      fields.push({ key: "Error Message", value: errorMessage });
+    }
+  }
+
+  return {
+    errorType,
+    summary,
+    fields
+  };
+};
+
 // Generate user-friendly description for spans
 const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
   const tags = processed.span.tags || [];
@@ -711,26 +1065,10 @@ const getUserFriendlyDescription = (processed: ProcessedSpan): string => {
     return tag ? String(tag.value) : null;
   };
 
-  // If there's an error, add error description
+  // If there's an error, return simple error indicator
+  // (detailed error will be shown in separate section)
   if (processed.hasError) {
-    let errorDesc = "";
-    if (processed.displayName.includes("Authorization") || processed.displayName.includes("Request Authorization")) {
-      errorDesc = "❌ This step failed during authentication. The credentials provided were invalid, expired, or missing required permissions. ";
-    } else if (processed.displayName.includes("Rejection") || processed.displayName.includes("reject")) {
-      errorDesc = "❌ This step rejected the request. The request did not meet the required criteria or validation checks failed. ";
-    } else if (processed.displayName.includes("verify") || processed.displayName.includes("jwt") || processed.displayName.includes("JWT")) {
-      errorDesc = "❌ This step failed during JWT token verification. The token may be invalid, expired, or improperly signed. ";
-    } else if (processed.displayName.includes("Validation") || processed.displayName.includes("validate")) {
-      errorDesc = "❌ This step failed during validation. The input data or credentials did not pass the validation checks. ";
-    } else if (processed.category === "auth") {
-      errorDesc = "❌ This authentication step failed. The credentials or permissions were not sufficient to proceed. ";
-    } else {
-      errorDesc = "❌ This step encountered an error during processing. ";
-    }
-    if (processed.errorMessage) {
-      errorDesc += `Error details: ${processed.errorMessage}.`;
-    }
-    return errorDesc;
+    return "This step encountered an error during processing.";
   }
 
   switch (processed.category) {
@@ -1291,7 +1629,7 @@ const TracesPage: React.FC = () => {
               {/* Main Content: Two Column Layout */}
               <Grid templateColumns={{ base: "1fr", lg: "1fr 1fr" }} gap={6} w="full">
                 {/* Left Column: User Interface (What the user sees) */}
-            <GridItem>
+            <GridItem minW="0">
                   <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" h="full">
                     <CardBody>
                       <VStack spacing={4} align="stretch">
@@ -1443,7 +1781,7 @@ const TracesPage: React.FC = () => {
             </GridItem>
 
                 {/* Right Column: Behind the Scenes (What the orchestrator does) */}
-            <GridItem>
+            <GridItem minW="0">
                   <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" h="full">
                   <CardBody>
                       <VStack spacing={4} align="stretch">
@@ -1563,11 +1901,23 @@ const TracesPage: React.FC = () => {
                                 return false;
                               }
                               
-                              // Keep otel.status_code and otel.scope.name, filter out other otel.*
+                              // Keep otel.status_code, otel.status_description (for errors), and otel.scope.name, filter out other otel.*
                               if (key.includes("otel.") && 
                                   key !== "otel.status_code" && 
+                                  key !== "otel.status_description" &&
                                   key !== "otel.scope.name") {
                                 return false;
+                              }
+                              
+                              // Always include error-related tags for error spans
+                              if (processed.hasError && (
+                                key.includes("error") || 
+                                key.includes("exception") ||
+                                key === "db.statement" ||
+                                key === "db.system" ||
+                                key === "db.name"
+                              )) {
+                                return true;
                               }
                               
                               return true;
@@ -1578,20 +1928,26 @@ const TracesPage: React.FC = () => {
                               const aKey = a.key.toLowerCase();
                               const bKey = b.key.toLowerCase();
                               
-                              // Priority order: input tags > service-specific tags (nmt, ocr, etc.) > http status > organization > correlation.id > user.id > otel scope > others
+                              // Priority order: error tags (for errors) > input tags > service-specific tags > http status > organization > correlation.id > user.id > otel scope > others
                               const getPriority = (key: string): number => {
+                                // Highest priority for errors: error-related tags
+                                if (processed.hasError) {
+                                  if (key === "otel.status_description") return -2;
+                                  if (key.includes("error") || key.includes("exception")) return -1;
+                                  if (key === "db.statement" || key === "db.system") return 0;
+                                }
                                 // Highest priority: input-related tags (most important for understanding the request)
                                 if (key.includes(".input.") || key.includes("input_count") || key.includes("input_size") || 
-                                    key.includes("request.size") || key.startsWith("http.request")) return 0;
+                                    key.includes("request.size") || key.startsWith("http.request")) return 1;
                                 // High priority: service-specific tags
-                                if (key.startsWith("nmt.") || key.startsWith("ocr.") || key.startsWith("tts.") || key.startsWith("asr.")) return 1;
-                                if (key === "http.status_code" || key === "otel.status_code") return 2;
-                                if (key === "organization") return 3;
-                                if (key === "correlation.id") return 4;
-                                if (key.startsWith("user.")) return 5;
-                                if (key.startsWith("http.")) return 6;
-                                if (key === "otel.scope.name") return 7;
-                                return 8;
+                                if (key.startsWith("nmt.") || key.startsWith("ocr.") || key.startsWith("tts.") || key.startsWith("asr.")) return 2;
+                                if (key === "http.status_code" || key === "otel.status_code") return 3;
+                                if (key === "organization") return 4;
+                                if (key === "correlation.id") return 5;
+                                if (key.startsWith("user.")) return 6;
+                                if (key.startsWith("http.")) return 7;
+                                if (key === "otel.scope.name") return 8;
+                                return 9;
                               };
                               
                               return getPriority(aKey) - getPriority(bKey);
@@ -1704,24 +2060,129 @@ const TracesPage: React.FC = () => {
                                     </HStack>
                                     
                                     {/* User-friendly description */}
-                                    <Box 
-                                      p={3} 
-                                      bg={processed.hasError ? "red.50" : "blue.50"} 
-                                      borderRadius="md" 
-                                      borderLeft="3px solid" 
-                                      borderLeftColor={processed.hasError ? "red.400" : "blue.400"}
-                                      boxShadow="sm"
-                                    >
-                                      <HStack spacing={2} mb={1} align="center">
-                                        <Icon as={FiInfo} color={processed.hasError ? "red.600" : "blue.600"} boxSize={3} />
-                                        <Text fontSize="xs" color={processed.hasError ? "red.700" : "blue.700"} fontWeight="medium">
-                                          {processed.hasError ? "Why this step failed:" : "What this step does:"}
-                              </Text>
-                                      </HStack>
-                                      <Text fontSize="xs" color={processed.hasError ? "red.800" : "gray.700"} lineHeight="1.6" pl={5} fontWeight={processed.hasError ? "medium" : "normal"}>
-                                        {getUserFriendlyDescription(processed)}
-                              </Text>
-                        </Box>
+                                    {(() => {
+                                      const errorDetails = processed.hasError ? parseErrorDetails(processed) : null;
+                                      
+                                      if (errorDetails) {
+                                        // Display structured error details
+                                        return (
+                                          <Box>
+                                            {/* Error Summary */}
+                                            <Box 
+                                              p={3} 
+                                              bg="red.50" 
+                                              borderRadius="md" 
+                                              borderLeft="4px solid" 
+                                              borderLeftColor="red.500"
+                                              boxShadow="sm"
+                                              mb={3}
+                                              overflow="hidden"
+                                              w="full"
+                                            >
+                                              <HStack spacing={2} mb={2} align="center">
+                                                <Icon as={FiInfo} color="red.600" boxSize={4} />
+                                                <Text fontSize="sm" color="red.700" fontWeight="bold">
+                                                  {errorDetails.errorType}
+                                                </Text>
+                                              </HStack>
+                                              <Text 
+                                                fontSize="xs" 
+                                                color="red.800" 
+                                                lineHeight="1.6" 
+                                                pl={6}
+                                                fontWeight="medium"
+                                              >
+                                                {errorDetails.summary}
+                                              </Text>
+                                            </Box>
+                                            
+                                            {/* Error Details Table */}
+                                            {errorDetails.fields.length > 0 && (
+                                              <Box 
+                                                p={3} 
+                                                bg="red.100" 
+                                                borderRadius="md" 
+                                                border="1px solid"
+                                                borderColor="red.300"
+                                                boxShadow="sm"
+                                                overflow="hidden"
+                                                w="full"
+                                              >
+                                                <HStack spacing={2} mb={3} align="center">
+                                                  <Icon as={FiSettings} color="red.700" boxSize={3} />
+                                                  <Text fontSize="xs" color="red.800" fontWeight="semibold">
+                                                    Error Details:
+                                                  </Text>
+                                                </HStack>
+                                                <VStack spacing={2} align="stretch">
+                                                  {errorDetails.fields.map((field, idx) => (
+                                                    <Box 
+                                                      key={idx} 
+                                                      p={2} 
+                                                      bg="white" 
+                                                      borderRadius="sm" 
+                                                      border="1px solid"
+                                                      borderColor="red.200"
+                                                      overflow="hidden"
+                                                      w="full"
+                                                    >
+                                                      <HStack spacing={3} align="start">
+                                                        <Text 
+                                                          fontSize="xs" 
+                                                          fontWeight="bold" 
+                                                          color="red.700" 
+                                                          minW="120px"
+                                                          maxW="120px"
+                                                        >
+                                                          {field.key}:
+                                                        </Text>
+                                                        <Text
+                                                          fontSize="xs"
+                                                          color="red.900"
+                                                          fontFamily="mono"
+                                                          wordBreak="break-word"
+                                                          flex={1}
+                                                          whiteSpace="pre-wrap"
+                                                        >
+                                                          {field.value}
+                                                        </Text>
+                                                      </HStack>
+                                                    </Box>
+                                                  ))}
+                                                </VStack>
+                                              </Box>
+                                            )}
+                                          </Box>
+                                        );
+                                      } else {
+                                        // Display normal description for non-error spans
+                                        return (
+                                          <Box 
+                                            p={3} 
+                                            bg="blue.50" 
+                                            borderRadius="md" 
+                                            borderLeft="3px solid" 
+                                            borderLeftColor="blue.400"
+                                            boxShadow="sm"
+                                          >
+                                            <HStack spacing={2} mb={1} align="center">
+                                              <Icon as={FiInfo} color="blue.600" boxSize={3} />
+                                              <Text fontSize="xs" color="blue.700" fontWeight="medium">
+                                                What this step does:
+                                              </Text>
+                                            </HStack>
+                                            <Text 
+                                              fontSize="xs" 
+                                              color="gray.700" 
+                                              lineHeight="1.6" 
+                                              pl={5}
+                                            >
+                                              {getUserFriendlyDescription(processed)}
+                                            </Text>
+                                          </Box>
+                                        );
+                                      }
+                                    })()}
 
                                     {/* Technical details - collapsible */}
                                     {relevantTags.length > 0 && (
@@ -1800,7 +2261,10 @@ const TracesPage: React.FC = () => {
                                                       fontFamily="mono" 
                                                       fontSize="xs"
                                                       wordBreak="break-word"
+                                                      whiteSpace="pre-wrap"
                                                       flex={1}
+                                                      maxH={tag.key.toLowerCase() === 'db.statement' ? "400px" : "none"}
+                                                      overflowY={tag.key.toLowerCase() === 'db.statement' ? "auto" : "visible"}
                                                     >
                                                       {formatTagValue(tag.key, tag.value)}
                                               </Text>
