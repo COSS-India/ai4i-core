@@ -13,6 +13,7 @@ export interface User {
   is_active: boolean;
   is_verified: boolean;
   is_superuser: boolean;
+  is_tenant?: boolean;
   created_at: string;
   updated_at?: string;
   last_login?: string;

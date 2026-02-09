@@ -1453,7 +1453,7 @@ class UserRegisterRequest(BaseModel):
     tenant_id: str = Field(..., description="Tenant identifier", example="acme-corp-5d448a")
     email: EmailStr = Field(..., description="User email address")
     username: str = Field(..., min_length=3, max_length=100, description="Username")
-    full_name: str = Field(None, description="Full name of the user")
+    full_name: Optional[str] = Field(None, description="Full name of the user")
     services: List[str] = Field(..., description="List of services the user has access to", example=["tts", "asr"])
     is_approved: bool = Field(False, description="Indicates if the user is approved by tenant admin")
 
@@ -2010,6 +2010,10 @@ def requires_both_auth_and_api_key(request: Request) -> bool:
             return True
     return False
 
+def is_multi_tenant_request(request: Request) -> bool:
+    """Multi-tenant endpoints should use only auth tokens (no API key)."""
+    return request.url.path.lower().startswith("/api/v1/multi-tenant")
+
 async def validate_api_key_permissions(api_key: str, service: str, action: str) -> None:
     """Call auth-service to validate API key permissions."""
     url = f"{AUTH_SERVICE_URL}/api/v1/auth/validate-api-key"
@@ -2134,6 +2138,12 @@ def build_auth_headers(request: Request, credentials: Optional[HTTPAuthorization
     if user_id is not None:
         headers["X-User-Id"] = str(user_id)
     
+    # Multi-tenant endpoints: AUTH_TOKEN only (Bearer JWT); API key not required
+    if is_multi_tenant_request(request):
+        headers.pop("X-API-Key", None)
+        headers["X-Auth-Source"] = "AUTH_TOKEN"
+        return headers
+
     # Set X-Auth-Source based on what's present (API Gateway has already validated)
     # Always overwrite X-Auth-Source for services requiring both (don't trust incoming header)
     if requires_both_auth_and_api_key(request):
@@ -2349,6 +2359,8 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
         else:
             # For other services: existing logic (either Bearer OR API key)
             auth_source = (req.headers.get("x-auth-source") or "").upper()
+            if is_multi_tenant_request(req):
+                auth_source = "AUTH_TOKEN"
             use_api_key = api_key is not None and auth_source == "API_KEY"
             if auth_span:
                 auth_span.set_attribute("auth.source", auth_source)
@@ -2524,6 +2536,22 @@ def custom_openapi():
         "/api/v1/auth/oauth2/callback",
         "/api/v1/auth/oauth2/google/authorize",
         "/api/v1/auth/oauth2/google/callback",
+        "/api/v1/multi-tenant/register/tenant",
+        "/api/v1/multi-tenant/register/users",
+        "/api/v1/multi-tenant/update/tenants/status",
+        "/api/v1/multi-tenant/update/users/status",
+        "/api/v1/multi-tenant/email/verify",
+        "/api/v1/multi-tenant/view/tenant",
+        "/api/v1/multi-tenant/view/user",
+        "/api/v1/multi-tenant/email/resend",
+        "/api/v1/multi-tenant/subscriptions/add",
+        "/api/v1/multi-tenant/subscriptions/remove",
+        "/api/v1/multi-tenant/user/subscriptions/add",
+        "/api/v1/multi-tenant/user/subscriptions/remove",
+        "/api/v1/multi-tenant/register/services",
+        "/api/v1/multi-tenant/update/services",
+        "/api/v1/multi-tenant/list/services",
+        "/api/v1/multi-tenant/resolve-tenant-from-user/{user_id}",
     ])
 
     # Auto-tag operations by path prefix for better grouping in Swagger and inject header where applicable
@@ -6281,7 +6309,13 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             method = request.method
             if method in ['POST', 'PUT', 'PATCH']:
                 body = await request.body()
-            headers = dict(request.headers)
+            out_headers = dict(request.headers)
+            # Merge caller-built auth headers (e.g. X-Auth-Source for multi-tenant) so downstream gets correct auth mode
+            if headers:
+                for k, v in headers.items():
+                    if k and v is not None:
+                        out_headers[k] = v
+            headers = out_headers
             params = request.query_params
             
             # Inject trace context if not already present
@@ -6294,10 +6328,7 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             # IMPORTANT: leave params as None so any querystring already present
             # in the URL (e.g. "/path?x=1") is not overwritten by an empty dict.
             params = None
-            if headers is None:
-                headers = {}
-            
-            # Inject trace context
+            headers = dict(headers) if headers else {}
             if TRACING_AVAILABLE and inject:
                 try:
                     inject(headers)
