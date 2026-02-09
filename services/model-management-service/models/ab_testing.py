@@ -190,9 +190,8 @@ class ExperimentDeleteResponse(BaseModel):
     detail: ExperimentDeleteDetail
 
 
-class ExperimentMetricsResponse(BaseModel):
-    """Response model for experiment metrics"""
-    experiment_id: str
+class ExperimentMetricItem(BaseModel):
+    """Single variant metric (per day) - no experiment_id to avoid repetition."""
     variant_id: str
     variant_name: str
     request_count: int
@@ -202,6 +201,12 @@ class ExperimentMetricsResponse(BaseModel):
     avg_latency_ms: Optional[int] = None
     custom_metrics: Optional[Dict[str, Any]] = None
     metric_date: datetime
+
+
+class ExperimentMetricsResponse(BaseModel):
+    """Standard response for GET experiment metrics: experiment_id once + metrics array."""
+    experiment_id: str
+    metrics: List[ExperimentMetricItem]
 
 
 class ExperimentMetricTrackRequest(BaseModel):

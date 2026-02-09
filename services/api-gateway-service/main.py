@@ -1285,6 +1285,21 @@ class ExperimentVariantSelectionResponse(BaseModel):
     api_key: Optional[str] = None
     is_experiment: bool = False
 
+
+class ExperimentMetricsResponse(BaseModel):
+    """Response model for experiment metrics (per variant per day)"""
+    experiment_id: str
+    variant_id: str
+    variant_name: str
+    request_count: int
+    success_count: int
+    error_count: int
+    success_rate: float
+    avg_latency_ms: Optional[int] = None
+    custom_metrics: Optional[Dict[str, Any]] = None
+    metric_date: Union[datetime, str]
+
+
 # Auth models (for API documentation)
 class RegisterUser(BaseModel):
     email: str = Field(..., description="Email address")
@@ -5291,6 +5306,23 @@ async def get_experiment(
     return await proxy_to_service(
         None,
         f"/experiments/{experiment_id}",
+        "model-management-service",
+        method="GET",
+        headers=headers,
+    )
+
+
+@app.get("/api/v1/model-management/experiments/{experiment_id}/metrics", response_model=List[ExperimentMetricsResponse], tags=["A/B Testing"])
+async def get_experiment_metrics(
+    experiment_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Get metrics for an A/B experiment by ID. Returns aggregated metrics per variant per day."""
+    headers = build_auth_headers(request, credentials, None)
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}/metrics",
         "model-management-service",
         method="GET",
         headers=headers,
