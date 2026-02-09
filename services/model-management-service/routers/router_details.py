@@ -133,6 +133,29 @@ async def list_services_request(
 #################################################### Policy apis ####################################################
 
 
+@router_details.post("/get/service/policy", response_model=ServicePolicyResponse)
+async def get_service_policy_request(payload: ServiceViewRequest):
+    """
+    Get policy for a specific service by service_id.
+    
+    Returns the service ID and its policy data (if set), or None if no policy is configured.
+    """
+    try:
+        data = await get_service_policy(payload.serviceId)
+        
+        if not data:
+            raise HTTPException(status_code=404, detail="Service not found")
+        return data
+        
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error while fetching service policy from DB.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"kind": "DBError", "message": "Error fetching service policy"}
+        )
+
 
 @router_details.get("/list/services/policies", response_model=ServicePolicyListResponse)
 async def list_services_policies_request(

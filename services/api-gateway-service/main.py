@@ -54,6 +54,34 @@ from smr import (
     inject_service_id_if_missing,
 )
 
+# Tenant resolver function - extract tenant context from JWT payload
+# Replicated from services/multi-tenant-feature/utils/tenant_resolver.py
+def resolve_tenant_from_jwt(jwt_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Extract tenant context from JWT payload.
+    
+    This function extracts tenant information from the JWT token payload.
+    It returns a dictionary with tenant context or None if tenant_id is missing.
+    
+    Args:
+        jwt_payload: Dictionary containing JWT token claims
+        
+    Returns:
+        Dictionary with tenant context (tenant_id, tenant_uuid, schema_name, subscriptions, user_subscriptions)
+        or None if tenant_id is not present in the payload
+    """
+    tenant_id = jwt_payload.get("tenant_id")
+    if not tenant_id:
+        return None
+    
+    return {
+        "tenant_id": tenant_id,
+        "tenant_uuid": jwt_payload.get("tenant_uuid"),
+        "schema_name": jwt_payload.get("schema_name"),
+        "subscriptions": jwt_payload.get("subscriptions", []),
+        "user_subscriptions": jwt_payload.get("user_subscriptions", []),
+    }
+
 # OpenTelemetry for distributed tracing
 try:
     from opentelemetry import trace
@@ -587,7 +615,10 @@ class LanguageDiarizationControlConfig(BaseModel):
 
 class LanguageDiarizationConfig(BaseModel):
     """Configuration for language diarization inference."""
-    serviceId: str = Field(..., description="Identifier for language diarization service/model")
+    serviceId: Optional[str] = Field(
+        None,
+        description="Identifier for language diarization service/model (optional; Smart Router will assign if omitted)",
+    )
 
 class LanguageDiarizationAudioInput(BaseModel):
     """Audio input for language diarization."""
@@ -631,7 +662,10 @@ class AudioLangDetectionControlConfig(BaseModel):
 
 class AudioLangDetectionConfig(BaseModel):
     """Configuration for audio language detection inference."""
-    serviceId: str = Field(..., description="Identifier for audio language detection service/model")
+    serviceId: Optional[str] = Field(
+        None,
+        description="Identifier for audio language detection service/model (optional; Smart Router will assign if omitted)",
+    )
 
 class AudioLangDetectionAudioInput(BaseModel):
     """Audio input for audio language detection."""
@@ -851,6 +885,22 @@ class Task(BaseModel):
     type: str = Field(..., description="Task type")
 
 # Pydantic models for Smart Model Router / Policy Engine integration
+
+
+# Policy Enums (matching policy-engine models)
+class LatencyPolicy(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+class CostPolicy(str, Enum):
+    TIER_1 = "tier_1"
+    TIER_2 = "tier_2"
+    TIER_3 = "tier_3"
+
+class AccuracyPolicy(str, Enum):
+    SENSITIVE = "sensitive"
+    STANDARD = "standard"
 
 
 class SMRPolicyInput(BaseModel):
@@ -2157,6 +2207,150 @@ async def _increment_try_it_count(key: str) -> int:
     try_it_counters[key] = entry
     return entry["count"]
 
+async def get_verified_tenant_id(request: Request) -> str:
+    """
+    Extract and verify tenant_id from JWT token.
+    
+    The tenant_id in JWT is already verified by auth-service when token was issued,
+    so we trust it. However, we verify that:
+    1. User is authenticated (user_id exists)
+    2. Tenant_id is present in JWT (user belongs to a tenant)
+    
+    Returns:
+        str: Verified tenant_id from JWT token
+        
+    Raises:
+        HTTPException: If user_id or tenant_id is missing
+    """
+    user_id = getattr(request.state, "user_id", None)
+    
+    # Verify user_id is present (required for authenticated requests)
+    if not user_id:
+        logger.warning(
+            "Tenant verification: user_id missing from authenticated request",
+            extra={"context": {"path": request.url.path}}
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "code": "AUTHENTICATION_REQUIRED",
+                "message": "User ID not found in authentication token. Please log in again."
+            }
+        )
+    
+    # Extract tenant_id from JWT token (set by auth middleware)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    
+    # If tenant_id is missing from JWT, user is not associated with any tenant
+    if not tenant_id:
+        logger.warning(
+            "Tenant verification: tenant_id missing from JWT token",
+            extra={
+                "context": {
+                    "user_id": user_id,
+                    "path": request.url.path,
+                    "message": "User is not associated with any tenant. Tenant ID is required for policy-based routing."
+                }
+            }
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "TENANT_REQUIRED",
+                "message": "Tenant ID is required for this operation. Your account is not associated with any tenant. Please contact your administrator."
+            }
+        )
+    
+    logger.debug(
+        "Tenant verified from JWT",
+        extra={
+            "context": {
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "path": request.url.path
+            }
+        }
+    )
+    
+    return tenant_id
+
+
+def extract_and_validate_policy_headers(request: Request) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Extract and validate policy headers from request.
+    
+    Headers:
+    - X-Latency-Policy: low, medium, or high
+    - X-Cost-Policy: tier_1, tier_2, or tier_3
+    - X-Accuracy-Policy: sensitive or standard
+    
+    Returns:
+        Tuple[Optional[str], Optional[str], Optional[str]]: (latency_policy, cost_policy, accuracy_policy)
+        
+    Raises:
+        HTTPException: If any header value is invalid
+    """
+    latency_policy = None
+    cost_policy = None
+    accuracy_policy = None
+    
+    # Extract latency policy header
+    latency_header = request.headers.get("X-Latency-Policy") or request.headers.get("x-latency-policy")
+    if latency_header:
+        latency_header = latency_header.strip().lower()
+        try:
+            # Validate against enum
+            LatencyPolicy(latency_header)
+            latency_policy = latency_header
+        except ValueError:
+            valid_values = ", ".join([e.value for e in LatencyPolicy])
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_LATENCY_POLICY",
+                    "message": f"Invalid X-Latency-Policy header value: '{latency_header}'. Expected one of: {valid_values}"
+                }
+            )
+    
+    # Extract cost policy header
+    cost_header = request.headers.get("X-Cost-Policy") or request.headers.get("x-cost-policy")
+    if cost_header:
+        cost_header = cost_header.strip().lower()
+        try:
+            # Validate against enum
+            CostPolicy(cost_header)
+            cost_policy = cost_header
+        except ValueError:
+            valid_values = ", ".join([e.value for e in CostPolicy])
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_COST_POLICY",
+                    "message": f"Invalid X-Cost-Policy header value: '{cost_header}'. Expected one of: {valid_values}"
+                }
+            )
+    
+    # Extract accuracy policy header
+    accuracy_header = request.headers.get("X-Accuracy-Policy") or request.headers.get("x-accuracy-policy")
+    if accuracy_header:
+        accuracy_header = accuracy_header.strip().lower()
+        try:
+            # Validate against enum
+            AccuracyPolicy(accuracy_header)
+            accuracy_policy = accuracy_header
+        except ValueError:
+            valid_values = ", ".join([e.value for e in AccuracyPolicy])
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_ACCURACY_POLICY",
+                    "message": f"Invalid X-Accuracy-Policy header value: '{accuracy_header}'. Expected one of: {valid_values}"
+                }
+            )
+    
+    return latency_policy, cost_policy, accuracy_policy
+
+
 async def ensure_authenticated_for_request(req: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> None:
     """Enforce authentication - require BOTH Bearer token AND API key for all services."""
     # Get tracer for creating spans
@@ -2238,6 +2432,36 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             },
                             headers={"WWW-Authenticate": "Bearer"}
                         )
+                    
+                    # Set user context in request state (in case middleware didn't set it)
+                    if payload:
+                        req.state.user_id = payload.get("sub")
+                        req.state.username = payload.get("username")
+                        req.state.permissions = payload.get("permissions", [])
+                        req.state.is_authenticated = True
+                        
+                        # Extract tenant information using resolve_tenant_from_jwt
+                        tenant_context = resolve_tenant_from_jwt(payload)
+                        if tenant_context:
+                            req.state.tenant_id = tenant_context.get("tenant_id")
+                            req.state.tenant_uuid = tenant_context.get("tenant_uuid")
+                            req.state.schema_name = tenant_context.get("schema_name")
+                            req.state.subscriptions = tenant_context.get("subscriptions", [])
+                            req.state.user_subscriptions = tenant_context.get("user_subscriptions", [])
+                        else:
+                            # Tenant is required - return error if not present
+                            if auth_span:
+                                auth_span.set_attribute("error", True)
+                                auth_span.set_attribute("error.type", "TenantMissing")
+                                auth_span.set_status(Status(StatusCode.ERROR, "Tenant ID missing from token"))
+                            raise HTTPException(
+                                status_code=403,
+                                detail={
+                                    "code": "TENANT_REQUIRED",
+                                    "message": "Tenant ID is required for this operation. Your account is not associated with any tenant. Please contact your administrator."
+                                }
+                            )
+                        
                 except HTTPException:
                     raise
                 except Exception as e:
@@ -2431,6 +2655,36 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             },
                             headers={"WWW-Authenticate": "Bearer"}
                         )
+                    
+                    # Set user context in request state (in case middleware didn't set it)
+                    if payload:
+                        req.state.user_id = payload.get("sub")
+                        req.state.username = payload.get("username")
+                        req.state.permissions = payload.get("permissions", [])
+                        req.state.is_authenticated = True
+                        
+                        # Extract tenant information using resolve_tenant_from_jwt
+                        tenant_context = resolve_tenant_from_jwt(payload)
+                        if tenant_context:
+                            req.state.tenant_id = tenant_context.get("tenant_id")
+                            req.state.tenant_uuid = tenant_context.get("tenant_uuid")
+                            req.state.schema_name = tenant_context.get("schema_name")
+                            req.state.subscriptions = tenant_context.get("subscriptions", [])
+                            req.state.user_subscriptions = tenant_context.get("user_subscriptions", [])
+                        else:
+                            # Tenant is required - return error if not present
+                            if auth_span:
+                                auth_span.set_attribute("error", True)
+                                auth_span.set_attribute("error.type", "TenantMissing")
+                                auth_span.set_status(Status(StatusCode.ERROR, "Tenant ID missing from token"))
+                            raise HTTPException(
+                                status_code=403,
+                                detail={
+                                    "code": "TENANT_REQUIRED",
+                                    "message": "Tenant ID is required for this operation. Your account is not associated with any tenant. Please contact your administrator."
+                                }
+                            )
+                    
                     if auth_span:
                         auth_span.set_attribute("auth.authenticated", True)
                         auth_span.set_attribute("auth.authorized", True)  # Bearer token implies authorization
@@ -3015,6 +3269,21 @@ async def smart_model_routed_inference(
     # Enforce authentication (same semantics as other inference endpoints)
     await ensure_authenticated_for_request(request, credentials, api_key)
 
+    # Extract verified tenant_id from JWT token (not from request body)
+    tenant_id = await get_verified_tenant_id(request)
+    user_id = getattr(request.state, "user_id", None)
+
+    # Extract and validate policy headers (prefer headers over payload.policy)
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
+    
+    # Fall back to payload.policy if headers not provided
+    if not latency_policy and payload.policy and payload.policy.latency:
+        latency_policy = payload.policy.latency
+    if not cost_policy and payload.policy and payload.policy.cost:
+        cost_policy = payload.policy.cost
+    if not accuracy_policy and payload.policy and payload.policy.accuracy:
+        accuracy_policy = payload.policy.accuracy
+
     # Reuse global HTTP client and tracing
     global http_client
     if http_client is None:
@@ -3025,15 +3294,69 @@ async def smart_model_routed_inference(
     policy_result: Optional[Dict[str, Any]] = None
 
     if not selected_service_id:
-        # 1. Evaluate policy using Policy Engine
-        policy_result = await call_policy_engine_for_smr(
-            http_client=http_client,
-            user_id=payload.user_id,
-            tenant_id=payload.tenant_id,
-            latency_policy=payload.policy.latency if payload.policy else None,
-            cost_policy=payload.policy.cost if payload.policy else None,
-            accuracy_policy=payload.policy.accuracy if payload.policy else None,
-        )
+        # Determine policy values: prioritize headers, fall back to Policy Engine
+        # Check if any policy headers are provided (highest priority)
+        headers_provided = latency_policy is not None or cost_policy is not None or accuracy_policy is not None
+        
+        actual_latency_policy: Optional[str] = None
+        actual_cost_policy: Optional[str] = None
+        actual_accuracy_policy: Optional[str] = None
+        
+        if headers_provided:
+            # Headers are present: use them directly, skip Policy Engine call
+            logger.info(
+                "SMR: Using policy headers directly (skipping Policy Engine)",
+                extra={
+                    "context": {
+                        "task_type": payload.task_type.value,
+                        "user_id": user_id,
+                        "tenant_id": tenant_id,
+                        "latency_policy": latency_policy,
+                        "cost_policy": cost_policy,
+                        "accuracy_policy": accuracy_policy,
+                        "decision": "header_priority",
+                    }
+                },
+            )
+            # Use header values directly
+            actual_latency_policy = latency_policy
+            actual_cost_policy = cost_policy
+            actual_accuracy_policy = accuracy_policy
+        else:
+            # No headers provided: call Policy Engine to get tenant-specific policies
+            logger.info(
+                "SMR: No policy headers provided, calling Policy Engine for tenant policies",
+                extra={
+                    "context": {
+                        "task_type": payload.task_type.value,
+                        "user_id": user_id,
+                        "tenant_id": tenant_id,
+                        "decision": "policy_engine_lookup",
+                    }
+                },
+            )
+            
+            policy_result = await call_policy_engine_for_smr(
+                http_client=http_client,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                latency_policy=None,  # No headers, let Policy Engine determine from tenant
+                cost_policy=None,
+                accuracy_policy=None,
+            )
+
+            # Extract actual policy values from policy_result (policy engine returns tenant-specific policies)
+            actual_latency_policy = policy_result.get("latency_policy")
+            actual_cost_policy = policy_result.get("cost_policy")
+            actual_accuracy_policy = policy_result.get("accuracy_policy")
+            
+            # Convert enum values to strings if needed
+            if actual_latency_policy and hasattr(actual_latency_policy, 'value'):
+                actual_latency_policy = actual_latency_policy.value
+            if actual_cost_policy and hasattr(actual_cost_policy, 'value'):
+                actual_cost_policy = actual_cost_policy.value
+            if actual_accuracy_policy and hasattr(actual_accuracy_policy, 'value'):
+                actual_accuracy_policy = actual_accuracy_policy.value
 
         # 2. Fetch candidate services for the given task_type
         candidate_services = await fetch_candidate_services_for_task(
@@ -3050,13 +3373,14 @@ async def smart_model_routed_inference(
                 },
             )
 
-        # 3. Deterministically select best service based on tenant policy and benchmarks/health
+        # 3. Deterministically select best service based on policy values and benchmarks/health
+        # Use the actual policy values (from headers or Policy Engine)
         selected_service = select_service_deterministically(
             candidate_services,
             preferred_language=payload.language,
-            latency_policy=payload.policy.latency if payload.policy else None,
-            cost_policy=payload.policy.cost if payload.policy else None,
-            accuracy_policy=payload.policy.accuracy if payload.policy else None,
+            latency_policy=actual_latency_policy,
+            cost_policy=actual_cost_policy,
+            accuracy_policy=actual_accuracy_policy,
         )
         selected_service_id = str(selected_service.get("serviceId"))
 
@@ -4377,7 +4701,10 @@ async def asr_inference(
 
     # Derive user/tenant context for policy evaluation
     user_id = getattr(request.state, "user_id", None)
-    tenant_id = request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
 
     # Ensure serviceId via Smart Model Router if missing
     global http_client
@@ -4389,6 +4716,9 @@ async def asr_inference(
         body_dict=body_dict,
         user_id=user_id,
         tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
     )
 
     body = json.dumps(body_dict).encode("utf-8")
@@ -4487,7 +4817,10 @@ async def tts_inference(
 
     body_dict = payload.model_dump(mode="json", exclude_none=True)
     user_id = getattr(request.state, "user_id", None)
-    tenant_id = request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
 
     global http_client
     if http_client is None:
@@ -4498,6 +4831,9 @@ async def tts_inference(
         body_dict=body_dict,
         user_id=user_id,
         tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
     )
 
     body = json.dumps(body_dict).encode("utf-8")
@@ -4574,11 +4910,36 @@ async def speaker_diarization_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
-    """Perform speaker diarization inference on one or more audio inputs"""
+    """Perform speaker diarization inference on one or more audio inputs.
+    
+    If config.serviceId is omitted, Smart Model Router will select the best service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     ensure_authenticated_for_request(request, credentials, api_key)
     import json
 
-    body = json.dumps(payload.dict()).encode()
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="speaker-diarization",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
     headers: Dict[str, str] = {}
     # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
     headers = build_auth_headers(request, credentials, api_key)
@@ -4607,11 +4968,36 @@ async def language_diarization_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
-    """Perform language diarization inference on one or more audio files"""
+    """Perform language diarization inference on one or more audio files.
+    
+    If config.serviceId is omitted, Smart Model Router will select the best service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     ensure_authenticated_for_request(request, credentials, api_key)
     import json
 
-    body = json.dumps(payload.dict()).encode()
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="language-diarization",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
     # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(
@@ -4639,7 +5025,11 @@ async def audio_lang_detection_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
-    """Perform audio language detection inference on one or more audio files"""
+    """Perform audio language detection inference on one or more audio files.
+    
+    If config.serviceId is omitted, Smart Model Router will select the best service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     # Log incoming request for debugging
     logger.info(
         f"Received audio-lang-detection inference request - has_token={credentials is not None and credentials.credentials is not None}, has_api_key={api_key is not None}, path={request.url.path}"
@@ -4655,7 +5045,28 @@ async def audio_lang_detection_inference(
     
     import json
 
-    body = json.dumps(payload.dict()).encode()
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="audio-lang-detection",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
     # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
     headers = build_auth_headers(request, credentials, api_key)
     
@@ -4711,18 +5122,15 @@ async def nmt_inference(
     If config.serviceId is omitted, Smart Model Router will select the best NMT service
     based on Policy Engine + Model Management and inject the chosen serviceId.
     """
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
 
     body_dict = payload.model_dump(mode="json", exclude_none=True)
     user_id = getattr(request.state, "user_id", None)
-    # Prefer tenant_id from auth middleware (JWT), fall back to incoming headers if present
-    tenant_id = getattr(request.state, "tenant_id", None) or \
-        request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
-
-    # TEMPORARY: Hardcode tenant_id when none is resolved (for testing)
-    if not tenant_id:
-        tenant_id = "tenant-b"
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
 
     # Log incoming request for SMR flow
     logger.info(
@@ -4731,6 +5139,9 @@ async def nmt_inference(
             "context": {
                 "user_id": user_id,
                 "tenant_id": tenant_id,
+                "latency_policy": latency_policy,
+                "cost_policy": cost_policy,
+                "accuracy_policy": accuracy_policy,
                 "request_body": body_dict,
             }
         },
@@ -4745,6 +5156,9 @@ async def nmt_inference(
         body_dict=body_dict,
         user_id=user_id,
         tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
     )
 
     # Log final routing decision before calling downstream NMT
@@ -4782,6 +5196,39 @@ async def nmt_inference(
             )
             downstream_response.headers["X-SMR-PolicyVersion"] = str(
                 policy_result.get("policy_version", "")
+            )
+        # Attach effective latency / cost / accuracy policy details as headers
+        # Prefer explicit headers; if not provided, fall back to policy engine result.
+        effective_latency_policy = (
+            latency_policy.value if hasattr(latency_policy, "value") else latency_policy
+        )
+        effective_cost_policy = (
+            cost_policy.value if hasattr(cost_policy, "value") else cost_policy
+        )
+        effective_accuracy_policy = (
+            accuracy_policy.value if hasattr(accuracy_policy, "value") else accuracy_policy
+        )
+
+        if policy_result:
+            # If no explicit header, use tenant-specific policy from Policy Engine
+            if not effective_latency_policy:
+                effective_latency_policy = policy_result.get("latency_policy")
+            if not effective_cost_policy:
+                effective_cost_policy = policy_result.get("cost_policy")
+            if not effective_accuracy_policy:
+                effective_accuracy_policy = policy_result.get("accuracy_policy")
+
+        if effective_latency_policy:
+            downstream_response.headers["X-SMR-LatencyPolicy"] = str(
+                effective_latency_policy
+            )
+        if effective_cost_policy:
+            downstream_response.headers["X-SMR-CostPolicy"] = str(
+                effective_cost_policy
+            )
+        if effective_accuracy_policy:
+            downstream_response.headers["X-SMR-AccuracyPolicy"] = str(
+                effective_accuracy_policy
             )
     return downstream_response
 
@@ -4912,7 +5359,10 @@ async def ocr_inference(
 
     body_dict = payload.model_dump(mode="json", exclude_none=True)
     user_id = getattr(request.state, "user_id", None)
-    tenant_id = request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
 
     global http_client
     if http_client is None:
@@ -4923,6 +5373,9 @@ async def ocr_inference(
         body_dict=body_dict,
         user_id=user_id,
         tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
     )
 
     body = json.dumps(body_dict).encode("utf-8")
@@ -4973,7 +5426,10 @@ async def ner_inference(
 
     body_dict = payload.model_dump(mode="json", exclude_none=True)
     user_id = getattr(request.state, "user_id", None)
-    tenant_id = request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
 
     global http_client
     if http_client is None:
@@ -4984,6 +5440,9 @@ async def ner_inference(
         body_dict=body_dict,
         user_id=user_id,
         tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
     )
 
     body = json.dumps(body_dict).encode("utf-8")
@@ -5019,7 +5478,10 @@ async def transliteration_inference(
 
     body_dict = payload.model_dump(mode="json", exclude_none=True)
     user_id = getattr(request.state, "user_id", None)
-    tenant_id = request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
 
     global http_client
     if http_client is None:
@@ -5030,6 +5492,9 @@ async def transliteration_inference(
         body_dict=body_dict,
         user_id=user_id,
         tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
     )
 
     body = json.dumps(body_dict).encode("utf-8")
@@ -5110,7 +5575,10 @@ async def language_detection_inference(
 
     body_dict = payload.model_dump(mode="json", exclude_none=True)
     user_id = getattr(request.state, "user_id", None)
-    tenant_id = request.headers.get("X-Tenant-Id") or request.headers.get("X-Tenant-ID")
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
 
     global http_client
     if http_client is None:
@@ -5121,6 +5589,9 @@ async def language_detection_inference(
         body_dict=body_dict,
         user_id=user_id,
         tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
     )
 
     body = json.dumps(body_dict).encode("utf-8")
@@ -5472,6 +5943,9 @@ async def list_services(
         )
 
 
+# Note: This route is intentionally placed before the catch-all route
+# It handles /api/v1/model-management/services/{service_id} for viewing service details
+# Admin routes like /api/v1/model-management/services/admin/* are handled by the catch-all route
 @app.post("/api/v1/model-management/services/{service_id:path}", response_model=ServiceViewResponse, tags=["Model Management"])
 async def get_service_details(
     service_id: str,
@@ -5479,6 +5953,23 @@ async def get_service_details(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Fetch metadata for a specific runtime service. Requires Bearer token authentication with 'service.read' permission."""
+    # Exclude admin routes - they should be handled by the catch-all route
+    # FastAPI matches routes in order, but this route uses {service_id:path} which is too general
+    # We need to explicitly exclude admin routes here by checking if service_id contains "/"
+    # Admin routes have paths like "admin/add/service/policy" which contain "/"
+    # Regular service IDs should not contain "/"
+    if "/" in service_id or service_id.startswith("admin"):
+        # This is likely an admin route (e.g., "admin/add/service/policy")
+        # Re-construct the path and forward to catch-all route handler
+        # Extract the path after /api/v1/model-management
+        full_path = request.url.path
+        if full_path.startswith("/api/v1/model-management/"):
+            path_after_prefix = full_path[len("/api/v1/model-management/"):]
+        else:
+            path_after_prefix = full_path.lstrip("/")
+        # Call the catch-all handler directly (it's defined later in this file)
+        return await proxy_request(request, path_after_prefix)
+    
     await check_permission("service.read", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
@@ -6516,6 +7007,71 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             
             # Don't log 403 errors here - RequestLoggingMiddleware handles all 400-series errors to avoid duplicates
             
+        except httpx.ConnectError as e:
+            response_time = time.time() - start_time
+            # Mark span as error if tracing is available
+            if TRACING_AVAILABLE and trace:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.message", str(e))
+                    current_span.set_attribute("error.type", "connection_error")
+            logger.error(
+                f"Connection error proxying to {service_name}: {e}",
+                extra={
+                    "context": {
+                        "method": method,
+                        "path": path,
+                        "service": service_name,
+                        "service_url": service_url,
+                        "error": "connection_error",
+                        "response_time_ms": round(response_time * 1000, 2),
+                    }
+                },
+                exc_info=True
+            )
+            raise HTTPException(
+                status_code=503, 
+                detail={
+                    "code": "SERVICE_UNAVAILABLE",
+                    "message": f"{service_name.replace('-', ' ').title()} is not reachable. Please check if the service is running.",
+                    "service": service_name,
+                    "service_url": service_url
+                }
+            )
+        except httpx.TimeoutException as e:
+            response_time = time.time() - start_time
+            # Mark span as error if tracing is available
+            if TRACING_AVAILABLE and trace:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.message", str(e))
+                    current_span.set_attribute("error.type", "timeout")
+            logger.error(
+                f"Timeout proxying to {service_name}: {e}",
+                extra={
+                    "context": {
+                        "method": method,
+                        "path": path,
+                        "service": service_name,
+                        "timeout": timeout_value,
+                        "error": "timeout",
+                        "response_time_ms": round(response_time * 1000, 2),
+                    }
+                },
+                exc_info=True
+            )
+            raise HTTPException(
+                status_code=504, 
+                detail={
+                    "code": "SERVICE_TIMEOUT",
+                    "message": f"{service_name.replace('-', ' ').title()} did not respond within {timeout_value}s. The service may be overloaded.",
+                    "service": service_name
+                }
+            )
         except Exception as e:
             response_time = time.time() - start_time
             # Mark span as error if tracing is available
@@ -6532,13 +7088,22 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
                         "method": method,
                         "path": path,
                         "service": service_name,
+                        "service_url": service_url,
                         "error": "proxy_error",
+                        "error_type": type(e).__name__,
                         "response_time_ms": round(response_time * 1000, 2),
                     }
                 },
                 exc_info=True
             )
-            raise HTTPException(status_code=500, detail=f"{service_name} temporarily unavailable")
+            raise HTTPException(
+                status_code=503, 
+                detail={
+                    "code": "SERVICE_UNAVAILABLE",
+                    "message": f"{service_name.replace('-', ' ').title()} is temporarily unavailable. Please try again later.",
+                    "service": service_name
+                }
+            )
         
         # Return response
         return Response(
@@ -6685,7 +7250,9 @@ async def proxy_request(request: Request, path: str):
                         route_span.set_attribute("gateway.method", request.method)
                     
                     # Determine target service
-                    service_name = await route_manager.get_service_for_path(f"/{path}")
+                    # Use the full request path for route matching, not just the captured path parameter
+                    full_request_path = request.url.path
+                    service_name = await route_manager.get_service_for_path(full_request_path)
                     
                     if route_span:
                         if service_name:
@@ -6717,7 +7284,18 @@ async def proxy_request(request: Request, path: str):
                             select_span.set_attribute("gateway.selection_method", "direct_fallback")
                             select_span.set_status(Status(StatusCode.OK))
                         logger.debug(f"Using direct service URL fallback for {service_name}")
-                        return await proxy_to_service(request, f"/{path}", service_name)
+                        # Strip the route prefix from path before forwarding
+                        route_prefix = None
+                        for route_pref, svc_name in route_manager.routes.items():
+                            if svc_name == service_name and full_request_path.startswith(route_pref):
+                                route_prefix = route_pref
+                                break
+                        
+                        if route_prefix:
+                            service_path = full_request_path[len(route_prefix):] or "/"
+                        else:
+                            service_path = full_request_path
+                        return await proxy_to_service(request, service_path, service_name)
 
                     # Select healthy instance
                     instance_info = await load_balancer.select_instance(service_name)
@@ -6745,10 +7323,37 @@ async def proxy_request(request: Request, path: str):
                 # Prepare forwarding headers (includes trace context injection)
                 headers = prepare_forwarding_headers(request, correlation_id, request_id)
                 
+                # Ensure Content-Type is set for POST/PUT/PATCH requests
+                if request.method in ['POST', 'PUT', 'PATCH']:
+                    if 'Content-Type' not in headers or not headers.get('Content-Type'):
+                        headers['Content-Type'] = 'application/json'
+                
+                # Strip the route prefix from path before forwarding
+                route_prefix = None
+                for route_pref, svc_name in route_manager.routes.items():
+                    if svc_name == service_name and full_request_path.startswith(route_pref):
+                        route_prefix = route_pref
+                        break
+                
+                if route_prefix:
+                    service_path = full_request_path[len(route_prefix):] or "/"
+                else:
+                    service_path = full_request_path
+                
                 # Prepare request body
                 body = None
                 if request.method in ['POST', 'PUT', 'PATCH']:
                     body = await request.body()
+                    # Log body size and content for debugging
+                    if body:
+                        logger.info(f"Forwarding {len(body)} bytes of body for {request.method} {service_path}")
+                        try:
+                            body_preview = body.decode('utf-8')[:200] if len(body) > 0 else ""
+                            logger.debug(f"Body preview: {body_preview}")
+                        except:
+                            pass
+                    else:
+                        logger.warning(f"No body found for {request.method} request to {service_path}")
                 
                 # Create child span for request preparation
                 prep_span_context = tracer_instance.start_as_current_span("gateway.prepare_request") if tracer_instance else nullcontext()
@@ -6763,15 +7368,26 @@ async def proxy_request(request: Request, path: str):
                 with http_span_context as http_span:
                     if http_span:
                         http_span.set_attribute("http.method", request.method)
-                        http_span.set_attribute("http.url", f"{instance_url}/{path}")
-                        http_span.set_attribute("http.target", f"/{path}")
+                        http_span.set_attribute("http.url", f"{instance_url}{service_path}")
+                        http_span.set_attribute("http.target", service_path)
                         http_span.set_attribute("service.name", service_name)
                         http_span.set_attribute("service.instance", instance_id)
                     
                     # Forward request
+                    # Log request details for debugging
+                    logger.warning(f"🔍 Proxying {request.method} request to {service_name}")
+                    logger.warning(f"🔍 Full request path: {full_request_path}")
+                    logger.warning(f"🔍 Service path after stripping: {service_path}")
+                    logger.warning(f"🔍 Target URL: {instance_url}{service_path}")
+                    if body:
+                        body_str = body[:200].decode('utf-8', errors='ignore') if len(body) > 0 else 'empty'
+                        logger.warning(f"🔍 Request body size: {len(body)} bytes, preview: {body_str}")
+                    else:
+                        logger.warning(f"🔍 No body for {request.method} request to {service_path}")
+                    
                     response = await http_client.request(
                         method=request.method,
-                        url=f"{instance_url}/{path}",
+                        url=f"{instance_url}{service_path}",
                         headers=headers,
                         params=request.query_params,
                         content=body,
@@ -6801,8 +7417,9 @@ async def proxy_request(request: Request, path: str):
                 
                 # Update proxy span with response info
                 if proxy_span:
+                    # service_path is already computed above in the http_span context
                     proxy_span.set_attribute("http.status_code", response.status_code)
-                    proxy_span.set_attribute("http.url", f"{instance_url}/{path}")
+                    proxy_span.set_attribute("http.url", f"{instance_url}{service_path}")
                     proxy_span.set_attribute("response.time_ms", round(response_time * 1000, 2))
                     proxy_span.set_attribute("gateway.total_time_ms", round(response_time * 1000, 2))
                     
