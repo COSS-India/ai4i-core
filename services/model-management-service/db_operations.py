@@ -1658,11 +1658,58 @@ async def add_or_update_service_policy(service_id: str, policy_data: ServicePoli
         Dictionary with service_id and policy
         
     Raises:
-        HTTPException: 404 if service not found, 500 on database error
+        HTTPException:
+            - 400 if the policy combination is against global policy constraints
+            - 404 if service not found
+            - 500 on database error
     """
     db: AsyncSession = AppDatabase()
     
     try:
+        # ------------------------------------------------------------------
+        # Cross-field policy constraints (mirror API Gateway header rules)
+        #
+        # Business rules:
+        # - High accuracy ("sensitive") cannot be combined with low cost ("tier_1").
+        # - Low latency ("low") cannot be combined with low cost ("tier_1").
+        #
+        # Enforced at write-time so invalid policies cannot be stored in
+        # Model Management; this keeps behavior consistent with gateway
+        # request-time validation.
+        # ------------------------------------------------------------------
+        latency = (policy_data.latency or "").strip().lower() if policy_data.latency else None
+        cost = (policy_data.cost or "").strip().lower() if policy_data.cost else None
+        accuracy = (policy_data.accuracy or "").strip().lower() if policy_data.accuracy else None
+
+        if cost == "tier_1":
+            # Low cost + high accuracy (sensitive) is not allowed
+            if accuracy == "sensitive":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "POLICY_CONSTRAINT_VIOLATION",
+                        "message": (
+                            "Requested combination accuracy='sensitive' with "
+                            "cost='tier_1' is against policy. "
+                            "Please choose a higher cost tier or lower accuracy profile."
+                        ),
+                    },
+                )
+
+            # Low cost + low latency is not allowed
+            if latency == "low":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "POLICY_CONSTRAINT_VIOLATION",
+                        "message": (
+                            "Requested combination latency='low' with "
+                            "cost='tier_1' is against policy. "
+                            "Please choose a higher cost tier or higher latency profile."
+                        ),
+                    },
+                )
+
         # Check if service exists
         result = await db.execute(select(Service).where(Service.service_id == service_id))
         service = result.scalars().first()
