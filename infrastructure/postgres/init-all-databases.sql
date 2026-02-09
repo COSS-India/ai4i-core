@@ -880,8 +880,102 @@ COMMENT ON COLUMN services.is_published IS 'Whether the service is published and
 COMMENT ON COLUMN services.published_at IS 'Unix timestamp when the service was published';
 COMMENT ON COLUMN services.unpublished_at IS 'Unix timestamp when the service was unpublished';
 
--- Ensure experiment_status enum includes PAUSED, COMPLETED, CANCELLED (experiments table is created by model-management-service;
--- if the enum was created with older values like STOPPED, add the values the app expects so stop/cancel work)
+-- ----------------------------------------------------------------------------
+-- A/B Testing: experiment_status enum and tables
+-- ----------------------------------------------------------------------------
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'experiment_status') THEN
+        CREATE TYPE experiment_status AS ENUM ('DRAFT', 'RUNNING', 'PAUSED', 'COMPLETED', 'CANCELLED');
+    END IF;
+END $$;
+
+-- Experiments table (A/B testing)
+CREATE TABLE IF NOT EXISTS experiments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    status experiment_status NOT NULL DEFAULT 'DRAFT',
+    task_type JSONB DEFAULT NULL,
+    languages JSONB DEFAULT NULL,
+    start_date TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    end_date TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    created_by VARCHAR(255) DEFAULT NULL,
+    updated_by VARCHAR(255) DEFAULT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    completed_at TIMESTAMP WITH TIME ZONE DEFAULT NULL
+);
+
+-- Experiment variants table (model/service variants per experiment)
+CREATE TABLE IF NOT EXISTS experiment_variants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    experiment_id UUID NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+    variant_name VARCHAR(255) NOT NULL,
+    service_id VARCHAR(255) NOT NULL REFERENCES services(service_id) ON DELETE CASCADE,
+    traffic_percentage BIGINT NOT NULL,
+    description TEXT DEFAULT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_experiment_service UNIQUE (experiment_id, service_id)
+);
+
+-- Experiment metrics table (daily aggregation per variant)
+CREATE TABLE IF NOT EXISTS experiment_metrics (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    experiment_id UUID NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+    variant_id UUID NOT NULL REFERENCES experiment_variants(id) ON DELETE CASCADE,
+    request_count BIGINT NOT NULL DEFAULT 0,
+    success_count BIGINT NOT NULL DEFAULT 0,
+    error_count BIGINT NOT NULL DEFAULT 0,
+    avg_latency_ms BIGINT DEFAULT NULL,
+    custom_metrics JSONB DEFAULT NULL,
+    metric_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_experiment_variant_date UNIQUE (experiment_id, variant_id, metric_date)
+);
+
+-- Indexes for experiments
+CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status);
+CREATE INDEX IF NOT EXISTS idx_experiments_task_type ON experiments USING GIN (task_type);
+CREATE INDEX IF NOT EXISTS idx_experiments_languages ON experiments USING GIN (languages);
+CREATE INDEX IF NOT EXISTS idx_experiments_start_date ON experiments(start_date);
+CREATE INDEX IF NOT EXISTS idx_experiments_end_date ON experiments(end_date);
+CREATE INDEX IF NOT EXISTS idx_experiments_created_at ON experiments(created_at);
+
+-- Indexes for experiment_variants
+CREATE INDEX IF NOT EXISTS idx_experiment_variants_experiment_id ON experiment_variants(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_experiment_variants_service_id ON experiment_variants(service_id);
+
+-- Indexes for experiment_metrics
+CREATE INDEX IF NOT EXISTS idx_experiment_metrics_experiment_id ON experiment_metrics(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_experiment_metrics_variant_id ON experiment_metrics(variant_id);
+CREATE INDEX IF NOT EXISTS idx_experiment_metrics_metric_date ON experiment_metrics(metric_date);
+
+-- Triggers for updated_at on A/B tables
+DROP TRIGGER IF EXISTS update_experiments_updated_at ON experiments;
+CREATE TRIGGER update_experiments_updated_at BEFORE UPDATE ON experiments
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_experiment_variants_updated_at ON experiment_variants;
+CREATE TRIGGER update_experiment_variants_updated_at BEFORE UPDATE ON experiment_variants
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_experiment_metrics_updated_at ON experiment_metrics;
+CREATE TRIGGER update_experiment_metrics_updated_at BEFORE UPDATE ON experiment_metrics
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Comments for A/B testing tables
+COMMENT ON TABLE experiments IS 'A/B testing experiments with traffic split across model variants';
+COMMENT ON COLUMN experiments.status IS 'DRAFT, RUNNING, PAUSED, COMPLETED, or CANCELLED';
+COMMENT ON COLUMN experiments.task_type IS 'Optional JSONB list of task types to filter (e.g. asr, nmt, tts)';
+COMMENT ON COLUMN experiments.languages IS 'Optional JSONB list of language codes to filter; null/empty = all languages';
+COMMENT ON TABLE experiment_variants IS 'Model/service variants and traffic percentage per experiment';
+COMMENT ON TABLE experiment_metrics IS 'Daily aggregated metrics per experiment variant';
+
+-- Ensure experiment_status enum has all values (for DBs where enum was created by older app version)
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'experiment_status') THEN
