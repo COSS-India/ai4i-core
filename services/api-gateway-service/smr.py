@@ -186,6 +186,63 @@ async def fetch_candidate_services_for_task(
     return data
 
 
+async def fetch_policies_for_task(
+    http_client: httpx.AsyncClient,
+    task_type: str,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Fetch per-service policies for a given task type from model-management-service.
+
+    Returns a mapping: serviceId -> policy-dict
+    """
+    params = {
+        "task_type": task_type,
+    }
+
+    try:
+        resp = await http_client.get(
+            f"{MODEL_MANAGEMENT_SERVICE_URL}/services/details/list/services/policies",
+            params=params,
+            timeout=10.0,
+        )
+    except httpx.RequestError as e:
+        logger.warning(f"Model Management policy request failed: {e}")
+        return {}
+
+    if resp.status_code != 200:
+        logger.warning(
+            "Model Management returned non-200 status for policies",
+            extra={"status_code": resp.status_code, "body": resp.text},
+        )
+        return {}
+
+    payload = resp.json()
+    services = payload.get("services") if isinstance(payload, dict) else None
+    if not isinstance(services, list):
+        logger.warning("Unexpected policy response format from model-management")
+        return {}
+
+    policies_map: Dict[str, Dict[str, Any]] = {}
+    for entry in services:
+        try:
+            sid = entry.get("serviceId")
+            pol = entry.get("policy")
+            if sid and isinstance(pol, dict):
+                policies_map[str(sid)] = pol
+        except AttributeError:
+            continue
+
+    logger.info(
+        "SMR: Loaded service policies",
+        extra={
+            "context": {
+                "task_type": task_type,
+                "policy_count": len(policies_map),
+            }
+        },
+    )
+    return policies_map
+
 def _compute_latency_score_for_service(
     svc: Dict[str, Any],
     preferred_language: Optional[str],
@@ -248,6 +305,30 @@ def _compute_latency_score_for_service(
                     continue
 
     return min(latencies) if latencies else None
+
+
+def _get_cost_tier_value(service_policy: Optional[Dict[str, Any]]) -> int:
+    """
+    Extract cost tier value from service policy for sorting.
+    Returns: 1 for tier_1, 2 for tier_2, 3 for tier_3, 999 if not available.
+    Lower tier = lower cost = better.
+    """
+    if not service_policy or not isinstance(service_policy, dict):
+        return 999  # Unknown cost, sort last
+    
+    cost = service_policy.get("cost")
+    if not cost:
+        return 999
+    
+    cost_str = str(cost).lower()
+    if cost_str == "tier_1":
+        return 1
+    elif cost_str == "tier_2":
+        return 2
+    elif cost_str == "tier_3":
+        return 3
+    else:
+        return 999  # Unknown tier, sort last
 
 
 def _compute_policy_match_score_for_service(
@@ -404,6 +485,17 @@ def select_service_deterministically(
         )
         if policy_score is not None:
             policy_scored.append((policy_score, service_id, svc))
+            logger.debug(
+                "SMR: Service added to policy_scored",
+                extra={
+                    "context": {
+                        "serviceId": service_id,
+                        "policy_score": policy_score,
+                        "service_policy": svc.get("policy"),
+                        "cost_tier": _get_cost_tier_value(svc.get("policy")),
+                    }
+                },
+            )
             continue
 
         # 2) Fallback: use benchmark-based latency score
@@ -415,16 +507,61 @@ def select_service_deterministically(
 
     # Prefer services that match the tenant's latency/cost/accuracy policy
     if policy_scored:
-        # Lower policy_score is better; tie-breaker on service_id
-        policy_scored.sort(key=lambda x: (x[0], x[1]))
-        return policy_scored[0][2]
+        # Lower policy_score is better; tie-breaker on cost (lower tier = lower cost), then service_id
+        # Log all services before sorting for debugging
+        logger.info(
+            "SMR: Policy-scored services before sorting",
+            extra={
+                "context": {
+                    "latency_policy": latency_policy,
+                    "cost_policy": cost_policy,
+                    "accuracy_policy": accuracy_policy,
+                    "services": [
+                        {
+                            "serviceId": x[1],
+                            "policy_score": x[0],
+                            "cost_tier": _get_cost_tier_value(x[2].get("policy")),
+                            "policy": x[2].get("policy"),
+                        }
+                        for x in policy_scored
+                    ]
+                }
+            },
+        )
+        policy_scored.sort(key=lambda x: (
+            x[0],  # policy_score (lower is better)
+            _get_cost_tier_value(x[2].get("policy")),  # cost tier (lower is better)
+            x[1]  # service_id (lexicographically smallest)
+        ))
+        selected = policy_scored[0][2]
+        logger.info(
+            "SMR: Selected service after sorting",
+            extra={
+                "context": {
+                    "selected_serviceId": selected.get("serviceId"),
+                    "selected_policy_score": policy_scored[0][0],
+                    "selected_cost_tier": _get_cost_tier_value(selected.get("policy")),
+                    "selected_policy": selected.get("policy"),
+                }
+            },
+        )
+        return selected
 
     if scored:
-        scored.sort(key=lambda x: (x[0], x[1]))
+        # Lower latency_score is better; tie-breaker on cost (lower tier = lower cost), then service_id
+        scored.sort(key=lambda x: (
+            x[0],  # latency_score (lower is better)
+            _get_cost_tier_value(x[2].get("policy")),  # cost tier (lower is better)
+            x[1]  # service_id (lexicographically smallest)
+        ))
         return scored[0][2]
 
     if fallback:
-        fallback.sort(key=lambda x: x[0])
+        # Sort by cost (lower tier = lower cost), then service_id
+        fallback.sort(key=lambda x: (
+            _get_cost_tier_value(x[1].get("policy")),  # cost tier (lower is better)
+            x[0]  # service_id (lexicographically smallest)
+        ))
         return fallback[0][1]
 
     raise HTTPException(
@@ -633,6 +770,23 @@ async def inject_service_id_if_missing(
         http_client=http_client,
         task_type=task_type,
     )
+
+    # 2b. Enrich candidate services with explicit policies from model-management if missing
+    try:
+        policies_map = await fetch_policies_for_task(http_client, task_type)
+        if policies_map:
+            for svc in candidate_services:
+                sid = str(svc.get("serviceId", ""))
+                if not sid:
+                    continue
+                # Only override when policy is missing or None
+                if svc.get("policy") in (None, {}):
+                    policy = policies_map.get(sid)
+                    if policy is not None:
+                        svc["policy"] = policy
+    except Exception as e:
+        # Policy enrichment is best-effort; do not fail routing if this step breaks
+        logger.warning(f"SMR: Failed to enrich services with policies: {e}")
 
     if not candidate_services:
         raise HTTPException(
