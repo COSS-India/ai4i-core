@@ -2284,7 +2284,7 @@ def extract_and_validate_policy_headers(request: Request) -> Tuple[Optional[str]
         Tuple[Optional[str], Optional[str], Optional[str]]: (latency_policy, cost_policy, accuracy_policy)
         
     Raises:
-        HTTPException: If any header value is invalid
+        HTTPException: If any header value is invalid or the combination is against policy
     """
     latency_policy = None
     cost_policy = None
@@ -2342,6 +2342,44 @@ def extract_and_validate_policy_headers(request: Request) -> Tuple[Optional[str]
                     "code": "INVALID_ACCURACY_POLICY",
                     "message": f"Invalid X-Accuracy-Policy header value: '{accuracy_header}'. Expected one of: {valid_values}"
                 }
+            )
+    
+    # ------------------------------------------------------------------
+    # Cross-header policy constraints (only applied when user passes
+    # explicit headers).
+    #
+    # Business rules:
+    # - "High accuracy" (mapped to AccuracyPolicy.SENSITIVE) cannot be
+    #   combined with "low cost" (CostPolicy.TIER_1).
+    # - "Low latency" (LatencyPolicy.LOW) cannot be combined with
+    #   "low cost" (CostPolicy.TIER_1).
+    # ------------------------------------------------------------------
+    if cost_policy == CostPolicy.TIER_1.value:
+        # Low cost + high accuracy (sensitive) is not allowed
+        if accuracy_policy == AccuracyPolicy.SENSITIVE.value:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "POLICY_CONSTRAINT_VIOLATION",
+                    "message": (
+                        "Requested combination X-Accuracy-Policy='sensitive' with "
+                        "X-Cost-Policy='tier_1' is against policy. "
+                        "Please choose a higher cost tier or lower accuracy profile."
+                    ),
+                },
+            )
+        # Low cost + low latency is not allowed
+        if latency_policy == LatencyPolicy.LOW.value:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "POLICY_CONSTRAINT_VIOLATION",
+                    "message": (
+                        "Requested combination X-Latency-Policy='low' with "
+                        "X-Cost-Policy='tier_1' is against policy. "
+                        "Please choose a higher cost tier or higher latency profile."
+                    ),
+                },
             )
     
     return latency_policy, cost_policy, accuracy_policy
@@ -5116,9 +5154,74 @@ async def nmt_inference(
     body_dict = payload.model_dump(mode="json", exclude_none=True)
     user_id = getattr(request.state, "user_id", None)
     tenant_id = await get_verified_tenant_id(request)
-    
-    # Extract and validate policy headers
-    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
+
+    # ------------------------------------------------------------------
+    # Context-awareness fast-path for tenant-scoped requests
+    # If tenant_id is present AND header "X-Context-Aware" is truthy,
+    # bypass SMR/Policy Engine and call LLM inference directly.
+    # ------------------------------------------------------------------
+    context_aware_header = request.headers.get("X-Context-Aware")
+    is_context_aware = bool(
+        context_aware_header
+        and context_aware_header.strip().lower() in {"1", "true", "yes", "y"}
+    )
+
+    if tenant_id is not None and is_context_aware:
+        logger.info(
+            "NMT inference: context-aware routing enabled, forwarding directly to LLM service",
+            extra={
+                "context": {
+                    "user_id": user_id,
+                    "tenant_id": tenant_id,
+                    "context_aware": context_aware_header,
+                    "request_body": body_dict,
+                }
+            },
+        )
+
+        # Map NMT request shape → LLMInferenceRequest shape.
+        # - NMT: config.language.sourceLanguage / targetLanguage
+        # - LLM: config.inputLanguage / outputLanguage, plus required serviceId
+        nmt_config = body_dict.get("config") or {}
+        lang_cfg = nmt_config.get("language") or {}
+
+        llm_config = {
+            # Use "default-llm" which is in LLM service's internal SERVICE_REGISTRY
+            # This bypasses Model Management resolution and uses the service's default Triton endpoint
+            "serviceId": nmt_config.get("serviceId") or "default-llm",
+            "inputLanguage": lang_cfg.get("sourceLanguage"),
+            "outputLanguage": lang_cfg.get("targetLanguage"),
+        }
+
+        llm_body = {
+            "input": body_dict.get("input", []),
+            "config": llm_config,
+        }
+
+        body = json.dumps(llm_body).encode("utf-8")
+        headers = build_auth_headers(request, credentials, api_key)
+
+        downstream_response = await proxy_to_service(
+            None,
+            "/api/v1/llm/inference",
+            "llm-service",
+            method="POST",
+            body=body,
+            headers=headers,
+        )
+
+        if isinstance(downstream_response, Response):
+            downstream_response.headers["X-SMR-ContextAware"] = "true"
+            downstream_response.headers["X-SMR-TenantId"] = tenant_id or "free_user"
+
+        return downstream_response
+
+    # ------------------------------------------------------------------
+    # Default SMR + Policy Engine flow (including free-user path)
+    # ------------------------------------------------------------------
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(
+        request
+    )
 
     # Log incoming request for SMR flow
     logger.info(
