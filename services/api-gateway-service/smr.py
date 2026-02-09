@@ -259,21 +259,59 @@ def _compute_policy_match_score_for_service(
     """
     Compute how well a service matches the requested latency/cost/accuracy policy.
 
-    This is intentionally heuristic and string-based so it works with the current
-    seed data stored in model-management (e.g. descriptions like:
-      - "low latency, tier_3 cost, sensitive accuracy"
-      - "high latency, tier_1 cost, standard accuracy"
+    Priority:
+    1. Use service's explicit policy data from `policy` column (if available)
+    2. Fall back to parsing serviceDescription (for backward compatibility)
 
     Lower score = better match. None = no usable signal.
     """
     if not (latency_policy or cost_policy or accuracy_policy):
         return None
 
+    score = 0
+    
+    # First, try to use explicit policy data from service's policy column
+    service_policy = svc.get("policy")
+    if service_policy and isinstance(service_policy, dict):
+        # Service has explicit policy data - use it for exact matching
+        service_latency = str(service_policy.get("latency", "")).lower() if service_policy.get("latency") else None
+        service_cost = str(service_policy.get("cost", "")).lower() if service_policy.get("cost") else None
+        service_accuracy = str(service_policy.get("accuracy", "")).lower() if service_policy.get("accuracy") else None
+        
+        # Latency: exact match
+        if latency_policy:
+            lp = str(latency_policy).lower()
+            if service_latency and service_latency != lp:
+                score += 1
+            elif not service_latency:
+                # Service doesn't have latency policy, can't match
+                score += 1
+        
+        # Cost: exact match
+        if cost_policy:
+            cp = str(cost_policy).lower()
+            if service_cost and service_cost != cp:
+                score += 1
+            elif not service_cost:
+                # Service doesn't have cost policy, can't match
+                score += 1
+        
+        # Accuracy: exact match
+        if accuracy_policy:
+            ap = str(accuracy_policy).lower()
+            if service_accuracy and service_accuracy != ap:
+                score += 1
+            elif not service_accuracy:
+                # Service doesn't have accuracy policy, can't match
+                score += 1
+        
+        # If we have policy data, return the score (even if 0 = perfect match)
+        return score
+    
+    # Fallback: parse from serviceDescription (backward compatibility)
     desc = str(svc.get("serviceDescription") or "").lower()
     if not desc:
         return None
-
-    score = 0
 
     # Latency: LOW / MEDIUM / HIGH
     if latency_policy:
@@ -478,50 +516,78 @@ async def inject_service_id_if_missing(
         )
         return str(existing_service_id), body_dict, None
 
-    # 1. Evaluate policy using Policy Engine
-    logger.info(
-        "SMR: Starting smart routing decision",
-        extra={
-            "context": {
-                "task_type": task_type,
-                "user_id": user_id,
-                "tenant_id": tenant_id,
-                "latency_policy": latency_policy,
-                "cost_policy": cost_policy,
-                "accuracy_policy": accuracy_policy,
-            }
-        },
-    )
-
-    policy_result = await call_policy_engine_for_smr(
-        http_client=http_client,
-        user_id=user_id,
-        tenant_id=tenant_id,
-        latency_policy=latency_policy,
-        cost_policy=cost_policy,
-        accuracy_policy=accuracy_policy,
-    )
-
-    # Extract actual policy values from policy_result (policy engine now returns them)
-    actual_latency_policy = policy_result.get("latency_policy")
-    actual_cost_policy = policy_result.get("cost_policy")
-    actual_accuracy_policy = policy_result.get("accuracy_policy")
+    # 1. Determine policy values: prioritize headers, fall back to Policy Engine
+    # Check if any policy headers are provided (highest priority)
+    headers_provided = latency_policy is not None or cost_policy is not None or accuracy_policy is not None
     
-    # Fall back to provided values if policy engine didn't return them (backward compatibility)
-    if actual_latency_policy is None:
+    policy_result: Optional[Dict[str, Any]] = None
+    actual_latency_policy: Optional[str] = None
+    actual_cost_policy: Optional[str] = None
+    actual_accuracy_policy: Optional[str] = None
+    
+    if headers_provided:
+        # Headers are present: use them directly, skip Policy Engine call
+        logger.info(
+            "SMR: Using policy headers directly (skipping Policy Engine)",
+            extra={
+                "context": {
+                    "task_type": task_type,
+                    "user_id": user_id,
+                    "tenant_id": tenant_id,
+                    "latency_policy": latency_policy,
+                    "cost_policy": cost_policy,
+                    "accuracy_policy": accuracy_policy,
+                    "decision": "header_priority",
+                }
+            },
+        )
+        # Use header values directly
         actual_latency_policy = latency_policy
-    if actual_cost_policy is None:
         actual_cost_policy = cost_policy
-    if actual_accuracy_policy is None:
         actual_accuracy_policy = accuracy_policy
-    
-    # Convert enum values to strings if needed
-    if actual_latency_policy and hasattr(actual_latency_policy, 'value'):
-        actual_latency_policy = actual_latency_policy.value
-    if actual_cost_policy and hasattr(actual_cost_policy, 'value'):
-        actual_cost_policy = actual_cost_policy.value
-    if actual_accuracy_policy and hasattr(actual_accuracy_policy, 'value'):
-        actual_accuracy_policy = actual_accuracy_policy.value
+        
+        # Convert enum values to strings if needed
+        if actual_latency_policy and hasattr(actual_latency_policy, 'value'):
+            actual_latency_policy = actual_latency_policy.value
+        if actual_cost_policy and hasattr(actual_cost_policy, 'value'):
+            actual_cost_policy = actual_cost_policy.value
+        if actual_accuracy_policy and hasattr(actual_accuracy_policy, 'value'):
+            actual_accuracy_policy = actual_accuracy_policy.value
+    else:
+        # No headers provided: call Policy Engine to get tenant-specific policies
+        logger.info(
+            "SMR: No policy headers provided, calling Policy Engine for tenant policies",
+            extra={
+                "context": {
+                    "task_type": task_type,
+                    "user_id": user_id,
+                    "tenant_id": tenant_id,
+                    "decision": "policy_engine_lookup",
+                }
+            },
+        )
+        
+        policy_result = await call_policy_engine_for_smr(
+            http_client=http_client,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            latency_policy=None,  # No headers, let Policy Engine determine from tenant
+            cost_policy=None,
+            accuracy_policy=None,
+        )
+
+        # Extract actual policy values from policy_result (policy engine returns tenant-specific policies)
+        actual_latency_policy = policy_result.get("latency_policy")
+        actual_cost_policy = policy_result.get("cost_policy")
+        actual_accuracy_policy = policy_result.get("accuracy_policy")
+        
+        # Convert enum values to strings if needed
+        if actual_latency_policy and hasattr(actual_latency_policy, 'value'):
+            actual_latency_policy = actual_latency_policy.value
+        if actual_cost_policy and hasattr(actual_cost_policy, 'value'):
+            actual_cost_policy = actual_cost_policy.value
+        if actual_accuracy_policy and hasattr(actual_accuracy_policy, 'value'):
+            actual_accuracy_policy = actual_accuracy_policy.value
     
     # 2. Fetch candidate services for the given task_type
     candidate_services = await fetch_candidate_services_for_task(

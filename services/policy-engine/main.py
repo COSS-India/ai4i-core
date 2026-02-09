@@ -52,14 +52,24 @@ async def evaluate_policy(request: PolicyRequest):
             is_free_user = False
             db_policy = await get_tenant_policy(request.tenant_id)
             if db_policy:
+                # Tenant-specific policy found in DB
                 lat = db_policy["latency"]
                 cost = db_policy["cost"]
                 acc = db_policy["accuracy"]
+            else:
+                # No tenant-specific row → force "everything low" by default
+                # Latency: LOW, Cost: TIER_1 (cheapest), Accuracy: STANDARD
+                lat = LatencyPolicy.LOW
+                cost = CostPolicy.TIER_1
+                acc = AccuracyPolicy.STANDARD
             
-            # Allow overrides
-            if request.latency_policy: lat = request.latency_policy
-            if request.cost_policy: cost = request.cost_policy
-            if request.accuracy_policy: acc = request.accuracy_policy
+            # Allow explicit overrides from request (highest priority)
+            if request.latency_policy:
+                lat = request.latency_policy
+            if request.cost_policy:
+                cost = request.cost_policy
+            if request.accuracy_policy:
+                acc = request.accuracy_policy
         else:
             # No tenant_id, but check if explicit policies are provided
             # If explicit policies are provided, use them
