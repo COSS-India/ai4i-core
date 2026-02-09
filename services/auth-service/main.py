@@ -1421,11 +1421,12 @@ async def list_api_keys(
 @app.post("/api/v1/auth/api-keys/select")
 async def select_api_key(
     payload: APIKeySelectRequest,
-    current_user: User = Depends(require_permission("apiKey", "update")),
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Mark an API key as the selected key for the current user.
+    Any authenticated user can select their own API keys without permission checks.
     """
     result = await db.execute(
         select(APIKey).where(
