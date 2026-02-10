@@ -753,7 +753,6 @@ const ServicesManagementPage: React.FC = () => {
                                   <Th>Description</Th>
                                   <Th>Task Type</Th>
                                   <Th>Model ID</Th>
-                                  <Th>Published Status</Th>
                                   <Th>Status</Th>
                                   <Th>Actions</Th>
                                 </Tr>
@@ -788,15 +787,6 @@ const ServicesManagementPage: React.FC = () => {
                                         p={1}
                                       >
                                         {service.isPublished === true ? "PUBLISHED" : "UNPUBLISHED"}
-                                      </Badge>
-                                    </Td>
-                                    <Td>
-                                      <Badge
-                                        colorScheme={getStatusColor(service.healthStatus?.status || service.status)}
-                                        fontSize="sm"
-                                        p={1}
-                                      >
-                                        {(service.healthStatus?.status || service.status)?.toUpperCase() || "N/A"}
                                       </Badge>
                                     </Td>
                                     <Td onClick={(e) => e.stopPropagation()}>
