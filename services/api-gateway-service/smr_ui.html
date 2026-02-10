@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>SMR Policy Tester - NMT Inference</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        :root {
+            --bg: #0f172a;
+            --bg-elevated: #020617;
+            --card: #020617;
+            --accent: #38bdf8;
+            --accent-soft: rgba(56, 189, 248, 0.15);
+            --border-subtle: rgba(148, 163, 184, 0.35);
+            --text: #e2e8f0;
+            --muted: #94a3b8;
+            --danger: #f97373;
+            --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: var(--font-sans);
+            background: radial-gradient(circle at top left, #1d293b, #020617 50%, #000 100%);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            align-items: stretch;
+            justify-content: center;
+        }
+
+        .page {
+            width: 100%;
+            max-width: 1280px;
+            margin: 32px auto;
+            padding: 0 16px;
+            display: grid;
+            grid-template-columns: minmax(0, 3fr) minmax(0, 3fr);
+            gap: 24px;
+        }
+
+        @media (max-width: 960px) {
+            .page {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+
+        .card {
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(15, 23, 42, 0.98));
+            border-radius: 16px;
+            border: 1px solid rgba(148, 163, 184, 0.35);
+            box-shadow:
+                0 22px 60px rgba(15, 23, 42, 0.9),
+                0 0 0 1px rgba(15, 23, 42, 1);
+            padding: 20px 22px 22px;
+            backdrop-filter: blur(18px);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 18px;
+            gap: 12px;
+        }
+
+        .title {
+            font-size: 18px;
+            font-weight: 600;
+            letter-spacing: 0.03em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .title-pill {
+            padding: 2px 8px;
+            border-radius: 999px;
+            border: 1px solid rgba(148, 163, 184, 0.5);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.09em;
+            color: var(--muted);
+        }
+
+        .subtitle {
+            font-size: 12px;
+            color: var(--muted);
+            margin-top: 2px;
+        }
+
+        .badge {
+            font-size: 11px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            border: 1px solid rgba(56, 189, 248, 0.7);
+            background: radial-gradient(circle at top left, rgba(56, 189, 248, 0.4), rgba(8, 47, 73, 0.9));
+            color: #e0f2fe;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .badge-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 999px;
+            background: #22c55e;
+            box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.25);
+        }
+
+        .divider {
+            height: 1px;
+            border-radius: 999px;
+            background: radial-gradient(circle at left, rgba(56, 189, 248, 0.7), rgba(148, 163, 184, 0.1), transparent);
+            margin: 10px 0 14px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.4fr);
+            gap: 14px 16px;
+            margin-bottom: 14px;
+        }
+
+        @media (max-width: 780px) {
+            .form-grid {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+
+        .field-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        label {
+            font-size: 12px;
+            color: var(--muted);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        label span {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .label-tag {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: rgba(148, 163, 184, 0.9);
+        }
+
+        .help {
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        input[type="text"],
+        select,
+        textarea {
+            width: 100%;
+            border-radius: 9px;
+            border: 1px solid var(--border-subtle);
+            background: radial-gradient(circle at top left, rgba(15, 23, 42, 0.85), rgba(15, 23, 42, 0.95));
+            color: var(--text);
+            padding: 8px 10px;
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
+        }
+
+        input[type="text"]::placeholder,
+        textarea::placeholder {
+            color: rgba(148, 163, 184, 0.7);
+        }
+
+        input[type="text"]:focus,
+        select:focus,
+        textarea:focus {
+            border-color: rgba(56, 189, 248, 0.8);
+            box-shadow:
+                0 0 0 1px rgba(56, 189, 248, 0.85),
+                0 0 0 6px rgba(56, 189, 248, 0.13);
+            background: radial-gradient(circle at top left, rgba(15, 23, 42, 1), rgba(15, 23, 42, 0.96));
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 172px;
+            max-height: 380px;
+            line-height: 1.45;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        }
+
+        select {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            background-image: linear-gradient(45deg, transparent 50%, rgba(148, 163, 184, 0.9) 50%), linear-gradient(135deg, rgba(148, 163, 184, 0.9) 50%, transparent 50%);
+            background-position: calc(100% - 16px) 11px, calc(100% - 11px) 11px;
+            background-size: 6px 6px, 6px 6px;
+            background-repeat: no-repeat;
+            padding-right: 28px;
+        }
+
+        .dropdown-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .dropdown-row .field-group {
+            flex: 1 1 140px;
+        }
+
+        .button-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 4px;
+        }
+
+        button {
+            border-radius: 999px;
+            border: 1px solid transparent;
+            font-size: 12px;
+            padding: 7px 14px;
+            cursor: pointer;
+            font-weight: 500;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+        }
+
+        button.primary {
+            background: radial-gradient(circle at top left, #0ea5e9, #0369a1);
+            color: white;
+            box-shadow:
+                0 14px 30px rgba(8, 47, 73, 0.9),
+                0 0 0 1px rgba(8, 47, 73, 1);
+        }
+
+        button.secondary {
+            background: rgba(15, 23, 42, 0.9);
+            border-color: rgba(148, 163, 184, 0.55);
+            color: var(--text);
+        }
+
+        button.ghost {
+            background: transparent;
+            border-color: rgba(148, 163, 184, 0.5);
+            color: var(--muted);
+        }
+
+        button:disabled {
+            opacity: 0.65;
+            cursor: default;
+            box-shadow: none;
+            transform: none;
+        }
+
+        button:not(:disabled):hover {
+            transform: translateY(-1px);
+            box-shadow:
+                0 12px 26px rgba(15, 23, 42, 0.8),
+                0 0 0 1px rgba(8, 47, 73, 0.7);
+        }
+
+        button:not(:disabled):active {
+            transform: translateY(0);
+            box-shadow:
+                0 6px 16px rgba(15, 23, 42, 0.9),
+                0 0 0 1px rgba(8, 47, 73, 0.9);
+        }
+
+        button .dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.9);
+        }
+
+        .status-line {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-top: 12px;
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .status-pill {
+            padding: 2px 8px;
+            border-radius: 999px;
+            border: 1px solid rgba(148, 163, 184, 0.5);
+            font-size: 11px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-code {
+            font-weight: 600;
+            color: #bbf7d0;
+        }
+
+        .status-code.error {
+            color: #fecaca;
+        }
+
+        .error-text {
+            color: var(--danger);
+            font-size: 11px;
+        }
+
+        .response-section {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .response-block {
+            background: radial-gradient(circle at top left, rgba(15, 23, 42, 0.95), rgba(15, 23, 42, 0.98));
+            border-radius: 12px;
+            border: 1px solid rgba(30, 64, 175, 0.8);
+            padding: 10px 12px 10px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .response-block::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at top left, rgba(56, 189, 248, 0.16), transparent 60%);
+            opacity: 0.7;
+            pointer-events: none;
+        }
+
+        .response-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: rgba(148, 163, 184, 0.95);
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .response-body {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            font-size: 12px;
+            line-height: 1.45;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 320px;
+            overflow: auto;
+            padding: 7px 8px;
+            border-radius: 8px;
+            background: radial-gradient(circle at top left, rgba(15, 23, 42, 0.95), rgba(15, 23, 42, 0.98));
+            border: 1px solid rgba(30, 64, 175, 0.8);
+        }
+
+        .chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 4px;
+        }
+
+        .chip {
+            border-radius: 999px;
+            border: 1px solid rgba(148, 163, 184, 0.4);
+            font-size: 11px;
+            padding: 2px 8px;
+            color: rgba(148, 163, 184, 0.95);
+        }
+
+        .chip strong {
+            color: rgba(226, 232, 240, 0.98);
+        }
+
+        .hint {
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 6px;
+        }
+    </style>
+</head>
+<body>
+<div class="page">
+    <section class="card">
+        <header class="card-header">
+            <div>
+                <div class="title">
+                    SMR Policy Playground
+                    <span class="title-pill">/api/v1/nmt/inference</span>
+                </div>
+                <div class="subtitle">
+                    Test Smart Model Router behaviour with latency, cost, accuracy and context-aware options.
+                </div>
+            </div>
+            <span class="badge">
+                <span class="badge-dot"></span>
+                API Gateway · Localhost
+            </span>
+        </header>
+
+        <div class="divider"></div>
+
+        <div class="form-grid">
+            <div class="field-group">
+                <label for="endpoint">
+                    <span>
+                        <span class="label-tag">Endpoint</span>
+                    </span>
+                </label>
+                <input
+                    id="endpoint"
+                    type="text"
+                    value="http://localhost:8080/api/v1/nmt/inference"
+                    spellcheck="false"
+                />
+                <div class="hint">
+                    Uses your running `api-gateway-service`. You can change this to point to another gateway.
+                </div>
+            </div>
+
+            <div class="field-group">
+                <label for="authToken">
+                    <span>
+                        <span class="label-tag">Auth Token</span>
+                    </span>
+                    <span class="help">Header: <code>Authorization</code></span>
+                </label>
+                <input
+                    id="authToken"
+                    type="text"
+                    placeholder="Bearer &lt;your-JWT-access-token&gt;"
+                    spellcheck="false"
+                />
+            </div>
+
+            <div class="field-group">
+                <label for="apiKey">
+                    <span>
+                        <span class="label-tag">API Key</span>
+                    </span>
+                    <span class="help">Header: <code>X-API-Key</code></span>
+                </label>
+                <input
+                    id="apiKey"
+                    type="text"
+                    placeholder="ak_********************************"
+                    spellcheck="false"
+                />
+            </div>
+
+            <div class="field-group">
+                <label>
+                    <span>
+                        <span class="label-tag">SMR Parameters</span>
+                    </span>
+                    <span class="help">Sent as policy / context headers</span>
+                </label>
+                <div class="dropdown-row">
+                    <div class="field-group">
+                        <label for="latency">
+                            <span>Latency</span>
+                        </label>
+                        <select id="latency">
+                            <option value="">Not set</option>
+                            <option value="low">LOW</option>
+                            <option value="medium">MEDIUM</option>
+                            <option value="high">HIGH</option>
+                        </select>
+                    </div>
+                    <div class="field-group">
+                        <label for="cost">
+                            <span>Cost</span>
+                        </label>
+                        <select id="cost">
+                            <option value="">Not set</option>
+                            <option value="tier_1">TIER_1</option>
+                            <option value="tier_2">TIER_2</option>
+                            <option value="tier_3">TIER_3</option>
+                        </select>
+                    </div>
+                    <div class="field-group">
+                        <label for="accuracy">
+                            <span>Accuracy</span>
+                        </label>
+                        <select id="accuracy">
+                            <option value="">Not set</option>
+                            <option value="sensitive">SENSITIVE</option>
+                            <option value="standard">STANDARD</option>
+                        </select>
+                    </div>
+                    <div class="field-group">
+                        <label for="contextAware">
+                            <span>Context Aware</span>
+                        </label>
+                            <select id="contextAware">
+                                <option value="">Not set</option>
+                                <option value="yes">YES</option>
+                                <option value="no">NO</option>
+                            </select>
+                    </div>
+                </div>
+                <div class="chip-row">
+                    <span class="chip"><strong>Latency</strong>: <code>X-Latency-Policy</code></span>
+                    <span class="chip"><strong>Cost</strong>: <code>X-Cost-Policy</code></span>
+                    <span class="chip"><strong>Accuracy</strong>: <code>X-Accuracy-Policy</code></span>
+                    <span class="chip"><strong>Context aware</strong>: <code>X-Context-Aware</code></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="field-group">
+            <label for="requestBody">
+                <span>
+                    <span class="label-tag">Request Body</span>
+                </span>
+                <span class="help">Edit JSON to test explicit <code>serviceId</code> or <code>context</code>.</span>
+            </label>
+            <textarea id="requestBody" spellcheck="false">{
+  "input": [
+    {
+      "source": "Hello world"
+    }
+  ],
+  "config": {
+    "language": {
+      "sourceLanguage": "en",
+      "targetLanguage": "hi"
+    }
+  }
+}</textarea>
+            <div class="hint">
+                To test explicit service selection, add <code>"serviceId": "nmt_service_b"</code> under <code>config</code>.
+                To test context-aware routing, add <code>"context": "your context"</code> and set <strong>Context Aware</strong> to YES.
+            </div>
+        </div>
+
+        <div class="button-row">
+            <button class="primary" id="btnWithPolicy">
+                <span class="dot"></span>
+                Execute · With Policy Headers
+            </button>
+            <button class="secondary" id="btnWithoutPolicy">
+                Execute · No Policy Headers
+            </button>
+            <button class="ghost" id="btnLoadContextExample">
+                Load Context-Aware Example Body
+            </button>
+        </div>
+
+        <div class="status-line">
+            <div>
+                <span class="status-pill">
+                    Status:
+                    <span id="statusText" class="status-code">Idle</span>
+                </span>
+                <span id="errorText" class="error-text"></span>
+            </div>
+            <div class="help">
+                First call uses your selected SMR parameters. Second call omits latency / cost / accuracy headers.
+            </div>
+        </div>
+    </section>
+
+    <section class="card">
+        <header class="card-header">
+            <div>
+                <div class="title">
+                    Response Inspector
+                    <span class="title-pill">Headers &amp; Payload</span>
+                </div>
+                <div class="subtitle">
+                    Every request shows the full response body and all response headers from the gateway.
+                </div>
+            </div>
+        </header>
+
+        <div class="divider"></div>
+
+        <div class="response-section">
+            <div class="response-block">
+                <div class="response-title">
+                    <span>Response Headers</span>
+                </div>
+                <pre id="responseHeaders" class="response-body">(no response yet)</pre>
+            </div>
+
+            <div class="response-block" style="margin-top: 10px;">
+                <div class="response-title">
+                    <span>Response Body</span>
+                </div>
+                <pre id="responseBody" class="response-body">(no response yet)</pre>
+            </div>
+        </div>
+    </section>
+</div>
+
+<script>
+    function setStatus(text, isError) {
+        const el = document.getElementById("statusText");
+        el.textContent = text;
+        if (isError) {
+            el.classList.add("error");
+        } else {
+            el.classList.remove("error");
+        }
+    }
+
+    function setError(text) {
+        document.getElementById("errorText").textContent = text || "";
+    }
+
+    async function executeRequest(withPolicyHeaders) {
+        setError("");
+
+        const endpoint = document.getElementById("endpoint").value.trim();
+        const authTokenRaw = document.getElementById("authToken").value.trim();
+        const apiKey = document.getElementById("apiKey").value.trim();
+
+        const latency = document.getElementById("latency").value;
+        const cost = document.getElementById("cost").value;
+        const accuracy = document.getElementById("accuracy").value;
+        const contextAware = document.getElementById("contextAware").value;
+
+        const bodyText = document.getElementById("requestBody").value;
+
+        if (!endpoint) {
+            setError("Endpoint is required.");
+            setStatus("Invalid endpoint", true);
+            return;
+        }
+
+        let body;
+        try {
+            body = JSON.parse(bodyText);
+        } catch (err) {
+            console.error(err);
+            setError("Request body must be valid JSON.");
+            setStatus("Invalid JSON", true);
+            return;
+        }
+
+        /** @type {Record<string, string>} */
+        const headers = {
+            "Content-Type": "application/json"
+        };
+
+        if (authTokenRaw) {
+            headers["Authorization"] = authTokenRaw.toLowerCase().startsWith("bearer ")
+                ? authTokenRaw
+                : "Bearer " + authTokenRaw;
+        }
+
+        if (apiKey) {
+            headers["X-API-Key"] = apiKey;
+        }
+
+        // Attach SMR policy headers only when requested.
+        if (withPolicyHeaders) {
+            if (latency) {
+                headers["X-Latency-Policy"] = latency;
+            }
+            if (cost) {
+                headers["X-Cost-Policy"] = cost;
+            }
+            if (accuracy) {
+                headers["X-Accuracy-Policy"] = accuracy;
+            }
+        }
+
+        // Context aware header is controlled directly by the dropdown.
+        if (contextAware) {
+            headers["X-Context-Aware"] = contextAware;
+        }
+
+        setStatus("Sending…", false);
+
+        try {
+            const response = await fetch(endpoint, {
+                method: "POST",
+                headers,
+                body: JSON.stringify(body)
+            });
+
+            const responseText = await response.text();
+
+            const headerLines = [];
+            response.headers.forEach((value, key) => {
+                headerLines.push(key + ": " + value);
+            });
+
+            document.getElementById("responseHeaders").textContent =
+                headerLines.length > 0 ? headerLines.join("\n") : "(no headers)";
+
+            try {
+                const json = JSON.parse(responseText);
+                document.getElementById("responseBody").textContent = JSON.stringify(json, null, 2);
+            } catch {
+                document.getElementById("responseBody").textContent = responseText || "(empty body)";
+            }
+
+            const statusLabel = response.status + " " + (response.statusText || "");
+            setStatus(statusLabel, !response.ok);
+        } catch (err) {
+            console.error(err);
+            setError("Network / CORS error: " + (err && err.message ? err.message : String(err)));
+            setStatus("Request failed", true);
+        }
+    }
+
+    function loadContextAwareExample() {
+        const example = `{
+  "input": [
+    {
+      "source": "I am going to court"
+    }
+  ],
+  "config": {
+    "context": "I am a sport person",
+    "language": {
+      "sourceLanguage": "en",
+      "targetLanguage": "ml"
+    }
+  }
+}`;
+        document.getElementById("requestBody").value = example;
+        document.getElementById("contextAware").value = "yes";
+        setStatus("Context example loaded", false);
+        setError("");
+    }
+
+    document.getElementById("btnWithPolicy").addEventListener("click", function (e) {
+        e.preventDefault();
+        executeRequest(true);
+    });
+
+    document.getElementById("btnWithoutPolicy").addEventListener("click", function (e) {
+        e.preventDefault();
+        executeRequest(false);
+    });
+
+    document.getElementById("btnLoadContextExample").addEventListener("click", function (e) {
+        e.preventDefault();
+        loadContextAwareExample();
+    });
+</script>
+</body>
+</html>
+

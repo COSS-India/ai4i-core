@@ -3108,6 +3108,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Expose all response headers so browser-based tools (like smr_ui.html)
+    # can read and display them via the Fetch API.
+    expose_headers=["*"],
 )
 
 # Add trusted host middleware
