@@ -6,7 +6,7 @@ import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestCo
 // For production this should be set to the browser-facing API gateway URL
 // (for example, https://dev.ai4inclusion.org or a dedicated API domain).
 // Default to localhost:8080 for local development if not set.
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 // Debug: Log the API base URL in development
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
@@ -264,7 +264,7 @@ asrApiClient.interceptors.response.use(
 );
 
 // Get JWT token from auth service
-const getJwtToken = (): string | null => {
+export const getJwtToken = (): string | null => {
   if (typeof window === 'undefined') return null;
   // Check both localStorage and sessionStorage for token (same logic as authService)
   const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
@@ -311,6 +311,8 @@ apiClient.interceptors.request.use(
     const isSpeakerDiarizationEndpoint = url.includes('/api/v1/speaker-diarization');
     const isLanguageDiarizationEndpoint = url.includes('/api/v1/language-diarization');
     const isAudioLangDetectionEndpoint = url.includes('/api/v1/audio-lang-detection');
+    const isObservabilityEndpoint = url.includes('/api/v1/observability');
+    const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
     
@@ -319,7 +321,9 @@ apiClient.interceptors.request.use(
                         isTTSEndpoint || isLLMEndpoint || isPipelineEndpoint ||
                         isAudioLangDetectionEndpoint || isLanguageDetectionEndpoint ||
                         isLanguageDiarizationEndpoint || isSpeakerDiarizationEndpoint ||
-                        isNEREndpoint || isOCREndpoint || isTransliterationEndpoint;
+                        isNEREndpoint || isOCREndpoint || isTransliterationEndpoint ||
+                        isObservabilityEndpoint ||
+                        isMultiTenantEndpoint;
     
     // Proactively refresh token if it's expiring soon (skip for refresh and login endpoints)
     if ((requiresJWT || (isAuthEndpoint && !isAuthRefreshEndpoint)) && !isAuthRefreshEndpoint) {
@@ -347,47 +351,64 @@ apiClient.interceptors.request.use(
           config.headers['X-API-Key'] = apiKey;
           config.headers['x-auth-source'] = 'BOTH';
           config.headers['X-Auth-Source'] = 'BOTH';
+          console.log('🔐 Model-management: Sending BOTH JWT + API key', {
+            url: config.url,
+            hasJWT: !!jwtToken,
+            hasAPIKey: !!apiKey,
+            apiKeyLength: apiKey?.length || 0,
+          });
         } else if (jwtToken) {
           // Only JWT token present - use AUTH_TOKEN
           config.headers['Authorization'] = `Bearer ${jwtToken}`;
           config.headers['x-auth-source'] = 'AUTH_TOKEN';
-        } else if (apiKey) {
-          // Only API key present - send as Bearer token with API_KEY auth source
-          // Some APIs expect API key as Bearer token when x-auth-source is API_KEY
-          config.headers['Authorization'] = `Bearer ${apiKey}`;
-          config.headers['X-API-Key'] = apiKey;
-          config.headers['x-auth-source'] = 'API_KEY';
+          config.headers['X-Auth-Source'] = 'AUTH_TOKEN';
+          console.log('🔐 Model-management: Sending JWT only (AUTH_TOKEN)', {
+            url: config.url,
+            hasJWT: !!jwtToken,
+            hasAPIKey: false,
+            jwtLength: jwtToken?.length || 0,
+          });
         } else {
-          // No authentication - will likely fail, but let API handle it
-          console.warn('No authentication token or API key found for model-management endpoint:', config.url);
+          console.error('❌ Model-management: No JWT token available!', {
+            url: config.url,
+          });
         }
-      } else {
-        // For other service endpoints, require JWT token
+      } 
+      
+      // Observability endpoints use JWT token with x-auth-source: BOTH
+      if (isObservabilityEndpoint) {
+        if (jwtToken) {
+          config.headers['Authorization'] = `Bearer ${jwtToken}`;
+          config.headers['x-auth-source'] = 'BOTH';
+          config.headers['X-Auth-Source'] = 'BOTH';
+        }
+      }
+      
+      // All services require BOTH JWT token AND API key
+      if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint || isNEREndpoint ||
+          isOCREndpoint || isTransliterationEndpoint || isLanguageDetectionEndpoint || 
+          isSpeakerDiarizationEndpoint || isLanguageDiarizationEndpoint || isAudioLangDetectionEndpoint) {
         if (jwtToken) {
           config.headers['Authorization'] = `Bearer ${jwtToken}`;
         }
-        
-        // All services require BOTH JWT token AND API key
-        if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint || isNEREndpoint ||
-            isOCREndpoint || isTransliterationEndpoint || isLanguageDetectionEndpoint || 
-            isSpeakerDiarizationEndpoint || isLanguageDiarizationEndpoint || isAudioLangDetectionEndpoint) {
-          if (apiKey) {
-            config.headers['X-API-Key'] = apiKey;
-            // Set X-Auth-Source to BOTH when both JWT and API key are present
-            // Use lowercase to match the model-management endpoint format
-            if (jwtToken) {
-              config.headers['x-auth-source'] = 'BOTH';
-              // Also set uppercase version for consistency
-              config.headers['X-Auth-Source'] = 'BOTH';
-            } else {
-              // If only API key is present (shouldn't happen for these endpoints, but handle it)
-              console.warn('API key present but JWT token missing for service endpoint:', config.url);
-            }
+        const apiKey = getApiKey();
+        if (apiKey) {
+          config.headers['X-API-Key'] = apiKey;
+          // Set X-Auth-Source to BOTH when both JWT and API key are present
+          // Use lowercase to match the model-management endpoint format
+          if (jwtToken) {
+            config.headers['x-auth-source'] = 'BOTH';
+            // Also set uppercase version for consistency
+            config.headers['X-Auth-Source'] = 'BOTH';
           } else {
-            // Log warning if API key is missing
-            console.warn('API key is missing for service endpoint:', config.url);
+            // If only API key is present (shouldn't happen for these endpoints, but handle it)
+            console.warn('API key present but JWT token missing for service endpoint:', config.url);
           }
+        } else {
+          // Log warning if API key is missing
+          console.warn('API key is missing for service endpoint:', config.url);
         }
+        
       }
     } else if (!isAuthEndpoint) {
       // For other endpoints (legacy), use API key if available
@@ -430,6 +451,7 @@ apiClient.interceptors.response.use(
           if (typeof window !== 'undefined') {
             const url = (error.config?.url || '').toLowerCase();
             const isModelManagementEndpoint = url.includes('/model-management');
+            const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
             
             // Check if it's a service endpoint or model-management endpoint
             // These should NOT automatically logout - let the UI handle the error
@@ -445,9 +467,11 @@ apiClient.interceptors.response.use(
                                      url.includes('/api/v1/speaker-diarization') ||
                                      url.includes('/api/v1/language-diarization') ||
                                      url.includes('/api/v1/audio-lang-detection') ||
-                                     isModelManagementEndpoint;
+                                     url.includes('/api/v1/observability') ||
+                                     isModelManagementEndpoint ||
+                                     isMultiTenantEndpoint;
             
-            if (isServiceEndpoint || isModelManagementEndpoint) {
+            if (isServiceEndpoint || isModelManagementEndpoint || isMultiTenantEndpoint) {
               // For service endpoints and model-management endpoints
               // Check if it's a token expiration issue - if so, redirect to sign-in
               

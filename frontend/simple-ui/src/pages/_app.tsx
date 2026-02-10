@@ -30,6 +30,8 @@ const layoutRoutes = [
   '/language-diarization',
   '/audio-language-detection',
   '/ner',
+  '/logs',
+  '/traces',
 ];
 
 export default function App({ Component, pageProps }: AppProps) {

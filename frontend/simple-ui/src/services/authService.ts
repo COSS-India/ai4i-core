@@ -80,16 +80,25 @@ class AuthService {
           errorData = {};
         }
         
-        // Extract error message from various possible formats
+        // Extract error message from various possible formats (avoid [object Object] when detail is an object)
         let errorMessage = `HTTP error! status: ${response.status}`;
         if (errorData?.detail) {
-          errorMessage = String(errorData.detail);
+          const d = errorData.detail;
+          if (typeof d === 'string') {
+            errorMessage = d;
+          } else if (typeof d === 'object' && d !== null && typeof (d as any).message === 'string') {
+            errorMessage = (d as any).message;
+          } else if (typeof d === 'object' && d !== null) {
+            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
+          } else {
+            errorMessage = String(d);
+          }
         } else if (errorData?.message) {
           errorMessage = String(errorData.message);
         } else if (typeof errorData === 'string') {
           errorMessage = errorData;
         } else if (Array.isArray(errorData) && errorData.length > 0) {
-          errorMessage = errorData.map((err: any) => err.detail || err.message || String(err)).join(', ');
+          errorMessage = errorData.map((err: any) => err.detail?.message ?? err.detail ?? err.message ?? String(err)).join(', ');
         }
         
         // Check if error is "Invalid authentication credentials" (session expiry)
@@ -263,24 +272,33 @@ class AuthService {
           errorData = {};
         }
         
-        // Handle different error response formats
+        // Handle different error response formats (avoid [object Object] when detail is an object)
         let errorMessage = `HTTP error! status: ${response.status}`;
         if (typeof errorData === 'string') {
           errorMessage = errorData;
         } else if (errorData?.detail) {
-          // Extract the detail field which contains the error message
-          errorMessage = String(errorData.detail);
+          const d = errorData.detail;
+          if (typeof d === 'string') {
+            errorMessage = d;
+          } else if (typeof d === 'object' && d !== null && typeof d.message === 'string') {
+            errorMessage = d.message;
+          } else if (typeof d === 'object' && d !== null) {
+            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
+          } else {
+            errorMessage = String(d);
+          }
         } else if (errorData?.message) {
           errorMessage = String(errorData.message);
         } else if (Array.isArray(errorData)) {
           // Handle array of errors
-          errorMessage = errorData.map((err: any) => 
-            err.detail || err.message || String(err)
+          errorMessage = errorData.map((err: any) =>
+            err.detail?.message ?? err.detail ?? err.message ?? String(err)
           ).join(', ');
         } else if (typeof errorData === 'object' && Object.keys(errorData).length > 0) {
-          // Try to extract meaningful error from object
-          const errorText = errorData.detail || errorData.message || errorData.error;
-          errorMessage = errorText ? String(errorText) : JSON.stringify(errorData);
+          const d = errorData.detail ?? errorData.message ?? errorData.error;
+          errorMessage = typeof d === 'object' && d !== null && (d as any).message != null
+            ? String((d as any).message)
+            : d != null ? String(d) : JSON.stringify(errorData);
         }
         
         // Add status code to error for better debugging
@@ -294,8 +312,22 @@ class AuthService {
       console.error('Auth service request failed:', error);
       // Re-throw as Error if it's not already one, with proper message
       if (error instanceof Error) {
+        // If error message is "[object Object]", try to extract meaningful info
+        if (error.message === '[object Object]' || error.message.includes('[object Object]')) {
+          // Try to get more info from the error object
+          const errorInfo = (error as any).response?.data || (error as any).data || error;
+          if (typeof errorInfo === 'object' && errorInfo !== null) {
+            const extractedMsg = errorInfo.detail || errorInfo.message || errorInfo.error || JSON.stringify(errorInfo);
+            throw new Error(typeof extractedMsg === 'string' ? extractedMsg : JSON.stringify(extractedMsg));
+          }
+        }
         throw error;
       } else {
+        // If it's not an Error instance, try to extract meaningful message
+        if (typeof error === 'object' && error !== null) {
+          const extractedMsg = (error as any).detail || (error as any).message || (error as any).error || JSON.stringify(error);
+          throw new Error(typeof extractedMsg === 'string' ? extractedMsg : JSON.stringify(extractedMsg));
+        }
         throw new Error(String(error));
       }
     }

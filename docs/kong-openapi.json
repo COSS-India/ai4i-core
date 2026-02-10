@@ -3187,6 +3187,166 @@
         }
       }
     },
+    "/api/v1/model-management/experiments": {
+      "post": {
+        "tags": ["Model Management", "A/B Testing"],
+        "summary": "Create Experiment",
+        "description": "Create a new A/B testing experiment. Requires at least 2 variants with traffic percentages summing to 100.",
+        "operationId": "create_experiment_api_v1_model_management_experiments_post",
+        "security": [{"HTTPBearer": []}, {"APIKeyHeader": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "title": "ExperimentCreateRequest"}}}},
+        "responses": {
+          "201": {"description": "Created", "content": {"application/json": {"schema": {"type": "object", "title": "ExperimentResponse"}}}},
+          "400": {"description": "Validation error"},
+          "422": {"description": "Validation Error", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HTTPValidationError"}}}}
+        }
+      },
+      "get": {
+        "tags": ["Model Management", "A/B Testing"],
+        "summary": "List Experiments",
+        "description": "List all experiments with optional filters (status, task_type, created_by).",
+        "operationId": "list_experiments_api_v1_model_management_experiments_get",
+        "security": [{"HTTPBearer": []}, {"APIKeyHeader": []}],
+        "parameters": [
+          {"name": "status", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Filter by experiment status"},
+          {"name": "task_type", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Filter by task type"},
+          {"name": "created_by", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Filter by creator user ID"}
+        ],
+        "responses": {
+          "200": {"description": "Successful Response", "content": {"application/json": {"schema": {"type": "array", "items": {"type": "object", "title": "ExperimentListResponse"}}}}},
+          "422": {"description": "Validation Error", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HTTPValidationError"}}}}
+        }
+      }
+    },
+    "/api/v1/model-management/experiments/select-variant": {
+      "post": {
+        "tags": ["Model Management", "A/B Testing"],
+        "summary": "Select Experiment Variant",
+        "description": "Select an experiment variant for a given request. Used by services/gateway to determine which variant to route to.",
+        "operationId": "select_variant_api_v1_model_management_experiments_select_variant_post",
+        "security": [{"HTTPBearer": []}, {"APIKeyHeader": []}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "title": "ExperimentVariantSelectionRequest"}}}},
+        "responses": {
+          "200": {"description": "Successful Response", "content": {"application/json": {"schema": {"type": "object", "title": "ExperimentVariantSelectionResponse"}}}},
+          "422": {"description": "Validation Error", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HTTPValidationError"}}}}
+        }
+      }
+    },
+    "/api/v1/model-management/experiments/{experiment_id}": {
+      "get": {
+        "tags": ["Model Management", "A/B Testing"],
+        "summary": "Get Experiment",
+        "description": "Get experiment details by ID.",
+        "operationId": "get_experiment_api_v1_model_management_experiments__experiment_id__get",
+        "security": [{"HTTPBearer": []}, {"APIKeyHeader": []}],
+        "parameters": [{"name": "experiment_id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}, "description": "Experiment UUID"}],
+        "responses": {
+          "200": {"description": "Successful Response", "content": {"application/json": {"schema": {"type": "object", "title": "ExperimentResponse"}}}},
+          "404": {"description": "Experiment not found"},
+          "422": {"description": "Validation Error", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HTTPValidationError"}}}}
+        }
+      },
+      "patch": {
+        "tags": ["Model Management", "A/B Testing"],
+        "summary": "Update Experiment",
+        "description": "Update an experiment. Cannot update variants of a RUNNING experiment.",
+        "operationId": "update_experiment_api_v1_model_management_experiments__experiment_id__patch",
+        "security": [{"HTTPBearer": []}, {"APIKeyHeader": []}],
+        "parameters": [{"name": "experiment_id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+        "requestBody": {"content": {"application/json": {"schema": {"type": "object", "title": "ExperimentUpdateRequest"}}}},
+        "responses": {
+          "200": {"description": "Successful Response", "content": {"application/json": {"schema": {"type": "object", "title": "ExperimentResponse"}}}},
+          "404": {"description": "Experiment not found"},
+          "422": {"description": "Validation Error", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HTTPValidationError"}}}}
+        }
+      },
+      "delete": {
+        "tags": ["Model Management", "A/B Testing"],
+        "summary": "Delete Experiment",
+        "description": "Delete an experiment. Cannot delete a RUNNING experiment. Stop it first.",
+        "operationId": "delete_experiment_api_v1_model_management_experiments__experiment_id__delete",
+        "security": [{"HTTPBearer": []}, {"APIKeyHeader": []}],
+        "parameters": [{"name": "experiment_id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+        "responses": {
+          "204": {"description": "Deleted"},
+          "404": {"description": "Experiment not found"},
+          "422": {"description": "Validation Error", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HTTPValidationError"}}}}
+        }
+      }
+    },
+    "/api/v1/model-management/experiments/{experiment_id}/status": {
+      "post": {
+        "tags": ["Model Management", "A/B Testing"],
+        "summary": "Update Experiment Status",
+        "description": "Update experiment status by action: start, stop, pause, resume, cancel.",
+        "operationId": "update_experiment_status_api_v1_model_management_experiments__experiment_id__status_post",
+        "security": [{"HTTPBearer": []}, {"APIKeyHeader": []}],
+        "parameters": [{"name": "experiment_id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "properties": {"action": {"type": "string", "enum": ["start", "stop", "pause", "resume", "cancel"]}}}}}},
+        "responses": {
+          "200": {"description": "Successful Response", "content": {"application/json": {"schema": {"type": "object", "title": "ExperimentResponse"}}}},
+          "404": {"description": "Experiment not found"},
+          "422": {"description": "Validation Error", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HTTPValidationError"}}}}
+        }
+      }
+    },
+    "/api/v1/model-management/experiments/{experiment_id}/metrics": {
+      "get": {
+        "tags": [
+          "Model Management",
+          "A/B Testing"
+        ],
+        "summary": "Get Experiment Metrics",
+        "description": "Get metrics for an A/B experiment by ID. Returns aggregated metrics per variant per day (request_count, success_count, error_count, success_rate, avg_latency_ms, custom_metrics).",
+        "operationId": "get_experiment_metrics_api_v1_model_management_experiments__experiment_id__metrics_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "experiment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Experiment Id"
+            },
+            "description": "Experiment UUID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExperimentMetricsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Experiment not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/pipeline/inference": {
       "post": {
         "tags": [
@@ -5154,6 +5314,37 @@
         ],
         "title": "Gender",
         "description": "Voice gender options for TTS."
+      },
+      "ExperimentMetricItem": {
+        "properties": {
+          "variant_id": { "type": "string", "format": "uuid", "title": "Variant Id" },
+          "variant_name": { "type": "string", "title": "Variant Name" },
+          "request_count": { "type": "integer", "title": "Request Count" },
+          "success_count": { "type": "integer", "title": "Success Count" },
+          "error_count": { "type": "integer", "title": "Error Count" },
+          "success_rate": { "type": "number", "title": "Success Rate" },
+          "avg_latency_ms": { "anyOf": [{ "type": "integer" }, { "type": "null" }], "title": "Avg Latency Ms" },
+          "custom_metrics": { "anyOf": [{ "type": "object", "additionalProperties": true }, { "type": "null" }], "title": "Custom Metrics" },
+          "metric_date": { "type": "string", "format": "date-time", "title": "Metric Date" }
+        },
+        "type": "object",
+        "required": ["variant_id", "variant_name", "request_count", "success_count", "error_count", "success_rate", "metric_date"],
+        "title": "ExperimentMetricItem",
+        "description": "Metrics for one variant for one day."
+      },
+      "ExperimentMetricsResponse": {
+        "properties": {
+          "experiment_id": { "type": "string", "format": "uuid", "title": "Experiment Id" },
+          "metrics": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ExperimentMetricItem" },
+            "title": "Metrics"
+          }
+        },
+        "type": "object",
+        "required": ["experiment_id", "metrics"],
+        "title": "ExperimentMetricsResponse",
+        "description": "Standard response: experiment_id once and list of variant metrics."
       },
       "HTTPValidationError": {
         "properties": {
