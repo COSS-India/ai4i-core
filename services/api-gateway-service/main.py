@@ -2002,8 +2002,7 @@ def requires_both_auth_and_api_key(request: Request) -> bool:
     path = request.url.path.lower()
     services_requiring_both = [
         "asr", "nmt", "tts", "pipeline", "llm", "ocr", "transliteration",
-        "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection"
-        # Note: NER removed - it only requires API key, not both
+        "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection", "ner"
     ]
     for svc in services_requiring_both:
         if f"/api/v1/{svc}" in path:
