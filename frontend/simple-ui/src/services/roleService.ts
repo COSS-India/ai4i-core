@@ -49,7 +49,14 @@ class RoleService {
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+        const detail = errorData.detail;
+        const message =
+          typeof detail === 'object' && detail !== null && typeof detail.message === 'string'
+            ? detail.message
+            : typeof detail === 'string'
+              ? detail
+              : `HTTP error! status: ${response.status}`;
+        throw new Error(message);
       }
 
       return await response.json();

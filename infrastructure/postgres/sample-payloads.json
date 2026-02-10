@@ -1,0 +1,168 @@
+{
+  "description": "Sample payloads for alert management API endpoints",
+  "version": "2.0",
+  "note": "This file contains sample payloads for the simplified alert management API. Organization is automatically extracted from API key or X-Organization header. Admins can specify organization as query parameter.",
+  
+  "create_alert_definition": {
+    "description": "POST /api/v1/alerts/definitions - Create a new alert definition",
+    "endpoint": "POST /api/v1/alerts/definitions",
+    "note": "IMPORTANT: For application alerts, do NOT include organization in promql_expr - the API will automatically inject it based on your API key or X-Organization header. For infrastructure alerts (CPU, Memory, Disk), organization injection is disabled as these metrics don't have organization labels.",
+    "examples": [
+      {
+        "name": "HighMedianLatencyPerService",
+        "description": "High median latency for specific inference endpoints",
+        "promql_expr": "histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~\"/.*inference.*\"}[5m]))) > 0.15",
+        "category": "application",
+        "severity": "warning",
+        "urgency": "medium",
+        "alert_type": "latency",
+        "scope": "per_endpoint",
+        "evaluation_interval": "30s",
+        "for_duration": "2m",
+        "annotations": [
+          {
+            "key": "summary",
+            "value": "High median latency for endpoint {{ $labels.endpoint }}"
+          },
+          {
+            "key": "description",
+            "value": "Median latency for {{ $labels.endpoint }} is {{ $value | humanize }}s (threshold: 0.15s)"
+          }
+        ]
+      },
+      {
+        "name": "HighErrorRateAllServices",
+        "description": "High error rate across all inference endpoints",
+        "promql_expr": "sum(rate(telemetry_obsv_http_requests_total{status=~\"5..\", endpoint=~\"/.*inference.*\"}[5m])) / sum(rate(telemetry_obsv_http_requests_total{endpoint=~\"/.*inference.*\"}[5m])) > 0.05",
+        "category": "application",
+        "severity": "critical",
+        "urgency": "high",
+        "alert_type": "error_rate",
+        "scope": "all_services",
+        "evaluation_interval": "30s",
+        "for_duration": "3m",
+        "annotations": [
+          {
+            "key": "summary",
+            "value": "High error rate across all inference endpoints"
+          },
+          {
+            "key": "description",
+            "value": "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+          }
+        ]
+      }
+    ],
+    "infrastructure_examples": [
+      {
+        "name": "HighCPUUtilization",
+        "description": "High CPU utilization detected across system nodes",
+        "promql_expr": "100 * (1 - sum(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) / sum(rate(node_cpu_seconds_total[5m]))) > 20",
+        "category": "infrastructure",
+        "severity": "warning",
+        "urgency": "medium",
+        "alert_type": "resource_utilization",
+        "scope": "cluster_wide",
+        "evaluation_interval": "1m",
+        "for_duration": "5m",
+        "annotations": [
+          {
+            "key": "summary",
+            "value": "High CPU utilization detected ({{ $value | humanize }}%)"
+          },
+          {
+            "key": "description",
+            "value": "CPU utilization is {{ $value | humanize }}% (threshold: 20%)"
+          }
+        ]
+      },
+      {
+        "name": "HighMemoryUtilization",
+        "description": "High memory utilization detected across system nodes",
+        "promql_expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 20",
+        "category": "infrastructure",
+        "severity": "warning",
+        "urgency": "medium",
+        "alert_type": "resource_utilization",
+        "scope": "cluster_wide",
+        "evaluation_interval": "1m",
+        "for_duration": "5m",
+        "annotations": [
+          {
+            "key": "summary",
+            "value": "High memory utilization detected ({{ $value | humanize }}%)"
+          },
+          {
+            "key": "description",
+            "value": "Memory utilization is {{ $value | humanize }}% (threshold: 20%)"
+          }
+        ]
+      },
+      {
+        "name": "HighDiskUtilization",
+        "description": "High disk utilization detected on root filesystem",
+        "promql_expr": "100 * (1 - node_filesystem_avail_bytes{fstype=\"ext4\", mountpoint=\"/\"} / node_filesystem_size_bytes{fstype=\"ext4\", mountpoint=\"/\"}) > 20",
+        "category": "infrastructure",
+        "severity": "warning",
+        "urgency": "medium",
+        "alert_type": "resource_utilization",
+        "scope": "cluster_wide",
+        "evaluation_interval": "1m",
+        "for_duration": "5m",
+        "annotations": [
+          {
+            "key": "summary",
+            "value": "High disk utilization detected on root filesystem ({{ $value | humanize }}%)"
+          },
+          {
+            "key": "description",
+            "value": "Disk utilization is {{ $value | humanize }}% (threshold: 20%)"
+          }
+        ]
+      }
+    ],
+    "usage": {
+      "headers": {
+        "Content-Type": "application/json",
+        "X-API-Key": "your-api-key-here",
+        "X-Organization": "bashadaan (optional - if not provided, organization is determined from API key)"
+      },
+      "admin_usage": "Admins can specify organization as query parameter: POST /api/v1/alerts/definitions?organization=bashadaan",
+      "curl_example": "curl -X POST http://localhost:8000/api/v1/alerts/definitions -H 'Content-Type: application/json' -H 'X-API-Key: your-api-key' -d @sample-payloads.json"
+    }
+  },
+  
+  "create_notification_receiver": {
+    "description": "POST /api/v1/alerts/receivers - Create a new notification receiver (auto-generates receiver name and routing rule)",
+    "endpoint": "POST /api/v1/alerts/receivers",
+    "note": "Receiver name is auto-generated as: {severity}-{category}. A routing rule is automatically created. Email templates are optional - defaults will be used if not provided.",
+    "examples": [
+      {
+        "category": "application",
+        "severity": "warning",
+        "alert_type": "latency",
+        "email_to": ["ops@example.com", "oncall@example.com"]
+      },
+      {
+        "category": "application",
+        "severity": "critical",
+        "email_to": ["critical-alerts@example.com"],
+        "email_subject_template": "[CRITICAL] {{ .GroupLabels.alertname }} - {{ .GroupLabels.organization }}",
+        "email_body_template": "<h2 style=\"color: #d32f2f;\">🚨 CRITICAL: {{ .GroupLabels.category | title }} Alert</h2><p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p><p><strong>Organization:</strong> {{ .GroupLabels.organization }}</p><p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p><p><strong>Category:</strong> {{ .GroupLabels.category }}</p>"
+      }
+    ],
+    "usage": {
+      "headers": {
+        "Content-Type": "application/json",
+        "X-API-Key": "your-api-key-here",
+        "X-Organization": "bashadaan (optional - if not provided, organization is determined from API key)"
+      },
+      "admin_usage": "Admins can specify organization as query parameter: POST /api/v1/alerts/receivers?organization=bashadaan",
+      "curl_example": "curl -X POST http://localhost:8000/api/v1/alerts/receivers -H 'Content-Type: application/json' -H 'X-API-Key: your-api-key' -d '{\"category\":\"application\",\"severity\":\"warning\",\"email_to\":[\"ops@example.com\"]}'",
+      "auto_generated": {
+        "receiver_name": "warning-application (auto-generated from category + severity)",
+        "routing_rule": "Automatically created with match conditions: severity=warning, category=application, alert_type=latency (if provided)"
+      }
+    }
+  }
+}

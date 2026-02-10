@@ -1,3 +1,6 @@
+# Core dependencies (needed early)
+packaging>=21.0
+
 # FastAPI and ASGI server
 fastapi==0.110.0
 uvicorn[standard]==0.29.0
@@ -28,6 +31,9 @@ requests>=2.31.0
 # Utilities
 python-multipart==0.0.9
 python-dotenv==1.0.1
+
+# Packaging (required by opentelemetry-instrumentation-fastapi)
+packaging>=21.0
 
 # Authentication and security (for future auth integration)
 passlib[bcrypt]==1.7.4

@@ -34,6 +34,15 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("tts-service")
 
 
+def count_words(text: str) -> int:
+    """Count words in text"""
+    try:
+        words = [word for word in text.split() if word.strip()]
+        return len(words)
+    except Exception:
+        return 0
+
+
 class TTSService:
     """Main TTS service for text-to-speech inference."""
     
@@ -298,7 +307,43 @@ class TTSService:
                 span.set_attribute("tts.processing_time_seconds", processing_time)
                 span.set_attribute("tts.output_count", len(response.audio))
                 
-                logger.info(f"TTS inference completed for request {request_id} in {processing_time:.2f}s")
+                # Calculate input metrics (character length and word count)
+                input_texts = [text_input.source for text_input in request.input]
+                total_input_characters = sum(len(text) for text in input_texts)
+                total_input_words = sum(count_words(text) for text in input_texts)
+                
+                # Calculate output metrics (audio duration)
+                total_output_audio_duration = total_audio_duration if total_audio_duration else 0.0
+                
+                # Add output audio length to trace span
+                span.set_attribute("tts.output.audio_length_seconds", total_output_audio_duration)
+                span.set_attribute("tts.output.audio_length_ms", total_output_audio_duration * 1000.0)
+                if total_audio_size > 0:
+                    span.set_attribute("tts.output.audio_size_bytes", total_audio_size)
+                
+                logger.info(
+                    f"TTS inference completed for request {request_id} in {processing_time:.2f}s, "
+                    f"input_characters={total_input_characters}, input_words={total_input_words}, "
+                    f"output_audio_duration={total_output_audio_duration:.2f}s",
+                    extra={
+                        # Common input/output details structure (general fields for all services)
+                        "input_details": {
+                            "character_length": total_input_characters,
+                            "word_count": total_input_words,
+                            "input_count": len(request.input)
+                        },
+                        "output_details": {
+                            "audio_length_seconds": total_output_audio_duration,
+                            "audio_length_ms": total_output_audio_duration * 1000.0,
+                            "output_count": len(response.audio)
+                        },
+                        # Service metadata (for filtering)
+                        "request_id": str(request_id),
+                        "processing_time_seconds": processing_time,
+                        "service_id": service_id,
+                        "source_language": language,
+                    }
+                )
                 return response
                 
             except Exception as e:

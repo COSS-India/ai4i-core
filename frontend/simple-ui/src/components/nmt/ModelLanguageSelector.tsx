@@ -24,6 +24,8 @@ interface ModelLanguageSelectorProps extends LanguageSelectorProps {
   selectedServiceId?: string;
   onServiceChange?: (serviceId: string) => void;
   hideServiceSelector?: boolean;
+  /** When true, service dropdown is shown but disabled (e.g. anonymous users with fixed IndicTrans). */
+  serviceDropdownDisabled?: boolean;
 }
 
 const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
@@ -34,6 +36,7 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   selectedServiceId,
   onServiceChange,
   hideServiceSelector = false,
+  serviceDropdownDisabled = false,
 }) => {
   const [currentServiceId, setCurrentServiceId] = useState<string>(selectedServiceId || '');
   const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
@@ -65,6 +68,13 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
     }
   }, [languagesData]);
 
+  // Sync with parent when selectedServiceId is set (e.g. anonymous users with fixed IndicTrans)
+  useEffect(() => {
+    if (selectedServiceId) {
+      setCurrentServiceId(selectedServiceId);
+    }
+  }, [selectedServiceId]);
+
   // Do not auto-select a service; user must choose explicitly
   useEffect(() => {
     if (!services || services.length === 0) return;
@@ -81,17 +91,27 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
 
   const handleSourceLanguageChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const newSourceLanguage = event.target.value;
+    const match = availableLanguagePairs?.find(
+      (p) => p.sourceLanguage === newSourceLanguage && p.targetLanguage === languagePair.targetLanguage
+    );
     onLanguagePairChange({
       ...languagePair,
       sourceLanguage: newSourceLanguage,
+      sourceScriptCode: match?.sourceScriptCode ?? languagePair.sourceScriptCode,
+      targetScriptCode: match?.targetScriptCode ?? languagePair.targetScriptCode,
     });
   };
 
   const handleTargetLanguageChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const newTargetLanguage = event.target.value;
+    const match = availableLanguagePairs?.find(
+      (p) => p.sourceLanguage === languagePair.sourceLanguage && p.targetLanguage === newTargetLanguage
+    );
     onLanguagePairChange({
       ...languagePair,
       targetLanguage: newTargetLanguage,
+      sourceScriptCode: match?.sourceScriptCode ?? languagePair.sourceScriptCode,
+      targetScriptCode: match?.targetScriptCode ?? languagePair.targetScriptCode,
     });
   };
 
@@ -137,25 +157,29 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
                 value={currentServiceId}
                 onChange={handleServiceChange}
                 placeholder="Select a model"
-                disabled={servicesLoading}
+                disabled={servicesLoading || serviceDropdownDisabled}
               >
-                {services?.map((service) => (
-                  <option key={service.service_id} value={service.service_id}>
-                    {service.name || service.service_id}
-                  </option>
-                ))}
+                {services?.map((service) => {
+                  const version = service.modelVersion || service.model_version;
+                  const displayText = version ? `${service.name || service.service_id} (${version})` : (service.name || service.service_id);
+                  return (
+                    <option key={service.service_id} value={service.service_id}>
+                      {displayText}
+                    </option>
+                  );
+                })}
               </Select>
             </FormControl>
             
             {selectedService && (
-              <Box mt={2} p={3} bg="gray.50" borderRadius="md">
-                <Text fontSize="sm" color="gray.600" mb={1}>
+              <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                <Text fontSize="sm" color="gray.700" mb={1}>
                   <strong>Service ID:</strong> {selectedService.service_id}
                 </Text>
-                <Text fontSize="sm" color="gray.600" mb={1}>
+                <Text fontSize="sm" color="gray.700" mb={1}>
                   <strong>Name:</strong> {selectedService.name || selectedService.service_id}
                 </Text>
-                <Text fontSize="sm" color="gray.600" mb={1}>
+                <Text fontSize="sm" color="gray.700" mb={1}>
                   <strong>Description:</strong> {selectedService.serviceDescription || selectedService.description || 'No description available'}
                 </Text>
               </Box>
@@ -233,11 +257,11 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
             </HStack>
 
             {/* Current Selection Display */}
-            <Box textAlign="center" p={3} bg="orange.50" borderRadius="md">
-              <Text fontSize="sm" color="orange.700" fontWeight="medium">
+            <Box textAlign="center" p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+              <Text fontSize="sm" color="gray.700" fontWeight="medium">
                 {getLanguageLabel(languagePair.sourceLanguage)} → {getLanguageLabel(languagePair.targetLanguage)}
               </Text>
-              <Text fontSize="xs" color="orange.600" mt={1}>
+              <Text fontSize="xs" color="gray.700" mt={1}>
                 {languagePair.sourceLanguage} → {languagePair.targetLanguage}
               </Text>
             </Box>

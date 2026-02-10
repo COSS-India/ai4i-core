@@ -417,8 +417,8 @@ services:
 
   telemetry-service:
     build:
-      context: ./services/telemetry-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/telemetry-service/Dockerfile
     container_name: ai4v-telemetry-service
     ports:
       - "8084:8084"
@@ -659,8 +659,8 @@ services:
 
   llm-service:
     build:
-      context: ./services/llm-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/llm-service/Dockerfile
     container_name: ai4v-llm-service
     ports:
       - "8093:8090"
@@ -947,6 +947,8 @@ services:
         NEXT_PUBLIC_NMT_API_KEY: ${NMT_API_KEY}
         NEXT_PUBLIC_PIPELINE_API_KEY: ${PIPELINE_API_KEY}
         NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
+        # Telemetry/Observability service URL (logs and traces) - same as API Gateway
+        NEXT_PUBLIC_TELEMETRY_SERVICE_URL: https://core-v1.ai4inclusion.org
     container_name: ai4v-simple-ui
     ports:
       - "3000:3000"
@@ -962,6 +964,8 @@ services:
       - NEXT_PUBLIC_NMT_API_KEY=${NMT_API_KEY}
       - NEXT_PUBLIC_PIPELINE_API_KEY=${PIPELINE_API_KEY}
       - NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${MODEL_MANAGEMENT_API_KEY}
+      # Telemetry/Observability service URL (logs and traces) - routed through API Gateway
+      - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://core-v1.ai4inclusion.org
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
       - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
     depends_on:
@@ -985,6 +989,7 @@ services:
       - "9090:9090"
     volumes:
       - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infrastructure/prometheus/rules:/etc/prometheus/rules
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -992,9 +997,9 @@ services:
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
       - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
       # - '--web.external-url=http://localhost:9090'
-
       - '--web.route-prefix=/'
     networks:
       - microservices-network
@@ -1008,6 +1013,69 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # Observability: Alertmanager (POC)
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: ai4v-alertmanager
+    ports:
+      - "9095:9093"
+    volumes:
+      - ./infrastructure/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+    networks:
+      - microservices-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Alert Configuration Sync Service
+  # Generates Prometheus and Alertmanager YAML files from database and triggers hot reload
+  alert-config-sync-service:
+    build:
+      context: ./services/alert-config-sync-service
+      dockerfile: Dockerfile
+    container_name: ai4v-alert-config-sync-service
+    ports:
+      - "8101:8097"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - PROMETHEUS_URL=http://prometheus:9090
+      - ALERTMANAGER_URL=http://alertmanager:9093
+      - PROMETHEUS_APPLICATION_ALERTS_PATH=/etc/prometheus/rules/application-alerts.yml
+      - PROMETHEUS_INFRASTRUCTURE_ALERTS_PATH=/etc/prometheus/rules/infrastructure-alerts.yml
+      - ALERTMANAGER_CONFIG_PATH=/etc/alertmanager/alertmanager.yml
+      - SYNC_INTERVAL=60
+      - PORT=8097
+    volumes:
+      # Mount Prometheus rules directory (writable so sync service can write YAML files)
+      - ./infrastructure/prometheus/rules:/etc/prometheus/rules
+      # Mount Alertmanager config file (writable so sync service can write YAML file)
+      # Note: alertmanager mounts this as read-only, but sync service writes to host file
+      - ./infrastructure/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    depends_on:
+      postgres:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+      alertmanager:
+        condition: service_started
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8097/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
 
   # Observability: Grafana
   grafana:
@@ -1147,6 +1215,7 @@ services:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
       - ./infrastructure/fluent-bit/extract_context.lua:/fluent-bit/scripts/extract_context.lua:ro
+      # - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -1161,10 +1230,14 @@ services:
 volumes:
   postgres-data:
     driver: local
+    # Note: Removed bind mount to Linux-specific path for Windows compatibility
+    # Data will persist in Docker's managed volume location
+    # To use a custom path on Linux, uncomment and adjust the driver_opts below:
     driver_opts:
-          type: "none"
-          o: "bind"
-          device: "/home/ubuntu/ai4i-v/volumes/pg_data"
+      type: "none"
+      o: "bind"
+      device: "/home/ubuntu/ai4i-v/volumes/pg_data"
+      
   postgres-konga-data:
     driver: local
   redis-data:
@@ -1184,6 +1257,8 @@ volumes:
   grafana-data:
     driver: local
   opensearch-data:
+    driver: local
+  alertmanager-data:
     driver: local
 
 networks:

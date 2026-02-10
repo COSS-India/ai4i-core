@@ -1,0 +1,44 @@
+# groups:
+# - name: system-alerts
+#   rules:
+
+#   - alert: HighMedianLatency
+#     expr: |
+#       histogram_quantile(
+#         0.5,
+#         sum by (le, service) (
+#           rate(telemetry_obsv_request_duration_seconds_bucket{
+#             service=~"nmt-service|tts-service|asr-service"
+#           }[5m])
+#         )
+#       ) > 0.1
+#     for: 2m
+#     labels:
+#       severity: warning
+#       category: application
+#     annotations:
+#       summary: "High median latency for {{ $labels.service }}"
+#       description: "Median (p50) latency is above 0.1s for more than 2 minutes."
+
+#   - alert: HighErrorRate
+#     expr: |
+#       (
+#         sum by (service) (
+#           rate(telemetry_obsv_errors_total{
+#             service=~"nmt-service|tts-service|asr-service"
+#           }[5m])
+#         )
+#         /
+#         sum by (service) (
+#           rate(telemetry_obsv_requests_total{
+#             service=~"nmt-service|tts-service|asr-service"
+#           }[5m])
+#         )
+#       ) * 100 > 0
+#     for: 2m
+#     labels:
+#       severity: critical
+#       category: application
+#     annotations:
+#       summary: "High error rate for {{ $labels.service }}"
+#       description: "Error rate exceeded 0% for more than 2 minutes."

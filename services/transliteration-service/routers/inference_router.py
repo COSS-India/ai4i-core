@@ -25,6 +25,7 @@ from utils.validation_utils import (
     InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError
 )
 from middleware.auth_provider import AuthProvider
+from middleware.tenant_db_dependency import get_tenant_db_session
 from middleware.exceptions import (
     AuthenticationError, 
     AuthorizationError,
@@ -71,7 +72,7 @@ inference_router = APIRouter(
 
 
 async def get_db_session(request: Request) -> AsyncSession:
-    """Dependency to get database session"""
+    """Dependency to get database session (legacy - use get_tenant_db_session for tenant routing)"""
     return request.app.state.db_session_factory()
 
 
@@ -82,7 +83,7 @@ def create_triton_client(triton_url: str, api_key: str) -> TritonClient:
 
 async def get_transliteration_service(
     request: Request,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = Depends(get_tenant_db_session),
 ) -> TransliterationService:
     """
     Dependency to get configured transliteration service.

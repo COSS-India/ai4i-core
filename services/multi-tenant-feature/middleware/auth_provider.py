@@ -122,14 +122,15 @@ async def AuthProvider(
     request: Request,
     authorization: Optional[str] = Header(None, alias="Authorization"),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
-    x_auth_source: str = Header(default="API_KEY", alias="X-Auth-Source"),
+    x_auth_source: Optional[str] = Header(default=None, alias="X-Auth-Source"),
     db: AsyncSession = Depends(get_auth_db_session)
 ) -> Dict[str, Any]:
-    """Authentication provider dependency for FastAPI routes."""
+    """Authentication provider for multi-tenant routes. Uses AUTH_TOKEN (Bearer JWT) by default; API key not required."""
     auth_enabled = _env_bool("AUTH_ENABLED", True)
-    require_api_key = _env_bool("REQUIRE_API_KEY", True)
+    require_api_key = _env_bool("REQUIRE_API_KEY", False)  # Multi-tenant: auth token only by default
     allow_anonymous = _env_bool("ALLOW_ANONYMOUS_ACCESS", False)
-    auth_source = (x_auth_source or "API_KEY").upper()
+    # Default to AUTH_TOKEN so all multi-tenant APIs work with Bearer token only; API key not required
+    auth_source = (x_auth_source or "AUTH_TOKEN").upper()
 
     if not auth_enabled or (allow_anonymous and not require_api_key):
         # Populate anonymous context
@@ -188,7 +189,7 @@ async def OptionalAuthProvider(
     request: Request,
     authorization: Optional[str] = Header(None, alias="Authorization"),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
-    x_auth_source: str = Header(default="API_KEY", alias="X-Auth-Source"),
+    x_auth_source: Optional[str] = Header(default=None, alias="X-Auth-Source"),
     db: AsyncSession = Depends(get_auth_db_session)
 ) -> Optional[Dict[str, Any]]:
     """Optional authentication provider that doesn't raise exception if no auth provided."""

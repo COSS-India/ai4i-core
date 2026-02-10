@@ -320,21 +320,21 @@ const OCRPage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               OCR - Optical Character Recognition
             </Heading>
-            <Text color="gray.600" fontSize="lg">
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
               OCR service for Indic and English languages running on NVIDIA T4 GPU. Provides high-accuracy text extraction from images with bounding boxes, confidence scores, and line-by-line results.
             </Text>
           </Box>
 
-          <Grid
-            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
-            gap={8}
-            w="full"
+        <Grid
+          templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
+          gap={8}
+          w="full"
             maxW="1200px"
-            mx="auto"
-          >
+          mx="auto"
+        >
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
@@ -352,7 +352,7 @@ const OCRPage: React.FC = () => {
                     <Select
                       value={selectedServiceId}
                       onChange={(e) => setSelectedServiceId(e.target.value)}
-                      placeholder="Select an OCR service"
+                      placeholder="Select a OCR service"
                       disabled={fetching}
                       size="md"
                       borderColor="gray.300"
@@ -377,16 +377,12 @@ const OCRPage: React.FC = () => {
                             <Text fontSize="sm" color="gray.700" mb={1}>
                               <strong>Service ID:</strong> {selectedService.service_id}
                             </Text>
-                            {selectedService.serviceDescription && (
-                              <Text fontSize="sm" color="gray.700" mb={1}>
-                                <strong>Description:</strong> {selectedService.serviceDescription}
-                              </Text>
-                            )}
-                            {selectedService.supported_languages.length > 0 && (
-                              <Text fontSize="sm" color="gray.700">
-                                <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
-                              </Text>
-                            )}
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                            </Text>
                           </>
                         ) : null;
                       })()}
@@ -515,27 +511,27 @@ const OCRPage: React.FC = () => {
                 </Tabs>
               </FormControl>
 
-                {previewUrl && (
-                  <Box>
-                    <Text fontSize="sm" fontWeight="semibold" mb={2}>
-                      Image Preview:
-                    </Text>
-                    <Box
-                      border="1px"
-                      borderColor="gray.300"
-                      borderRadius="md"
-                      overflow="hidden"
-                      bg="gray.50"
-                      p={2}
-                    >
-                      <img
-                        src={previewUrl}
-                        alt="Preview"
-                        style={{ maxWidth: "100%", height: "auto", display: "block" }}
-                      />
-                    </Box>
+              {previewUrl && (
+                <Box>
+                  <Text fontSize="sm" fontWeight="semibold" mb={2}>
+                    Image Preview:
+                  </Text>
+                  <Box
+                    border="1px"
+                    borderColor="gray.300"
+                    borderRadius="md"
+                    overflow="hidden"
+                    bg="gray.50"
+                    p={2}
+                  >
+                    <img
+                      src={previewUrl}
+                      alt="Preview"
+                      style={{ maxWidth: "100%", height: "auto", display: "block" }}
+                    />
                   </Box>
-                )}
+                </Box>
+              )}
 
                 <Button
                   colorScheme="orange"
@@ -555,29 +551,29 @@ const OCRPage: React.FC = () => {
             <GridItem>
               <VStack spacing={6} align="stretch">
                 {/* Progress Indicator */}
-                {fetching && (
-                  <Box>
-                    <Text mb={2} fontSize="sm" color="gray.600">
-                      Processing image...
-                    </Text>
+              {fetching && (
+                <Box>
+                  <Text mb={2} fontSize="sm" color="gray.600">
+                    Processing image...
+                  </Text>
                     <Progress size="xs" isIndeterminate colorScheme="orange" />
-                  </Box>
-                )}
+                </Box>
+              )}
 
                 {/* Error Display */}
-                {error && (
-                  <Box
-                    p={4}
-                    bg="red.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="red.200"
-                  >
-                    <Text color="red.600" fontSize="sm">
-                      {error}
-                    </Text>
-                  </Box>
-                )}
+              {error && (
+                <Box
+                  p={4}
+                  bg="red.50"
+                  borderRadius="md"
+                  border="1px"
+                  borderColor="red.200"
+                >
+                  <Text color="red.600" fontSize="sm">
+                    {error}
+                  </Text>
+                </Box>
+              )}
 
                 {/* Metrics Box */}
                 {fetched && (
@@ -610,40 +606,40 @@ const OCRPage: React.FC = () => {
                 )}
 
                 {/* OCR Results */}
-                {fetched && extractedText && (
+              {fetched && extractedText && (
                   <>
-                    <Box>
-                      <HStack justify="space-between" mb={2}>
-                        <Text fontSize="sm" fontWeight="semibold">
-                          Extracted Text:
-                        </Text>
-                        <IconButton
-                          aria-label="Copy text"
-                          icon={copied ? <CheckIcon /> : <CopyIcon />}
-                          size="sm"
-                          onClick={handleCopy}
-                          colorScheme={copied ? "green" : "gray"}
-                        />
-                      </HStack>
-                      <Box
-                        p={4}
-                        bg="white"
-                        borderRadius="md"
-                        border="1px"
-                        borderColor="gray.300"
-                        maxH="300px"
-                        overflowY="auto"
-                      >
-                        <Text fontSize="sm" whiteSpace="pre-wrap" wordBreak="break-word">
-                          {extractedText}
-                        </Text>
-                      </Box>
-                    </Box>
+                <Box>
+                  <HStack justify="space-between" mb={2}>
+                    <Text fontSize="sm" fontWeight="semibold">
+                      Extracted Text:
+                    </Text>
+                    <IconButton
+                      aria-label="Copy text"
+                      icon={copied ? <CheckIcon /> : <CopyIcon />}
+                      size="sm"
+                      onClick={handleCopy}
+                      colorScheme={copied ? "green" : "gray"}
+                    />
+                  </HStack>
+                  <Box
+                    p={4}
+                    bg="white"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="gray.300"
+                    maxH="300px"
+                    overflowY="auto"
+                  >
+                    <Text fontSize="sm" whiteSpace="pre-wrap" wordBreak="break-word">
+                      {extractedText}
+                    </Text>
+                  </Box>
+                </Box>
 
                     {/* Clear Results Button */}
                     <Box textAlign="center">
                       <button
-                        onClick={clearResults}
+                  onClick={clearResults}
                         style={{
                           padding: "8px 16px",
                           backgroundColor: "#f7fafc",
@@ -653,15 +649,15 @@ const OCRPage: React.FC = () => {
                           fontSize: "14px",
                           color: "#4a5568",
                         }}
-                      >
-                        Clear Results
+                >
+                  Clear Results
                       </button>
                     </Box>
                   </>
-                )}
-              </VStack>
-            </GridItem>
-          </Grid>
+              )}
+            </VStack>
+          </GridItem>
+        </Grid>
         </VStack>
       </ContentLayout>
     </>

@@ -25,19 +25,59 @@ from sqlalchemy.ext.asyncio import (
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
+# Logging imports (structured JSON logging to OpenSearch via ai4icore_logging)
+LOGGING_AVAILABLE = False
+configure_logging = None
+get_logger = None
+CorrelationMiddleware = None
+try:
+    from ai4icore_logging import configure_logging, get_logger, CorrelationMiddleware
+    LOGGING_AVAILABLE = True
+except ImportError:
+    pass
+
+# Tracing imports (OpenTelemetry for distributed tracing)
+TRACING_AVAILABLE = False
+setup_tracing = None
+FastAPIInstrumentor = None
+try:
+    from ai4icore_telemetry import setup_tracing
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    TRACING_AVAILABLE = True
+except ImportError:
+    pass
+
 from routers import inference_router
 from models import database_models, auth_models
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
+from middleware.tenant_middleware import TenantMiddleware
+from middleware.tenant_schema_router import TenantSchemaRouter
 from utils.triton_client import TritonClient
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+# Configure structured logging (JSON) so Fluent Bit can forward logs to OpenSearch.
+# Fallback to basic logging if ai4icore_logging is not available.
+if LOGGING_AVAILABLE:
+    configure_logging(
+        service_name=os.getenv("SERVICE_NAME", "language-diarization-service"),
+        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
+    )
+    logger = get_logger(__name__)
+
+    # Disable uvicorn access logger to avoid duplicate plain-text logs
+    uvicorn_access = logging.getLogger("uvicorn.access")
+    uvicorn_access.handlers.clear()
+    uvicorn_access.propagate = False
+    uvicorn_access.disabled = True
+    uvicorn_access.setLevel(logging.CRITICAL + 1)
+else:
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO"),
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+    logger = logging.getLogger(__name__)
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
@@ -48,6 +88,9 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db",
 )
+
+# Multi-tenant database URL for tenant schema routing
+MULTI_TENANT_DB_URL = os.getenv("MULTI_TENANT_DB_URL")
 
 TRITON_ENDPOINT = os.getenv("TRITON_ENDPOINT", "")
 TRITON_API_KEY = os.getenv("TRITON_API_KEY", "")
@@ -149,6 +192,21 @@ async def lifespan(app: FastAPI):
     app.state.redis_client = redis_client
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
+    
+    # Initialize tenant schema router for multi-tenant routing
+    # Use MULTI_TENANT_DB_URL for tenant schema routing (different from auth DATABASE_URL)
+    if not MULTI_TENANT_DB_URL:
+        logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
+        # Fallback to DATABASE_URL but log warning
+        multi_tenant_db_url = DATABASE_URL
+    else:
+        multi_tenant_db_url = MULTI_TENANT_DB_URL
+    
+    logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")  # Mask password in logs
+    tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
+    app.state.tenant_schema_router = tenant_schema_router
+    logger.info("Tenant schema router initialized with multi-tenant database")
+    
     app.state.triton_endpoint = TRITON_ENDPOINT
     app.state.triton_api_key = TRITON_API_KEY
     app.state.triton_timeout = TRITON_TIMEOUT
@@ -247,6 +305,20 @@ observability_plugin = ObservabilityPlugin(obs_config)
 observability_plugin.register_plugin(app)
 logger.info("AI4ICore Observability Plugin initialized for Language Diarization service")
 
+# Distributed Tracing (Jaeger)
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+if TRACING_AVAILABLE:
+    tracer = setup_tracing("language-diarization-service")
+    if tracer:
+        logger.info("✅ Distributed tracing initialized for Language Diarization service")
+        # Instrument FastAPI to automatically create spans for all requests
+        FastAPIInstrumentor.instrument_app(app)
+        logger.info("✅ FastAPI instrumentation enabled for tracing")
+    else:
+        logger.warning("⚠️ Tracing not available (OpenTelemetry setup failed)")
+else:
+    logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
+
 # Model Management Plugin - single source of truth for Triton endpoint/model (no env fallback)
 try:
     mm_config = ModelManagementConfig(
@@ -277,6 +349,9 @@ app.add_middleware(
 
 # Request logging
 app.add_middleware(RequestLoggingMiddleware)
+
+# Tenant middleware (must be before rate limiting to mark tenant-aware endpoints)
+app.add_middleware(TenantMiddleware)
 
 # Rate limiting (Redis client will be picked from app.state)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))

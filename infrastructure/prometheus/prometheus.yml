@@ -8,6 +8,15 @@ global:
     cluster: 'ai4i-core'
     environment: 'production'
 
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - "alertmanager:9093"
+
+# Load alert rules
+rule_files:
+  - '/etc/prometheus/rules/*.yml'
 # -----------------------------
 # Scrape all microservices
 # -----------------------------
