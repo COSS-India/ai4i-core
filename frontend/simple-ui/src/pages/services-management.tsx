@@ -182,11 +182,12 @@ const ServicesManagementPage: React.FC = () => {
         return;
       }
 
-      // Model not in active list (e.g. DEPRECATED) - fetch by ID and add to dropdown
+      // Model not in active list - only add to dropdown if not deprecated (deprecated models must not appear in Create Service)
       if (!inActiveList) {
         try {
           const modelDetails = await getModelById(modelId);
-          if (modelDetails) {
+          const isDeprecated = modelDetails?.versionStatus?.toLowerCase() === "deprecated";
+          if (modelDetails && !isDeprecated) {
             setPreselectedModelFromQuery(modelDetails);
             if (formData.modelId !== modelId) {
               handleModelNameChange(modelId);
@@ -211,9 +212,12 @@ const ServicesManagementPage: React.FC = () => {
   const tableHeaderBg = useColorModeValue("gray.50", "gray.700");
   const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
 
-  // Dropdown options: active models + preselected model from query (e.g. deprecated) if not already in list
-  const modelsForDropdown =
+  // Dropdown options: active models only (no deprecated). Include preselected from query only if not deprecated and not already in list.
+  const preselectedNotDeprecated =
     preselectedModelFromQuery &&
+    preselectedModelFromQuery.versionStatus?.toLowerCase() !== "deprecated";
+  const modelsForDropdown =
+    preselectedNotDeprecated &&
     !models.some(
       (m) =>
         (m.modelId || m.model_id) ===
