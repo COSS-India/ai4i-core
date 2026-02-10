@@ -417,8 +417,8 @@ services:
 
   telemetry-service:
     build:
-      context: ./services/telemetry-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/telemetry-service/Dockerfile
     container_name: ai4v-telemetry-service
     ports:
       - "8084:8084"
@@ -947,6 +947,8 @@ services:
         NEXT_PUBLIC_NMT_API_KEY: ${NMT_API_KEY}
         NEXT_PUBLIC_PIPELINE_API_KEY: ${PIPELINE_API_KEY}
         NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
+        # Telemetry/Observability service URL (logs and traces) - same as API Gateway
+        NEXT_PUBLIC_TELEMETRY_SERVICE_URL: https://core-v1.ai4inclusion.org
     container_name: ai4v-simple-ui
     ports:
       - "3000:3000"
@@ -962,6 +964,8 @@ services:
       - NEXT_PUBLIC_NMT_API_KEY=${NMT_API_KEY}
       - NEXT_PUBLIC_PIPELINE_API_KEY=${PIPELINE_API_KEY}
       - NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${MODEL_MANAGEMENT_API_KEY}
+      # Telemetry/Observability service URL (logs and traces) - routed through API Gateway
+      - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://core-v1.ai4inclusion.org
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
       - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
     depends_on:
@@ -1229,10 +1233,11 @@ volumes:
     # Note: Removed bind mount to Linux-specific path for Windows compatibility
     # Data will persist in Docker's managed volume location
     # To use a custom path on Linux, uncomment and adjust the driver_opts below:
-    # driver_opts:
-    #   type: "none"
-    #   o: "bind"
-    #   device: "/path/to/your/persistent/storage"
+    driver_opts:
+      type: "none"
+      o: "bind"
+      device: "/home/ubuntu/ai4i-v/volumes/pg_data"
+      
   postgres-konga-data:
     driver: local
   redis-data:

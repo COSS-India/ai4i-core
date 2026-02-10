@@ -44,6 +44,8 @@ from models.tenant_view import TenantViewResponse, ListTenantsResponse
 from models.user_view import TenantUserViewResponse, ListUsersResponse
 from models.user_subscription import UserSubscriptionResponse
 from models.tenant_update import TenantUpdateRequest, TenantUpdateResponse
+from models.user_update import TenantUserUpdateRequest, TenantUserUpdateResponse
+from models.user_delete import TenantUserDeleteRequest,TenantUserDeleteResponse
 
 from services.email_service import send_welcome_email, send_verification_email , send_user_welcome_email
 
@@ -1392,6 +1394,10 @@ async def register_user(
 
     if existing_tenant_user:
         raise HTTPException(status_code=409,detail="Email already registered , please use a different email")
+    
+
+    if not payload.is_approved:
+        raise HTTPException(status_code=400, detail="User must be approved by tenant admin to register")
 
     # Generate password (if not provided). Hashing is handled by auth-service.
     plain_password = generate_random_password(length=12)
@@ -1454,8 +1460,6 @@ async def register_user(
                 status=TenantUserStatus.ACTIVE, 
                 is_approved=True,
         )
-    else:
-        raise HTTPException(status_code=400, detail="User must be approved by tenant admin to register")
 
     tenant_db.add(tenant_user)
     await tenant_db.flush()
@@ -1746,6 +1750,216 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
     return response
 
 
+async def update_tenant_user(
+    payload: TenantUserUpdateRequest,
+    db: AsyncSession,
+) -> TenantUserUpdateResponse:
+    """
+    Update tenant user information (username, email, approval flag).
+    Supports partial updates - only provided fields will be updated.
+
+    Args:
+        payload: Tenant user update request payload
+        db: Database session
+    Returns:
+        TenantUserUpdateResponse: Details of the updated tenant user and changes made
+    """
+
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == payload.tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    tenant_user = await db.scalar(
+        select(TenantUser).where(
+            TenantUser.tenant_id == payload.tenant_id,
+            TenantUser.user_id == payload.user_id,
+        )
+    )
+
+    if tenant_user and tenant_user.status == TenantUserStatus.DEACTIVATED:
+        raise HTTPException(status_code=400, detail="Cannot update deactivated tenant user")
+    
+    if tenant.status == TenantStatus.SUSPENDED or tenant.status == TenantStatus.DEACTIVATED:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot update tenant user while tenant is suspended",
+        )
+
+    if not tenant_user:
+        raise HTTPException(status_code=404, detail="Tenant user not found")
+
+    update_data = payload.model_dump(
+        exclude_unset=True,
+        exclude={"tenant_id", "user_id"},
+    )
+
+    if not update_data:
+        raise HTTPException(
+            status_code=400,
+            detail="No fields provided for update",
+        )
+
+    changes: dict[str, FieldChange] = {}
+    updated_fields: list[str] = []
+
+    # Handle username update
+    if "username" in update_data:
+        old_value = tenant_user.username
+        new_value = update_data["username"]
+        if old_value != new_value:
+            changes["username"] = FieldChange(old=old_value, new=new_value)
+            tenant_user.username = new_value
+            updated_fields.append("username")
+
+    # Handle email update
+    if "email" in update_data:
+        old_value = tenant_user.email
+        new_value = update_data["email"]
+        if old_value != new_value:
+            changes["email"] = FieldChange(old=old_value, new=new_value)
+            tenant_user.email = new_value
+            updated_fields.append("email")
+
+    # Handle is_approved update
+    if "is_approved" in update_data:
+        old_value = tenant_user.is_approved
+        new_value = update_data["is_approved"]
+        if old_value != new_value:
+            changes["is_approved"] = FieldChange(old=old_value, new=new_value)
+            tenant_user.is_approved = new_value
+            updated_fields.append("is_approved")
+
+    if not changes:
+        raise HTTPException(
+            status_code=400,
+            detail="No changes detected. All provided values are the same as current values.",
+        )
+
+    # Audit log
+    audit = AuditLog(
+        tenant_id=tenant.id,
+        action=AuditAction.user_updated,
+        actor=AuditActorType.USER,
+        details={
+            "user_id": payload.user_id,
+            "updated_fields": updated_fields,
+            "changes": {
+                field: {"old": str(change.old), "new": str(change.new)}
+                for field, change in changes.items()
+            },
+        },
+    )
+    db.add(audit)
+
+    try:
+        await db.commit()
+        await db.refresh(tenant_user)
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(
+            f"Integrity error while updating tenant user | tenant={payload.tenant_id} user_id={payload.user_id}: {e}"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Tenant user update failed due to integrity constraint violation (e.g., email already exists)",
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.exception(
+            f"Error committing tenant user update to database | tenant={payload.tenant_id} user_id={payload.user_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to update tenant user")
+
+    logger.info(
+        f"Tenant user updated successfully | tenant_id={payload.tenant_id} | "
+        f"user_id={payload.user_id} | updated_fields={updated_fields}"
+    )
+
+    return TenantUserUpdateResponse(
+        tenant_id=payload.tenant_id,
+        user_id=payload.user_id,
+        message=f"Tenant user updated successfully. {len(updated_fields)} field(s) modified.",
+        changes=changes,
+        updated_fields=updated_fields,
+    )
+
+
+async def delete_tenant_user(
+    payload: TenantUserDeleteRequest,
+    db: AsyncSession,
+) -> TenantUserDeleteResponse:
+    """
+    Delete a tenant user and cascade deletions to related records (e.g., billing).
+
+    Args:
+        payload: Tenant user delete request payload
+        db: Database session
+    Returns:
+        TenantUserDeleteResponse: Deletion confirmation
+    """
+
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == payload.tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    tenant_user = await db.scalar(
+        select(TenantUser).where(
+            TenantUser.tenant_id == payload.tenant_id,
+            TenantUser.user_id == payload.user_id,
+        )
+    )
+
+    if not tenant_user:
+        raise HTTPException(status_code=404, detail="Tenant user not found")
+
+    # Delete the tenant user (will cascade to related records via FK constraints)
+    await db.delete(tenant_user)
+
+    # Audit log for deletion
+    db.add(
+        AuditLog(
+            tenant_id=tenant.id,
+            action=AuditAction.user_deleted,
+            actor=AuditActorType.ADMIN,
+            details={
+                "user_id": payload.user_id,
+                "username": tenant_user.username,
+                "email": tenant_user.email,
+            },
+        )
+    )
+
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(
+            f"Integrity error while deleting tenant user | tenant={payload.tenant_id} user_id={payload.user_id}: {e}"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Tenant user deletion failed due to integrity constraint violation",
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.exception(
+            f"Error committing tenant user deletion to database | tenant={payload.tenant_id} user_id={payload.user_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to delete tenant user")
+
+    logger.info(
+        f"Tenant user deleted successfully | tenant_id={payload.tenant_id} | user_id={payload.user_id}"
+    )
+
+    return TenantUserDeleteResponse(
+        tenant_id=payload.tenant_id,
+        user_id=payload.user_id,
+        message="Tenant user deleted successfully",
+    )
+
+
 async def view_tenant_details(tenant_id: str, db: AsyncSession) -> TenantViewResponse:
     """
     View tenant details by tenant_id (human-readable tenant identifier).
@@ -1765,7 +1979,7 @@ async def view_tenant_details(tenant_id: str, db: AsyncSession) -> TenantViewRes
     response = TenantViewResponse(
         id=tenant.id,
         tenant_id=tenant.tenant_id,
-        user_id=tenant.user_id,
+        user_id=tenant.user_id or None,
         organization_name=tenant.organization_name,
         email=tenant.contact_email,
         domain=tenant.domain,
