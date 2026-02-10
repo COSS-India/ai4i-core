@@ -24,6 +24,7 @@ import { useQuery } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
 import { performNERInference, listNERServices } from "../services/nerService";
 import { extractErrorInfo } from "../utils/errorHandler";
+import { NER_ERRORS, MIN_NER_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
 
 const NERPage: React.FC = () => {
   const toast = useToast();
@@ -55,11 +56,39 @@ const NERPage: React.FC = () => {
   }, [services, selectedServiceId]);
 
   const handleProcess = async () => {
-    if (!inputText.trim()) {
+    const trimmedText = inputText.trim();
+    
+    // Validate input text
+    if (!trimmedText) {
+      const err = NER_ERRORS.TEXT_REQUIRED;
       toast({
-        title: "Input Required",
-        description: "Please enter text to process.",
-        status: "warning",
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    if (trimmedText.length < MIN_NER_TEXT_LENGTH) {
+      const err = NER_ERRORS.TEXT_TOO_SHORT;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    if (trimmedText.length > MAX_TEXT_LENGTH) {
+      const err = NER_ERRORS.TEXT_TOO_LONG;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -83,7 +112,7 @@ const NERPage: React.FC = () => {
 
     try {
       const startTime = Date.now();
-      const response = await performNERInference(inputText, {
+      const response = await performNERInference(trimmedText, {
         serviceId: selectedServiceId,
         language: {
           sourceLanguage,
@@ -96,8 +125,8 @@ const NERPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Use centralized error handler
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err);
+      // Use centralized error handler (ner context so backend message shown as default when no specific mapping)
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'ner');
       
       setError(errorMessage);
       toast({

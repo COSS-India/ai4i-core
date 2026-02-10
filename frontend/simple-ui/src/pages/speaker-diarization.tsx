@@ -24,6 +24,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import { performSpeakerDiarizationInference, listSpeakerDiarizationServices } from "../services/speakerDiarizationService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { extractErrorInfo } from "../utils/errorHandler";
+import { SPEAKER_DIARIZATION_ERRORS } from "../config/constants";
 
 const SpeakerDiarizationPage: React.FC = () => {
   const toast = useToast();
@@ -92,10 +93,11 @@ const SpeakerDiarizationPage: React.FC = () => {
 
   const handleSubmit = async () => {
     if (!audioData) {
+      const err = SPEAKER_DIARIZATION_ERRORS.FILE_REQUIRED;
       toast({
-        title: "No Audio",
-        description: "Please record or upload audio first.",
-        status: "warning",
+        title: err.title,
+        description: err.description,
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -130,8 +132,8 @@ const SpeakerDiarizationPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Use centralized error handler
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err);
+      // Use centralized error handler (speaker-diarization context so backend message shown as default when no specific mapping)
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'speaker-diarization');
       
       setError(errorMessage);
       toast({

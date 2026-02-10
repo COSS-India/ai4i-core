@@ -30,6 +30,8 @@ import { CopyIcon, CheckIcon, AttachmentIcon, DeleteIcon } from "@chakra-ui/icon
 import { useQuery } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
 import { performOCRInference, listOCRServices } from "../services/ocrService";
+import { OCR_ERRORS, MAX_IMAGE_FILE_SIZE } from "../config/constants";
+import { extractErrorInfo } from "../utils/errorHandler";
 
 const OCRPage: React.FC = () => {
   const toast = useToast();
@@ -111,6 +113,48 @@ const OCRPage: React.FC = () => {
   };
 
   const processFile = (file: File) => {
+    // Validate file type
+    const isJPG = file.type === 'image/jpeg' || file.type === 'image/jpg' || file.name.toLowerCase().endsWith('.jpg') || file.name.toLowerCase().endsWith('.jpeg');
+    const isPNG = file.type === 'image/png' || file.name.toLowerCase().endsWith('.png');
+    
+    if (!isJPG && !isPNG) {
+      const err = OCR_ERRORS.INVALID_FORMAT;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    // Validate file size
+    if (file.size > MAX_IMAGE_FILE_SIZE) {
+      const err = OCR_ERRORS.FILE_TOO_LARGE;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    // Validate file is not empty
+    if (file.size === 0) {
+      const err = OCR_ERRORS.EMPTY_FILE;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
     setImageFile(file);
     setImageUri("");
     const url = URL.createObjectURL(file);
@@ -135,9 +179,10 @@ const OCRPage: React.FC = () => {
     if (file && file.type.startsWith('image/')) {
       processFile(file);
     } else {
+      const err = OCR_ERRORS.INVALID_FORMAT;
       toast({
-        title: "Invalid File",
-        description: "Please upload an image file.",
+        title: err.title,
+        description: err.description,
         status: "error",
         duration: 3000,
         isClosable: true,
@@ -197,10 +242,11 @@ const OCRPage: React.FC = () => {
 
   const handleProcess = async () => {
     if (!imageFile && !imageUri) {
+      const err = OCR_ERRORS.FILE_REQUIRED;
       toast({
-        title: "Input Required",
-        description: "Please upload an image or provide an image URL.",
-        status: "warning",
+        title: err.title,
+        description: err.description,
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -216,7 +262,25 @@ const OCRPage: React.FC = () => {
       let imageUriValue: string | null = null;
 
       if (imageFile) {
-        imageContent = await fileToBase64(imageFile);
+        try {
+          imageContent = await fileToBase64(imageFile);
+          if (!imageContent || imageContent.length === 0) {
+            throw new Error('EMPTY_FILE');
+          }
+        } catch (err: any) {
+          const error = err?.message === 'EMPTY_FILE' 
+            ? OCR_ERRORS.EMPTY_FILE 
+            : OCR_ERRORS.INVALID_FILE;
+          toast({
+            title: error.title,
+            description: error.description,
+            status: 'error',
+            duration: 3000,
+            isClosable: true,
+          });
+          setFetching(false);
+          return;
+        }
       } else {
         imageUriValue = imageUri;
       }
@@ -253,24 +317,12 @@ const OCRPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Prioritize API error message from response
-      let errorMessage = "Failed to perform OCR inference";
-      
-      if (err?.response?.data?.detail?.message) {
-        errorMessage = err.response.data.detail.message;
-      } else if (err?.response?.data?.message) {
-        errorMessage = err.response.data.message;
-      } else if (err?.response?.data?.detail) {
-        if (typeof err.response.data.detail === 'string') {
-          errorMessage = err.response.data.detail;
-        }
-      } else if (err?.message) {
-        errorMessage = err.message;
-      }
+      // Use centralized error handler (ocr context so backend message shown as default when no specific mapping)
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'ocr');
       
       setError(errorMessage);
       toast({
-        title: "Error",
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: "error",
         duration: 5000,
