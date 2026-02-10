@@ -43,6 +43,7 @@ import { useRouter } from "next/router";
 import React, { useState, useEffect, useRef } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import { getAllModels, createModel, getModelById, updateModel } from "../services/modelManagementService";
+import { listServices as listServicesForModels } from "../services/servicesManagementService";
 import { useAuth } from "../hooks/useAuth";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { extractErrorInfo } from "../utils/errorHandler";
@@ -126,6 +127,7 @@ const ModelManagementPage: React.FC = () => {
   const [isValidating, setIsValidating] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [updatingModelId, setUpdatingModelId] = useState<string | null>(null);
+  const [modelIdsWithService, setModelIdsWithService] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
   const {  user } = useAuth();
@@ -176,6 +178,24 @@ const ModelManagementPage: React.FC = () => {
 
     fetchModels();
   }, [toast]);
+
+  // Fetch services to know which models have a service associated (no deprecate for those)
+  useEffect(() => {
+    const fetchServices = async () => {
+      try {
+        const svcs = await listServicesForModels();
+        const ids = new Set<string>();
+        (svcs || []).forEach((s: any) => {
+          const id = s.modelId ?? s.model_id;
+          if (id) ids.add(String(id));
+        });
+        setModelIdsWithService(ids);
+      } catch {
+        setModelIdsWithService(new Set());
+      }
+    };
+    fetchServices();
+  }, []);
 
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
@@ -838,7 +858,7 @@ const ModelManagementPage: React.FC = () => {
                                     >
                                       View
                                     </Button>
-                                    {model.versionStatus?.toLowerCase() === "active" || !model.versionStatus ? (
+                                    {(model.versionStatus?.toLowerCase() === "active" || !model.versionStatus) && !modelIdsWithService.has(model.modelId) ? (
                                       <Button
                                         size="sm"
                                         colorScheme="orange"
@@ -850,7 +870,7 @@ const ModelManagementPage: React.FC = () => {
                                       >
                                         Deprecate
                                       </Button>
-                                    ) : (
+                                    ) : (model.versionStatus?.toLowerCase() !== "active" && model.versionStatus) ? (
                                       <Button
                                         size="sm"
                                         colorScheme="green"
@@ -862,7 +882,7 @@ const ModelManagementPage: React.FC = () => {
                                       >
                                         Activate
                                       </Button>
-                                    )}
+                                    ) : null}
                                   </HStack>
                                 </Td>
                               </Tr>
@@ -1114,16 +1134,18 @@ const ModelManagementPage: React.FC = () => {
                             Model Details: {selectedModel.name}
                           </Heading>
                           <HStack spacing={2}>
-                            <Button
-                              size="sm"
-                              colorScheme="blue"
-                              onClick={() => {
-                                router.push(`/services-management?modelId=${selectedModel.modelId}&tab=create`);
-                              }}
-                            >
-                              Create Service
-                            </Button>
-                            {selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus ? (
+                            {(selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && (
+                              <Button
+                                size="sm"
+                                colorScheme="blue"
+                                onClick={() => {
+                                  router.push(`/services-management?modelId=${selectedModel.modelId}&tab=create`);
+                                }}
+                              >
+                                Create Service
+                              </Button>
+                            )}
+                            {(selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithService.has(selectedModel.modelId) ? (
                               <Button
                                 size="sm"
                                 colorScheme="orange"
@@ -1135,7 +1157,7 @@ const ModelManagementPage: React.FC = () => {
                               >
                                 Deprecate Model
                               </Button>
-                            ) : (
+                            ) : (selectedModel.versionStatus?.toLowerCase() !== "active" && selectedModel.versionStatus) ? (
                               <Button
                                 size="sm"
                                 colorScheme="green"
@@ -1147,7 +1169,7 @@ const ModelManagementPage: React.FC = () => {
                               >
                                 Activate Model
                               </Button>
-                            )}
+                            ) : null}
                           </HStack>
                         </HStack>
                       </CardHeader>
