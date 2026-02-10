@@ -18,6 +18,14 @@ from middleware.exceptions import (
     RateLimitExceededError,
 )
 
+# Import OpenTelemetry for tracing
+try:
+    from opentelemetry import trace
+    from opentelemetry.trace import Status, StatusCode
+    TELEMETRY_AVAILABLE = True
+except ImportError:
+    TELEMETRY_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,6 +56,15 @@ def add_error_handlers(app: FastAPI) -> None:
         """Handle authorization errors."""
         # Use message attribute if available, otherwise use detail or str(exc)
         message = getattr(exc, "message", None) or getattr(exc, "detail", None) or str(exc)
+        
+        # Error message should already be formatted by validate_api_key_permissions
+        # But ensure it has the correct format if it doesn't
+        if "Authorization error" not in message and "insufficient permission" not in message.lower():
+            if "permission" in message.lower() or "does not have" in message.lower() or "ner.inference" in message:
+                message = f"Authorization error: Insufficient permission. {message}"
+            else:
+                message = f"Authorization error: {message}"
+        
         error_detail = ErrorDetail(
             message=message,
             code="AUTHORIZATION_ERROR",
@@ -94,6 +111,23 @@ def add_error_handlers(app: FastAPI) -> None:
         request: Request, exc: Exception
     ):  # type: ignore[unused-argument]
         """Handle unexpected exceptions."""
+        # Capture full exception in trace span
+        if TELEMETRY_AVAILABLE:
+            try:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.code", "INTERNAL_ERROR")
+                    current_span.set_attribute("error.message", str(exc))
+                    current_span.set_attribute("error.type", type(exc).__name__)
+                    current_span.set_attribute("http.status_code", 500)
+                    
+                    # Record full exception with traceback
+                    current_span.record_exception(exc)
+                    current_span.set_status(Status(StatusCode.ERROR, str(exc)))
+            except Exception:
+                pass  # Don't fail if tracing fails
+        
         logger.error("Unexpected error: %s", exc)
         logger.error("Traceback: %s", traceback.format_exc())
 

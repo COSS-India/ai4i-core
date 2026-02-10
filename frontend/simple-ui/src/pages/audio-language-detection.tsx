@@ -133,11 +133,11 @@ const AudioLanguageDetectionPage: React.FC = () => {
       setFetched(true);
     } catch (err: any) {
       // Use centralized error handler
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err);
       
       setError(errorMessage);
       toast({
-        title: errorTitle,
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: "error",
         duration: 5000,
@@ -169,10 +169,10 @@ const AudioLanguageDetectionPage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               Audio Language Detection
             </Heading>
-            <Text color="gray.600" fontSize="lg">
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
               Detect the spoken language directly from an audio file. Identify which language is being spoken in audio recordings.
             </Text>
           </Box>
@@ -210,7 +210,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
                   <Select
                     value={selectedServiceId}
                     onChange={(e) => setSelectedServiceId(e.target.value)}
-                    placeholder="Select a service..."
+                    placeholder="Select a Audio Language Detection service"
                     disabled={fetching}
                     size="md"
                     borderColor="gray.300"
@@ -235,16 +235,12 @@ const AudioLanguageDetectionPage: React.FC = () => {
                           <Text fontSize="sm" color="gray.700" mb={1}>
                             <strong>Service ID:</strong> {selectedService.service_id}
                           </Text>
-                          {selectedService.serviceDescription && (
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Description:</strong> {selectedService.serviceDescription}
-                            </Text>
-                          )}
-                          {selectedService.supported_languages.length > 0 && (
-                            <Text fontSize="sm" color="gray.700">
-                              <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
-                            </Text>
-                          )}
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                          </Text>
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                          </Text>
                         </>
                       ) : null;
                     })()}

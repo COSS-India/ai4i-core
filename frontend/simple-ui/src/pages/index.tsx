@@ -300,10 +300,10 @@ const services = [
         <VStack spacing={10} w="full" h="full" justify="center" align="center">
           {/* Hero Section */}
           <Box textAlign="center" w="full">
-            <Heading size="lg" fontWeight="bold" color="gray.800" mb={2}>
+            <Heading size="lg" fontWeight="bold" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               AI Accessibility Studio
             </Heading>
-            <Text fontSize="sm" color="gray.600" maxW="600px" mx="auto">
+            <Text fontSize="sm" color="gray.600" maxW="600px" mx="auto" userSelect="none" cursor="default">
               Test and explore NLP and LLM models
             </Text>
           </Box>
@@ -402,6 +402,8 @@ const services = [
                       noOfLines={3}
                       wordBreak="break-word"
                       whiteSpace="pre-line"
+                      userSelect="none"
+                      cursor="default"
                     >
                       {service.title}
                     </Heading>

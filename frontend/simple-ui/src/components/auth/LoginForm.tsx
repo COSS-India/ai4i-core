@@ -60,7 +60,22 @@ const LoginForm: React.FC<LoginFormProps> = ({
     if (loginAttempted && error) {
       // Only show login-related errors, not initialization errors
       if (error !== "Failed to initialize authentication") {
-        setLoginError(error);
+        // Ensure error is always a string, not an object
+        let errorMessage = 'Login failed';
+        if (typeof error === 'string') {
+          errorMessage = error;
+        } else if (error && typeof error === 'object') {
+          // Try to extract error message from various possible formats
+          // Type assertion to handle error object properties
+          const errorObj = error as any;
+          errorMessage = errorObj.message || 
+                       errorObj.detail || 
+                       errorObj.error || 
+                       (errorObj.response?.data?.detail) ||
+                       (errorObj.response?.data?.message) ||
+                       (typeof errorObj.toString === 'function' && errorObj.toString() !== '[object Object]' ? errorObj.toString() : JSON.stringify(errorObj));
+        }
+        setLoginError(errorMessage);
       } else {
         setLoginError(null);
       }
