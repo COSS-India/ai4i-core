@@ -2002,8 +2002,7 @@ def requires_both_auth_and_api_key(request: Request) -> bool:
     path = request.url.path.lower()
     services_requiring_both = [
         "asr", "nmt", "tts", "pipeline", "llm", "ocr", "transliteration",
-        "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection"
-        # Note: NER removed - it only requires API key, not both
+        "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection", "ner"
     ]
     for svc in services_requiring_both:
         if f"/api/v1/{svc}" in path:
@@ -2061,10 +2060,14 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
         if data.get("valid") is False:
             # Extract the actual error message from auth-service
             error_message = data.get("message", "Invalid API key or insufficient permissions")
+            # Format error message to be consistent with "insufficient permission" format
+            if "does not have" in error_message.lower() or "permission" in error_message.lower():
+                if "insufficient permission" not in error_message.lower():
+                    error_message = f"Authorization error: Insufficient permission. {error_message}"
             raise HTTPException(
                 status_code=403,
                 detail={
-                    "error": "INVALID_API_KEY",
+                    "error": "AUTHORIZATION_ERROR",
                     "message": error_message
                 }
             )
@@ -2365,6 +2368,20 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
             if auth_span:
                 auth_span.set_attribute("auth.source", auth_source)
                 auth_span.set_attribute("auth.use_api_key", use_api_key)
+
+            # If x-auth-source is explicitly set to API_KEY, require API key
+            if auth_source == "API_KEY" and not api_key:
+                if auth_span:
+                    auth_span.set_attribute("auth.authenticated", False)
+                    auth_span.set_attribute("error.type", "MissingAPIKey")
+                    auth_span.set_status(Status(StatusCode.ERROR, "API key required"))
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error": "API_KEY_MISSING",
+                        "message": "API key is required when X-Auth-Source is set to API_KEY"
+                    }
+                )
 
             if use_api_key:
                 # Validate API key permissions via auth-service
@@ -4698,10 +4715,7 @@ async def ner_inference(
     api_key: Optional[str] = Security(api_key_scheme),
 ):
     """Perform NER inference on one or more text inputs"""
-    try:
-        ensure_authenticated_for_request(request, credentials, api_key)
-    except Exception as e:
-        raise
+    await ensure_authenticated_for_request(request, credentials, api_key)
 
     import json
 
