@@ -1938,6 +1938,8 @@ INSERT INTO permissions (name, resource, action) VALUES
 ('model.delete', 'models', 'delete'),
 ('model.deprecate', 'models', 'deprecate'),
 ('model.activate', 'models', 'activate'),
+('model.publish', 'models', 'publish'),
+('model.unpublish', 'models', 'unpublish'),
 -- Service Management permissions
 ('service.create', 'services', 'create'),
 ('service.read', 'services', 'read'),
@@ -1949,10 +1951,14 @@ INSERT INTO permissions (name, resource, action) VALUES
 ('apiKey.create', 'apiKey', 'create'),
 ('apiKey.read', 'apiKey', 'read'),
 ('apiKey.update', 'apiKey', 'update'),
-('apiKey.delete', 'apiKey', 'delete')
+('apiKey.delete', 'apiKey', 'delete'),
+-- Observability permissions (logs, traces)
+('logs.read', 'logs', 'read'),
+('traces.read', 'traces', 'read')
 ON CONFLICT (name) DO NOTHING;
 
--- Assign permissions to ADMIN role
+-- Assign all permissions to ADMIN role (includes users, configs, metrics, alerts, dashboards,
+-- asr, tts, nmt, ner, model.*, service.*, apiKey.create, apiKey.read, apiKey.update, apiKey.delete, logs, traces)
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
@@ -1991,7 +1997,7 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 -- 
 -- Credentials:
 --   Username: admin
---   Email:    admin@ai4i.org
+--   Email:    admin@ai4inclusion.org
 --   Password: Admin@123
 --   Role:     ADMIN (all permissions)
 --   Status:   ACTIVE
@@ -2000,7 +2006,7 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 -- Create the default admin user
 -- Password hash for "Admin@123" (bcrypt)
 INSERT INTO users (email, username, hashed_password, is_active, is_verified, full_name, is_superuser) VALUES
-('admin@ai4i.org', 'admin', '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW', true, true, 'System Administrator', true)
+('admin@ai4inclusion.org', 'admin', '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW', true, true, 'System Administrator', true)
 ON CONFLICT (email) DO UPDATE
 SET 
     username = EXCLUDED.username,
@@ -2011,11 +2017,11 @@ SET
     is_superuser = EXCLUDED.is_superuser;
 
 -- Assign ADMIN role to the default admin user
--- This ensures the admin user has all permissions through the ADMIN role
+-- This ensures the admin user has all permissions through the ADMIN role (including apiKey.*)
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'admin@ai4i.org' AND u.username = 'admin' AND r.name = 'ADMIN'
+WHERE u.email = 'admin@ai4inclusion.org' AND u.username = 'admin' AND r.name = 'ADMIN'
 ON CONFLICT (user_id, role_id) DO NOTHING;
 
 \c config_db;
