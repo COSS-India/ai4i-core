@@ -91,12 +91,12 @@ const ServicesManagementPage: React.FC = () => {
   const { checkSessionExpiry } = useSessionExpiry();
 
   
-  // Check if user is GUEST and redirect if so
+  // Check if user is GUEST or USER and redirect if so
   useEffect(() => {
-    if (user?.roles?.includes('GUEST')) {
+    if (user?.roles?.includes('GUEST') || user?.roles?.includes('USER')) {
       toast({
         title: "Access Denied",
-        description: "Guest users do not have access to Services Management.",
+        description: "You do not have access to Services Management.",
         status: "error",
         duration: 5000,
         isClosable: true,
