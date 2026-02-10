@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Query
+from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
@@ -279,14 +280,17 @@ async def list_tenants(
 
 @router.get("/list/users", response_model=ListUsersResponse, status_code=status.HTTP_200_OK)
 async def list_users(
+    tenant_id: Optional[str] = Query(None, description="Filter users by tenant_id"),
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
-    List all tenant users across all tenants.
-    Returns a list of all users registered under any tenant.
+    List tenant users.
+
+    If tenant_id is provided, only users for that tenant are returned.
+    If tenant_id is omitted, users across all tenants are returned.
     """
     try:
-        return await list_all_users(db)
+        return await list_all_users(db, tenant_id=tenant_id)
     except HTTPException:
         raise
     except Exception as exc:

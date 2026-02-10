@@ -5902,20 +5902,27 @@ async def list_tenants(
 @app.get("/api/v1/multi-tenant/list/users", response_model=ListUsersResponse, tags=["Multi-Tenant"])
 async def list_users(
     request: Request,
+    tenant_id: Optional[str] = Query(None, description="Filter users by tenant_id"),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
     """
-    List all tenant users across all tenants via API Gateway.
-    Returns a list of all users registered under any tenant.
+    List all tenant users across all tenants if tenant_id is not provided.
+    Returns a list of all users registered under any tenant if tenant_id is provided.
     """
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
-    return await proxy_to_service(
+
+    params: Dict[str, Any] = {}
+    if tenant_id:
+        params["tenant_id"] = tenant_id
+
+    return await proxy_to_service_with_params(
         request,
         "/admin/list/users",
         "multi-tenant-service",
+        params,
         method="GET",
         headers=headers,
     )
