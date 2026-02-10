@@ -535,41 +535,94 @@
         </div>
 
         <div class="field-group">
-            <label for="requestBody">
+            <label>
                 <span>
-                    <span class="label-tag">Request Body</span>
+                    <span class="label-tag">Request Parameters</span>
                 </span>
-                <span class="help">Edit JSON to test explicit <code>serviceId</code> or <code>context</code>.</span>
+                <span class="help">UI builds the JSON body for you from these fields.</span>
             </label>
-            <textarea id="requestBody" spellcheck="false">{
-  "input": [
-    {
-      "source": "Hello world"
-    }
-  ],
-  "config": {
-    "language": {
-      "sourceLanguage": "en",
-      "targetLanguage": "hi"
-    }
-  }
-}</textarea>
-            <div class="hint">
-                To test explicit service selection, add <code>"serviceId": "nmt_service_b"</code> under <code>config</code>.
-                To test context-aware routing, add <code>"context": "your context"</code> and set <strong>Context Aware</strong> to YES.
+        </div>
+
+        <div class="field-group">
+            <label for="sourceText">
+                <span>
+                    <span class="label-tag">Source Text</span>
+                </span>
+            </label>
+            <textarea
+                id="sourceText"
+                spellcheck="false"
+                placeholder="Hello world"
+            ></textarea>
+        </div>
+
+        <div class="field-group">
+            <label for="contextText">
+                <span>
+                    <span class="label-tag">Context (optional)</span>
+                </span>
+            </label>
+            <textarea
+                id="contextText"
+                spellcheck="false"
+                placeholder="I am a sport person"
+            ></textarea>
+        </div>
+
+        <div class="dropdown-row">
+            <div class="field-group">
+                <label for="serviceId">
+                    <span>
+                        <span class="label-tag">Service ID (optional)</span>
+                    </span>
+                </label>
+                <input
+                    id="serviceId"
+                    type="text"
+                    spellcheck="false"
+                    placeholder="nmt_service_b"
+                />
+            </div>
+            <div class="field-group">
+                <label for="sourceLang">
+                    <span>
+                        <span class="label-tag">Source Language</span>
+                    </span>
+                </label>
+                <input
+                    id="sourceLang"
+                    type="text"
+                    spellcheck="false"
+                    placeholder="en"
+                    value="en"
+                />
+            </div>
+            <div class="field-group">
+                <label for="targetLang">
+                    <span>
+                        <span class="label-tag">Target Language</span>
+                    </span>
+                </label>
+                <input
+                    id="targetLang"
+                    type="text"
+                    spellcheck="false"
+                    placeholder="hi or ml"
+                    value="hi"
+                />
             </div>
         </div>
 
+        <div class="hint">
+            - For <strong>context-aware</strong> calls: fill <code>Context</code>, set <strong>Context Aware</strong> to YES, and execute.<br />
+            - For <strong>explicit service</strong> calls: fill <code>Service ID</code> and execute (with or without policy headers as needed).<br />
+            - For simple routing via SMR: just fill <code>Source Text</code> and languages.
+        </div>
+
         <div class="button-row">
-            <button class="primary" id="btnWithPolicy">
+            <button class="primary" id="btnExecute">
                 <span class="dot"></span>
-                Execute · With Policy Headers
-            </button>
-            <button class="secondary" id="btnWithoutPolicy">
-                Execute · No Policy Headers
-            </button>
-            <button class="ghost" id="btnLoadContextExample">
-                Load Context-Aware Example Body
+                Execute Request
             </button>
         </div>
 
@@ -582,7 +635,7 @@
                 <span id="errorText" class="error-text"></span>
             </div>
             <div class="help">
-                First call uses your selected SMR parameters. Second call omits latency / cost / accuracy headers.
+                Policy headers are only sent when you select values above; leave them as "Not set" to call without policy headers.
             </div>
         </div>
     </section>
@@ -635,19 +688,23 @@
         document.getElementById("errorText").textContent = text || "";
     }
 
-    async function executeRequest(withPolicyHeaders) {
+    async function executeRequest() {
         setError("");
 
         const endpoint = document.getElementById("endpoint").value.trim();
         const authTokenRaw = document.getElementById("authToken").value.trim();
         const apiKey = document.getElementById("apiKey").value.trim();
 
+        const sourceText = document.getElementById("sourceText").value.trim();
+        const contextText = document.getElementById("contextText").value.trim();
+        const serviceId = document.getElementById("serviceId").value.trim();
+        const sourceLang = document.getElementById("sourceLang").value.trim() || "en";
+        const targetLang = document.getElementById("targetLang").value.trim() || "hi";
+
         const latency = document.getElementById("latency").value;
         const cost = document.getElementById("cost").value;
         const accuracy = document.getElementById("accuracy").value;
         const contextAware = document.getElementById("contextAware").value;
-
-        const bodyText = document.getElementById("requestBody").value;
 
         if (!endpoint) {
             setError("Endpoint is required.");
@@ -655,14 +712,32 @@
             return;
         }
 
-        let body;
-        try {
-            body = JSON.parse(bodyText);
-        } catch (err) {
-            console.error(err);
-            setError("Request body must be valid JSON.");
-            setStatus("Invalid JSON", true);
+        if (!sourceText) {
+            setError("Source text is required.");
+            setStatus("Invalid source text", true);
             return;
+        }
+
+        const body = {
+            input: [
+                {
+                    source: sourceText
+                }
+            ],
+            config: {
+                language: {
+                    sourceLanguage: sourceLang,
+                    targetLanguage: targetLang
+                }
+            }
+        };
+
+        if (contextText) {
+            body.config.context = contextText;
+        }
+
+        if (serviceId) {
+            body.config.serviceId = serviceId;
         }
 
         /** @type {Record<string, string>} */
@@ -680,17 +755,15 @@
             headers["X-API-Key"] = apiKey;
         }
 
-        // Attach SMR policy headers only when requested.
-        if (withPolicyHeaders) {
-            if (latency) {
-                headers["X-Latency-Policy"] = latency;
-            }
-            if (cost) {
-                headers["X-Cost-Policy"] = cost;
-            }
-            if (accuracy) {
-                headers["X-Accuracy-Policy"] = accuracy;
-            }
+        // Attach SMR policy headers when values are selected.
+        if (latency) {
+            headers["X-Latency-Policy"] = latency;
+        }
+        if (cost) {
+            headers["X-Cost-Policy"] = cost;
+        }
+        if (accuracy) {
+            headers["X-Accuracy-Policy"] = accuracy;
         }
 
         // Context aware header is controlled directly by the dropdown.
@@ -733,40 +806,9 @@
         }
     }
 
-    function loadContextAwareExample() {
-        const example = `{
-  "input": [
-    {
-      "source": "I am going to court"
-    }
-  ],
-  "config": {
-    "context": "I am a sport person",
-    "language": {
-      "sourceLanguage": "en",
-      "targetLanguage": "ml"
-    }
-  }
-}`;
-        document.getElementById("requestBody").value = example;
-        document.getElementById("contextAware").value = "yes";
-        setStatus("Context example loaded", false);
-        setError("");
-    }
-
-    document.getElementById("btnWithPolicy").addEventListener("click", function (e) {
+    document.getElementById("btnExecute").addEventListener("click", function (e) {
         e.preventDefault();
-        executeRequest(true);
-    });
-
-    document.getElementById("btnWithoutPolicy").addEventListener("click", function (e) {
-        e.preventDefault();
-        executeRequest(false);
-    });
-
-    document.getElementById("btnLoadContextExample").addEventListener("click", function (e) {
-        e.preventDefault();
-        loadContextAwareExample();
+        executeRequest();
     });
 </script>
 </body>
