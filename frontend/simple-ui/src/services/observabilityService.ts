@@ -4,7 +4,7 @@ import axios, { AxiosInstance } from 'axios';
 import { getJwtToken } from './api';
 
 // Telemetry service runs on port 8084 (different from API gateway on 8080)
-const TELEMETRY_SERVICE_URL = process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL || 'http://localhost:8084';
+const TELEMETRY_SERVICE_URL = process.env.NEXT_PUBLIC_TELEMETRY_SERVICE_URL ;
 
 // Create dedicated axios instance for observability endpoints
 const observabilityClient: AxiosInstance = axios.create({

@@ -232,6 +232,14 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
                         span.set_status(Status(StatusCode.OK))
                     return
                 error_msg = result.get("message", "Permission denied")
+                # Format error message to be consistent with other services
+                # Ensure it says "Authorization error: Insufficient permission" for permission-related errors
+                if "insufficient permission" not in error_msg.lower() and "authorization error" not in error_msg.lower():
+                    if "permission" in error_msg.lower() or "does not have" in error_msg.lower() or "ner.inference" in error_msg:
+                        # For permission errors, format as "Authorization error: Insufficient permission. [original message]"
+                        error_msg = f"Authorization error: Insufficient permission. {error_msg}"
+                    else:
+                        error_msg = f"Authorization error: {error_msg}"
                 if span:
                     span.set_attribute("auth.valid", False)
                     span.set_attribute("error", True)

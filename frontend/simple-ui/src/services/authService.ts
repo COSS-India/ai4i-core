@@ -80,16 +80,25 @@ class AuthService {
           errorData = {};
         }
         
-        // Extract error message from various possible formats
+        // Extract error message from various possible formats (avoid [object Object] when detail is an object)
         let errorMessage = `HTTP error! status: ${response.status}`;
         if (errorData?.detail) {
-          errorMessage = String(errorData.detail);
+          const d = errorData.detail;
+          if (typeof d === 'string') {
+            errorMessage = d;
+          } else if (typeof d === 'object' && d !== null && typeof (d as any).message === 'string') {
+            errorMessage = (d as any).message;
+          } else if (typeof d === 'object' && d !== null) {
+            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
+          } else {
+            errorMessage = String(d);
+          }
         } else if (errorData?.message) {
           errorMessage = String(errorData.message);
         } else if (typeof errorData === 'string') {
           errorMessage = errorData;
         } else if (Array.isArray(errorData) && errorData.length > 0) {
-          errorMessage = errorData.map((err: any) => err.detail || err.message || String(err)).join(', ');
+          errorMessage = errorData.map((err: any) => err.detail?.message ?? err.detail ?? err.message ?? String(err)).join(', ');
         }
         
         // Check if error is "Invalid authentication credentials" (session expiry)
@@ -263,39 +272,33 @@ class AuthService {
           errorData = {};
         }
         
-        // Handle different error response formats
+        // Handle different error response formats (avoid [object Object] when detail is an object)
         let errorMessage = `HTTP error! status: ${response.status}`;
         if (typeof errorData === 'string') {
           errorMessage = errorData;
         } else if (errorData?.detail) {
-          // Extract the detail field which contains the error message
-          // Handle nested detail objects (e.g., { detail: { message: "..." } })
-          if (typeof errorData.detail === 'string') {
-            errorMessage = errorData.detail;
-          } else if (typeof errorData.detail === 'object' && errorData.detail !== null) {
-            // If detail is an object, try to extract message from it
-            errorMessage = errorData.detail.message || 
-                          errorData.detail.error || 
-                          errorData.detail.detail ||
-                          JSON.stringify(errorData.detail);
+          const d = errorData.detail;
+          if (typeof d === 'string') {
+            errorMessage = d;
+          } else if (typeof d === 'object' && d !== null && typeof d.message === 'string') {
+            errorMessage = d.message;
+          } else if (typeof d === 'object' && d !== null) {
+            errorMessage = (d as any).message != null ? String((d as any).message) : JSON.stringify(d);
           } else {
-          errorMessage = String(errorData.detail);
+            errorMessage = String(d);
           }
         } else if (errorData?.message) {
           errorMessage = String(errorData.message);
         } else if (Array.isArray(errorData)) {
           // Handle array of errors
-          errorMessage = errorData.map((err: any) => 
-            err.detail || err.message || String(err)
+          errorMessage = errorData.map((err: any) =>
+            err.detail?.message ?? err.detail ?? err.message ?? String(err)
           ).join(', ');
-        } else if (typeof errorData === 'object' && errorData !== null && Object.keys(errorData).length > 0) {
-          // Try to extract meaningful error from object
-          const errorText = errorData.detail || errorData.message || errorData.error;
-          if (errorText) {
-            errorMessage = typeof errorText === 'string' ? errorText : JSON.stringify(errorText);
-          } else {
-            errorMessage = JSON.stringify(errorData);
-          }
+        } else if (typeof errorData === 'object' && Object.keys(errorData).length > 0) {
+          const d = errorData.detail ?? errorData.message ?? errorData.error;
+          errorMessage = typeof d === 'object' && d !== null && (d as any).message != null
+            ? String((d as any).message)
+            : d != null ? String(d) : JSON.stringify(errorData);
         }
         
         // Add status code to error for better debugging

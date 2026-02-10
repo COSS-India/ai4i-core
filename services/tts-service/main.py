@@ -54,6 +54,7 @@ from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
 # Import routers
 from routers import inference_router, health_router
@@ -374,6 +375,53 @@ app.add_middleware(CorrelationMiddleware)
 # FastAPI middleware runs in REVERSE order, so this will run AFTER ObservabilityMiddleware
 # This ensures organization is set in context before logging
 app.add_middleware(RequestLoggingMiddleware)
+
+# Synchronous Redis client for Model Management middleware (A/B testing, service resolution)
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+redis_client_sync = None
+try:
+    import redis as redis_sync
+    redis_client_sync = redis_sync.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        password=REDIS_PASSWORD,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        retry_on_timeout=True,
+    )
+    redis_client_sync.ping()
+    logger.info("Redis client created for Model Management middleware (connection tested)")
+except Exception as e:
+    logger.warning("Redis connection failed for Model Management middleware: %s", e)
+    redis_client_sync = None
+
+# Model Management Plugin – service resolution and A/B experiment variant selection + metrics
+MODEL_MANAGEMENT_SERVICE_URL = os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091")
+MODEL_MANAGEMENT_SERVICE_API_KEY = os.getenv(
+    "MODEL_MANAGEMENT_SERVICE_API_KEY",
+    os.getenv("MODEL_MANAGEMENT_API_KEY"),
+)
+MODEL_MANAGEMENT_CACHE_TTL = int(os.getenv("MODEL_MANAGEMENT_CACHE_TTL", "300"))
+TRITON_ENDPOINT_CACHE_TTL = int(os.getenv("TRITON_ENDPOINT_CACHE_TTL", "300"))
+_default_triton = (os.getenv("TRITON_ENDPOINT") or "").strip().replace("http://", "").replace("https://", "") or ""
+_default_triton_key = os.getenv("TRITON_API_KEY") or ""
+
+model_mgmt_config = ModelManagementConfig(
+    model_management_service_url=MODEL_MANAGEMENT_SERVICE_URL,
+    model_management_api_key=MODEL_MANAGEMENT_SERVICE_API_KEY,
+    cache_ttl_seconds=MODEL_MANAGEMENT_CACHE_TTL,
+    triton_endpoint_cache_ttl=TRITON_ENDPOINT_CACHE_TTL,
+    default_triton_endpoint=_default_triton,
+    default_triton_api_key=_default_triton_key,
+    middleware_enabled=True,
+    middleware_paths=["/api/v1"],
+)
+model_mgmt_plugin = ModelManagementPlugin(model_mgmt_config)
+model_mgmt_plugin.register_plugin(app, redis_client=redis_client_sync)
+logger.info("Model Management Plugin initialized for TTS service (A/B experiments + metrics)")
 
 # Add tenant middleware (after auth, before routes)
 # This extracts tenant context from JWT or user_id
