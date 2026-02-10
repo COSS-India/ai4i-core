@@ -2211,16 +2211,19 @@ async def list_all_tenants(db: AsyncSession) -> ListTenantsResponse:
     )
 
 
-async def list_all_users(db: AsyncSession) -> ListUsersResponse:
+async def list_all_users(db: AsyncSession, tenant_id: Optional[str] = None) -> ListUsersResponse:
     """
-    List all tenant users across all tenants.
-    
-    Args:
-        db: Database session
-    Returns:
-        ListUsersResponse: List of all tenant users and their details
+    List tenant users.
+
+    If tenant_id is provided, only users belonging to that tenant are returned.
+    If tenant_id is not provided, users across all tenants are returned.
     """
-    result = await db.execute(select(TenantUser).order_by(TenantUser.created_at.desc()))
+    stmt = select(TenantUser)
+    if tenant_id:
+        stmt = stmt.where(TenantUser.tenant_id == tenant_id)
+    stmt = stmt.order_by(TenantUser.created_at.desc())
+
+    result = await db.execute(stmt)
     users = result.scalars().all()
     
     user_list = [
