@@ -1465,6 +1465,27 @@ const TracesPage: React.FC = () => {
     return rootSpan.operationName;
   };
 
+  // Extract client IP address from trace spans
+  const getClientIP = (trace: Trace): string | null => {
+    if (!trace.spans || trace.spans.length === 0) return null;
+    
+    // Look for IP in any span (usually in the root HTTP request span)
+    for (const span of trace.spans) {
+      const tags = span.tags || [];
+      // Check for client.ip or http.client_ip attributes
+      const ipTag = tags.find(t => 
+        t.key === "client.ip" || 
+        t.key === "http.client_ip" ||
+        t.key.toLowerCase() === "client.ip" ||
+        t.key.toLowerCase() === "http.client_ip"
+      );
+      if (ipTag && ipTag.value && String(ipTag.value) !== "unknown") {
+        return String(ipTag.value);
+      }
+    }
+    return null;
+  };
+
   return (
     <>
       <Head>
@@ -1604,6 +1625,16 @@ const TracesPage: React.FC = () => {
                           {processedSpans.length}
                         </Text>
                       </Box>
+                      {getClientIP(traceDetails) && (
+                        <Box minH="50px">
+                          <Text fontSize="xs" color="gray.600" mb={1}>
+                            Client IP
+                          </Text>
+                          <Text fontSize="sm" fontWeight="medium" color="gray.700" fontFamily="mono">
+                            {getClientIP(traceDetails)}
+                          </Text>
+                        </Box>
+                      )}
                       <Box minH="50px" display="flex" flexDirection="column" flex={1} minW="200px">
                         <Text fontSize="xs" color="gray.600" mb={1}>
                           Status
@@ -1854,7 +1885,9 @@ const TracesPage: React.FC = () => {
                                        tagKey.startsWith('asr.') ||
                                        tagKey === 'correlation.id' ||
                                        tagKey === 'organization' ||
-                                       tagKey.startsWith('user.');
+                                       tagKey.startsWith('user.') ||
+                                       tagKey === 'client.ip' ||
+                                       tagKey === 'http.client_ip';
                               }
                               
                               // For auth spans, include auth-related and organization tags
@@ -1862,7 +1895,9 @@ const TracesPage: React.FC = () => {
                                 return tagKey.startsWith('auth.') ||
                                        tagKey === 'organization' ||
                                        tagKey.startsWith('user.') ||
-                                       tagKey === 'correlation.id';
+                                       tagKey === 'correlation.id' ||
+                                       tagKey === 'client.ip' ||
+                                       tagKey === 'http.client_ip';
                               }
                               
                               // For other spans, only include essential tags
@@ -1870,7 +1905,9 @@ const TracesPage: React.FC = () => {
                                      tagKey === 'organization' ||
                                      tagKey.startsWith('user.') ||
                                      tagKey.includes('.input.') ||
-                                     tagKey.includes('input_count');
+                                     tagKey.includes('input_count') ||
+                                     tagKey === 'client.ip' ||
+                                     tagKey === 'http.client_ip';
                             };
                             
                             // Traverse up the parent chain to collect tags from all ancestors
@@ -1958,6 +1995,8 @@ const TracesPage: React.FC = () => {
                                 // Highest priority: input-related tags (most important for understanding the request)
                                 if (key.includes(".input.") || key.includes("input_count") || key.includes("input_size") || 
                                     key.includes("request.size") || key.startsWith("http.request")) return 1;
+                                // High priority: client IP (important for request tracking)
+                                if (key === "client.ip" || key === "http.client_ip") return 1.5;
                                 // High priority: service-specific tags
                                 if (key.startsWith("nmt.") || key.startsWith("ocr.") || key.startsWith("tts.") || key.startsWith("asr.")) return 2;
                                 if (key === "http.status_code" || key === "otel.status_code") return 3;
