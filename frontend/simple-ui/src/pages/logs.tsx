@@ -107,6 +107,59 @@ const LogsPage: React.FC = () => {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
+  // Filter services to only show application services (exclude infrastructure services)
+  const filteredServices = useMemo(() => {
+    if (!services || !Array.isArray(services)) {
+      return [];
+    }
+
+    // Define allowed application services
+    const allowedServices = [
+      'ocr-service',
+      'ner-service',
+      'tts-service',
+      'nmt-service',
+      'pipeline-service',
+      'audio-lang',
+      'audio-lang-detection-service', // Support both naming conventions
+      'asr-service',
+      'speaker-diarization-service',
+      'transliteration-service',
+      'llm-service',
+      'language-detection-service',
+      'language-detection',
+      'language-diarization-service',
+      'language-diarization',
+      'auth-service',
+      'telemetry-service',
+    ];
+
+    // Also define patterns for infrastructure services to exclude
+    const infrastructurePatterns = [
+      /^apisix/i,
+      /^fluent-bit/i,
+      /^prometheus/i,
+      /^grafana/i,
+      /^jaeger/i,
+      /^opensearch/i,
+      /^postgres/i,
+      /^redis/i,
+      /^influxdb/i,
+      /^alertmanager/i,
+      /^node-exporter/i,
+      /^kube-state/i,
+      /^cm-acme/i,
+      /^opensearch-cleanup/i,
+      /^simple-ui/i,
+    ];
+
+    // Filter services: only include services in the allowed list
+    return services.filter((service: string) => {
+      // Only include services that are explicitly in the allowed list
+      return allowedServices.includes(service);
+    }).sort(); // Sort alphabetically for better UX
+  }, [services]);
+
   // Handle services error
   useEffect(() => {
     if (servicesError && (servicesError as any)?.response?.status === 401 || (servicesError as any)?.response?.status === 403) {
@@ -801,7 +854,7 @@ const LogsPage: React.FC = () => {
                     bg="white"
                   >
                     <option value="">All Services</option>
-                    {Array.isArray(services) && services.map((svc) => (
+                    {filteredServices.map((svc) => (
                       <option key={svc} value={svc}>
                         {svc}
                       </option>
