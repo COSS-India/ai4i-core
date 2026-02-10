@@ -195,6 +195,9 @@ class NMTInferenceConfig(BaseModel):
     """Configuration for NMT inference."""
     serviceId: Optional[str] = Field(None, description="Identifier for NMT service/model (optional; Smart Router will assign if omitted)")
     language: NMTLanguagePair = Field(..., description="Language pair configuration")
+    # Optional context for context-aware routing. When X-Context-Aware is true,
+    # this field becomes required at runtime in the NMT fast-path logic.
+    context: Optional[str] = Field(None, description="Optional context string for context-aware translation")
 
 class NMTInferenceRequest(BaseModel):
     """NMT inference request model."""
@@ -5233,8 +5236,19 @@ async def nmt_inference(
                 "zh": "Chinese", "ar": "Arabic", "th": "Thai", "vi": "Vietnamese"
             }
             
-            # Extract input text and language configuration
+            # Extract input text, language configuration, and required context
             nmt_config = body_dict.get("config") or {}
+            if not isinstance(nmt_config, dict):
+                raise HTTPException(status_code=400, detail="config must be an object when X-Context-Aware is true")
+
+            # When context-aware routing is enabled, config.context is required
+            if "context" not in nmt_config:
+                raise HTTPException(
+                    status_code=400,
+                    detail="config.context is required when X-Context-Aware is true",
+                )
+            context_value = nmt_config.get("context")
+
             lang_cfg = nmt_config.get("language") or {}
             source_lang_code = lang_cfg.get("sourceLanguage", "en")
             target_lang_code = lang_cfg.get("targetLanguage", "en")
@@ -5253,11 +5267,12 @@ async def nmt_inference(
             if not text:
                 raise HTTPException(status_code=400, detail="Source text cannot be empty")
             
-            # Prepare translate API request
+            # Prepare translate API request (include context from config)
             translate_payload = {
                 "text": text,
                 "source_language": source_language,
-                "target_language": target_language
+                "target_language": target_language,
+                "context": context_value,
             }
             
             logger.debug(
