@@ -561,7 +561,7 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
     if (error?.message?.includes('API key') || error?.message?.includes('api key')) {
       errorMessage = 'API key is required to access this service.';
     } else {
-      errorMessage = err.description;
+      errorMessage = ASR_ERRORS.AUTH_FAILED.description;
     }
     return {
       title: errorTitle,
@@ -570,10 +570,11 @@ export function extractErrorInfo(error: any, service?: ErrorHandlerService): Err
     };
   }
   
+  const lowerMessage = (errorMessage || detailMessage || (error?.message && String(error.message)) || '').toLowerCase();
   if (status === 403) {
     const errorCode = String(error?.response?.data?.detail?.error || error?.response?.data?.detail?.code || '').toUpperCase();
     if (errorCode === 'TENANT_SUSPENDED' || errorCode.includes('SUSPENDED')) {
-      const err = 'TENANT_SUSPENDED' in serviceErrors ? (serviceErrors as typeof ASR_ERRORS).TENANT_SUSPENDED : ASR_ERRORS.TENANT_SUSPENDED;
+      const err = ASR_ERRORS.TENANT_SUSPENDED;
       return {
         title: err.title,
         message: err.description,
