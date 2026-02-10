@@ -345,8 +345,9 @@ const Sidebar: React.FC = () => {
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
   const [isMobile] = useMediaQuery("(max-width: 1080px)");
   
-  // Check if user is GUEST
+  // Check if user is GUEST or USER
   const isGuest = user?.roles?.includes('GUEST') || false;
+  const isUser = user?.roles?.includes('USER') || false;
 
   // Feature flags for each service
   const asrEnabled = useFeatureFlag({ flagName: "asr-enabled" });
@@ -385,8 +386,8 @@ const Sidebar: React.FC = () => {
   // Filter top nav items (Home and Model Management)
   const topItems = topNavItems.filter((item) => {
     if (item.id === "home") return true;
-    // Hide Model Management and Services Management for GUEST users
-    if (isGuest && (item.id === "model-management" || item.id === "services-management")) {
+    // Hide Model Management and Services Management for GUEST and USER users
+    if ((isGuest || isUser) && (item.id === "model-management" || item.id === "services-management")) {
       return false;
     }
     if (item.featureFlag) {

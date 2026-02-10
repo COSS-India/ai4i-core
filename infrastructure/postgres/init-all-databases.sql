@@ -1930,6 +1930,7 @@ INSERT INTO permissions (name, resource, action) VALUES
 ('tts.read', 'tts', 'read'),
 ('nmt.inference', 'nmt', 'inference'),
 ('nmt.read', 'nmt', 'read'),
+('ner.inference', 'ner', 'inference'),
 -- Model Management permissions
 ('model.create', 'models', 'create'),
 ('model.read', 'models', 'read'),

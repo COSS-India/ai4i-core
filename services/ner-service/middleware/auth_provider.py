@@ -232,6 +232,14 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
                         span.set_status(Status(StatusCode.OK))
                     return
                 error_msg = result.get("message", "Permission denied")
+                # Format error message to be consistent with other services
+                # Ensure it says "Authorization error: Insufficient permission" for permission-related errors
+                if "insufficient permission" not in error_msg.lower() and "authorization error" not in error_msg.lower():
+                    if "permission" in error_msg.lower() or "does not have" in error_msg.lower() or "ner.inference" in error_msg:
+                        # For permission errors, format as "Authorization error: Insufficient permission. [original message]"
+                        error_msg = f"Authorization error: Insufficient permission. {error_msg}"
+                    else:
+                        error_msg = f"Authorization error: {error_msg}"
                 if span:
                     span.set_attribute("auth.valid", False)
                     span.set_attribute("error", True)
@@ -290,6 +298,11 @@ async def AuthProvider(
     """Authentication provider for NER - supports AUTH_TOKEN, API_KEY, BOTH."""
     tracer = get_tracer()
     
+    # Environment-driven auth behavior (align with ASR service)
+    auth_enabled = os.getenv("AUTH_ENABLED", "true").lower() == "true"
+    require_api_key = os.getenv("REQUIRE_API_KEY", "true").lower() == "true"
+    allow_anonymous = os.getenv("ALLOW_ANONYMOUS_ACCESS", "false").lower() == "true"
+
     # Also check request headers directly in case FastAPI header parsing missed it
     # (API gateway might forward it with different casing)
     x_auth_source_from_header = request.headers.get("X-Auth-Source") or request.headers.get("x-auth-source")
@@ -297,37 +310,42 @@ async def AuthProvider(
         x_auth_source = x_auth_source_from_header
         logger.debug(f"Found X-Auth-Source header: {x_auth_source}")
     
-    # Auto-detect auth mode: If Bearer token is provided and no explicit API key,
-    # automatically use AUTH_TOKEN mode (unless explicitly set to API_KEY with X-API-Key)
+    # Determine auth source strictly from header (no auto-fallback)
     has_bearer_token = authorization and authorization.startswith("Bearer ")
     has_explicit_api_key = x_api_key is not None
-    
     auth_source = (x_auth_source or "API_KEY").upper()
-    
-    # Smart fallback: If both Bearer token and API key are present but auth_source is API_KEY,
-    # automatically use BOTH mode (API gateway might not forward x-auth-source header)
-    if auth_source == "API_KEY" and has_bearer_token and has_explicit_api_key:
-        auth_source = "BOTH"
-        logger.debug(f"Auto-detected BOTH mode: Bearer token + API key present")
-    
+
     logger.debug(f"Auth source determined: {auth_source} (from header: {x_auth_source})")
-    
-    # If Bearer token is provided but auth_source is API_KEY (default) and no explicit API key,
-    # automatically switch to AUTH_TOKEN mode for better UX
-    auto_detected = False
-    if has_bearer_token and auth_source == "API_KEY" and not has_explicit_api_key:
-        auth_source = "AUTH_TOKEN"
-        auto_detected = True
 
     # Tracing-aware implementation
     span_context = tracer.start_as_current_span("request.authorize") if tracer else nullcontext()
     with span_context as auth_span:
         if auth_span:
             auth_span.set_attribute("auth.source", auth_source)
-            if auto_detected:
-                auth_span.set_attribute("auth.source_auto_detected", True)
+            auth_span.set_attribute("auth.enabled", auth_enabled)
+            auth_span.set_attribute("auth.require_api_key", require_api_key)
+            auth_span.set_attribute("auth.allow_anonymous", allow_anonymous)
+            auth_span.set_attribute("auth.authorization_present", bool(authorization))
+            auth_span.set_attribute("auth.api_key_present", bool(x_api_key))
         
         try:
+            # If authentication is disabled or anonymous access is allowed, skip auth
+            if not auth_enabled or (allow_anonymous and not require_api_key):
+                if auth_span:
+                    auth_span.set_attribute("auth.method", "NONE")
+                    auth_span.set_attribute("auth.authorized", False)
+                    auth_span.set_attribute("auth.skipped", True)
+                    auth_span.set_status(Status(StatusCode.OK) if Status else None)
+
+                # Clear request auth state
+                request.state.user_id = None
+                request.state.api_key_id = None
+                request.state.api_key_name = None
+                request.state.user_email = None
+                request.state.is_authenticated = False
+
+                return {"user_id": None, "api_key_id": None, "user": None, "api_key": None}
+
             if auth_source == "AUTH_TOKEN":
                 if auth_span:
                     auth_span.set_attribute("auth.method", "JWT")
