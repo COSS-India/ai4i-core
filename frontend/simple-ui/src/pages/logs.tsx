@@ -56,7 +56,7 @@ import {
 const LogsPage: React.FC = () => {
   const toast = useToast();
   const router = useRouter();
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(10);
   const [clientPage, setClientPage] = useState(1); // Client-side pagination for filtered logs
@@ -71,25 +71,39 @@ const LogsPage: React.FC = () => {
   const theadBg = useColorModeValue("gray.50", "gray.700");
   const rowHoverBg = useColorModeValue("gray.50", "gray.800");
 
-  // Redirect to login if not authenticated
-  useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      toast({
-        title: "Authentication Required",
-        description: "Please log in to view logs.",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
-      router.push("/auth");
-    }
-  }, [isAuthenticated, authLoading, router, toast]);
+  // Check if user is ADMIN
+  const isAdmin = user?.roles?.includes('ADMIN') || false;
 
-  // Fetch services list (only if authenticated)
+  // Redirect to login if not authenticated or not ADMIN
+  useEffect(() => {
+    if (!authLoading) {
+      if (!isAuthenticated) {
+        toast({
+          title: "Authentication Required",
+          description: "Please log in to view logs.",
+          status: "warning",
+          duration: 3000,
+          isClosable: true,
+        });
+        router.push("/auth");
+      } else if (!isAdmin) {
+        toast({
+          title: "Access Denied",
+          description: "Only administrators can access the logs dashboard.",
+          status: "error",
+          duration: 3000,
+          isClosable: true,
+        });
+        router.push("/");
+      }
+    }
+  }, [isAuthenticated, authLoading, isAdmin, router, toast]);
+
+  // Fetch services list (only if authenticated and ADMIN)
   const { data: services, isLoading: servicesLoading, error: servicesError } = useQuery({
     queryKey: ["logs-services"],
     queryFn: getServicesWithLogs,
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && isAdmin,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
@@ -107,7 +121,7 @@ const LogsPage: React.FC = () => {
     }
   }, [servicesError, router, toast]);
 
-  // Fetch aggregations (only if authenticated)
+  // Fetch aggregations (only if authenticated and ADMIN)
   const { data: aggregations, isLoading: aggregationsLoading, error: aggregationsError } = useQuery({
     queryKey: ["logs-aggregations", startTime, endTime],
     queryFn: () =>
@@ -115,7 +129,7 @@ const LogsPage: React.FC = () => {
         start_time: startTime || undefined,
         end_time: endTime || undefined,
       }),
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && isAdmin,
     staleTime: 1 * 60 * 1000, // 1 minute
   });
 
@@ -239,7 +253,7 @@ const LogsPage: React.FC = () => {
         total_pages: Math.ceil(allLogs.length / fetchSize),
       };
     },
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && isAdmin,
     staleTime: 30 * 1000, // 30 seconds
   });
 
