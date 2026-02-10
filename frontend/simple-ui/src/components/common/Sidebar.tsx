@@ -349,6 +349,9 @@ const Sidebar: React.FC = () => {
   const isGuest = user?.roles?.includes('GUEST') || false;
   const isUser = user?.roles?.includes('USER') || false;
 
+  // Check if user is ADMIN
+  const isAdmin = user?.roles?.includes('ADMIN') || false;
+
   // Feature flags for each service
   const asrEnabled = useFeatureFlag({ flagName: "asr-enabled" });
   const ttsEnabled = useFeatureFlag({ flagName: "tts-enabled" });
@@ -388,6 +391,10 @@ const Sidebar: React.FC = () => {
     if (item.id === "home") return true;
     // Hide Model Management and Services Management for GUEST and USER users
     if ((isGuest || isUser) && (item.id === "model-management" || item.id === "services-management")) {
+      return false;
+    }
+    // Hide Logs Dashboard and Traces Dashboard for non-ADMIN users
+    if ((item.id === "logs" || item.id === "traces") && !isAdmin) {
       return false;
     }
     if (item.featureFlag) {
