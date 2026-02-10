@@ -44,7 +44,7 @@ from ai4icore_logging import (
     CorrelationMiddleware,
     configure_logging,
 )
-from ai4icore_telemetry import setup_tracing
+from ai4icore_telemetry import setup_tracing, IPCaptureMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 
 # OpenTelemetry for distributed tracing
@@ -2811,6 +2811,10 @@ if TRACING_AVAILABLE:
 
 # Add correlation middleware (must be first to set correlation ID)
 app.add_middleware(CorrelationMiddleware)
+
+# Add IP capture middleware (after FastAPIInstrumentor, captures IP for all spans)
+if TRACING_AVAILABLE:
+    app.add_middleware(IPCaptureMiddleware)
 
 # Add authentication/authorization middleware (after correlation, before logging)
 from middleware.auth_middleware_gateway import AuthGatewayMiddleware
