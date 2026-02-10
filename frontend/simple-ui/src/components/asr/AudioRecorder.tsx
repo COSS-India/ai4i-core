@@ -14,7 +14,7 @@ import {
 } from "@chakra-ui/react";
 import React, { useRef } from "react";
 import { FaMicrophone, FaMicrophoneSlash, FaUpload } from "react-icons/fa";
-import { formatDuration, MAX_RECORDING_DURATION } from "../../config/constants";
+import { formatDuration, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS } from "../../config/constants";
 import { AudioRecorderProps } from "../../types/asr";
 
 const AudioRecorder: React.FC<AudioRecorderProps> = ({
@@ -38,6 +38,14 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
     if (!file) {
       console.log("No file selected");
+      const err = UPLOAD_ERRORS.NO_FILE_SELECTED;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
       return;
     }
 
@@ -49,6 +57,19 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
       "Type:",
       file.type
     );
+
+    // Validate file size
+    if (file.size > MAX_AUDIO_FILE_SIZE) {
+      const err = UPLOAD_ERRORS.FILE_TOO_LARGE;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
 
     // Validate file type - only MP3 and WAV files are supported
     const isMP3 =
@@ -62,10 +83,10 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
       file.name.toLowerCase().endsWith(".wav");
 
     if (!isMP3 && !isWAV) {
+      const err = UPLOAD_ERRORS.UNSUPPORTED_FORMAT;
       toast({
-        title: "Invalid File Type",
-        description:
-          "Only MP3 and WAV files are supported. Please select a valid audio file.",
+        title: err.title,
+        description: err.description,
         status: "error",
         duration: 3000,
         isClosable: true,
@@ -73,37 +94,39 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
       return;
     }
 
-    // Validate file size (max 10MB)
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size > maxSize) {
-      toast({
-        title: "File Too Large",
-        description: "Please select a file smaller than 10MB.",
-        status: "error",
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    // Validate audio duration (max 1 minute)
-    const validateAudioDuration = (file: File): Promise<boolean> => {
+    // Validate audio duration (min 1 second, max 60 seconds)
+    const validateAudioDuration = (file: File): Promise<{ isValid: boolean; duration: number; error?: string }> => {
       return new Promise((resolve) => {
         const audio = new Audio();
         const url = URL.createObjectURL(file);
 
+        const timeout = setTimeout(() => {
+          URL.revokeObjectURL(url);
+          resolve({ isValid: false, duration: 0, error: 'UPLOAD_TIMEOUT' });
+        }, 10000); // 10 second timeout
+
         audio.addEventListener("loadedmetadata", () => {
+          clearTimeout(timeout);
           URL.revokeObjectURL(url);
           const duration = audio.duration;
           console.log("Audio duration:", duration, "seconds");
-          resolve(duration <= MAX_RECORDING_DURATION);
+          
+          if (duration < MIN_RECORDING_DURATION) {
+            resolve({ isValid: false, duration, error: 'AUDIO_TOO_SHORT' });
+          } else if (duration > MAX_RECORDING_DURATION) {
+            resolve({ isValid: false, duration, error: 'AUDIO_TOO_LONG' });
+          } else if (isNaN(duration) || duration === 0) {
+            resolve({ isValid: false, duration, error: 'EMPTY_AUDIO_FILE' });
+          } else {
+            resolve({ isValid: true, duration });
+          }
         });
 
         audio.addEventListener("error", () => {
+          clearTimeout(timeout);
           URL.revokeObjectURL(url);
           console.error("Error loading audio metadata");
-          // If we can't determine duration, allow it but warn user
-          resolve(true);
+          resolve({ isValid: false, duration: 0, error: 'INVALID_FILE' });
         });
 
         audio.src = url;
@@ -112,11 +135,30 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
     // Validate duration first, then process file
     validateAudioDuration(file)
-      .then((isValidDuration) => {
-        if (!isValidDuration) {
+      .then((result) => {
+        if (!result.isValid) {
+          let err;
+          switch (result.error) {
+            case 'AUDIO_TOO_SHORT':
+              err = UPLOAD_ERRORS.AUDIO_TOO_SHORT;
+              break;
+            case 'AUDIO_TOO_LONG':
+              err = UPLOAD_ERRORS.AUDIO_TOO_LONG;
+              break;
+            case 'EMPTY_AUDIO_FILE':
+              err = UPLOAD_ERRORS.EMPTY_AUDIO_FILE;
+              break;
+            case 'UPLOAD_TIMEOUT':
+              err = UPLOAD_ERRORS.UPLOAD_TIMEOUT;
+              break;
+            case 'INVALID_FILE':
+            default:
+              err = UPLOAD_ERRORS.INVALID_FILE;
+              break;
+          }
           toast({
-            title: "Audio Too Long",
-            description: `Audio file exceeds the 1 minute limit. Please select a file that is ${MAX_RECORDING_DURATION} seconds or less.`,
+            title: err.title,
+            description: err.description,
             status: "error",
             duration: 5000,
             isClosable: true,
@@ -146,9 +188,10 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
               onAudioReady(base64Data);
             } catch (err) {
               console.error("Error processing file result:", err);
+              const uploadErr = UPLOAD_ERRORS.UPLOAD_FAILED;
               toast({
-                title: "File Processing Error",
-                description: "Failed to process the selected file.",
+                title: uploadErr.title,
+                description: uploadErr.description,
                 status: "error",
                 duration: 3000,
                 isClosable: true,
@@ -158,9 +201,10 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
 
           reader.onerror = (error) => {
             console.error("FileReader error:", error);
+            const err = UPLOAD_ERRORS.INVALID_FILE;
             toast({
-              title: "File Read Error",
-              description: "Failed to read the selected file.",
+              title: err.title,
+              description: err.description,
               status: "error",
               duration: 3000,
               isClosable: true,
@@ -174,9 +218,10 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
           reader.readAsDataURL(file);
         } catch (error) {
           console.error("Error reading file:", error);
+          const err = UPLOAD_ERRORS.INVALID_FILE;
           toast({
-            title: "File Read Error",
-            description: "Failed to read the selected file.",
+            title: err.title,
+            description: err.description,
             status: "error",
             duration: 3000,
             isClosable: true,
@@ -185,9 +230,10 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
       })
       .catch((error) => {
         console.error("Error validating audio duration:", error);
+        const err = UPLOAD_ERRORS.INVALID_FILE;
         toast({
-          title: "File Validation Error",
-          description: "Failed to validate audio file. Please try again.",
+          title: err.title,
+          description: err.description,
           status: "error",
           duration: 3000,
           isClosable: true,

@@ -24,6 +24,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import { performAudioLanguageDetectionInference, listAudioLanguageDetectionServices } from "../services/audioLanguageDetectionService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { extractErrorInfo } from "../utils/errorHandler";
+import { AUDIO_LANGUAGE_DETECTION_ERRORS } from "../config/constants";
 
 const AudioLanguageDetectionPage: React.FC = () => {
   const toast = useToast();
@@ -94,10 +95,11 @@ const AudioLanguageDetectionPage: React.FC = () => {
 
   const handleSubmit = async () => {
     if (!audioData) {
+      const err = AUDIO_LANGUAGE_DETECTION_ERRORS.FILE_REQUIRED;
       toast({
-        title: "No Audio",
-        description: "Please record or upload audio first.",
-        status: "warning",
+        title: err.title,
+        description: err.description,
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -132,8 +134,8 @@ const AudioLanguageDetectionPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Use centralized error handler
-      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err);
+      // Use centralized error handler (audio-language-detection context so backend message shown as default when no specific mapping)
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'audio-language-detection');
       
       setError(errorMessage);
       toast({
