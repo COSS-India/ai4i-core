@@ -237,7 +237,9 @@ const ModelManagementPage: React.FC = () => {
         }
       ],
       license: "mit",
-      domain: ["general"],
+      domain: [
+        "general"
+      ],
       inferenceEndPoint: {
         schema: {
           modelProcessingType: {
@@ -289,7 +291,11 @@ const ModelManagementPage: React.FC = () => {
         team: [
           {
             name: "John Doe",
-            aboutMe: "Lead Researcher"
+            aboutMe: "Lead Researcher",
+            oauthId: {
+              oauthId: "1234567890",
+              provider: "google"
+            }
           }
         ]
       }
