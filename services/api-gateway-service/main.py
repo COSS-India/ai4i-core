@@ -1445,7 +1445,6 @@ class TenantRegisterResponse(BaseModel):
     quotas: Dict[str, Any] = Field(..., description="Quota configuration")
     usage_quota: Optional[Dict[str, Any]] = Field(None, description="Usage quota values")
     status: str = Field(..., description="Tenant status")
-    token: str = Field(..., description="Email verification token")
     message: Optional[str] = Field(None, description="Additional message")
 
 class UserRegisterRequest(BaseModel):
@@ -1498,6 +1497,19 @@ class TenantResendEmailVerificationRequest(BaseModel):
 
 class TenantResendEmailVerificationResponse(BaseModel):
     """Response model for resending email verification."""
+    tenant_uuid: UUID = Field(..., description="Tenant UUID")
+    tenant_id: str = Field(..., description="Tenant identifier")
+    token: str = Field(..., description="Verification token")
+    message: str = Field(..., description="Response message")
+
+
+class TenantSendEmailVerificationRequest(BaseModel):
+    """Request model for sending initial email verification link."""
+    tenant_id: str = Field(..., description="Tenant identifier (e.g., 'acme-corp')")
+
+
+class TenantSendEmailVerificationResponse(BaseModel):
+    """Response model for sending initial email verification link."""
     tenant_uuid: UUID = Field(..., description="Tenant UUID")
     tenant_id: str = Field(..., description="Tenant identifier")
     token: str = Field(..., description="Verification token")
@@ -5928,6 +5940,31 @@ async def resend_verification_email(
         method="POST",
         body=body,
         headers=headers
+    )
+
+
+@app.post("/api/v1/multi-tenant/email/send-verification", response_model=TenantSendEmailVerificationResponse, tags=["Multi-Tenant"], status_code=201)
+async def send_verification_email(
+    payload: TenantSendEmailVerificationRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    Send the initial email verification link for a tenant.
+    This email is intiated by Admin , and is different from the resend endpoint which is initiated by users.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/admin/email/send/verification",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers,
     )
 
 @app.post("/api/v1/multi-tenant/subscriptions/add", response_model=TenantSubscriptionResponse, tags=["Multi-Tenant"], status_code=201)
