@@ -211,6 +211,32 @@ class NMTInferenceResponse(BaseModel):
     """NMT inference response model."""
     output: List[NMTTranslationOutput] = Field(..., description="Translation results")
 
+# Pydantic models for LLM endpoints
+class LLMTextInput(BaseModel):
+    """Text input for LLM processing."""
+    source: str = Field(..., description="Input text to process")
+
+class LLMInferenceConfig(BaseModel):
+    """Configuration for LLM inference."""
+    serviceId: Optional[str] = Field(None, description="Identifier for LLM service/model (optional; Smart Router will assign if omitted)")
+    inputLanguage: Optional[str] = Field(None, description="Input language code (e.g., 'en', 'hi')")
+    outputLanguage: Optional[str] = Field(None, description="Output language code")
+
+class LLMInferenceRequest(BaseModel):
+    """LLM inference request model."""
+    input: List[LLMTextInput] = Field(..., description="List of text inputs to process", min_items=1)
+    config: LLMInferenceConfig = Field(..., description="Configuration for inference")
+    controlConfig: Optional[Dict[str, Any]] = Field(None, description="Additional control parameters")
+
+class LLMOutput(BaseModel):
+    """LLM output result."""
+    source: str = Field(..., description="Source text")
+    target: str = Field(..., description="Processed text")
+
+class LLMInferenceResponse(BaseModel):
+    """LLM inference response model."""
+    output: List[LLMOutput] = Field(..., description="Processing results")
+
 # Pydantic models for TTS endpoints
 class Gender(str, Enum):
     """Voice gender options for TTS."""
@@ -5166,9 +5192,23 @@ async def nmt_inference(
         and context_aware_header.strip().lower() in {"1", "true", "yes", "y"}
     )
 
-    if tenant_id is not None and is_context_aware:
+    # Log the context-aware decision
+    logger.info(
+        "NMT inference: context-aware header check",
+        extra={
+            "context": {
+                "context_aware_header": context_aware_header,
+                "is_context_aware": is_context_aware,
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+            }
+        },
+    )
+
+    # Allow context-aware routing even without tenant_id if header is explicitly set
+    if is_context_aware:
         logger.info(
-            "NMT inference: context-aware routing enabled, forwarding directly to LLM service",
+            "NMT inference: context-aware routing enabled, calling translate API directly",
             extra={
                 "context": {
                     "user_id": user_id,
@@ -5179,47 +5219,230 @@ async def nmt_inference(
             },
         )
 
-        # Map NMT request shape → LLMInferenceRequest shape.
-        # - NMT: config.language.sourceLanguage / targetLanguage
-        # - LLM: config.inputLanguage / outputLanguage, plus required serviceId
-        nmt_config = body_dict.get("config") or {}
-        lang_cfg = nmt_config.get("language") or {}
+        try:
+            # Language code to full name mapping
+            LANGUAGE_CODE_TO_NAME = {
+                "en": "English", "hi": "Hindi", "ta": "Tamil", "te": "Telugu",
+                "kn": "Kannada", "ml": "Malayalam", "bn": "Bengali", "gu": "Gujarati",
+                "mr": "Marathi", "pa": "Punjabi", "or": "Oriya", "as": "Assamese",
+                "ur": "Urdu", "sa": "Sanskrit", "ks": "Kashmiri", "ne": "Nepali",
+                "sd": "Sindhi", "kok": "Konkani", "doi": "Dogri", "mai": "Maithili",
+                "brx": "Bodo", "mni": "Manipuri", "sat": "Santali", "gom": "Goan Konkani",
+                "fr": "French", "es": "Spanish", "de": "German", "it": "Italian",
+                "pt": "Portuguese", "ru": "Russian", "ja": "Japanese", "ko": "Korean",
+                "zh": "Chinese", "ar": "Arabic", "th": "Thai", "vi": "Vietnamese"
+            }
+            
+            # Extract input text and language configuration
+            nmt_config = body_dict.get("config") or {}
+            lang_cfg = nmt_config.get("language") or {}
+            source_lang_code = lang_cfg.get("sourceLanguage", "en")
+            target_lang_code = lang_cfg.get("targetLanguage", "en")
+            
+            # Map language codes to full names
+            source_language = LANGUAGE_CODE_TO_NAME.get(source_lang_code, source_lang_code.capitalize())
+            target_language = LANGUAGE_CODE_TO_NAME.get(target_lang_code, target_lang_code.capitalize())
+            
+            # Get input text (use first input if multiple)
+            input_list = body_dict.get("input", [])
+            if not input_list:
+                raise HTTPException(status_code=400, detail="Input text is required")
+            
+            # Combine all input texts or use first one
+            text = " ".join([item.get("source", "") for item in input_list if item.get("source")])
+            if not text:
+                raise HTTPException(status_code=400, detail="Source text cannot be empty")
+            
+            # Prepare translate API request
+            translate_payload = {
+                "text": text,
+                "source_language": source_language,
+                "target_language": target_language
+            }
+            
+            logger.debug(
+                "NMT inference: calling translate API",
+                extra={
+                    "context": {
+                        "translate_payload": translate_payload,
+                        "endpoint": "http://13.201.75.118:8000/api/translate"
+                    }
+                },
+            )
+            
+            # Call translate API directly
+            # Use a local client for this request
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                translate_response = await client.post(
+                    "http://13.201.75.118:8000/api/translate",
+                    json=translate_payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                translate_response.raise_for_status()
+                translate_result = translate_response.json()
+                
+                # Extract translated text from response
+                # Response format: {"success":true,"result":"...","model":"gpt-oss:20b"}
+                translated_text = None
+                
+                # Try common response field names (check if key exists and value is not None/empty)
+                if "translated_text" in translate_result and translate_result.get("translated_text"):
+                    translated_text = str(translate_result["translated_text"])
+                elif "translation" in translate_result and translate_result.get("translation"):
+                    translated_text = str(translate_result["translation"])
+                elif "result" in translate_result and translate_result.get("result"):
+                    translated_text = str(translate_result["result"])
+                elif "text" in translate_result and translate_result.get("text"):
+                    translated_text = str(translate_result["text"])
+                elif "output" in translate_result and translate_result.get("output"):
+                    translated_text = str(translate_result["output"])
+                elif isinstance(translate_result, str):
+                    translated_text = translate_result
+                
+                if not translated_text:
+                    logger.warning(
+                        "Translate API response format unexpected",
+                        extra={"context": {"response": translate_result}}
+                    )
+                    translated_text = "Translation unavailable"
+            
+            # Format response in NMT format
+            output_list = []
+            for item in input_list:
+                output_list.append({
+                    "source": item.get("source", ""),
+                    "target": translated_text  # Use same translation for all inputs
+                })
+            
+            response_data = {"output": output_list}
+            
+            downstream_response = Response(
+                content=json.dumps(response_data).encode("utf-8"),
+                status_code=200,
+                headers={"Content-Type": "application/json"},
+                media_type="application/json"
+            )
 
-        llm_config = {
-            # Use "default-llm" which is in LLM service's internal SERVICE_REGISTRY
-            # This bypasses Model Management resolution and uses the service's default Triton endpoint
-            "serviceId": nmt_config.get("serviceId") or "default-llm",
-            "inputLanguage": lang_cfg.get("sourceLanguage"),
-            "outputLanguage": lang_cfg.get("targetLanguage"),
-        }
+            if isinstance(downstream_response, Response):
+                downstream_response.headers["X-SMR-ContextAware"] = "true"
+                downstream_response.headers["X-SMR-TenantId"] = tenant_id or "free_user"
+                downstream_response.headers["X-SMR-ServiceType"] = "llm translate"
+                
+                # Log response status for debugging
+                if downstream_response.status_code >= 400:
+                    logger.warning(
+                        "NMT inference: Translate API returned error status",
+                        extra={
+                            "context": {
+                                "status_code": downstream_response.status_code,
+                                "tenant_id": tenant_id,
+                            }
+                        },
+                    )
+                else:
+                    logger.info(
+                        "NMT inference: Translate API call successful",
+                        extra={
+                            "context": {
+                                "source_language": source_language,
+                                "target_language": target_language,
+                                "text_length": len(text)
+                            }
+                        },
+                    )
 
-        llm_body = {
-            "input": body_dict.get("input", []),
-            "config": llm_config,
-        }
-
-        body = json.dumps(llm_body).encode("utf-8")
-        headers = build_auth_headers(request, credentials, api_key)
-
-        downstream_response = await proxy_to_service(
-            None,
-            "/api/v1/llm/inference",
-            "llm-service",
-            method="POST",
-            body=body,
-            headers=headers,
-        )
-
-        if isinstance(downstream_response, Response):
-            downstream_response.headers["X-SMR-ContextAware"] = "true"
-            downstream_response.headers["X-SMR-TenantId"] = tenant_id or "free_user"
-            downstream_response.headers["X-SMR-ServiceType"] = "llm"
-
-        return downstream_response
+            return downstream_response
+            
+        except httpx.HTTPStatusError as e:
+            # HTTP error from translate API
+            logger.error(
+                "NMT inference: Translate API returned error",
+                extra={
+                    "context": {
+                        "status_code": e.response.status_code,
+                        "response_text": e.response.text[:500] if e.response else None,
+                        "tenant_id": tenant_id,
+                    }
+                },
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=e.response.status_code if e.response else 500,
+                detail={
+                    "code": "TRANSLATE_API_ERROR",
+                    "message": f"Translation service error: {e.response.text[:200] if e.response else str(e)}",
+                },
+            )
+        except httpx.RequestError as e:
+            # Network/connection error
+            logger.error(
+                "NMT inference: Translate API connection error",
+                extra={
+                    "context": {
+                        "error": str(e),
+                        "tenant_id": tenant_id,
+                    }
+                },
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "TRANSLATE_API_UNAVAILABLE",
+                    "message": "Translation service is temporarily unavailable. Please try again later.",
+                },
+            )
+        except HTTPException as e:
+            # Re-raise HTTP exceptions (from proxy_to_service)
+            logger.error(
+                "NMT inference: context-aware routing failed with HTTP exception",
+                extra={
+                    "context": {
+                        "status_code": e.status_code,
+                        "detail": e.detail,
+                        "tenant_id": tenant_id,
+                    }
+                },
+                exc_info=True,
+            )
+            raise
+        except Exception as e:
+            # Catch any other unexpected errors
+            logger.error(
+                "NMT inference: context-aware routing failed with unexpected error",
+                extra={
+                    "context": {
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "tenant_id": tenant_id,
+                    }
+                },
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "CONTEXT_AWARE_ROUTING_ERROR",
+                    "message": f"Context-aware routing failed: {str(e)}",
+                }
+            )
 
     # ------------------------------------------------------------------
     # Default SMR + Policy Engine flow (including free-user path)
+    # This path is taken when X-Context-Aware is "no", missing, or any other value
     # ------------------------------------------------------------------
+    logger.info(
+        "NMT inference: using normal SMR flow (context-aware disabled or not set)",
+        extra={
+            "context": {
+                "context_aware_header": context_aware_header,
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+            }
+        },
+    )
+    
     latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(
         request
     )
@@ -5283,6 +5506,9 @@ async def nmt_inference(
         downstream_response.headers["X-SMR-ServiceId"] = selected_service_id or ""
         # If no tenant_id in token, mark as "free_user" for observability
         downstream_response.headers["X-SMR-TenantId"] = tenant_id or "free_user"
+        # Mark normal NMT SMR flow as translate
+        downstream_response.headers["X-SMR-ServiceType"] = "translate"
+
         if policy_result:
             downstream_response.headers["X-SMR-PolicyId"] = str(
                 policy_result.get("policy_id", "")
@@ -5546,6 +5772,103 @@ async def ner_inference(
         None, "/api/v1/ner/inference", "ner-service", method="POST", body=body, headers=headers
     )
     return result
+
+
+# LLM Service Endpoints (Proxy to LLM Service)
+
+@app.post("/api/v1/llm/inference", response_model=LLMInferenceResponse, tags=["LLM"])
+async def llm_inference(
+    payload: LLMInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Perform LLM inference.
+
+    If config.serviceId is omitted, Smart Model Router will select the best LLM service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    import json
+
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(
+        request
+    )
+
+    # Log incoming request for SMR flow
+    logger.info(
+        "LLM inference request received",
+        extra={
+            "context": {
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "latency_policy": latency_policy,
+                "cost_policy": cost_policy,
+                "accuracy_policy": accuracy_policy,
+                "request_body": body_dict,
+            }
+        },
+    )
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    selected_service_id, body_dict, policy_result = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="llm",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    # Log final routing decision before calling downstream LLM
+    logger.info(
+        "LLM inference routing decision",
+        extra={
+            "context": {
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "selected_service_id": selected_service_id,
+                "policy_result": policy_result,
+                "final_request_body": body_dict,
+            }
+        },
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    
+    downstream_response = await proxy_to_service(
+        None,
+        "/api/v1/llm/inference",
+        "llm-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+    # Attach SMR debug metadata in response headers for observability
+    if isinstance(downstream_response, Response):
+        downstream_response.headers["X-SMR-ServiceId"] = selected_service_id or ""
+        downstream_response.headers["X-SMR-TenantId"] = tenant_id or "free_user"
+        if policy_result:
+            downstream_response.headers["X-SMR-PolicyId"] = str(
+                policy_result.get("policy_id", "")
+            )
+            downstream_response.headers["X-SMR-PolicyVersion"] = str(
+                policy_result.get("policy_version", "")
+            )
+
+    return downstream_response
 
 
 # Transliteration Service Endpoints (Proxy to Transliteration Service)
