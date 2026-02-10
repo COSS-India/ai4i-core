@@ -939,8 +939,7 @@ services:
       dockerfile: Dockerfile
       args:
         # Browser talks directly to the API Gateway on host port 8080
-        # Use environment variable or default to localhost for local development
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+        NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
         # Service-specific API keys from .env file (no hardcoding)
         NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
         NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
@@ -948,6 +947,8 @@ services:
         NEXT_PUBLIC_NMT_API_KEY: ${NMT_API_KEY}
         NEXT_PUBLIC_PIPELINE_API_KEY: ${PIPELINE_API_KEY}
         NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
+        # Telemetry/Observability service URL (logs and traces) - same as API Gateway
+        NEXT_PUBLIC_TELEMETRY_SERVICE_URL: https://core-v1.ai4inclusion.org
     container_name: ai4v-simple-ui
     ports:
       - "3000:3000"
@@ -955,8 +956,7 @@ services:
       # HOSTNAME=0.0.0.0 tells Next.js standalone server to listen on all interfaces
       - HOSTNAME=0.0.0.0
       # Route all frontend API calls through the API Gateway on host
-      # Use environment variable or default to localhost for local development
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}
+      - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
       - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
       # Service-specific API keys for API Gateway authentication / RBAC
       - NEXT_PUBLIC_ASR_API_KEY=${ASR_API_KEY}
@@ -964,6 +964,8 @@ services:
       - NEXT_PUBLIC_NMT_API_KEY=${NMT_API_KEY}
       - NEXT_PUBLIC_PIPELINE_API_KEY=${PIPELINE_API_KEY}
       - NEXT_PUBLIC_MODEL_MANAGEMENT_API_KEY=${MODEL_MANAGEMENT_API_KEY}
+      # Telemetry/Observability service URL (logs and traces) - routed through API Gateway
+      - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://core-v1.ai4inclusion.org
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
       - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
     depends_on:
@@ -1231,10 +1233,11 @@ volumes:
     # Note: Removed bind mount to Linux-specific path for Windows compatibility
     # Data will persist in Docker's managed volume location
     # To use a custom path on Linux, uncomment and adjust the driver_opts below:
-    # driver_opts:
-    #   type: "none"
-    #   o: "bind"
-    #   device: "/path/to/your/persistent/storage"
+    driver_opts:
+      type: "none"
+      o: "bind"
+      device: "/home/ubuntu/ai4i-v/volumes/pg_data"
+      
   postgres-konga-data:
     driver: local
   redis-data:

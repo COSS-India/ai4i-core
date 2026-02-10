@@ -1394,6 +1394,10 @@ async def register_user(
 
     if existing_tenant_user:
         raise HTTPException(status_code=409,detail="Email already registered , please use a different email")
+    
+
+    if not payload.is_approved:
+        raise HTTPException(status_code=400, detail="User must be approved by tenant admin to register")
 
     # Generate password (if not provided). Hashing is handled by auth-service.
     plain_password = generate_random_password(length=12)
@@ -1456,8 +1460,6 @@ async def register_user(
                 status=TenantUserStatus.ACTIVE, 
                 is_approved=True,
         )
-    else:
-        raise HTTPException(status_code=400, detail="User must be approved by tenant admin to register")
 
     tenant_db.add(tenant_user)
     await tenant_db.flush()
