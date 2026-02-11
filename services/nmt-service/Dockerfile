@@ -22,6 +22,13 @@ COPY services/nmt-service/requirements.txt .
 RUN pip install --upgrade pip setuptools wheel
 
 # Install Python deps
+# CRITICAL: Install packaging FIRST (system-wide) before any opentelemetry packages
+# opentelemetry-instrumentation-fastapi imports packaging during installation
+# Install both system-wide AND user-wide to ensure it's available
+RUN pip install --no-cache-dir packaging>=21.0 && \
+    pip install --no-cache-dir --user packaging>=21.0
+ 
+# Install Python deps (packaging is already installed above)
 RUN pip install --no-cache-dir --user -r requirements.txt
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 # RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_auth
