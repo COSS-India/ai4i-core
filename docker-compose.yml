@@ -1225,6 +1225,23 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+# Policy Engine
+  policy-engine:
+    build:
+      context: ./services/policy-engine
+      dockerfile: Dockerfile
+    container_name: ai4v-policy-engine
+    ports:
+      - "8102:8095"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    networks:
+      - microservices-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
+      interval: 30s
+      timeout: 5s
 
 
 volumes:
@@ -1267,4 +1284,3 @@ networks:
     ipam:
       config:
         - subnet: 172.31.0.0/16
-
