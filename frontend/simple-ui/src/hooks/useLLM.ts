@@ -1,6 +1,6 @@
 // Custom React hook for LLM functionality with text processing
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useToast } from '@chakra-ui/react';
 import { performLLMInference } from '../services/llmService';
@@ -33,6 +33,9 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
   const [requestTime, setRequestTime] = useState<string>('0');
   const [nmtRequestTime, setNmtRequestTime] = useState<string>('0');
   const [error, setError] = useState<string | null>(null);
+
+  // Only show "text exceeds limit" toast once per exceed (not every keystroke)
+  const hasShownTextLimitToastRef = useRef(false);
 
   // Toast hook
   const toast = useToast();
@@ -224,18 +227,24 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
     }
   }, [serviceId, selectedModelId, inputLanguage, outputLanguage, toast]);
 
-  // Set input text with validation
+  // Set input text with validation — show toast only when first exceeding limit, not every keystroke
   const setInputTextWithValidation = useCallback((text: string) => {
     setInputText(text);
-    
+
     if (text.length > MAX_TEXT_LENGTH) {
-      toast({
-        title: 'Text Length Warning',
-        description: `Text length (${text.length}) exceeds recommended limit of ${MAX_TEXT_LENGTH} characters.`,
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
+      if (!hasShownTextLimitToastRef.current) {
+        hasShownTextLimitToastRef.current = true;
+        toast({
+          id: 'llm-text-exceeds-limit',
+          title: 'Text Length Warning',
+          description: `Text length (${text.length}) exceeds recommended limit of ${MAX_TEXT_LENGTH} characters.`,
+          status: 'warning',
+          duration: 3000,
+          isClosable: true,
+        });
+      }
+    } else {
+      hasShownTextLimitToastRef.current = false;
     }
   }, [toast]);
 
