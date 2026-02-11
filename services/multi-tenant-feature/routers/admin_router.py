@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Query
+from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
@@ -10,6 +11,7 @@ from models.user_status import TenantUserStatusUpdateRequest, TenantUserStatusUp
 from models.tenant_update import TenantUpdateRequest, TenantUpdateResponse
 from models.tenant_view import TenantViewResponse, ListTenantsResponse
 from models.user_view import TenantUserViewResponse, ListUsersResponse
+from models.tenant_email import TenantSendEmailVerificationRequest, TenantSendEmailVerificationResponse
 from models.user_update import TenantUserUpdateRequest , TenantUserUpdateResponse
 from models.user_delete import TenantUserDeleteRequest , TenantUserDeleteResponse
 
@@ -20,6 +22,7 @@ from services.tenant_service import (
     update_tenant_user_status,
     update_tenant,
     delete_tenant_user,
+    send_initial_verification_email,
     update_tenant_user,
     view_tenant_details,
     view_tenant_user_details,
@@ -277,16 +280,49 @@ async def list_tenants(
 
 @router.get("/list/users", response_model=ListUsersResponse, status_code=status.HTTP_200_OK)
 async def list_users(
+    tenant_id: Optional[str] = Query(None, description="Filter users by tenant_id"),
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
-    List all tenant users across all tenants.
-    Returns a list of all users registered under any tenant.
+    List tenant users.
+
+    If tenant_id is provided, only users for that tenant are returned.
+    If tenant_id is omitted, users across all tenants are returned.
     """
     try:
-        return await list_all_users(db)
+        return await list_all_users(db, tenant_id=tenant_id)
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception(f"Error listing users: {exc}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/email/send/verification", response_model=TenantSendEmailVerificationResponse, status_code=status.HTTP_201_CREATED)
+async def send_verification_email_admin(
+    payload: TenantSendEmailVerificationRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_tenant_db_session),
+):
+    """
+    Send the initial email verification link for a tenant.
+
+    This is separate from the public /email/resend API to avoid confusion between
+    first-time send and resend flows.
+    """
+    try:
+        response = await send_initial_verification_email(
+            tenant_id=payload.tenant_id,
+            db=db,
+            background_tasks=background_tasks,
+        )
+        logger.info(f"Verification email sent successfully for Tenant ID: {payload.tenant_id}")
+        return response
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        logger.error(f"Value error during initial email verification send | tenant_id={payload.tenant_id}: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception(f"Error sending initial verification email | tenant_id={payload.tenant_id}: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")
