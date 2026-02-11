@@ -5346,6 +5346,13 @@ async def nmt_inference(
                 downstream_response.headers["X-SMR-ContextAware"] = "true"
                 downstream_response.headers["X-SMR-TenantId"] = tenant_id or "free_user"
                 downstream_response.headers["X-SMR-ServiceType"] = "llm translate"
+                # Expose the underlying LLM service identifier for observability.
+                # Prefer the model name from the translate API if present; otherwise
+                # fall back to a stable logical service id.
+                llm_service_id = None
+                if isinstance(translate_result, dict):
+                    llm_service_id = str(translate_result.get("model") or "").strip() or None
+                downstream_response.headers["X-SMR-ServiceId"] = llm_service_id or "llm_gptoss"
                 
                 # Log response status for debugging
                 if downstream_response.status_code >= 400:
