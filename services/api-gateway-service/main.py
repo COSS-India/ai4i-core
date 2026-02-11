@@ -23,7 +23,7 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from enum import Enum
 from uuid import UUID
 from urllib.parse import urlencode, urlparse, parse_qs
-from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security
+from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security, status
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -1360,6 +1360,118 @@ class ServiceListResponse(BaseModel):
     modelVersion: Optional[str] = Field(None, description="Model version associated with this service")
     versionStatus: Optional[str] = Field(None, description="Version status of the associated model (ACTIVE or DEPRECATED)")
 
+# A/B Testing Experiment Models
+class ExperimentVariantRequest(BaseModel):
+    """Request model for creating/updating an experiment variant"""
+    variant_name: str = Field(..., description="Name of the variant (e.g., 'control', 'variant-a')")
+    service_id: str = Field(..., description="Service ID to use for this variant")
+    traffic_percentage: int = Field(..., ge=0, le=100, description="Traffic percentage (0-100)")
+    description: Optional[str] = Field(None, description="Optional description of the variant")
+
+class ExperimentVariantResponse(BaseModel):
+    """Response model for experiment variant"""
+    id: str
+    variant_name: str
+    service_id: str
+    traffic_percentage: int
+    description: Optional[str] = None
+    created_at: Union[str, datetime]
+    updated_at: Union[str, datetime]
+
+class ExperimentCreateRequest(BaseModel):
+    """Request model for creating an experiment"""
+    name: str = Field(..., min_length=1, max_length=255, description="Experiment name")
+    description: Optional[str] = Field(None, description="Experiment description")
+    task_type: Optional[List[str]] = Field(None, description="List of task types to filter (e.g., ['asr', 'tts'])")
+    languages: Optional[List[str]] = Field(None, description="List of language codes to filter (e.g., ['hi', 'en'])")
+    start_date: Optional[Union[datetime, str]] = Field(None, description="Experiment start date (optional, defaults to now)")
+    end_date: Optional[Union[datetime, str]] = Field(None, description="Experiment end date (optional)")
+    variants: List[ExperimentVariantRequest] = Field(..., min_items=2, description="At least 2 variants required")
+
+class ExperimentUpdateRequest(BaseModel):
+    """Request model for updating an experiment"""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    task_type: Optional[List[str]] = None
+    languages: Optional[List[str]] = None
+    start_date: Optional[Union[datetime, str]] = None
+    end_date: Optional[Union[datetime, str]] = None
+    variants: Optional[List[ExperimentVariantRequest]] = None
+
+class ExperimentStatusUpdateRequest(BaseModel):
+    """Request model for updating experiment status"""
+    action: str = Field(..., description="Action to perform: 'start', 'stop', 'pause', 'resume', or 'cancel'")
+
+class ExperimentResponse(BaseModel):
+    """Response model for experiment"""
+    id: str
+    name: str
+    description: Optional[str] = None
+    status: str
+    task_type: Optional[List[str]] = None
+    languages: Optional[List[str]] = None
+    start_date: Optional[Union[datetime, str]] = None
+    end_date: Optional[Union[datetime, str]] = None
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+    created_at: Union[datetime, str]
+    updated_at: Union[datetime, str]
+    started_at: Optional[Union[datetime, str]] = None
+    completed_at: Optional[Union[datetime, str]] = None
+    variants: List[ExperimentVariantResponse] = []
+
+class ExperimentListResponse(BaseModel):
+    """Response model for listing experiments"""
+    id: str
+    name: str
+    description: Optional[str] = None
+    status: str
+    task_type: Optional[List[str]] = None
+    languages: Optional[List[str]] = None
+    start_date: Optional[Union[datetime, str]] = None
+    end_date: Optional[Union[datetime, str]] = None
+    created_at: Union[datetime, str]
+    updated_at: Union[datetime, str]
+    variant_count: int = 0
+
+class ExperimentVariantSelectionRequest(BaseModel):
+    """Request model for selecting a variant for a given request"""
+    task_type: str = Field(..., description="Task type (e.g., 'asr', 'tts')")
+    language: Optional[str] = Field(None, description="Language code (e.g., 'hi', 'en')")
+    request_id: Optional[str] = Field(None, description="Optional request ID for consistent routing")
+    user_id: Optional[str] = Field(None, description="Optional user ID so same user gets same variant")
+    service_id: Optional[str] = Field(
+        None,
+        description="Optional service ID; when set, only experiments that include this service as a variant are considered"
+    )
+
+class ExperimentVariantSelectionResponse(BaseModel):
+    """Response model for variant selection"""
+    experiment_id: Optional[str] = None
+    variant_id: Optional[str] = None
+    variant_name: Optional[str] = None
+    service_id: Optional[str] = None
+    model_id: Optional[str] = None
+    model_version: Optional[str] = None
+    endpoint: Optional[str] = None
+    api_key: Optional[str] = None
+    is_experiment: bool = False
+
+
+class ExperimentMetricsResponse(BaseModel):
+    """Response model for experiment metrics (per variant per day)"""
+    experiment_id: str
+    variant_id: str
+    variant_name: str
+    request_count: int
+    success_count: int
+    error_count: int
+    success_rate: float
+    avg_latency_ms: Optional[int] = None
+    custom_metrics: Optional[Dict[str, Any]] = None
+    metric_date: Union[datetime, str]
+
+
 # Auth models (for API documentation)
 class RegisterUser(BaseModel):
     email: str = Field(..., description="Email address")
@@ -1513,7 +1625,7 @@ class UserRegisterRequest(BaseModel):
     tenant_id: str = Field(..., description="Tenant identifier", example="acme-corp-5d448a")
     email: EmailStr = Field(..., description="User email address")
     username: str = Field(..., min_length=3, max_length=100, description="Username")
-    full_name: str = Field(None, description="Full name of the user")
+    full_name: Optional[str] = Field(None, description="Full name of the user")
     services: List[str] = Field(..., description="List of services the user has access to", example=["tts", "asr"])
     is_approved: bool = Field(False, description="Indicates if the user is approved by tenant admin")
 
@@ -2063,13 +2175,16 @@ def requires_both_auth_and_api_key(request: Request) -> bool:
     path = request.url.path.lower()
     services_requiring_both = [
         "asr", "nmt", "tts", "pipeline", "llm", "ocr", "transliteration",
-        "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection"
-        # Note: NER removed - it only requires API key, not both
+        "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection", "ner"
     ]
     for svc in services_requiring_both:
         if f"/api/v1/{svc}" in path:
             return True
     return False
+
+def is_multi_tenant_request(request: Request) -> bool:
+    """Multi-tenant endpoints should use only auth tokens (no API key)."""
+    return request.url.path.lower().startswith("/api/v1/multi-tenant")
 
 async def validate_api_key_permissions(api_key: str, service: str, action: str) -> None:
     """Call auth-service to validate API key permissions."""
@@ -2118,10 +2233,14 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
         if data.get("valid") is False:
             # Extract the actual error message from auth-service
             error_message = data.get("message", "Invalid API key or insufficient permissions")
+            # Format error message to be consistent with "insufficient permission" format
+            if "does not have" in error_message.lower() or "permission" in error_message.lower():
+                if "insufficient permission" not in error_message.lower():
+                    error_message = f"Authorization error: Insufficient permission. {error_message}"
             raise HTTPException(
                 status_code=403,
                 detail={
-                    "error": "INVALID_API_KEY",
+                    "error": "AUTHORIZATION_ERROR",
                     "message": error_message
                 }
             )
@@ -2190,7 +2309,17 @@ def build_auth_headers(request: Request, credentials: Optional[HTTPAuthorization
         headers['Authorization'] = f"Bearer {credentials.credentials}"
     if api_key:
         headers['X-API-Key'] = api_key
+    # Forward user ID for downstream A/B variant sticky assignment (set by ensure_authenticated_for_request after JWT validation)
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is not None:
+        headers["X-User-Id"] = str(user_id)
     
+    # Multi-tenant endpoints: AUTH_TOKEN only (Bearer JWT); API key not required
+    if is_multi_tenant_request(request):
+        headers.pop("X-API-Key", None)
+        headers["X-Auth-Source"] = "AUTH_TOKEN"
+        return headers
+
     # Set X-Auth-Source based on what's present (API Gateway has already validated)
     # Always overwrite X-Auth-Source for services requiring both (don't trust incoming header)
     if requires_both_auth_and_api_key(request):
@@ -2495,6 +2624,7 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             },
                             headers={"WWW-Authenticate": "Bearer"}
                         )
+<<<<<<< HEAD
                     
                     # Set user context in request state (in case middleware didn't set it)
                     if payload:
@@ -2517,6 +2647,11 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             req.state.subscriptions = tenant_context.get("subscriptions", [])
                             req.state.user_subscriptions = tenant_context.get("user_subscriptions", [])
                         
+=======
+                    # Set user identity on request for downstream (e.g. A/B variant sticky assignment via X-User-Id)
+                    req.state.user_id = payload.get("sub") or payload.get("user_id")
+                    req.state.jwt_payload = payload
+>>>>>>> 2258a58b0de17ba3196f66b3ae3a688c649efdea
                 except HTTPException:
                     raise
                 except Exception as e:
@@ -2603,10 +2738,26 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
         else:
             # For other services: existing logic (either Bearer OR API key)
             auth_source = (req.headers.get("x-auth-source") or "").upper()
+            if is_multi_tenant_request(req):
+                auth_source = "AUTH_TOKEN"
             use_api_key = api_key is not None and auth_source == "API_KEY"
             if auth_span:
                 auth_span.set_attribute("auth.source", auth_source)
                 auth_span.set_attribute("auth.use_api_key", use_api_key)
+
+            # If x-auth-source is explicitly set to API_KEY, require API key
+            if auth_source == "API_KEY" and not api_key:
+                if auth_span:
+                    auth_span.set_attribute("auth.authenticated", False)
+                    auth_span.set_attribute("error.type", "MissingAPIKey")
+                    auth_span.set_status(Status(StatusCode.ERROR, "API key required"))
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error": "API_KEY_MISSING",
+                        "message": "API key is required when X-Auth-Source is set to API_KEY"
+                    }
+                )
 
             if use_api_key:
                 # Validate API key permissions via auth-service
@@ -2710,6 +2861,7 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             },
                             headers={"WWW-Authenticate": "Bearer"}
                         )
+<<<<<<< HEAD
                     
                     # Set user context in request state (in case middleware didn't set it)
                     if payload:
@@ -2740,6 +2892,11 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                                 }
                             )
                     
+=======
+                    # Set user identity on request for downstream (e.g. A/B variant sticky assignment via X-User-Id)
+                    req.state.user_id = payload.get("sub") or payload.get("user_id")
+                    req.state.jwt_payload = payload
+>>>>>>> 2258a58b0de17ba3196f66b3ae3a688c649efdea
                     if auth_span:
                         auth_span.set_attribute("auth.authenticated", True)
                         auth_span.set_attribute("auth.authorized", True)  # Bearer token implies authorization
@@ -2805,6 +2962,22 @@ def custom_openapi():
         "/api/v1/auth/oauth2/callback",
         "/api/v1/auth/oauth2/google/authorize",
         "/api/v1/auth/oauth2/google/callback",
+        "/api/v1/multi-tenant/register/tenant",
+        "/api/v1/multi-tenant/register/users",
+        "/api/v1/multi-tenant/update/tenants/status",
+        "/api/v1/multi-tenant/update/users/status",
+        "/api/v1/multi-tenant/email/verify",
+        "/api/v1/multi-tenant/view/tenant",
+        "/api/v1/multi-tenant/view/user",
+        "/api/v1/multi-tenant/email/resend",
+        "/api/v1/multi-tenant/subscriptions/add",
+        "/api/v1/multi-tenant/subscriptions/remove",
+        "/api/v1/multi-tenant/user/subscriptions/add",
+        "/api/v1/multi-tenant/user/subscriptions/remove",
+        "/api/v1/multi-tenant/register/services",
+        "/api/v1/multi-tenant/update/services",
+        "/api/v1/multi-tenant/list/services",
+        "/api/v1/multi-tenant/resolve-tenant-from-user/{user_id}",
     ])
 
     # Auto-tag operations by path prefix for better grouping in Swagger and inject header where applicable
@@ -5175,6 +5348,7 @@ async def nmt_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
+<<<<<<< HEAD
     """Perform NMT inference.
 
     If config.serviceId is omitted, Smart Model Router will select the best NMT service
@@ -5516,6 +5690,14 @@ async def nmt_inference(
     )
 
     body = json.dumps(body_dict).encode("utf-8")
+=======
+    """Perform NMT inference"""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    import json
+    # Convert Pydantic model to JSON for proxy
+    body = json.dumps(payload.dict()).encode()
+    # Use build_auth_headers which automatically forwards all headers including X-User-Id for A/B sticky assignment
+>>>>>>> 2258a58b0de17ba3196f66b3ae3a688c649efdea
     headers = build_auth_headers(request, credentials, api_key)
     downstream_response = await proxy_to_service(
         None,
@@ -5756,6 +5938,7 @@ async def ner_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
+<<<<<<< HEAD
     """Perform NER inference on one or more text inputs.
 
     If config.serviceId is omitted, Smart Model Router will select the best NER service
@@ -5765,6 +5948,10 @@ async def ner_inference(
         ensure_authenticated_for_request(request, credentials, api_key)
     except Exception as e:
         raise
+=======
+    """Perform NER inference on one or more text inputs"""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+>>>>>>> 2258a58b0de17ba3196f66b3ae3a688c649efdea
 
     import json
 
@@ -6514,6 +6701,186 @@ async def update_service_health(
         "/services/admin/health",
         "model-management-service",
         method="PATCH",
+        body=body,
+        headers=headers,
+    )
+
+
+# A/B Testing Experiment Endpoints
+
+@app.post("/api/v1/model-management/experiments", response_model=ExperimentResponse, status_code=status.HTTP_201_CREATED, tags=["A/B Testing"])
+async def create_experiment(
+    payload: ExperimentCreateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Create a new A/B testing experiment. Requires at least 2 variants with traffic percentages summing to 100."""
+    # await check_permission("experiment.create", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/experiments",
+        "model-management-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.get("/api/v1/model-management/experiments", response_model=List[ExperimentListResponse], tags=["A/B Testing"])
+async def list_experiments(
+    request: Request,
+    status: Optional[str] = Query(None, description="Filter by experiment status"),
+    task_type: Optional[str] = Query(None, description="Filter by task type"),
+    created_by: Optional[str] = Query(None, description="Filter by creator user ID"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """List all experiments with optional filters."""
+    # await check_permission("experiment.read", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    params = {}
+    if status:
+        params["status"] = status
+    if task_type:
+        params["task_type"] = task_type
+    if created_by:
+        params["created_by"] = created_by
+    return await proxy_to_service_with_params(
+        None,
+        "/experiments",
+        "model-management-service",
+        params,
+        method="GET",
+        headers=headers
+    )
+
+
+@app.get("/api/v1/model-management/experiments/{experiment_id}", response_model=ExperimentResponse, tags=["A/B Testing"])
+async def get_experiment(
+    experiment_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Get experiment details by ID."""
+    # await check_permission("experiment.read", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}",
+        "model-management-service",
+        method="GET",
+        headers=headers,
+    )
+
+
+@app.get("/api/v1/model-management/experiments/{experiment_id}/metrics", response_model=List[ExperimentMetricsResponse], tags=["A/B Testing"])
+async def get_experiment_metrics(
+    experiment_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Get metrics for an A/B experiment by ID. Returns aggregated metrics per variant per day."""
+    headers = build_auth_headers(request, credentials, None)
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}/metrics",
+        "model-management-service",
+        method="GET",
+        headers=headers,
+    )
+
+
+@app.patch("/api/v1/model-management/experiments/{experiment_id}", response_model=ExperimentResponse, tags=["A/B Testing"])
+async def update_experiment(
+    experiment_id: str,
+    payload: ExperimentUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Update an experiment. Cannot update variants of a RUNNING experiment."""
+    # await check_permission("experiment.update", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}",
+        "model-management-service",
+        method="PATCH",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.post("/api/v1/model-management/experiments/{experiment_id}/status", response_model=ExperimentResponse, tags=["A/B Testing"])
+async def update_experiment_status(
+    experiment_id: str,
+    payload: ExperimentStatusUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """
+    Update experiment status by action.
+    
+    Actions:
+    - 'start': Start a DRAFT experiment (changes to RUNNING)
+    - 'stop': Stop a RUNNING experiment (changes to COMPLETED)
+    - 'pause': Pause a RUNNING experiment (changes to PAUSED)
+    - 'resume': Resume a PAUSED experiment (changes to RUNNING)
+    - 'cancel': Cancel a non-RUNNING experiment (changes to CANCELLED)
+    
+    """
+    # await check_permission("experiment.update", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}/status",
+        "model-management-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.delete("/api/v1/model-management/experiments/{experiment_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["A/B Testing"])
+async def delete_experiment(
+    experiment_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Delete an experiment. Cannot delete a RUNNING experiment. Stop it first."""
+    # await check_permission("experiment.delete", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    return await proxy_to_service(
+        None,
+        f"/experiments/{experiment_id}",
+        "model-management-service",
+        method="DELETE",
+        headers=headers,
+    )
+
+
+@app.post("/api/v1/model-management/experiments/select-variant", response_model=ExperimentVariantSelectionResponse, tags=["A/B Testing"])
+async def select_experiment_variant(
+    payload: ExperimentVariantSelectionRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Select an experiment variant for a given request. This endpoint is used by services to determine which variant to route a request to."""
+    # await ensure_authenticated_for_request(request, credentials, api_key)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/experiments/select-variant",
+        "model-management-service",
+        method="POST",
         body=body,
         headers=headers,
     )
@@ -7377,7 +7744,13 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             method = request.method
             if method in ['POST', 'PUT', 'PATCH']:
                 body = await request.body()
-            headers = dict(request.headers)
+            out_headers = dict(request.headers)
+            # Merge caller-built auth headers (e.g. X-Auth-Source for multi-tenant) so downstream gets correct auth mode
+            if headers:
+                for k, v in headers.items():
+                    if k and v is not None:
+                        out_headers[k] = v
+            headers = out_headers
             params = request.query_params
             
             # Inject trace context if not already present
@@ -7390,10 +7763,7 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             # IMPORTANT: leave params as None so any querystring already present
             # in the URL (e.g. "/path?x=1") is not overwritten by an empty dict.
             params = None
-            if headers is None:
-                headers = {}
-            
-            # Inject trace context
+            headers = dict(headers) if headers else {}
             if TRACING_AVAILABLE and inject:
                 try:
                     inject(headers)
