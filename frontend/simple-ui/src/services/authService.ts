@@ -564,6 +564,28 @@ class AuthService {
     };
   }
 
+  /**
+   * Apply API key list response to localStorage so the selected key is available for services.
+   * Call this after login/sign-in (and on session restore) so the stored key is used for API requests.
+   */
+  applyApiKeyListToStorage(response: APIKeyListResponse): void {
+    if (typeof window === 'undefined') return;
+    const selectedId = response.selected_api_key_id;
+    if (selectedId != null && response.api_keys?.length) {
+      const selected = response.api_keys.find((k) => k.id === selectedId);
+      if (selected?.key_value && selected.key_value.trim() !== '' && selected.key_value !== '***') {
+        localStorage.setItem('api_key', selected.key_value.trim());
+        localStorage.setItem('selected_api_key_id', String(selectedId));
+        return;
+      }
+      localStorage.setItem('selected_api_key_id', String(selectedId));
+    }
+    localStorage.removeItem('api_key');
+    if (selectedId == null) {
+      localStorage.removeItem('selected_api_key_id');
+    }
+  }
+
   /** Persist the selected API key for the current user (used to restore selection on next login). */
   async selectApiKey(apiKeyId: number): Promise<{ selected_api_key_id: number }> {
     return this.request<{ selected_api_key_id: number }>('/api-keys/select', {
