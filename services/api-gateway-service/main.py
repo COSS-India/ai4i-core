@@ -2636,14 +2636,15 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             },
                             headers={"WWW-Authenticate": "Bearer"}
                         )
-<<<<<<< HEAD
                     
                     # Set user context in request state (in case middleware didn't set it)
                     if payload:
-                        req.state.user_id = payload.get("sub")
+                        # Basic identity used by downstream (e.g. A/B variant sticky assignment via X-User-Id)
+                        req.state.user_id = payload.get("sub") or payload.get("user_id")
                         req.state.username = payload.get("username")
                         req.state.permissions = payload.get("permissions", [])
                         req.state.is_authenticated = True
+                        req.state.jwt_payload = payload
                         
                         # Extract tenant information using resolve_tenant_from_jwt
                         # NOTE:
@@ -2658,12 +2659,6 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             req.state.schema_name = tenant_context.get("schema_name")
                             req.state.subscriptions = tenant_context.get("subscriptions", [])
                             req.state.user_subscriptions = tenant_context.get("user_subscriptions", [])
-                        
-=======
-                    # Set user identity on request for downstream (e.g. A/B variant sticky assignment via X-User-Id)
-                    req.state.user_id = payload.get("sub") or payload.get("user_id")
-                    req.state.jwt_payload = payload
->>>>>>> 2258a58b0de17ba3196f66b3ae3a688c649efdea
                 except HTTPException:
                     raise
                 except Exception as e:
@@ -2873,14 +2868,15 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             },
                             headers={"WWW-Authenticate": "Bearer"}
                         )
-<<<<<<< HEAD
                     
                     # Set user context in request state (in case middleware didn't set it)
                     if payload:
-                        req.state.user_id = payload.get("sub")
+                        # Basic identity used by downstream (e.g. A/B variant sticky assignment via X-User-Id)
+                        req.state.user_id = payload.get("sub") or payload.get("user_id")
                         req.state.username = payload.get("username")
                         req.state.permissions = payload.get("permissions", [])
                         req.state.is_authenticated = True
+                        req.state.jwt_payload = payload
                         
                         # Extract tenant information using resolve_tenant_from_jwt
                         tenant_context = resolve_tenant_from_jwt(payload)
@@ -2903,12 +2899,6 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                                     "message": "Tenant ID is required for this operation. Your account is not associated with any tenant. Please contact your administrator."
                                 }
                             )
-                    
-=======
-                    # Set user identity on request for downstream (e.g. A/B variant sticky assignment via X-User-Id)
-                    req.state.user_id = payload.get("sub") or payload.get("user_id")
-                    req.state.jwt_payload = payload
->>>>>>> 2258a58b0de17ba3196f66b3ae3a688c649efdea
                     if auth_span:
                         auth_span.set_attribute("auth.authenticated", True)
                         auth_span.set_attribute("auth.authorized", True)  # Bearer token implies authorization
@@ -5364,7 +5354,6 @@ async def nmt_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
-<<<<<<< HEAD
     """Perform NMT inference.
 
     If config.serviceId is omitted, Smart Model Router will select the best NMT service
@@ -5706,14 +5695,6 @@ async def nmt_inference(
     )
 
     body = json.dumps(body_dict).encode("utf-8")
-=======
-    """Perform NMT inference"""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    import json
-    # Convert Pydantic model to JSON for proxy
-    body = json.dumps(payload.dict()).encode()
-    # Use build_auth_headers which automatically forwards all headers including X-User-Id for A/B sticky assignment
->>>>>>> 2258a58b0de17ba3196f66b3ae3a688c649efdea
     headers = build_auth_headers(request, credentials, api_key)
     downstream_response = await proxy_to_service(
         None,
@@ -5954,20 +5935,12 @@ async def ner_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
-<<<<<<< HEAD
     """Perform NER inference on one or more text inputs.
 
     If config.serviceId is omitted, Smart Model Router will select the best NER service
     based on Policy Engine + Model Management and inject the chosen serviceId.
     """
-    try:
-        ensure_authenticated_for_request(request, credentials, api_key)
-    except Exception as e:
-        raise
-=======
-    """Perform NER inference on one or more text inputs"""
     await ensure_authenticated_for_request(request, credentials, api_key)
->>>>>>> 2258a58b0de17ba3196f66b3ae3a688c649efdea
 
     import json
 
