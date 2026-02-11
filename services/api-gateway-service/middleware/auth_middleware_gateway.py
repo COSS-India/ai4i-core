@@ -222,6 +222,10 @@ class AuthGatewayMiddleware(BaseHTTPMiddleware):
                     request.state.user_id = user.get("user_id")
                     request.state.username = user.get("username")
                     request.state.permissions = user.get("permissions", [])
+                    # Optional multi-tenant context from auth-service (if present)
+                    request.state.tenant_id = user.get("tenant_id")
+                    request.state.tenant_uuid = user.get("tenant_uuid")
+                    request.state.schema_name = user.get("schema_name")
                     request.state.is_authenticated = True
                     
                     # Add user info to auth span
@@ -403,6 +407,9 @@ class AuthGatewayMiddleware(BaseHTTPMiddleware):
             # Add user info to response headers for debugging (optional)
             if hasattr(request.state, "user_id"):
                 response.headers["X-User-ID"] = str(request.state.user_id)
+            # Add tenant context headers for debugging (if available)
+            if hasattr(request.state, "tenant_id") and request.state.tenant_id:
+                response.headers["X-Tenant-Id"] = str(request.state.tenant_id)
             
             return response
 
