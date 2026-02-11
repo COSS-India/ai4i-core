@@ -45,6 +45,14 @@ const OAuthCallback = () => {
         try {
           const user = await authService.getCurrentUser();
           authService.setStoredUser(user);
+
+          // Fetch API keys and store selected key in localStorage for use in services
+          try {
+            const apiKeyList = await authService.listApiKeys();
+            authService.applyApiKeyListToStorage(apiKeyList);
+          } catch {
+            // Non-blocking
+          }
           
           // Broadcast auth update event
           if (typeof window !== 'undefined') {
