@@ -28,7 +28,7 @@
             font-family: var(--font-sans);
             background: radial-gradient(circle at top left, #1d293b, #020617 50%, #000 100%);
             color: var(--text);
-            min-height: 100vh;
+            height: 100vh;
             display: flex;
             align-items: stretch;
             justify-content: center;
@@ -37,11 +37,13 @@
         .page {
             width: 100%;
             max-width: 1280px;
-            margin: 32px auto;
-            padding: 0 16px;
+            height: 100%;
+            margin: 12px auto;
+            padding: 0 12px;
             display: grid;
             grid-template-columns: minmax(0, 3fr) minmax(0, 3fr);
-            gap: 24px;
+            gap: 16px;
+            box-sizing: border-box;
         }
 
         @media (max-width: 960px) {
@@ -57,8 +59,19 @@
             box-shadow:
                 0 22px 60px rgba(15, 23, 42, 0.9),
                 0 0 0 1px rgba(15, 23, 42, 1);
-            padding: 20px 22px 22px;
+            padding: 14px 16px 16px;
             backdrop-filter: blur(18px);
+            overflow: hidden;
+        }
+
+        .card:first-of-type {
+            overflow-y: auto;
+        }
+
+        .card:last-of-type {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
 
         .card-header {
@@ -127,7 +140,7 @@
             display: grid;
             grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.4fr);
             gap: 14px 16px;
-            margin-bottom: 14px;
+            margin-bottom: 10px;
         }
 
         @media (max-width: 780px) {
@@ -195,14 +208,6 @@
                 0 0 0 1px rgba(56, 189, 248, 0.85),
                 0 0 0 6px rgba(56, 189, 248, 0.13);
             background: radial-gradient(circle at top left, rgba(15, 23, 42, 1), rgba(15, 23, 42, 0.96));
-        }
-
-        textarea {
-            resize: vertical;
-            min-height: 172px;
-            max-height: 380px;
-            line-height: 1.45;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
         }
 
         select {
@@ -333,16 +338,20 @@
         .response-section {
             display: flex;
             flex-direction: column;
-            gap: 10px;
+            gap: 8px;
+            flex: 1 1 auto;
+            min-height: 0;
         }
 
         .response-block {
             background: radial-gradient(circle at top left, rgba(15, 23, 42, 0.95), rgba(15, 23, 42, 0.98));
             border-radius: 12px;
             border: 1px solid rgba(30, 64, 175, 0.8);
-            padding: 10px 12px 10px;
+            padding: 8px 10px 8px;
             position: relative;
             overflow: hidden;
+            flex: 1 1 0;
+            min-height: 0;
         }
 
         .response-block::before {
@@ -371,7 +380,7 @@
             line-height: 1.45;
             white-space: pre-wrap;
             word-break: break-word;
-            max-height: 320px;
+            height: 100%;
             overflow: auto;
             padding: 7px 8px;
             border-radius: 8px;
@@ -549,11 +558,12 @@
                     <span class="label-tag">Source Text</span>
                 </span>
             </label>
-            <textarea
+            <input
                 id="sourceText"
+                type="text"
                 spellcheck="false"
-                placeholder="Hello world"
-            ></textarea>
+                placeholder="I am going to court"
+            />
         </div>
 
         <div class="field-group">
@@ -562,11 +572,12 @@
                     <span class="label-tag">Context (optional)</span>
                 </span>
             </label>
-            <textarea
+            <input
                 id="contextText"
+                type="text"
                 spellcheck="false"
                 placeholder="I am a sport person"
-            ></textarea>
+            />
         </div>
 
         <div class="dropdown-row">
