@@ -6,6 +6,7 @@ from routers.router_admin import router_admin
 from routers.router_details import router_details
 from routers.router_health import router_health
 from routers.router_restful import router_restful
+from routers.router_experiments import router_experiments, router_experiments_public
 from cache.app_cache import get_cache_connection, get_async_cache_connection
 import uvicorn
 import os
@@ -132,6 +133,8 @@ app.include_router(router_admin)
 app.include_router(router_details)
 app.include_router(router_restful)  # RESTful endpoints for frontend compatibility
 app.include_router(router_health)
+app.include_router(router_experiments)  # A/B testing experiment management (authenticated)
+app.include_router(router_experiments_public)  # A/B testing variant selection (public/internal)
 
 
 @app.get("/")

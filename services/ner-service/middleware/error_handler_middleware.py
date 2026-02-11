@@ -56,6 +56,15 @@ def add_error_handlers(app: FastAPI) -> None:
         """Handle authorization errors."""
         # Use message attribute if available, otherwise use detail or str(exc)
         message = getattr(exc, "message", None) or getattr(exc, "detail", None) or str(exc)
+        
+        # Error message should already be formatted by validate_api_key_permissions
+        # But ensure it has the correct format if it doesn't
+        if "Authorization error" not in message and "insufficient permission" not in message.lower():
+            if "permission" in message.lower() or "does not have" in message.lower() or "ner.inference" in message:
+                message = f"Authorization error: Insufficient permission. {message}"
+            else:
+                message = f"Authorization error: {message}"
+        
         error_detail = ErrorDetail(
             message=message,
             code="AUTHORIZATION_ERROR",

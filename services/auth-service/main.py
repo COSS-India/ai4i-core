@@ -1131,6 +1131,7 @@ async def get_current_user_info(
         "is_active": current_user.is_active,
         "is_verified": current_user.is_verified,
         "is_superuser": current_user.is_superuser,
+        "is_tenant": getattr(current_user, "is_tenant", None),
         "created_at": current_user.created_at,
         "updated_at": current_user.updated_at,
         "last_login": current_user.last_login,
@@ -1170,6 +1171,7 @@ async def update_current_user(
         "is_active": current_user.is_active,
         "is_verified": current_user.is_verified,
         "is_superuser": current_user.is_superuser,
+        "is_tenant": getattr(current_user, "is_tenant", None),
         "created_at": current_user.created_at,
         "updated_at": current_user.updated_at,
         "last_login": current_user.last_login,
@@ -1419,11 +1421,12 @@ async def list_api_keys(
 @app.post("/api/v1/auth/api-keys/select")
 async def select_api_key(
     payload: APIKeySelectRequest,
-    current_user: User = Depends(require_permission("apiKey", "update")),
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Mark an API key as the selected key for the current user.
+    Any authenticated user can select their own API keys without permission checks.
     """
     result = await db.execute(
         select(APIKey).where(

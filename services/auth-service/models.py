@@ -174,6 +174,7 @@ class UserResponse(UserBase):
     is_active: bool
     is_verified: bool
     is_superuser: bool
+    is_tenant: Optional[bool] = None
     created_at: datetime
     updated_at: Optional[datetime]
     last_login: Optional[datetime]
