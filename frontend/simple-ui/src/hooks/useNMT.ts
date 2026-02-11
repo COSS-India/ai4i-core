@@ -1,6 +1,6 @@
 // Custom React hook for NMT functionality with text translation
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useToast } from '@chakra-ui/react';
 import { performNMTInference } from '../services/nmtService';
@@ -24,6 +24,9 @@ export const useNMT = (): UseNMTReturn => {
   const [responseWordCount, setResponseWordCount] = useState<number>(0);
   const [requestTime, setRequestTime] = useState<string>('0');
   const [error, setError] = useState<string | null>(null);
+
+  // Only show "text exceeds limit" toast once per exceed (not every keystroke)
+  const hasShownTextLimitToastRef = useRef(false);
 
   // Toast hook
   const toast = useToast();
@@ -185,19 +188,25 @@ export const useNMT = (): UseNMTReturn => {
     }
   }, [nmtMutation, languagePair, toast, selectedServiceId]);
 
-  // Set input text with validation
+  // Set input text with validation — show toast only when first exceeding limit, not every keystroke
   const setInputTextWithValidation = useCallback((text: string) => {
     setInputText(text);
-    
+
     if (text.length > MAX_TEXT_LENGTH) {
-      const err = NMT_ERRORS.TEXT_TOO_LONG;
-      toast({
-        title: err.title,
-        description: err.description,
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
+      if (!hasShownTextLimitToastRef.current) {
+        hasShownTextLimitToastRef.current = true;
+        const err = NMT_ERRORS.TEXT_TOO_LONG;
+        toast({
+          id: 'nmt-text-exceeds-limit',
+          title: err.title,
+          description: err.description,
+          status: 'warning',
+          duration: 3000,
+          isClosable: true,
+        });
+      }
+    } else {
+      hasShownTextLimitToastRef.current = false;
     }
   }, [toast]);
 
