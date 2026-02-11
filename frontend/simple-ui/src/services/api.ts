@@ -313,13 +313,15 @@ apiClient.interceptors.request.use(
     const isAudioLangDetectionEndpoint = url.includes('/api/v1/audio-lang-detection');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
+    const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
     
     // Services that require JWT tokens (routed via Kong with token-validator)
     const requiresJWT = isModelManagementEndpoint || isASREndpoint || isNMSEndpoint || 
                         isTTSEndpoint || isLLMEndpoint || isPipelineEndpoint ||
                         isAudioLangDetectionEndpoint || isLanguageDetectionEndpoint ||
                         isLanguageDiarizationEndpoint || isSpeakerDiarizationEndpoint ||
-                        isNEREndpoint || isOCREndpoint || isTransliterationEndpoint;
+                        isNEREndpoint || isOCREndpoint || isTransliterationEndpoint ||
+                        isMultiTenantEndpoint;
     
     // Proactively refresh token if it's expiring soon (skip for refresh and login endpoints)
     if ((requiresJWT || (isAuthEndpoint && !isAuthRefreshEndpoint)) && !isAuthRefreshEndpoint) {
@@ -367,10 +369,19 @@ apiClient.interceptors.request.use(
           config.headers['Authorization'] = `Bearer ${jwtToken}`;
         }
         
-        // All services require BOTH JWT token AND API key
-        if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint || isNEREndpoint ||
+        // Multi-tenant endpoints require JWT token with x-auth-source: AUTH_TOKEN
+        if (isMultiTenantEndpoint) {
+          if (jwtToken) {
+            config.headers['Authorization'] = `Bearer ${jwtToken}`;
+            config.headers['x-auth-source'] = 'AUTH_TOKEN';
+            config.headers['X-Auth-Source'] = 'AUTH_TOKEN';
+          } else {
+            console.warn('JWT token is missing for multi-tenant endpoint:', config.url);
+          }
+        } else if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint || isNEREndpoint ||
             isOCREndpoint || isTransliterationEndpoint || isLanguageDetectionEndpoint || 
             isSpeakerDiarizationEndpoint || isLanguageDiarizationEndpoint || isAudioLangDetectionEndpoint) {
+          // All other services require BOTH JWT token AND API key
           if (apiKey) {
             config.headers['X-API-Key'] = apiKey;
             // Set X-Auth-Source to BOTH when both JWT and API key are present
@@ -430,6 +441,7 @@ apiClient.interceptors.response.use(
           if (typeof window !== 'undefined') {
             const url = (error.config?.url || '').toLowerCase();
             const isModelManagementEndpoint = url.includes('/model-management');
+            const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
             
             // Check if it's a service endpoint or model-management endpoint
             // These should NOT automatically logout - let the UI handle the error
@@ -445,7 +457,8 @@ apiClient.interceptors.response.use(
                                      url.includes('/api/v1/speaker-diarization') ||
                                      url.includes('/api/v1/language-diarization') ||
                                      url.includes('/api/v1/audio-lang-detection') ||
-                                     isModelManagementEndpoint;
+                                     isModelManagementEndpoint ||
+                                     isMultiTenantEndpoint;
             
             if (isServiceEndpoint || isModelManagementEndpoint) {
               // For service endpoints and model-management endpoints

@@ -1,4 +1,4 @@
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import BackgroundTasks, HTTPException, status
 from datetime import datetime, timezone , timedelta , date
 
 from typing import Optional
@@ -574,18 +574,21 @@ async def send_verification_link(
 async def create_new_tenant(
         payload: TenantRegisterRequest,
         db: AsyncSession,
+        auth_db: AsyncSession,
         background_tasks: BackgroundTasks
         ) -> TenantRegisterResponse:
     """
-    Create a new tenant with PENDING status and send verification email.
+    Create a new tenant with ACTIVE status by default (auto-verified).
+    Creates admin user and provisions schema immediately.
     
     Args:
         payload: Tenant registration request payload
-        db: Database session
-        background_tasks: BackgroundTasks to send email asynchronously
+        db: Database session for tenant operations
+        auth_db: Database session for authentication operations
+        background_tasks: BackgroundTasks to send email and provision schema asynchronously
     
     Returns:
-        TenantRegisterResponse with tenant details and verification token
+        TenantRegisterResponse with tenant details
     """
 
     if payload.contact_email:
@@ -648,6 +651,13 @@ async def create_new_tenant(
     # Convert SubscriptionType enums to strings for storage
     subscription_strings = [s.value if hasattr(s, "value") else str(s) for s in payload.requested_subscriptions]
     
+    # Generate admin username and password immediately (auto-verified)
+    admin_username = f"admin@{tenant_id}"
+    plain_password = generate_random_password(length=8)
+    hashed_password = hash_password(plain_password)
+    
+    logger.debug(f"Password generated for Tenant:-{tenant_id} | password:- {plain_password}")
+
     tenant_data = {
         "tenant_id": tenant_id,
         "organization_name": payload.organization_name,
@@ -658,10 +668,10 @@ async def create_new_tenant(
         "subscriptions": subscription_strings,
         "quotas": quotas_dict,
         "usage": usage_dict,
-        "status": TenantStatus.PENDING,
-        "temp_admin_username": "",                 # Will be set upon email verification
-        "temp_admin_password_hash": "",            # Will be set upon email verification
-        "user_id": None,                           # Will be set upon email verification
+        "status": TenantStatus.ACTIVE,  # Set to ACTIVE by default
+        "temp_admin_username": admin_username,
+        "temp_admin_password_hash": hashed_password,
+        "user_id": None,  # Will be set after creating auth user
     }
 
     # Validate services are active
@@ -691,14 +701,54 @@ async def create_new_tenant(
     result = await db.execute(stmt)
     created: Tenant = result.scalar_one()
 
-    # Email verification
-    token = await send_verification_link(
-        created=created, 
-        payload=payload, 
-        db=db, 
-        subdomain=None,
-        background_tasks=background_tasks,
-    )
+    # Create tenant admin user in auth-service immediately (auto-verified)
+    try:
+        async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
+            auth_response = await client.post(
+                f"{API_GATEWAY_URL}/api/v1/auth/register",
+                json={
+                    "email": payload.contact_email,
+                    "username": admin_username,
+                    "password": plain_password,
+                    "confirm_password": plain_password,
+                    "full_name": payload.organization_name,
+                    "phone_number": None,
+                    "timezone": "UTC",
+                    "language": "en",
+                    "is_tenant": True,
+                },
+            )
+    except httpx.RequestError as e:
+        logger.error(f"Failed to call auth-service for tenant admin registration: {e}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication service unavailable while creating tenant admin user",
+        )
+
+    if auth_response.status_code != 201:
+        logger.error(
+            f"Auth-service /api/v1/auth/register failed for tenant {tenant_id}: "
+            f"status={auth_response.status_code}, body={auth_response.text}"
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=auth_response.status_code,
+            detail=auth_response.json() if auth_response.headers.get("content-type", "").startswith("application/json") else auth_response.text,
+        )
+
+    auth_user = auth_response.json()
+    admin_user_id = auth_user.get("id")
+    if not admin_user_id:
+        logger.error(f"Auth-service did not return user id for tenant admin {tenant_id}: {auth_user}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Authentication service response missing user id for tenant admin",
+        )
+
+    # Update tenant with user_id
+    created.user_id = admin_user_id
     
     billing = BillingRecord(
         tenant_id=created.id,
@@ -718,6 +768,7 @@ async def create_new_tenant(
             "organization": payload.organization_name,
             "subscriptions": subscription_strings,
             "email": payload.contact_email,
+            "auto_verified": True,
         },
     )
     db.add(audit)
@@ -733,6 +784,33 @@ async def create_new_tenant(
         await db.rollback()
         raise HTTPException(status_code=500,detail="Failed to create tenant")
 
+    await db.refresh(created)
+
+    # Extract values before adding background task to avoid detached object issues
+    tenant_id_str = str(created.tenant_id)
+    contact_email_str = str(created.contact_email)
+    admin_username_str = str(admin_username)
+    password_str = str(plain_password)
+
+    logger.info(f"Tenant created and activated: {tenant_id_str}")
+
+    # Send welcome email with admin credentials
+    background_tasks.add_task(
+        send_welcome_email,
+        tenant_id_str,
+        contact_email_str,
+        None,  # use subdomain if required
+        admin_username_str,
+        password_str,
+    )
+
+    # Provision tenant schema immediately
+    background_tasks.add_task(
+        provision_tenant_schema,
+        created.schema_name,
+        created.subscriptions or [],
+    )
+
     resposne = TenantRegisterResponse(
         id=created.id,
         tenant_id=created.tenant_id,
@@ -741,7 +819,7 @@ async def create_new_tenant(
         quotas=created.quotas or {},
         usage_quota=created.usage or {},
         status=created.status.value if hasattr(created.status, "value") else str(created.status),
-        token=token,
+        token=None,  # No token needed for auto-verified tenants
     )
 
     return resposne
@@ -1781,7 +1859,7 @@ async def view_tenant_details(tenant_id: str, db: AsyncSession) -> TenantViewRes
     return response
 
 
-async def update_tenant(payload: TenantUpdateRequest, db: AsyncSession) -> TenantUpdateResponse:
+async def update_tenant(payload: TenantUpdateRequest, db: AsyncSession, user_id: Optional[int] = None) -> TenantUpdateResponse:
     """
     Update tenant information including quotas and usage_quota.
     Supports partial updates - only provided fields will be updated.
@@ -1789,6 +1867,7 @@ async def update_tenant(payload: TenantUpdateRequest, db: AsyncSession) -> Tenan
     Args:
         payload: Tenant update request payload with optional fields
         db: Database session
+        user_id: Optional user_id to verify adopter admin ownership. If provided, only the tenant owner can update.
     Returns:
         TenantUpdateResponse: Details of the updated tenant and changes made
     """
@@ -1796,6 +1875,13 @@ async def update_tenant(payload: TenantUpdateRequest, db: AsyncSession) -> Tenan
     
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    
+    # If user_id is provided, verify that the user is the adopter admin (owner) of this tenant
+    if user_id is not None and tenant.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only update tenants that you own as an adopter admin"
+        )
     
     # Get update data excluding unset fields
     update_data = payload.model_dump(exclude_unset=True, exclude={"tenant_id"})
@@ -1859,6 +1945,31 @@ async def update_tenant(payload: TenantUpdateRequest, db: AsyncSession) -> Tenan
         # Merge with existing usage to preserve other fields
         merged_usage = {**old_usage, **new_usage_dict}
         
+        # Validate quota limits before updating
+        quotas = tenant.quotas or {}
+        quota_chars = quotas.get("characters_length")
+        quota_audio = quotas.get("audio_length_in_min")
+        
+        usage_chars = merged_usage.get("characters_length", 0)
+        usage_audio = merged_usage.get("audio_length_in_min", 0)
+        
+        # Check if usage exceeds quota limits
+        quota_exceeded_errors = []
+        if quota_chars is not None and usage_chars > quota_chars:
+            quota_exceeded_errors.append(
+                f"Characters usage ({usage_chars}) exceeds quota limit ({quota_chars})"
+            )
+        if quota_audio is not None and usage_audio > quota_audio:
+            quota_exceeded_errors.append(
+                f"Audio usage ({usage_audio:.2f} min) exceeds quota limit ({quota_audio:.2f} min)"
+            )
+        
+        if quota_exceeded_errors:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Quota exceeded: " + "; ".join(quota_exceeded_errors)
+            )
+        
         if old_usage != merged_usage:
             changes["usage_quota"] = FieldChange(old=old_usage, new=merged_usage)
             tenant.usage = merged_usage
@@ -1907,6 +2018,66 @@ async def update_tenant(payload: TenantUpdateRequest, db: AsyncSession) -> Tenan
     )
 
 
+async def increment_tenant_usage(
+    tenant_id: str,
+    characters_length: int = 0,
+    audio_length_in_min: int = 0,
+    db: AsyncSession = None
+) -> dict:
+    """
+    Increment tenant usage quota by adding to existing values.
+    
+    Args:
+        tenant_id: The tenant identifier
+        characters_length: Number of characters to add
+        audio_length_in_min: Number of audio minutes to add
+        db: Database session
+        
+    Returns:
+        dict: Updated usage values
+    """
+    from sqlalchemy import select
+    from models.db_models import Tenant
+    
+    if not db:
+        raise ValueError("Database session is required")
+    
+    # Get tenant
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
+    
+    if not tenant:
+        raise HTTPException(status_code=404, detail=f"Tenant not found: {tenant_id}")
+    
+    # Get current usage or initialize empty dict
+    current_usage = tenant.usage or {}
+    
+    # Increment usage values
+    updated_usage = {
+        "characters_length": (current_usage.get("characters_length", 0) or 0) + characters_length,
+        "audio_length_in_min": (current_usage.get("audio_length_in_min", 0) or 0) + audio_length_in_min,
+    }
+    
+    # Update tenant usage
+    tenant.usage = updated_usage
+    
+    try:
+        await db.commit()
+        await db.refresh(tenant)
+        
+        logger.info(
+            f"Usage incremented for tenant {tenant_id}: "
+            f"+{characters_length} chars, +{audio_length_in_min} min. "
+            f"New totals: {updated_usage['characters_length']} chars, "
+            f"{updated_usage['audio_length_in_min']} min"
+        )
+        
+        return updated_usage
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error incrementing usage for tenant {tenant_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to increment usage")
+
+
 async def view_tenant_user_details(user_id: str, db: AsyncSession) -> TenantUserViewResponse:
     """
     View tenant user details by tenant_id and user_id.
@@ -1949,6 +2120,48 @@ async def list_all_tenants(db: AsyncSession) -> ListTenantsResponse:
         ListTenantsResponse: List of all tenants and their details
     """
     result = await db.execute(select(Tenant).order_by(Tenant.created_at.desc()))
+    tenants = result.scalars().all()
+    
+    tenant_list = [
+        TenantViewResponse(
+            id=tenant.id,
+            tenant_id=tenant.tenant_id,
+            user_id=tenant.user_id or 0,
+            organization_name=tenant.organization_name,
+            email=tenant.contact_email,
+            domain=tenant.domain,
+            schema=tenant.schema_name,
+            subscriptions=tenant.subscriptions or [],
+            status=tenant.status.value if hasattr(tenant.status, "value") else str(tenant.status),
+            quotas=tenant.quotas or {},
+            usage_quota=tenant.usage or {},
+            created_at=tenant.created_at.isoformat(),
+            updated_at=tenant.updated_at.isoformat(),
+        )
+        for tenant in tenants
+    ]
+    
+    return ListTenantsResponse(
+        count=len(tenant_list),
+        tenants=tenant_list,
+    )
+
+
+async def list_tenants_by_adopter_admin(user_id: int, db: AsyncSession) -> ListTenantsResponse:
+    """
+    List all tenants owned by a specific adopter admin (user_id).
+    
+    Args:
+        user_id: The adopter admin user ID
+        db: Database session
+    Returns:
+        ListTenantsResponse: List of tenants owned by the adopter admin
+    """
+    result = await db.execute(
+        select(Tenant)
+        .where(Tenant.user_id == user_id)
+        .order_by(Tenant.created_at.desc())
+    )
     tenants = result.scalars().all()
     
     tenant_list = [

@@ -21,7 +21,9 @@ from services.tenant_service import (
     view_tenant_user_details,
     list_all_tenants,
     list_all_users,
+    increment_tenant_usage,
 )
+from models.usage_increment import UsageIncrementRequest, UsageIncrementResponse
 
 from logger import logger
 from middleware.auth_provider import AuthProvider
@@ -38,9 +40,10 @@ async def register_tenant_request(
     payload: TenantRegisterRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db_session),
+    auth_db: AsyncSession = Depends(get_auth_db_session),
 ):
     try:
-        response = await create_new_tenant(payload, db, background_tasks)
+        response = await create_new_tenant(payload, db, auth_db, background_tasks)
 
         logger.info(f"Tenant registered successfully. Tenant Domain: {payload.domain}, Email: {payload.contact_email}")
 
@@ -225,4 +228,36 @@ async def list_users(
         raise
     except Exception as exc:
         logger.exception(f"Error listing users: {exc}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/increment/usage", response_model=UsageIncrementResponse, status_code=status.HTTP_200_OK)
+async def increment_usage(
+    payload: UsageIncrementRequest,
+    db: AsyncSession = Depends(get_tenant_db_session),
+):
+    """
+    Increment tenant usage quota.
+    Used by services (NMT, TTS, ASR) to track usage when inference is performed.
+    """
+    try:
+        updated_usage = await increment_tenant_usage(
+            tenant_id=payload.tenant_id,
+            characters_length=payload.characters_length,
+            audio_length_in_min=payload.audio_length_in_min,
+            db=db
+        )
+        
+        return UsageIncrementResponse(
+            tenant_id=payload.tenant_id,
+            message=f"Usage incremented: +{payload.characters_length} chars, +{payload.audio_length_in_min} min",
+            updated_usage=updated_usage
+        )
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        logger.error(f"Validation error while incrementing usage | tenant_id={payload.tenant_id}: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception(f"Unexpected error while incrementing usage | tenant_id={payload.tenant_id}: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")

@@ -130,7 +130,7 @@ services:
       UNLEASH_URL: http://unleash:4242
       LOG_LEVEL: info
       BASE_URI_PATH: /feature-flags
-      UNLEASH_PUBLIC_BASE_URL: https://core-v1.ai4inclusion.org/feature-flags
+      UNLEASH_PUBLIC_BASE_URL: http://localhost/feature-flags
       TRUST_PROXY: "true"  
     depends_on:
       postgres:
@@ -308,6 +308,8 @@ services:
       # Prod: point Swagger to public API Gateway URL
       - TRY_IT_LIMIT=5
       - TRY_IT_TTL_SECONDS=3600
+      # Service URLs - use service names for container-to-container communication
+      - AUTH_SERVICE_URL=http://auth-service:8081
     env_file:
       - ./services/api-gateway-service/.env
     depends_on:
@@ -939,7 +941,7 @@ services:
       dockerfile: Dockerfile
       args:
         # Browser talks directly to the API Gateway on host port 8080
-        NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
+        NEXT_PUBLIC_API_URL: http://localhost:8080
         # Service-specific API keys from .env file (no hardcoding)
         NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
         NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
@@ -954,7 +956,7 @@ services:
       # HOSTNAME=0.0.0.0 tells Next.js standalone server to listen on all interfaces
       - HOSTNAME=0.0.0.0
       # Route all frontend API calls through the API Gateway on host
-      - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
       - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
       # Service-specific API keys for API Gateway authentication / RBAC
       - NEXT_PUBLIC_ASR_API_KEY=${ASR_API_KEY}
@@ -992,7 +994,7 @@ services:
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
       - '--storage.tsdb.retention.time=30d'
-      - '--web.external-url=https://core-v1.ai4inclusion.org/prometheus/'
+      - '--web.external-url=http://localhost/prometheus/'
       # - '--web.external-url=http://localhost:9090'
 
       - '--web.route-prefix=/'
@@ -1021,8 +1023,8 @@ services:
 
       # Combined from both HEAD and remote commits
       - GF_INSTALL_PLUGINS=
-      - GF_SERVER_DOMAIN=core-v1.ai4inclusion.org
-      - GF_SERVER_ROOT_URL=https://core-v1.ai4inclusion.org/grafana/
+      - GF_SERVER_DOMAIN=localhost
+      - GF_SERVER_ROOT_URL=http://localhost/grafana/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
 
     volumes:
@@ -1161,10 +1163,10 @@ services:
 volumes:
   postgres-data:
     driver: local
-    driver_opts:
-          type: "none"
-          o: "bind"
-          device: "/home/ubuntu/ai4i-v/volumes/pg_data"
+    # driver_opts:
+    #       type: "none"
+    #       o: "bind"
+    #       device: "/home/ubuntu/ai4i-v/volumes/pg_data"
   postgres-konga-data:
     driver: local
   redis-data:

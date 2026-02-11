@@ -10,6 +10,8 @@ import {
   VoiceFilterOptions
 } from '../types/tts';
 import { listServices } from './modelManagementService';
+import { incrementTenantUsage, checkTenantQuota } from './tenantManagementService';
+import authService from './authService';
 
 export interface TTSServiceDetailsResponse {
   service_id: string;
@@ -93,6 +95,34 @@ export const performTTSInference = async (
   config: TTSInferenceRequest['config']
 ): Promise<{ data: TTSInferenceResponse; responseTime: number }> => {
   try {
+    // Check quota before making inference call (for logged-in users)
+    const jwtToken = authService.getAccessToken();
+    if (jwtToken) {
+      try {
+        const parts = jwtToken.split('.');
+        if (parts.length === 3) {
+          const tokenPayload = JSON.parse(atob(parts[1]));
+          const tenantId = tokenPayload.tenant_id;
+          
+          if (tenantId && text && text.length > 0) {
+            const charactersLength = text.length;
+            const quotaCheck = await checkTenantQuota(tenantId, charactersLength, 0);
+            
+            if (!quotaCheck.hasQuota) {
+              throw new Error(quotaCheck.error || 'Quota exceeded. Please contact your administrator.');
+            }
+          }
+        }
+      } catch (quotaError: any) {
+        // If quota check fails with an error message, throw it
+        if (quotaError.message && quotaError.message.includes('quota')) {
+          throw quotaError;
+        }
+        // Otherwise, log and continue (fail open if quota check fails)
+        console.warn('Quota check failed, allowing request:', quotaError);
+      }
+    }
+
     const payload: TTSInferenceRequest = {
       input: [{ source: text }],
       config,
@@ -108,6 +138,31 @@ export const performTTSInference = async (
 
     // Extract response time from headers
     const responseTime = parseInt(response.headers['request-duration'] || '0');
+
+    // Frontend-side usage tracking for logged-in users
+    if (jwtToken) {
+      try {
+        // Decode JWT token to get tenant_id
+        const parts = jwtToken.split('.');
+        if (parts.length === 3) {
+          const tokenPayload = JSON.parse(atob(parts[1]));
+          const tenantId = tokenPayload.tenant_id;
+          
+          if (tenantId && text && text.length > 0) {
+            const charactersLength = text.length;
+            // Call the increment usage API asynchronously (don't block the response)
+            incrementTenantUsage({
+              tenant_id: tenantId,
+              characters_length: charactersLength,
+              audio_length_in_min: 0, // TTS does not use audio minutes (it generates audio)
+            }).catch(error => console.error("Frontend TTS usage tracking failed:", error));
+          }
+        }
+      } catch (decodeError) {
+        // Token decode failed, skip usage tracking silently
+        console.debug('Could not decode token for TTS usage tracking:', decodeError);
+      }
+    }
 
     return {
       data: response.data,

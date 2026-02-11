@@ -30,8 +30,8 @@ tritonclient[http]>=2.40.0
 gevent>=23.9.0
 
 # PyTorch (CPU version)
-torch==2.2.2+cpu           # stable for Python 3.10
-torchaudio==2.2.2+cpu      # matches torch version
+torch==2.2.2           # stable for Python 3.10, CPU-only build available
+torchaudio==2.2.2      # matches torch version
 
 # HTTP client
 httpx>=0.25.0
