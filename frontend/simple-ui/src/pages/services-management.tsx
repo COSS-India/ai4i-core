@@ -91,12 +91,12 @@ const ServicesManagementPage: React.FC = () => {
   const { checkSessionExpiry } = useSessionExpiry();
 
   
-  // Check if user is GUEST and redirect if so
+  // Check if user is GUEST or USER and redirect if so
   useEffect(() => {
-    if (user?.roles?.includes('GUEST')) {
+    if (user?.roles?.includes('GUEST') || user?.roles?.includes('USER')) {
       toast({
         title: "Access Denied",
-        description: "Guest users do not have access to Services Management.",
+        description: "You do not have access to Services Management.",
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -182,11 +182,12 @@ const ServicesManagementPage: React.FC = () => {
         return;
       }
 
-      // Model not in active list (e.g. DEPRECATED) - fetch by ID and add to dropdown
+      // Model not in active list - only add to dropdown if not deprecated (deprecated models must not appear in Create Service)
       if (!inActiveList) {
         try {
           const modelDetails = await getModelById(modelId);
-          if (modelDetails) {
+          const isDeprecated = modelDetails?.versionStatus?.toLowerCase() === "deprecated";
+          if (modelDetails && !isDeprecated) {
             setPreselectedModelFromQuery(modelDetails);
             if (formData.modelId !== modelId) {
               handleModelNameChange(modelId);
@@ -211,9 +212,12 @@ const ServicesManagementPage: React.FC = () => {
   const tableHeaderBg = useColorModeValue("gray.50", "gray.700");
   const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
 
-  // Dropdown options: active models + preselected model from query (e.g. deprecated) if not already in list
-  const modelsForDropdown =
+  // Dropdown options: active models only (no deprecated). Include preselected from query only if not deprecated and not already in list.
+  const preselectedNotDeprecated =
     preselectedModelFromQuery &&
+    preselectedModelFromQuery.versionStatus?.toLowerCase() !== "deprecated";
+  const modelsForDropdown =
+    preselectedNotDeprecated &&
     !models.some(
       (m) =>
         (m.modelId || m.model_id) ===
@@ -749,7 +753,6 @@ const ServicesManagementPage: React.FC = () => {
                                   <Th>Description</Th>
                                   <Th>Task Type</Th>
                                   <Th>Model ID</Th>
-                                  <Th>Published Status</Th>
                                   <Th>Status</Th>
                                   <Th>Actions</Th>
                                 </Tr>
@@ -784,15 +787,6 @@ const ServicesManagementPage: React.FC = () => {
                                         p={1}
                                       >
                                         {service.isPublished === true ? "PUBLISHED" : "UNPUBLISHED"}
-                                      </Badge>
-                                    </Td>
-                                    <Td>
-                                      <Badge
-                                        colorScheme={getStatusColor(service.healthStatus?.status || service.status)}
-                                        fontSize="sm"
-                                        p={1}
-                                      >
-                                        {(service.healthStatus?.status || service.status)?.toUpperCase() || "N/A"}
                                       </Badge>
                                     </Td>
                                     <Td onClick={(e) => e.stopPropagation()}>

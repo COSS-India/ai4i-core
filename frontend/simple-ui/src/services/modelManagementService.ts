@@ -68,7 +68,7 @@ export const createModel = async (modelData: any): Promise<any> => {
 export const getModelById = async (modelId: string): Promise<any> => {
   try {
     const response = await apiClient.post<any>(
-      `/api/v1/model-management/models/${modelId}`,
+      `/api/v1/model-management/models/${encodeURIComponent(modelId)}`,
       { modelId }
     );
     return response.data;

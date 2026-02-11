@@ -74,6 +74,13 @@ export const useAuth = () => {
             });
             // Update stored user with fresh data
             authService.setStoredUser(currentUser);
+            // Restore selected API key to localStorage for use in services
+            try {
+              const apiKeyList = await authService.listApiKeys();
+              authService.applyApiKeyListToStorage(apiKeyList);
+            } catch {
+              // Non-blocking; user can set key in profile
+            }
           } catch (error: any) {
             // Token is invalid or expired, or request timed out - clear everything
             const errorMessage = error?.message || 'Token validation failed';
@@ -194,6 +201,14 @@ export const useAuth = () => {
         });
 
         console.log('useAuth: ✅ Authentication complete - user logged in successfully');
+
+        // Fetch API keys and store selected key in localStorage for use in services
+        try {
+          const apiKeyList = await authService.listApiKeys();
+          authService.applyApiKeyListToStorage(apiKeyList);
+        } catch (apiKeyErr) {
+          console.warn('useAuth: Failed to fetch API keys after login:', apiKeyErr);
+        }
 
         // Notify other components/hooks to refresh their view immediately
         if (typeof window !== 'undefined') {
