@@ -5,6 +5,7 @@ Copied from OCR service to keep behavior and structure consistent.
 """
 
 import logging
+import os
 import time
 import traceback
 
@@ -128,8 +129,20 @@ def add_error_handlers(app: FastAPI) -> None:
             except Exception:
                 pass  # Don't fail if tracing fails
         
-        logger.error("Unexpected error: %s", exc)
-        logger.error("Traceback: %s", traceback.format_exc())
+        # Check if health/metrics logs should be excluded
+        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+        exclude_metrics_logs = os.getenv("EXCLUDE_METRICS_LOGS", "false").lower() == "true"
+        
+        path = request.url.path.lower().rstrip('/')
+        should_skip = False
+        if exclude_health_logs and ('/health' in path or path.endswith('/health')):
+            should_skip = True
+        if exclude_metrics_logs and ('/metrics' in path or path.endswith('/metrics')):
+            should_skip = True
+        
+        if not should_skip:
+            logger.error("Unexpected error: %s", exc)
+            logger.error("Traceback: %s", traceback.format_exc())
 
         error_detail = ErrorDetail(
             message="Internal server error",
