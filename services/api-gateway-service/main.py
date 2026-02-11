@@ -1312,7 +1312,15 @@ class ServiceCurrencyType(str, Enum):
 class QuotaStructure(BaseModel):
     """Structure for quota limits"""
     characters_length: Optional[int] = Field(None, ge=0, description="Character length quota")
-    audio_length_in_min: Optional[int] = Field(None, ge=0, description="Audio length quota in minutes")
+    audio_length_in_min: Optional[float] = Field(None, ge=0, description="Audio length quota in minutes (supports fractional minutes, rounded to 2 decimals)")
+    
+    @field_validator('audio_length_in_min', mode='before')
+    @classmethod
+    def round_audio_length(cls, v):
+        """Round audio length to 2 decimal places"""
+        if v is not None and isinstance(v, (int, float)):
+            return round(float(v), 2)
+        return v
 
 class TenantRegisterRequest(BaseModel):
     """Request model for tenant registration."""
@@ -1502,6 +1510,28 @@ class TenantViewResponse(BaseModel):
     usage_quota: Optional[Dict[str, Any]] = Field(None, description="Usage quota values")
     created_at: str = Field(..., description="Creation timestamp")
     updated_at: str = Field(..., description="Update timestamp")
+
+
+class UsageIncrementRequest(BaseModel):
+    """Request model for incrementing tenant usage"""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    characters_length: int = Field(0, ge=0, description="Characters to add to usage")
+    audio_length_in_min: float = Field(0, ge=0, description="Audio minutes to add to usage (supports fractional minutes, rounded to 2 decimals)")
+    
+    @field_validator('audio_length_in_min', mode='before')
+    @classmethod
+    def round_audio_length(cls, v):
+        """Round audio length to 2 decimal places"""
+        if v is not None and isinstance(v, (int, float)):
+            return round(float(v), 2)
+        return v
+
+
+class UsageIncrementResponse(BaseModel):
+    """Response model for usage increment"""
+    tenant_id: str
+    message: str
+    updated_usage: dict
 
 
 class TenantUserViewResponse(BaseModel):
@@ -4656,6 +4686,30 @@ async def update_tenant(
         headers=headers
     )
 
+@app.post("/api/v1/multi-tenant/increment/usage", response_model=UsageIncrementResponse, tags=["Multi-Tenant"])
+async def increment_usage(
+    payload: UsageIncrementRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Increment tenant usage quota.
+    Used by services (NMT, TTS, ASR) to track usage when inference is performed.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/admin/increment/usage",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
 @app.patch("/api/v1/multi-tenant/update/users/status", response_model=TenantUserStatusUpdateResponse, tags=["Multi-Tenant"])
 async def update_tenant_user_status(
     payload: TenantUserStatusUpdateRequest,
@@ -4786,6 +4840,54 @@ async def list_users(
         "/admin/list/users",
         "multi-tenant-service",
         method="GET",
+        headers=headers,
+    )
+
+@app.get("/api/v1/multi-tenant/adopter/tenants", response_model=ListTenantsResponse, tags=["Multi-Tenant - Adopter Admin"])
+async def list_adopter_tenants(
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    List all tenants owned by the current adopter admin via API Gateway.
+    Only tenants where user_id matches the authenticated user are returned.
+    Proxies to multi-tenant-service /adopter/tenants.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    return await proxy_to_service(
+        request,
+        "/adopter/tenants",
+        "multi-tenant-service",
+        method="GET",
+        headers=headers,
+    )
+
+@app.patch("/api/v1/multi-tenant/adopter/tenants/update", response_model=TenantUpdateResponse, tags=["Multi-Tenant - Adopter Admin"])
+async def update_adopter_tenant(
+    payload: TenantUpdateRequest,
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    Update tenant information for a tenant owned by the current adopter admin via API Gateway.
+    Only tenants owned by the authenticated adopter admin can be updated.
+    Supports partial updates - only provided fields will be updated.
+    Proxies to multi-tenant-service /adopter/tenants/update.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/adopter/tenants/update",
+        "multi-tenant-service",
+        method="PATCH",
+        body=body,
         headers=headers,
     )
 

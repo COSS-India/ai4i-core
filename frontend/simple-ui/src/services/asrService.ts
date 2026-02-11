@@ -10,6 +10,8 @@ import {
 } from '../types/asr';
 import { io, Socket } from 'socket.io-client';
 import { listServices } from './modelManagementService';
+import { incrementTenantUsage, checkTenantQuota } from './tenantManagementService';
+import authService from './authService';
 
 // ASR Service details from model management
 export interface ASRServiceDetails {
@@ -34,6 +36,42 @@ export const performASRInference = async (
   config: ASRInferenceRequest['config']
 ): Promise<ASRInferenceResponse> => {
   try {
+    // Check quota before making inference call (for logged-in users)
+    const jwtToken = authService.getAccessToken();
+    if (jwtToken && audioContent) {
+      try {
+        const parts = jwtToken.split('.');
+        if (parts.length === 3) {
+          const tokenPayload = JSON.parse(atob(parts[1]));
+          const tenantId = tokenPayload.tenant_id;
+          
+          if (tenantId) {
+            // Estimate audio duration in minutes
+            const sampleRate = config.samplingRate || 16000;
+            const estimatedBytes = (audioContent.length * 3) / 4;
+            const headerSize = 44;
+            const audioDataSize = Math.max(0, estimatedBytes - headerSize);
+            const estimatedSamples = audioDataSize / 2;
+            const estimatedDurationSeconds = estimatedSamples / sampleRate;
+            const audioLengthMinutes = Math.round(Math.max(0.01, estimatedDurationSeconds / 60) * 100) / 100;
+            
+            const quotaCheck = await checkTenantQuota(tenantId, 0, audioLengthMinutes);
+            
+            if (!quotaCheck.hasQuota) {
+              throw new Error(quotaCheck.error || 'Quota exceeded. Please contact your administrator.');
+            }
+          }
+        }
+      } catch (quotaError: any) {
+        // If quota check fails with an error message, throw it
+        if (quotaError.message && quotaError.message.includes('quota')) {
+          throw quotaError;
+        }
+        // Otherwise, log and continue (fail open if quota check fails)
+        console.warn('Quota check failed, allowing request:', quotaError);
+      }
+    }
+
     const payload: ASRInferenceRequest = {
       audio: [{ audioContent }],
       config,
@@ -46,6 +84,44 @@ export const performASRInference = async (
       apiEndpoints.asr.inference,
       payload
     );
+
+    // Frontend-side usage tracking for logged-in users
+    if (jwtToken) {
+    if (jwtToken) {
+      try {
+        // Decode JWT token to get tenant_id
+        const parts = jwtToken.split('.');
+        if (parts.length === 3) {
+          const tokenPayload = JSON.parse(atob(parts[1]));
+          const tenantId = tokenPayload.tenant_id;
+          
+          if (tenantId && audioContent) {
+            // Estimate audio duration in minutes from base64 content
+            // Base64 encoding increases size by ~33%, so actual audio size is smaller
+            // For WAV files: duration ≈ (decoded_size - header) / (sample_rate * channels * bytes_per_sample)
+            // Simplified estimation: assume 16-bit mono audio at sample rate
+            const sampleRate = config.samplingRate || 16000; // Default to 16kHz
+            const estimatedBytes = (audioContent.length * 3) / 4; // Approximate decoded size
+            const headerSize = 44; // WAV header size
+            const audioDataSize = Math.max(0, estimatedBytes - headerSize);
+            // 16-bit = 2 bytes per sample, mono = 1 channel
+            const estimatedSamples = audioDataSize / 2;
+            const estimatedDurationSeconds = estimatedSamples / sampleRate;
+            const audioLengthMinutes = Math.round(Math.max(0.01, estimatedDurationSeconds / 60) * 100) / 100; // Round to 2 decimal places, at least 0.01 minutes
+            
+            // Call the increment usage API asynchronously (don't block the response)
+            incrementTenantUsage({
+              tenant_id: tenantId,
+              characters_length: 0, // ASR does not use characters
+              audio_length_in_min: audioLengthMinutes,
+            }).catch(error => console.error("Frontend ASR usage tracking failed:", error));
+          }
+        }
+      } catch (decodeError) {
+        // Token decode failed, skip usage tracking silently
+        console.debug('Could not decode token for ASR usage tracking:', decodeError);
+      }
+    }
 
     return response.data;
   } catch (error) {
@@ -65,6 +141,42 @@ export const transcribeAudio = async (
   config: ASRInferenceRequest['config']
 ): Promise<{ data: ASRInferenceResponse; responseTime: number }> => {
   try {
+    // Check quota before making inference call (for logged-in users)
+    const jwtToken = authService.getAccessToken();
+    if (jwtToken && audioContent) {
+      try {
+        const parts = jwtToken.split('.');
+        if (parts.length === 3) {
+          const tokenPayload = JSON.parse(atob(parts[1]));
+          const tenantId = tokenPayload.tenant_id;
+          
+          if (tenantId) {
+            // Estimate audio duration in minutes
+            const sampleRate = config.samplingRate || 16000;
+            const estimatedBytes = (audioContent.length * 3) / 4;
+            const headerSize = 44;
+            const audioDataSize = Math.max(0, estimatedBytes - headerSize);
+            const estimatedSamples = audioDataSize / 2;
+            const estimatedDurationSeconds = estimatedSamples / sampleRate;
+            const audioLengthMinutes = Math.round(Math.max(0.01, estimatedDurationSeconds / 60) * 100) / 100;
+            
+            const quotaCheck = await checkTenantQuota(tenantId, 0, audioLengthMinutes);
+            
+            if (!quotaCheck.hasQuota) {
+              throw new Error(quotaCheck.error || 'Quota exceeded. Please contact your administrator.');
+            }
+          }
+        }
+      } catch (quotaError: any) {
+        // If quota check fails with an error message, throw it
+        if (quotaError.message && quotaError.message.includes('quota')) {
+          throw quotaError;
+        }
+        // Otherwise, log and continue (fail open if quota check fails)
+        console.warn('Quota check failed, allowing request:', quotaError);
+      }
+    }
+
     // Dhruva Platform ASR request schema
     const payload: ASRInferenceRequest = {
       audio: [{ audioContent }],
@@ -100,6 +212,44 @@ export const transcribeAudio = async (
 
     // Extract response time from headers
     const responseTime = parseInt(response.headers['request-duration'] || '0');
+
+    // Frontend-side usage tracking for logged-in users
+    const jwtToken = authService.getAccessToken();
+    if (jwtToken) {
+      try {
+        // Decode JWT token to get tenant_id
+        const parts = jwtToken.split('.');
+        if (parts.length === 3) {
+          const tokenPayload = JSON.parse(atob(parts[1]));
+          const tenantId = tokenPayload.tenant_id;
+          
+          if (tenantId && audioContent) {
+            // Estimate audio duration in minutes from base64 content
+            // Base64 encoding increases size by ~33%, so actual audio size is smaller
+            // For WAV files: duration ≈ (decoded_size - header) / (sample_rate * channels * bytes_per_sample)
+            // Simplified estimation: assume 16-bit mono audio at sample rate
+            const sampleRate = config.samplingRate || 16000; // Default to 16kHz
+            const estimatedBytes = (audioContent.length * 3) / 4; // Approximate decoded size
+            const headerSize = 44; // WAV header size
+            const audioDataSize = Math.max(0, estimatedBytes - headerSize);
+            // 16-bit = 2 bytes per sample, mono = 1 channel
+            const estimatedSamples = audioDataSize / 2;
+            const estimatedDurationSeconds = estimatedSamples / sampleRate;
+            const audioLengthMinutes = Math.round(Math.max(0.01, estimatedDurationSeconds / 60) * 100) / 100; // Round to 2 decimal places, at least 0.01 minutes
+            
+            // Call the increment usage API asynchronously (don't block the response)
+            incrementTenantUsage({
+              tenant_id: tenantId,
+              characters_length: 0, // ASR does not use characters
+              audio_length_in_min: audioLengthMinutes,
+            }).catch(error => console.error("Frontend ASR usage tracking failed:", error));
+          }
+        }
+      } catch (decodeError) {
+        // Token decode failed, skip usage tracking silently
+        console.debug('Could not decode token for ASR usage tracking:', decodeError);
+      }
+    }
 
     return {
       data: response.data,

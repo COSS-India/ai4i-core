@@ -42,6 +42,7 @@ import {
   CheckboxGroup,
   SimpleGrid,
   Modal,
+  Code,
   ModalOverlay,
   ModalContent,
   ModalHeader,
@@ -54,6 +55,9 @@ import {
   AlertDialogHeader,
   AlertDialogContent,
   AlertDialogOverlay,
+  useDisclosure,
+  Progress,
+  Divider,
 } from "@chakra-ui/react";
 import { ViewIcon, ViewOffIcon, CopyIcon } from "@chakra-ui/icons";
 import { FiEdit2, FiCheck, FiX } from "react-icons/fi";
@@ -67,6 +71,16 @@ import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { User, UserUpdateRequest, Permission, APIKeyResponse, AdminAPIKeyWithUserResponse, APIKeyUpdate } from "../types/auth";
 import roleService, { Role, UserRole } from "../services/roleService";
 import authService from "../services/authService";
+import {
+  listAdopterTenants,
+  updateTenant,
+  registerTenant,
+  Tenant,
+  TenantUpdateRequest,
+  TenantRegisterRequest,
+  ListTenantsResponse,
+} from "../services/tenantManagementService";
+import { extractErrorInfo } from "../utils/errorHandler";
 
 const ProfilePage: React.FC = () => {
   const router = useRouter();
@@ -159,6 +173,42 @@ const ProfilePage: React.FC = () => {
   const [selectedKeyForView, setSelectedKeyForView] = useState<AdminAPIKeyWithUserResponse | null>(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   
+  // Tenant Management state
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [isLoadingTenants, setIsLoadingTenants] = useState(false);
+  const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null);
+  const [isEditingTenant, setIsEditingTenant] = useState(false);
+  const [tenantUpdateFormData, setTenantUpdateFormData] = useState<Partial<TenantUpdateRequest>>({});
+  const [isUpdatingTenant, setIsUpdatingTenant] = useState(false);
+  const [isCreatingTenant, setIsCreatingTenant] = useState(false);
+  const [createTenantFormData, setCreateTenantFormData] = useState<Partial<TenantRegisterRequest>>({
+    organization_name: "",
+    domain: "",
+    contact_email: "",
+    requested_subscriptions: [],
+  });
+  const [subscriptionsInput, setSubscriptionsInput] = useState("tts, asr, nmt");
+  const [quotaData, setQuotaData] = useState({
+    characters_length: 100000,
+    audio_length_in_min: 60,
+  });
+  const [updateQuotaData, setUpdateQuotaData] = useState({
+    characters_length: 0,
+    audio_length_in_min: 0,
+  });
+  const [updateUsageQuotaData, setUpdateUsageQuotaData] = useState({
+    characters_length: 0,
+    audio_length_in_min: 0,
+  });
+  const { isOpen: isTenantModalOpen, onOpen: onTenantModalOpen, onClose: onTenantModalClose } = useDisclosure();
+  const { isOpen: isCreateTenantModalOpen, onOpen: onCreateTenantModalOpen, onClose: onCreateTenantModalClose } = useDisclosure();
+  const tenantModalRef = useRef(null);
+  
+  // Usage tab state
+  const [usageData, setUsageData] = useState<Tenant[]>([]);
+  const [isLoadingUsage, setIsLoadingUsage] = useState(false);
+  const createTenantModalRef = useRef(null);
+  
   // Persist selected API key ID to localStorage whenever it changes
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -228,6 +278,9 @@ const ProfilePage: React.FC = () => {
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
   const inputReadOnlyBg = useColorModeValue("gray.50", "gray.700");
+  const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
+  const costDetailsBg = useColorModeValue("blue.50", "blue.900");
+  const totalRowBg = useColorModeValue("gray.50", "gray.700");
 
   // Initialize form data when user data is available
   useEffect(() => {
@@ -253,6 +306,24 @@ const ProfilePage: React.FC = () => {
       router.push("/auth");
     }
   }, [isAuthenticated, authLoading, router]);
+
+  // Fetch usage data when Usage tab is active
+  useEffect(() => {
+    if (!user || !user.id || !isAuthenticated) return;
+    
+    const isAdmin = user?.roles?.includes('ADMIN') || user?.is_superuser;
+    const isModerator = user?.roles?.includes('MODERATOR');
+    const usageTabIndex = isAdmin ? 7 : (isModerator ? 4 : 3);
+    
+    console.log("Usage tab check - activeTabIndex:", activeTabIndex, "usageTabIndex:", usageTabIndex, "hasData:", usageData.length > 0, "isLoading:", isLoadingUsage);
+    
+    // If Usage tab is active and we don't have data yet, fetch it
+    if (activeTabIndex === usageTabIndex && usageData.length === 0 && !isLoadingUsage) {
+      console.log("Usage tab is active, fetching usage data automatically");
+      handleFetchUsage();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTabIndex, user, isAuthenticated]);
 
   // Fetch all users (Admin only)
   useEffect(() => {
@@ -649,6 +720,326 @@ const ProfilePage: React.FC = () => {
     setFilterActive("all");
   };
 
+  // Usage tab handler - handles both adopter admins and tenant users
+  const handleFetchUsage = async () => {
+    if (!user || !user.id) {
+      console.warn("Cannot fetch usage: user or user.id is missing", { user });
+      return;
+    }
+    
+    console.log("handleFetchUsage called for user:", user.id, user.email, user.roles);
+    setIsLoadingUsage(true);
+    try {
+      const { apiClient } = await import("../services/api");
+      let tenants: Tenant[] = [];
+      
+      // Method 1: Try to get tenants as adopter admin
+      try {
+        const fetchedTenants = await listAdopterTenants();
+        if (fetchedTenants && fetchedTenants.length > 0) {
+          console.log("Found tenants via adopter admin endpoint:", fetchedTenants.length);
+          setUsageData(fetchedTenants);
+          setIsLoadingUsage(false);
+          return;
+        }
+      } catch (adopterError: any) {
+        console.log("Adopter admin endpoint failed:", adopterError.response?.status, adopterError.message);
+      }
+      
+      // Method 2: Try to resolve tenant from user_id
+      try {
+        console.log("Attempting to resolve tenant for user_id:", user.id);
+        const resolveResponse = await apiClient.get<{
+          tenant_id: string;
+          tenant_uuid: string;
+          schema_name: string;
+          subscriptions: string[];
+          status: string;
+        }>(`/api/v1/multi-tenant/resolve-tenant-from-user/${user.id}`);
+        
+        console.log("Resolve response:", resolveResponse.data);
+        
+        if (resolveResponse.data && resolveResponse.data.tenant_id) {
+          // Get full tenant details using tenant_id
+          const tenantResponse = await apiClient.get<Tenant>(
+            `/api/v1/multi-tenant/view/tenant?tenant_id=${resolveResponse.data.tenant_id}`
+          );
+          
+          if (tenantResponse.data) {
+            console.log("Successfully fetched tenant:", tenantResponse.data.tenant_id);
+            setUsageData([tenantResponse.data]);
+            setIsLoadingUsage(false);
+            return;
+          }
+        }
+      } catch (resolveError: any) {
+        console.error("Failed to resolve tenant for user:", resolveError.response?.status, resolveError.response?.data || resolveError.message);
+      }
+      
+      // Method 3: If user is admin, try to list all tenants and find by email match
+      if (user.roles?.includes('ADMIN') || user.is_superuser) {
+        try {
+          console.log("Trying to list all tenants and match by email:", user.email);
+          const allTenantsResponse = await apiClient.get<ListTenantsResponse>('/api/v1/multi-tenant/list/tenants');
+          
+          if (allTenantsResponse.data && allTenantsResponse.data.tenants) {
+            // Find tenant where contact_email matches user email
+            const matchingTenant = allTenantsResponse.data.tenants.find(
+              (t: Tenant) => t.email?.toLowerCase() === user.email?.toLowerCase()
+            );
+            
+            if (matchingTenant) {
+              console.log("Found tenant by email match:", matchingTenant.tenant_id);
+              setUsageData([matchingTenant]);
+              setIsLoadingUsage(false);
+              return;
+            }
+          }
+        } catch (listError: any) {
+          console.error("Failed to list all tenants:", listError.response?.status, listError.message);
+        }
+      }
+      
+      // If all methods failed, show empty state
+      console.warn("No tenant found for user:", user.id, user.email);
+      setUsageData([]);
+    } catch (error: any) {
+      console.error("Failed to fetch usage data:", error);
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
+      toast({
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMessage,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      setUsageData([]);
+    } finally {
+      setIsLoadingUsage(false);
+    }
+  };
+
+  // Tenant Management handlers
+  const handleFetchTenants = async () => {
+    if (!user) return;
+    
+    setIsLoadingTenants(true);
+    try {
+      const fetchedTenants = await listAdopterTenants();
+      setTenants(fetchedTenants);
+    } catch (error: any) {
+      console.error("Failed to fetch tenants:", error);
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
+      toast({
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMessage,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      setTenants([]);
+    } finally {
+      setIsLoadingTenants(false);
+    }
+  };
+
+  const handleEditTenant = (tenant: Tenant) => {
+    if (!checkSessionExpiry()) return;
+    
+    setSelectedTenant(tenant);
+    setTenantUpdateFormData({
+      tenant_id: tenant.tenant_id,
+      organization_name: tenant.organization_name,
+      contact_email: tenant.email,
+      domain: tenant.domain,
+      requested_quotas: tenant.quotas || {},
+      usage_quota: tenant.usage_quota || {},
+    });
+    // Initialize quota data for editing
+    setUpdateQuotaData({
+      characters_length: tenant.quotas?.characters_length || 0,
+      audio_length_in_min: tenant.quotas?.audio_length_in_min || 0,
+    });
+    setUpdateUsageQuotaData({
+      characters_length: tenant.usage_quota?.characters_length || 0,
+      audio_length_in_min: tenant.usage_quota?.audio_length_in_min || 0,
+    });
+    setIsEditingTenant(true);
+    onTenantModalOpen();
+  };
+
+  const handleCreateTenant = async () => {
+    if (!createTenantFormData.organization_name || !createTenantFormData.domain || !createTenantFormData.contact_email) {
+      toast({
+        title: "Validation Error",
+        description: "Please fill in all required fields (Organization Name, Domain, Contact Email).",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (!checkSessionExpiry()) return;
+
+    setIsCreatingTenant(true);
+    try {
+      // Parse subscriptions from input string
+      const subscriptions = subscriptionsInput
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+
+      const registerPayload: TenantRegisterRequest = {
+        organization_name: createTenantFormData.organization_name!,
+        domain: createTenantFormData.domain!,
+        contact_email: createTenantFormData.contact_email!,
+        requested_subscriptions: subscriptions,
+        requested_quotas: {
+          characters_length: quotaData.characters_length,
+          audio_length_in_min: quotaData.audio_length_in_min,
+        },
+        usage_quota: {
+          characters_length: 0,
+          audio_length_in_min: 0,
+        },
+      };
+
+      const response = await registerTenant(registerPayload);
+      
+      toast({
+        title: "Tenant Created",
+        description: `Tenant "${response.tenant_id}" has been created successfully. Status: ${response.status}`,
+        status: "success",
+        duration: 5000,
+        isClosable: true,
+      });
+
+      // Refresh tenants list
+      await handleFetchTenants();
+      
+      onCreateTenantModalClose();
+      setCreateTenantFormData({
+        organization_name: "",
+        domain: "",
+        contact_email: "",
+        requested_subscriptions: [],
+      });
+      setSubscriptionsInput("tts, asr, nmt");
+      setQuotaData({
+        characters_length: 100000,
+        audio_length_in_min: 60,
+      });
+    } catch (error: any) {
+      console.error("Failed to create tenant:", error);
+      
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
+      
+      toast({
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMessage,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsCreatingTenant(false);
+    }
+  };
+
+  const handleUpdateTenant = async () => {
+    if (!selectedTenant || !tenantUpdateFormData.tenant_id) return;
+    
+    if (!checkSessionExpiry()) return;
+
+    setIsUpdatingTenant(true);
+    try {
+      const updatePayload: TenantUpdateRequest = {
+        tenant_id: tenantUpdateFormData.tenant_id,
+      };
+
+      // Only include fields that have been changed
+      if (tenantUpdateFormData.organization_name !== selectedTenant.organization_name) {
+        updatePayload.organization_name = tenantUpdateFormData.organization_name;
+      }
+      if (tenantUpdateFormData.contact_email !== selectedTenant.email) {
+        updatePayload.contact_email = tenantUpdateFormData.contact_email;
+      }
+      if (tenantUpdateFormData.domain !== selectedTenant.domain) {
+        updatePayload.domain = tenantUpdateFormData.domain;
+      }
+      // Use quota data from state instead of tenantUpdateFormData
+      const newQuotas = {
+        characters_length: updateQuotaData.characters_length,
+        audio_length_in_min: updateQuotaData.audio_length_in_min,
+      };
+      if (JSON.stringify(newQuotas) !== JSON.stringify(selectedTenant.quotas || {})) {
+        updatePayload.requested_quotas = newQuotas;
+      }
+      
+      const newUsageQuota = {
+        characters_length: updateUsageQuotaData.characters_length,
+        audio_length_in_min: updateUsageQuotaData.audio_length_in_min,
+      };
+      if (JSON.stringify(newUsageQuota) !== JSON.stringify(selectedTenant.usage_quota || {})) {
+        updatePayload.usage_quota = newUsageQuota;
+      }
+
+      const response = await updateTenant(updatePayload);
+      
+      toast({
+        title: "Tenant Updated",
+        description: response.message,
+        status: "success",
+        duration: 5000,
+        isClosable: true,
+      });
+
+      // Refresh tenants list
+      await handleFetchTenants();
+      
+      setIsEditingTenant(false);
+      onTenantModalClose();
+      setSelectedTenant(null);
+      setTenantUpdateFormData({});
+      setUpdateQuotaData({
+        characters_length: 0,
+        audio_length_in_min: 0,
+      });
+      setUpdateUsageQuotaData({
+        characters_length: 0,
+        audio_length_in_min: 0,
+      });
+    } catch (error: any) {
+      console.error("Failed to update tenant:", error);
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
+      toast({
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMessage,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsUpdatingTenant(false);
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status?.toUpperCase()) {
+      case "ACTIVE":
+        return "green";
+      case "PENDING":
+        return "yellow";
+      case "SUSPENDED":
+        return "red";
+      case "DEACTIVATED":
+        return "gray";
+      default:
+        return "gray";
+    }
+  };
+
   const handleRevokeApiKey = async () => {
     if (!keyToRevoke) return;
 
@@ -793,8 +1184,9 @@ const ProfilePage: React.FC = () => {
                 // If API Key Management tab is clicked, fetch all API keys
                 const isAdmin = user?.roles?.includes('ADMIN') || user?.is_superuser;
                 const isModerator = user?.roles?.includes('MODERATOR');
-                // Calculate tab index: User Details(0), Organization(1), API Key(2), Roles(3 if admin), Create API Key(4 if admin), API Key Management(5 if admin, 3 if moderator only)
+                // Calculate tab index: User Details(0), Organization(1), API Key(2), Roles(3 if admin), Create API Key(4 if admin), API Key Management(5 if admin, 3 if moderator only), Tenant Management(6 if admin only)
                 const apiKeyManagementTabIndex = isAdmin ? 5 : (isModerator ? 3 : -1);
+                const tenantManagementTabIndex = isAdmin ? 6 : -1;
                 if (index === apiKeyManagementTabIndex) {
                   console.log('Profile: API Key Management tab clicked, fetching all API keys');
                   handleFetchAllApiKeys();
@@ -818,6 +1210,21 @@ const ProfilePage: React.FC = () => {
                   console.log('Profile: Permissions tab clicked, fetching API keys for matching');
                   handleFetchApiKeys();
                 }
+                // When Tenant Management tab is clicked, fetch tenants
+                if (index === tenantManagementTabIndex) {
+                  console.log('Profile: Tenant Management tab clicked, fetching tenants');
+                  handleFetchTenants();
+                }
+                // When Usage tab is clicked, fetch usage data
+                // Tab order: User Details(0), Organization(1), API Key(2), 
+                //            Roles(3 if admin), Create API Key(4 if admin), 
+                //            API Key Management(5 if admin, 3 if moderator only), 
+                //            Tenant Management(6 if admin only), Usage(last)
+                const usageTabIndex = isAdmin ? 7 : (isModerator ? 4 : 3);
+                if (index === usageTabIndex) {
+                  console.log('Profile: Usage tab clicked, fetching usage data for user:', user.id, user.email);
+                  handleFetchUsage();
+                }
               }}
             >
               <TabList>
@@ -833,6 +1240,10 @@ const ProfilePage: React.FC = () => {
                 {(user?.roles?.includes('ADMIN') || user?.roles?.includes('MODERATOR') || user?.is_superuser) && (
                   <Tab fontWeight="semibold">API Key Management</Tab>
                 )}
+                {(user?.roles?.includes('ADMIN') || user?.is_superuser) && (
+                  <Tab fontWeight="semibold">Tenant Management</Tab>
+                )}
+                <Tab fontWeight="semibold">Usage</Tab>
               </TabList>
 
               <TabPanels>
@@ -2080,6 +2491,343 @@ const ProfilePage: React.FC = () => {
                     </Card>
                   </TabPanel>
                 )}
+                {/* Tenant Management Tab - Only for Admin */}
+                {(user?.roles?.includes('ADMIN') || user?.is_superuser) && (
+                  <TabPanel px={0} pt={6}>
+                  <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
+                    <CardHeader>
+                      <HStack justify="space-between" align="flex-start">
+                        <Box>
+                          <Heading size="md" color="gray.700" userSelect="none" cursor="default">
+                            Tenant Management
+                          </Heading>
+                          <Text fontSize="sm" color="gray.600" mt={2}>
+                            Manage your tenants as an Adopter Admin. View and update tenant information.
+                          </Text>
+                        </Box>
+                        <Button
+                          colorScheme="green"
+                          size="sm"
+                          onClick={onCreateTenantModalOpen}
+                          leftIcon={<Text>+</Text>}
+                        >
+                          Create Tenant
+                        </Button>
+                      </HStack>
+                    </CardHeader>
+                    <CardBody>
+                      {isLoadingTenants ? (
+                        <Center py={8}>
+                          <Spinner size="xl" color="blue.500" />
+                        </Center>
+                      ) : tenants.length === 0 ? (
+                        <Alert status="info">
+                          <AlertIcon />
+                          <AlertDescription>
+                            No tenants found. You need to be an adopter admin (own at least one tenant) to see tenants here.
+                          </AlertDescription>
+                        </Alert>
+                      ) : (
+                        <Box overflowX="auto">
+                          <Table variant="simple" size="sm">
+                            <Thead>
+                              <Tr>
+                                <Th>Tenant ID</Th>
+                                <Th>Organization</Th>
+                                <Th>Email</Th>
+                                <Th>Domain</Th>
+                                <Th>Status</Th>
+                                <Th>Subscriptions</Th>
+                                <Th>Created</Th>
+                                <Th>Actions</Th>
+                              </Tr>
+                            </Thead>
+                            <Tbody>
+                              {tenants.map((tenant) => (
+                                <Tr
+                                  key={tenant.id}
+                                  _hover={{ bg: tableRowHoverBg, cursor: "pointer" }}
+                                >
+                                  <Td>
+                                    <Text fontWeight="medium" fontSize="sm">
+                                      {tenant.tenant_id}
+                                    </Text>
+                                  </Td>
+                                  <Td>
+                                    <Text fontSize="sm">{tenant.organization_name}</Text>
+                                  </Td>
+                                  <Td>
+                                    <Text fontSize="sm">{tenant.email}</Text>
+                                  </Td>
+                                  <Td>
+                                    <Text fontSize="sm" fontFamily="mono">
+                                      {tenant.domain}
+                                    </Text>
+                                  </Td>
+                                  <Td>
+                                    <Badge
+                                      colorScheme={getStatusColor(tenant.status)}
+                                      fontSize="xs"
+                                    >
+                                      {tenant.status}
+                                    </Badge>
+                                  </Td>
+                                  <Td>
+                                    <HStack spacing={1} flexWrap="wrap">
+                                      {tenant.subscriptions && tenant.subscriptions.length > 0 ? (
+                                        tenant.subscriptions.map((sub, idx) => (
+                                          <Badge key={idx} colorScheme="blue" fontSize="xs">
+                                            {sub}
+                                          </Badge>
+                                        ))
+                                      ) : (
+                                        <Text fontSize="xs" color="gray.500">
+                                          None
+                                        </Text>
+                                      )}
+                                    </HStack>
+                                  </Td>
+                                  <Td>
+                                    <Text fontSize="xs" color="gray.600">
+                                      {new Date(tenant.created_at).toLocaleDateString()}
+                                    </Text>
+                                  </Td>
+                                  <Td>
+                                    <Button
+                                      size="xs"
+                                      colorScheme="blue"
+                                      onClick={() => handleEditTenant(tenant)}
+                                    >
+                                      Update
+                                    </Button>
+                                  </Td>
+                                </Tr>
+                              ))}
+                            </Tbody>
+                          </Table>
+                        </Box>
+                      )}
+                    </CardBody>
+                  </Card>
+                  </TabPanel>
+                )}
+                
+                {/* Usage Tab - Visible to all authenticated users */}
+                <TabPanel px={0} pt={6}>
+                  <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
+                    <CardHeader>
+                      <Heading size="md" color="gray.700" userSelect="none" cursor="default">
+                        Usage & Quotas
+                      </Heading>
+                      <Text fontSize="sm" color="gray.600" mt={2}>
+                        View your quota limits and current usage across all tenants.
+                      </Text>
+                    </CardHeader>
+                    <CardBody>
+                      {isLoadingUsage ? (
+                        <Center py={8}>
+                          <VStack spacing={4}>
+                            <Spinner size="xl" color="blue.500" />
+                            <Text color="gray.600">Loading usage data...</Text>
+                          </VStack>
+                        </Center>
+                      ) : usageData.length === 0 ? (
+                        <Alert status="info">
+                          <AlertIcon />
+                          <AlertDescription>
+                            No tenant data found. You need to be an adopter admin (own at least one tenant) to see usage information here.
+                          </AlertDescription>
+                        </Alert>
+                      ) : (
+                        <VStack spacing={6} align="stretch">
+                          {usageData.map((tenant) => {
+                            const quotaChars = tenant.quotas?.characters_length || 0;
+                            const quotaAudio = tenant.quotas?.audio_length_in_min || 0;
+                            const usageChars = tenant.usage_quota?.characters_length || 0;
+                            const usageAudio = tenant.usage_quota?.audio_length_in_min || 0;
+                            const charsPercent = quotaChars > 0 ? Math.min((usageChars / quotaChars) * 100, 100) : 0;
+                            const audioPercent = quotaAudio > 0 ? Math.min((usageAudio / quotaAudio) * 100, 100) : 0;
+                            
+                            // Pricing constants
+                            const CHAR_RATE_PER_1K = 10; // ₹10 per 1,000 characters (for both NMT and TTS)
+                            const AUDIO_RATE_PER_MIN = 1; // ₹1 per minute (for ASR)
+                            
+                            // Calculate costs by resource type (not by service)
+                            // Characters are used by both NMT and TTS
+                            const charsCost = usageChars > 0 ? (usageChars * CHAR_RATE_PER_1K) / 1000 : 0;
+                            // Audio minutes are used by ASR
+                            const audioCost = usageAudio > 0 ? usageAudio * AUDIO_RATE_PER_MIN : 0;
+                            const totalCost = charsCost + audioCost;
+                            
+                            // Check if tenant has any relevant subscriptions
+                            const subscriptions = tenant.subscriptions || [];
+                            const hasCharServices = subscriptions.some(sub => ['nmt', 'tts'].includes(sub));
+                            const hasAudioServices = subscriptions.includes('asr');
+                            
+                            return (
+                              <Box
+                                key={tenant.id}
+                                borderWidth="1px"
+                                borderRadius="md"
+                                p={6}
+                                bg="white"
+                                borderColor={cardBorder}
+                              >
+                                <VStack spacing={4} align="stretch">
+                                  <Box>
+                                    <Heading size="sm" color="gray.700" mb={1}>
+                                      {tenant.organization_name}
+                                    </Heading>
+                                    <Text fontSize="xs" color="gray.500">
+                                      {tenant.tenant_id} • {tenant.domain}
+                                    </Text>
+                                  </Box>
+                                  
+                                  <Divider />
+                                  
+                                  {/* Characters Length Usage */}
+                                  <Box>
+                                    <HStack justify="space-between" mb={2}>
+                                      <FormLabel fontSize="sm" fontWeight="semibold" mb={0}>
+                                        Characters Length
+                                      </FormLabel>
+                                      <Text fontSize="sm" color="gray.600">
+                                        {usageChars.toLocaleString()} / {quotaChars.toLocaleString()}
+                                      </Text>
+                                    </HStack>
+                                    <Progress
+                                      value={charsPercent}
+                                      colorScheme={charsPercent >= 90 ? "red" : charsPercent >= 70 ? "yellow" : "green"}
+                                      size="lg"
+                                      borderRadius="md"
+                                    />
+                                    <Text fontSize="xs" color="gray.500" mt={1}>
+                                      {charsPercent.toFixed(1)}% used
+                                    </Text>
+                                  </Box>
+                                  
+                                  {/* Audio Length Usage */}
+                                  <Box>
+                                    <HStack justify="space-between" mb={2}>
+                                      <FormLabel fontSize="sm" fontWeight="semibold" mb={0}>
+                                        Audio Length (minutes)
+                                      </FormLabel>
+                                      <Text fontSize="sm" color="gray.600">
+                                        {usageAudio.toLocaleString()} / {quotaAudio.toLocaleString()}
+                                      </Text>
+                                    </HStack>
+                                    <Progress
+                                      value={audioPercent}
+                                      colorScheme={audioPercent >= 90 ? "red" : audioPercent >= 70 ? "yellow" : "green"}
+                                      size="lg"
+                                      borderRadius="md"
+                                    />
+                                    <Text fontSize="xs" color="gray.500" mt={1}>
+                                      {audioPercent.toFixed(1)}% used
+                                    </Text>
+                                  </Box>
+                                  
+                                  {/* Subscriptions */}
+                                  {tenant.subscriptions && tenant.subscriptions.length > 0 && (
+                                    <Box>
+                                      <FormLabel fontSize="sm" fontWeight="semibold" mb={2}>
+                                        Active Subscriptions
+                                      </FormLabel>
+                                      <HStack spacing={2} flexWrap="wrap">
+                                        {tenant.subscriptions.map((sub, idx) => (
+                                          <Badge key={idx} colorScheme="blue" fontSize="xs">
+                                            {sub.toUpperCase()}
+                                          </Badge>
+                                        ))}
+                                      </HStack>
+                                    </Box>
+                                  )}
+                                  
+                                  {/* Usage-Based Pricing & Cost Breakdown */}
+                                  <Divider />
+                                  <Box>
+                                    <Heading size="sm" color="gray.700" mb={4}>
+                                      Usage-Based Pricing & Cost Breakdown
+                                    </Heading>
+                                    
+                                    <TableContainer>
+                                      <Table variant="simple" size="sm">
+                                        <Thead>
+                                          <Tr>
+                                            <Th>Resource Type</Th>
+                                            <Th isNumeric>Usage</Th>
+                                            <Th>Rate</Th>
+                                            <Th isNumeric>Cost</Th>
+                                          </Tr>
+                                        </Thead>
+                                        <Tbody>
+                                          {usageChars > 0 && (
+                                            <Tr>
+                                              <Td fontWeight="medium">Characters</Td>
+                                              <Td isNumeric>{usageChars.toLocaleString()} chars</Td>
+                                              <Td>₹{CHAR_RATE_PER_1K}/1K chars</Td>
+                                              <Td isNumeric fontWeight="semibold">₹{charsCost.toFixed(2)}</Td>
+                                            </Tr>
+                                          )}
+                                          {usageAudio > 0 && (
+                                            <Tr>
+                                              <Td fontWeight="medium">Audio</Td>
+                                              <Td isNumeric>{usageAudio.toLocaleString()} min</Td>
+                                              <Td>₹{AUDIO_RATE_PER_MIN}/min</Td>
+                                              <Td isNumeric fontWeight="semibold">₹{audioCost.toFixed(2)}</Td>
+                                            </Tr>
+                                          )}
+                                          {usageChars === 0 && usageAudio === 0 && (
+                                            <Tr>
+                                              <Td colSpan={4} textAlign="center" color="gray.500" fontSize="sm">
+                                                No usage recorded yet
+                                              </Td>
+                                            </Tr>
+                                          )}
+                                          {(usageChars > 0 || usageAudio > 0) && (
+                                            <Tr bg={totalRowBg}>
+                                              <Td fontWeight="bold">Total</Td>
+                                              <Td></Td>
+                                              <Td></Td>
+                                              <Td isNumeric fontWeight="bold" fontSize="md">
+                                                ₹{totalCost.toFixed(2)}
+                                              </Td>
+                                            </Tr>
+                                          )}
+                                        </Tbody>
+                                      </Table>
+                                    </TableContainer>
+                                    
+                                    {/* Cost Calculation Details */}
+                                    {(usageChars > 0 || usageAudio > 0) && (
+                                      <Box mt={4} p={4} bg={costDetailsBg} borderRadius="md">
+                                        <Text fontSize="sm" fontWeight="semibold" mb={2} color="gray.700">
+                                          Cost Calculation Details:
+                                        </Text>
+                                        <VStack align="stretch" spacing={1} fontSize="xs">
+                                          {usageChars > 0 && (
+                                            <Text color="gray.600">
+                                              <strong>Characters:</strong> ({usageChars.toLocaleString()} chars × ₹{CHAR_RATE_PER_1K}/1K) / 1,000 = ₹{charsCost.toFixed(2)}
+                                            </Text>
+                                          )}
+                                          {usageAudio > 0 && (
+                                            <Text color="gray.600">
+                                              <strong>Audio:</strong> {usageAudio.toLocaleString()} min × ₹{AUDIO_RATE_PER_MIN}/min = ₹{audioCost.toFixed(2)}
+                                            </Text>
+                                          )}
+                                        </VStack>
+                                      </Box>
+                                    )}
+                                  </Box>
+                                </VStack>
+                              </Box>
+                            );
+                          })}
+                        </VStack>
+                      )}
+                    </CardBody>
+                  </Card>
+                </TabPanel>
               </TabPanels>
             </Tabs>
           </Card>
@@ -2335,6 +3083,309 @@ const ProfilePage: React.FC = () => {
             </AlertDialogContent>
           </AlertDialogOverlay>
         </AlertDialog>
+
+        {/* Create Tenant Modal */}
+        <Modal
+          isOpen={isCreateTenantModalOpen}
+          onClose={onCreateTenantModalClose}
+          size="xl"
+          initialFocusRef={createTenantModalRef}
+        >
+          <ModalOverlay />
+          <ModalContent>
+            <ModalHeader>Create New Tenant</ModalHeader>
+            <ModalCloseButton />
+            <ModalBody pb={6}>
+              <VStack spacing={4} align="stretch">
+                <FormControl isRequired>
+                  <FormLabel>Organization Name</FormLabel>
+                  <Input
+                    ref={createTenantModalRef}
+                    value={createTenantFormData.organization_name || ""}
+                    onChange={(e) =>
+                      setCreateTenantFormData({
+                        ...createTenantFormData,
+                        organization_name: e.target.value,
+                      })
+                    }
+                    placeholder="Enter organization name"
+                  />
+                </FormControl>
+
+                <FormControl isRequired>
+                  <FormLabel>Domain</FormLabel>
+                  <Input
+                    value={createTenantFormData.domain || ""}
+                    onChange={(e) =>
+                      setCreateTenantFormData({
+                        ...createTenantFormData,
+                        domain: e.target.value,
+                      })
+                    }
+                    placeholder="Enter domain (e.g., acme.com)"
+                  />
+                </FormControl>
+
+                <FormControl isRequired>
+                  <FormLabel>Contact Email</FormLabel>
+                  <Input
+                    type="email"
+                    value={createTenantFormData.contact_email || ""}
+                    onChange={(e) =>
+                      setCreateTenantFormData({
+                        ...createTenantFormData,
+                        contact_email: e.target.value,
+                      })
+                    }
+                    placeholder="Enter contact email"
+                  />
+                </FormControl>
+
+                <FormControl>
+                  <FormLabel>Requested Subscriptions (comma-separated)</FormLabel>
+                  <Input
+                    value={subscriptionsInput}
+                    onChange={(e) => setSubscriptionsInput(e.target.value)}
+                    placeholder="e.g., tts, asr, nmt"
+                  />
+                  <Text fontSize="xs" color="gray.600" mt={1}>
+                    Enter service names separated by commas (e.g., tts, asr, nmt). Default: tts, asr, nmt
+                  </Text>
+                </FormControl>
+
+                <FormControl>
+                  <FormLabel>Requested Quotas (Optional)</FormLabel>
+                  <SimpleGrid columns={2} spacing={4} mt={2}>
+                    <FormControl>
+                      <FormLabel fontSize="sm">Characters Length</FormLabel>
+                      <Input
+                        type="number"
+                        value={quotaData.characters_length}
+                        onChange={(e) =>
+                          setQuotaData({
+                            ...quotaData,
+                            characters_length: parseInt(e.target.value) || 0,
+                          })
+                        }
+                        placeholder="100000"
+                        min={0}
+                      />
+                    </FormControl>
+                    <FormControl>
+                      <FormLabel fontSize="sm">Audio Length (minutes)</FormLabel>
+                      <Input
+                        type="number"
+                        value={quotaData.audio_length_in_min}
+                        onChange={(e) =>
+                          setQuotaData({
+                            ...quotaData,
+                            audio_length_in_min: parseInt(e.target.value) || 0,
+                          })
+                        }
+                        placeholder="60"
+                        min={0}
+                      />
+                    </FormControl>
+                  </SimpleGrid>
+                  <Text fontSize="xs" color="gray.600" mt={2}>
+                    Set quota limits for the tenant. Default: 100,000 characters and 60 minutes of audio.
+                  </Text>
+                </FormControl>
+              </VStack>
+            </ModalBody>
+
+            <ModalFooter>
+              <Button
+                colorScheme="green"
+                mr={3}
+                onClick={handleCreateTenant}
+                isLoading={isCreatingTenant}
+                loadingText="Creating"
+              >
+                Create Tenant
+              </Button>
+              <Button onClick={onCreateTenantModalClose} isDisabled={isCreatingTenant}>
+                Cancel
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+
+        {/* Tenant Management Modal */}
+        <Modal
+          isOpen={isTenantModalOpen}
+          onClose={() => {
+            onTenantModalClose();
+            setUpdateQuotaData({
+              characters_length: 0,
+              audio_length_in_min: 0,
+            });
+            setUpdateUsageQuotaData({
+              characters_length: 0,
+              audio_length_in_min: 0,
+            });
+          }}
+          size="xl"
+          initialFocusRef={tenantModalRef}
+        >
+          <ModalOverlay />
+          <ModalContent>
+            <ModalHeader>Update Tenant</ModalHeader>
+            <ModalCloseButton />
+            <ModalBody pb={6}>
+              {selectedTenant && (
+                <VStack spacing={4} align="stretch">
+                  <FormControl>
+                    <FormLabel>Tenant ID</FormLabel>
+                    <Input
+                      value={selectedTenant.tenant_id}
+                      isReadOnly
+                      bg={inputReadOnlyBg}
+                      fontSize="sm"
+                    />
+                  </FormControl>
+
+                  <FormControl>
+                    <FormLabel>Organization Name</FormLabel>
+                    <Input
+                      ref={tenantModalRef}
+                      value={tenantUpdateFormData.organization_name || ""}
+                      onChange={(e) =>
+                        setTenantUpdateFormData({
+                          ...tenantUpdateFormData,
+                          organization_name: e.target.value,
+                        })
+                      }
+                      placeholder="Enter organization name"
+                    />
+                  </FormControl>
+
+                  <FormControl>
+                    <FormLabel>Contact Email</FormLabel>
+                    <Input
+                      type="email"
+                      value={tenantUpdateFormData.contact_email || ""}
+                      onChange={(e) =>
+                        setTenantUpdateFormData({
+                          ...tenantUpdateFormData,
+                          contact_email: e.target.value,
+                        })
+                      }
+                      placeholder="Enter contact email"
+                    />
+                  </FormControl>
+
+                  <FormControl>
+                    <FormLabel>Domain</FormLabel>
+                    <Input
+                      value={tenantUpdateFormData.domain || ""}
+                      onChange={(e) =>
+                        setTenantUpdateFormData({
+                          ...tenantUpdateFormData,
+                          domain: e.target.value,
+                        })
+                      }
+                      placeholder="Enter domain"
+                    />
+                  </FormControl>
+
+                  <FormControl>
+                    <FormLabel>Requested Quotas</FormLabel>
+                    <SimpleGrid columns={2} spacing={4} mt={2}>
+                      <FormControl>
+                        <FormLabel fontSize="sm">Characters Length</FormLabel>
+                        <Input
+                          type="number"
+                          value={updateQuotaData.characters_length}
+                          onChange={(e) =>
+                            setUpdateQuotaData({
+                              ...updateQuotaData,
+                              characters_length: parseInt(e.target.value) || 0,
+                            })
+                          }
+                          placeholder="100000"
+                          min={0}
+                        />
+                      </FormControl>
+                      <FormControl>
+                        <FormLabel fontSize="sm">Audio Length (minutes)</FormLabel>
+                        <Input
+                          type="number"
+                          value={updateQuotaData.audio_length_in_min}
+                          onChange={(e) =>
+                            setUpdateQuotaData({
+                              ...updateQuotaData,
+                              audio_length_in_min: parseInt(e.target.value) || 0,
+                            })
+                          }
+                          placeholder="60"
+                          min={0}
+                        />
+                      </FormControl>
+                    </SimpleGrid>
+                    <Text fontSize="xs" color="gray.600" mt={2}>
+                      Set quota limits for the tenant. You can increase or decrease these values.
+                    </Text>
+                  </FormControl>
+
+                  <FormControl>
+                    <FormLabel>Usage Quota</FormLabel>
+                    <SimpleGrid columns={2} spacing={4} mt={2}>
+                      <FormControl>
+                        <FormLabel fontSize="sm">Characters Length Used</FormLabel>
+                        <Input
+                          type="number"
+                          value={updateUsageQuotaData.characters_length}
+                          onChange={(e) =>
+                            setUpdateUsageQuotaData({
+                              ...updateUsageQuotaData,
+                              characters_length: parseInt(e.target.value) || 0,
+                            })
+                          }
+                          placeholder="0"
+                          min={0}
+                        />
+                      </FormControl>
+                      <FormControl>
+                        <FormLabel fontSize="sm">Audio Length Used (minutes)</FormLabel>
+                        <Input
+                          type="number"
+                          value={updateUsageQuotaData.audio_length_in_min}
+                          onChange={(e) =>
+                            setUpdateUsageQuotaData({
+                              ...updateUsageQuotaData,
+                              audio_length_in_min: parseInt(e.target.value) || 0,
+                            })
+                          }
+                          placeholder="0"
+                          min={0}
+                        />
+                      </FormControl>
+                    </SimpleGrid>
+                    <Text fontSize="xs" color="gray.600" mt={2}>
+                      Current usage quota values. You can update these to reflect actual usage.
+                    </Text>
+                  </FormControl>
+                </VStack>
+              )}
+            </ModalBody>
+
+            <ModalFooter>
+              <Button
+                colorScheme="blue"
+                mr={3}
+                onClick={handleUpdateTenant}
+                isLoading={isUpdatingTenant}
+                loadingText="Updating"
+              >
+                Update Tenant
+              </Button>
+              <Button onClick={onTenantModalClose} isDisabled={isUpdatingTenant}>
+                Cancel
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
       </ContentLayout>
     </>
   );

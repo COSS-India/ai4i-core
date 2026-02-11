@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from datetime import datetime
 from uuid import UUID
 from .enum_tenant import SubscriptionType
@@ -8,7 +8,15 @@ from .enum_tenant import SubscriptionType
 class QuotaStructure(BaseModel):
     """Structure for quota limits"""
     characters_length: Optional[int] = Field(None, ge=0, description="Character length quota")
-    audio_length_in_min: Optional[int] = Field(None, ge=0, description="Audio length quota in minutes")
+    audio_length_in_min: Optional[float] = Field(None, ge=0, description="Audio length quota in minutes (supports fractional minutes, rounded to 2 decimals)")
+    
+    @field_validator('audio_length_in_min', mode='before')
+    @classmethod
+    def round_audio_length(cls, v):
+        """Round audio length to 2 decimal places"""
+        if v is not None and isinstance(v, (int, float)):
+            return round(float(v), 2)
+        return v
 
 
 class TenantRegisterRequest(BaseModel):
