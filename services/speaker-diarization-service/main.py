@@ -417,7 +417,7 @@ async def health(request: Request):
             redis_ok = True
     except Exception as e:
         if not exclude_health_logs:
-            logger.warning("/health: Redis check failed: %s", e)
+        logger.warning("/health: Redis check failed: %s", e)
 
     try:
         session_factory = getattr(request.app.state, "db_session_factory", None)
@@ -427,7 +427,7 @@ async def health(request: Request):
             db_ok = True
     except Exception as e:
         if not exclude_health_logs:
-            logger.warning("/health: PostgreSQL check failed: %s", e)
+        logger.warning("/health: PostgreSQL check failed: %s", e)
 
     status_str = "ok" if (redis_ok and db_ok) else "degraded"
     status_code = 200 if status_str == "ok" else 503
