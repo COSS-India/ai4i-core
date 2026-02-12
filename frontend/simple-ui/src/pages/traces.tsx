@@ -1799,7 +1799,7 @@ const TracesPage: React.FC = () => {
                                 </Text>
                                         </VStack>
                                       </HStack>
-                                      <Badge fontSize="xs" colorScheme={processed.hasError ? "red" : "orange"} px={2} py={1} borderRadius="full">
+                                      <Badge fontSize="xs" colorScheme={processed.hasError ? "red" : "orange"} px={2} py={1} borderRadius="full" textTransform="none">
                                         {duration}
                                   </Badge>
                                 </HStack>
@@ -2111,6 +2111,7 @@ const TracesPage: React.FC = () => {
                                           px={2}
                                           py={0.5}
                                           borderRadius="full"
+                                          textTransform="none"
                                         >
                                           {formatDuration(processed.span.duration)}
                                         </Badge>
