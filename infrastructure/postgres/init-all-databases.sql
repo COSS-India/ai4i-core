@@ -802,6 +802,7 @@ CREATE TABLE IF NOT EXISTS services (
     api_key VARCHAR(255),
     health_status JSONB,
     benchmarks JSONB,
+    policy JSONB,
     is_published BOOLEAN NOT NULL DEFAULT FALSE,
     published_at BIGINT DEFAULT NULL,
     unpublished_at BIGINT DEFAULT NULL,
@@ -812,6 +813,9 @@ CREATE TABLE IF NOT EXISTS services (
     -- Unique constraint on (model_id, model_version, name)
     CONSTRAINT uq_model_id_version_service_name UNIQUE (model_id, model_version, name)
 );
+
+-- Ensure policy column exists on services (for databases created before policy was added)
+ALTER TABLE services ADD COLUMN IF NOT EXISTS policy JSONB;
 
 -- Create indexes for models table
 CREATE INDEX IF NOT EXISTS idx_models_model_id ON models(model_id);
@@ -833,6 +837,7 @@ CREATE INDEX IF NOT EXISTS idx_services_model_id_version ON services(model_id, m
 CREATE INDEX IF NOT EXISTS idx_services_is_published ON services(is_published);
 CREATE INDEX IF NOT EXISTS idx_services_created_at ON services(created_at);
 CREATE INDEX IF NOT EXISTS idx_services_health_status ON services USING GIN (health_status);
+CREATE INDEX IF NOT EXISTS idx_services_policy ON services USING GIN (policy);
 CREATE INDEX IF NOT EXISTS idx_services_created_by ON services(created_by);
 
 -- Create trigger for version_status_updated_at

@@ -61,21 +61,24 @@ def add_error_handlers(app: FastAPI) -> None:
     
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
-        """Handle generic HTTP exceptions. Accepts detail as string or dict with message (and optional kind/code)."""
+        """Handle generic HTTP exceptions. Accepts detail as string or dict with message (and optional kind/code, error)."""
         if isinstance(exc.detail, dict) and "message" in exc.detail:
             message = exc.detail["message"]
             code = exc.detail.get("kind") or exc.detail.get("code") or "HTTP_ERROR"
+            details = exc.detail.get("error")
         else:
             message = str(exc.detail)
             code = "HTTP_ERROR"
+            details = None
         error_detail = ErrorDetail(
             message=message,
             code=code,
-            timestamp=time.time()
+            timestamp=time.time(),
+            details=details
         )
         return JSONResponse(
             status_code=exc.status_code,
-            content={"detail": error_detail.dict()}
+            content={"detail": error_detail.model_dump(exclude_none=True)}
         )
     
     @app.exception_handler(Exception)

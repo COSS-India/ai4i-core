@@ -179,7 +179,7 @@ class ModelManagementClient:
         # Fetch from API
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/services/details/list_services"
+            url = f"{self.base_url}/api/v1/model-management/services/"
             headers = self._get_headers(auth_headers)
             
             # Add task_type as query parameter if provided
@@ -289,12 +289,11 @@ class ModelManagementClient:
         # Fetch from API
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/services/details/view_service"
+            url = f"{self.base_url}/api/v1/model-management/services/{service_id}"
             headers = self._get_headers(auth_headers)
-            payload = {"serviceId": service_id}
             
             logger.debug(f"Fetching service {service_id} from {url}")
-            response = await client.post(url, headers=headers, json=payload)
+            response = await client.post(url, headers=headers)
             
             if response.status_code == 404:
                 return None

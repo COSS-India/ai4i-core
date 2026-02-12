@@ -6412,7 +6412,7 @@ async def list_models(
         params["created_by"] = created_by
     return await proxy_to_service_with_params(
         None, 
-        "/services/details/list_models", 
+        "/api/v1/model-management/models", 
         "model-management-service",
         params, 
         method="GET",
@@ -6436,7 +6436,7 @@ async def get_model_get(
         query_params["version"] = version
     return await proxy_to_service_with_params(
         None,
-        f"/models/{model_id}",
+        f"/api/v1/model-management/models/{model_id}",
         "model-management-service",
         query_params,
         method="GET",
@@ -6462,7 +6462,7 @@ async def get_model(
     payload_body = json.dumps(payload_dict).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/details/view_model",
+        f"/api/v1/model-management/models/{model_id}",
         "model-management-service",
         method="POST",
         body=payload_body,
@@ -6484,7 +6484,7 @@ async def create_model(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/create/model",
+        "/api/v1/model-management/models",
         "model-management-service",
         method="POST",
         body=body,
@@ -6506,7 +6506,7 @@ async def update_model(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/update/model",
+        "/api/v1/model-management/models",
         "model-management-service",
         method="PATCH",
         body=body,
@@ -6523,11 +6523,10 @@ async def delete_model(
     """Delete a model by ID. Requires Bearer token authentication with 'model.delete' permission."""
     await check_permission("model.delete", request, credentials)
     headers = build_auth_headers(request, credentials, None)
-    return await proxy_to_service_with_params(
+    return await proxy_to_service(
         None,
-        "/services/admin/delete/model",
+        f"/api/v1/model-management/models/{uuid}",
         "model-management-service",
-        {"id": uuid},
         method="DELETE",
         headers=headers,
     )
@@ -6552,7 +6551,7 @@ async def list_services(
         params["created_by"] = created_by
     return await proxy_to_service_with_params(
         None, 
-        "/services/details/list_services", 
+        "/api/v1/model-management/services/", 
         "model-management-service",
         params, 
         method="GET", 
@@ -6593,7 +6592,7 @@ async def get_service_details(
     payload = json.dumps({"serviceId": service_id}).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/details/view_service",
+        f"/api/v1/model-management/services/{service_id}",
         "model-management-service",
         method="POST",
         body=payload,
@@ -6615,7 +6614,7 @@ async def create_service_entry(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/create/service",
+        "/api/v1/model-management/services",
         "model-management-service",
         method="POST",
         body=body,
@@ -6642,7 +6641,7 @@ async def update_service_entry(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/update/service",
+        "/api/v1/model-management/services",
         "model-management-service",
         method="PATCH",
         body=body,
@@ -6659,11 +6658,10 @@ async def delete_service_entry(
     """Delete a service entry. Requires Bearer token authentication with 'service.delete' permission."""
     await check_permission("service.delete", request, credentials)
     headers = build_auth_headers(request, credentials, None)
-    return await proxy_to_service_with_params(
+    return await proxy_to_service(
         None,
-        "/services/admin/delete/service",
+        f"/api/v1/model-management/services/{uuid}",
         "model-management-service",
-        {"id": uuid},
         method="DELETE",
         headers=headers,
     )
@@ -6687,7 +6685,7 @@ async def update_service_health(
     body = json.dumps(body_data).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/health",
+        f"/api/v1/model-management/services/{service_id}/health",
         "model-management-service",
         method="PATCH",
         body=body,
@@ -6710,7 +6708,7 @@ async def create_experiment(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/experiments",
+        "/api/v1/model-management/experiments",
         "model-management-service",
         method="POST",
         body=body,
@@ -6738,7 +6736,7 @@ async def list_experiments(
         params["created_by"] = created_by
     return await proxy_to_service_with_params(
         None,
-        "/experiments",
+        "/api/v1/model-management/experiments",
         "model-management-service",
         params,
         method="GET",
@@ -6757,7 +6755,7 @@ async def get_experiment(
     headers = build_auth_headers(request, credentials, None)
     return await proxy_to_service(
         None,
-        f"/experiments/{experiment_id}",
+        f"/api/v1/model-management/experiments/{experiment_id}",
         "model-management-service",
         method="GET",
         headers=headers,
@@ -6774,7 +6772,7 @@ async def get_experiment_metrics(
     headers = build_auth_headers(request, credentials, None)
     return await proxy_to_service(
         None,
-        f"/experiments/{experiment_id}/metrics",
+        f"/api/v1/model-management/experiments/{experiment_id}/metrics",
         "model-management-service",
         method="GET",
         headers=headers,
@@ -6795,7 +6793,7 @@ async def update_experiment(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
     return await proxy_to_service(
         None,
-        f"/experiments/{experiment_id}",
+        f"/api/v1/model-management/experiments/{experiment_id}",
         "model-management-service",
         method="PATCH",
         body=body,
@@ -6827,7 +6825,7 @@ async def update_experiment_status(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
-        f"/experiments/{experiment_id}/status",
+        f"/api/v1/model-management/experiments/{experiment_id}/status",
         "model-management-service",
         method="POST",
         body=body,
@@ -6846,7 +6844,7 @@ async def delete_experiment(
     headers = build_auth_headers(request, credentials, None)
     return await proxy_to_service(
         None,
-        f"/experiments/{experiment_id}",
+        f"/api/v1/model-management/experiments/{experiment_id}",
         "model-management-service",
         method="DELETE",
         headers=headers,
@@ -6867,7 +6865,7 @@ async def select_experiment_variant(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/experiments/select-variant",
+        "/api/v1/model-management/experiments/select-variant",
         "model-management-service",
         method="POST",
         body=body,
@@ -8124,7 +8122,8 @@ async def proxy_request(request: Request, path: str):
                                 break
                         
                         if route_prefix:
-                            service_path = full_request_path[len(route_prefix):] or "/"
+                            # Model-management expects full path /api/v1/model-management/* (same as gateway)
+                            service_path = full_request_path if service_name == "model-management-service" else (full_request_path[len(route_prefix):] or "/")
                         else:
                             service_path = full_request_path
                         return await proxy_to_service(request, service_path, service_name)
@@ -8168,7 +8167,8 @@ async def proxy_request(request: Request, path: str):
                         break
                 
                 if route_prefix:
-                    service_path = full_request_path[len(route_prefix):] or "/"
+                    # Model-management expects full path /api/v1/model-management/* (same as gateway)
+                    service_path = full_request_path if service_name == "model-management-service" else (full_request_path[len(route_prefix):] or "/")
                 else:
                     service_path = full_request_path
                 

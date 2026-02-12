@@ -432,7 +432,7 @@ async def update_model(payload: ModelUpdateRequest, updated_by: str = None):
                 detail={
                     "kind": "DeprecatedModelUpdateNotAllowed",
                     "message": f"Model version '{payload.modelId}' v{payload.version} cannot be modified because it is "
-                               f"DEPRECATED and ALLOW_DEPRECATED_MODEL_CHANGES is set to false."
+                               f"deprecated."
                 }
             )
 
@@ -1405,7 +1405,8 @@ async def list_all_services(
             raise
 
         if not rows:
-            logger.info(f"[DB] No services found for type :{task_type.value}")
+            task_type_str = task_type.value if task_type else "all"
+            logger.info(f"[DB] No services found for task_type={task_type_str}")
             return None
 
         services_list = []
