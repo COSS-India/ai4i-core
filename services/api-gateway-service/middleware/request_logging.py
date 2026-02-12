@@ -22,6 +22,38 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     def __init__(self, app):
         super().__init__(app)
+        
+        # Read filtering configuration from environment variables
+        # Parse boolean values - handle "true", "True", "TRUE", "1", etc.
+        exclude_health_env = os.getenv("EXCLUDE_HEALTH_LOGS", "false")
+        exclude_metrics_env = os.getenv("EXCLUDE_METRICS_LOGS", "false")
+        self.exclude_health_logs = exclude_health_env.lower().strip() in ("true", "1", "yes", "on")
+        self.exclude_metrics_logs = exclude_metrics_env.lower().strip() in ("true", "1", "yes", "on")
+        
+        # Log configuration at startup for debugging
+        logger.info(
+            f"API Gateway RequestLoggingMiddleware initialized: "
+            f"EXCLUDE_HEALTH_LOGS={self.exclude_health_logs} (env='{exclude_health_env}'), "
+            f"EXCLUDE_METRICS_LOGS={self.exclude_metrics_logs} (env='{exclude_metrics_env}')"
+        )
+    
+    def _should_skip_logging(self, path: str) -> bool:
+        """Check if logging should be skipped based on path and configuration."""
+        # Normalize path: remove trailing slash, convert to lowercase, remove query params
+        path_clean = path.split('?')[0].lower().rstrip('/')
+        
+        # Check health endpoints - match any path containing /health
+        if self.exclude_health_logs:
+            if '/health' in path_clean or path_clean.endswith('/health'):
+                return True
+        
+        # Check metrics endpoints - match any path containing /metrics
+        # This will match: /metrics, /enterprise/metrics, /api/v1/metrics, etc.
+        if self.exclude_metrics_logs:
+            if '/metrics' in path_clean or path_clean.endswith('/metrics'):
+                return True
+        
+        return False
     
     async def dispatch(self, request: Request, call_next):
         """Log request and response information with structured logging."""
@@ -73,6 +105,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # Determine log level based on status code
         status_code = response.status_code
+        
+        # Check if logging should be skipped (health/metrics filtering)
+        should_skip = self._should_skip_logging(path)
+        if should_skip:
+            # Debug: Log when we skip (only if metrics filtering is enabled, to avoid spam)
+            if self.exclude_metrics_logs and '/metrics' in path.lower():
+                logger.debug(f"API Gateway: Skipping metrics log for path: {path} (EXCLUDE_METRICS_LOGS={self.exclude_metrics_logs})")
+            response.headers["X-Process-Time"] = f"{processing_time:.3f}"
+            return response
 
         # ---- POST-SPAN: tiny span for logging & response enrichment ----
         if tracer:
