@@ -1,7 +1,7 @@
 // Tenant Management: state (model) + handlers (controller) for Multi Tenant tab
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useToast } from "@chakra-ui/react";
+import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import * as multiTenantService from "../../../services/multiTenantService";
 import { extractErrorInfo } from "../../../utils/errorHandler";
 import type { TenantView, TenantUserView, ServiceView } from "../../../types/multiTenant";
@@ -38,7 +38,7 @@ export interface UseTenantManagementOptions {
 
 export function useTenantManagement(options: UseTenantManagementOptions) {
   const { user } = options;
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   // ----- Model (state) -----
   const [tenants, setTenants] = useState<TenantView[]>([]);
