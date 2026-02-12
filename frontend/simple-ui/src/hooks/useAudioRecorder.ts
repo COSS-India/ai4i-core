@@ -1,8 +1,8 @@
 // Custom hook for audio recording functionality
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { useToast } from '@chakra-ui/react';
+import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { convertWebmToWav } from '../utils/helpers';
-import { MAX_RECORDING_DURATION } from '../config/constants';
+import { MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS } from '../config/constants';
 
 interface UseAudioRecorderOptions {
   sampleRate?: number;
@@ -11,7 +11,7 @@ interface UseAudioRecorderOptions {
 
 export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
   const { sampleRate = 16000, onRecordingComplete } = options;
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   
   const [isRecording, setIsRecording] = useState(false);
   const [timer, setTimer] = useState<number>(0);
@@ -22,6 +22,7 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const stopRecordingRef = useRef<(() => void) | null>(null);
+  const recordingDurationRef = useRef<number>(0);
 
   // Timer effect
   useEffect(() => {
@@ -29,8 +30,8 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
       timerRef.current = setInterval(() => {
         setTimer(prev => {
           const newTimer = prev + 1;
+          recordingDurationRef.current = newTimer;
           if (newTimer >= MAX_RECORDING_DURATION) {
-            // Use ref to avoid dependency issues
             if (stopRecordingRef.current) {
               stopRecordingRef.current();
             }
@@ -71,11 +72,14 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
       try {
         streamToUse = await navigator.mediaDevices.getUserMedia({ audio: true });
         setAudioStream(streamToUse);
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error accessing microphone:', err);
+        const isNotFoundError = err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError';
         toast({
-          title: 'Microphone Access Denied',
-          description: 'Please enable microphone access to record audio.',
+          title: isNotFoundError ? 'No Microphone Detected' : 'Microphone Access Denied',
+          description: isNotFoundError
+            ? 'No microphone detected. Please connect a microphone and try again.'
+            : 'Microphone access is required to record audio. Please allow microphone permissions in your browser settings.',
           status: 'error',
           duration: 5000,
           isClosable: true,
@@ -85,9 +89,10 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
     }
 
     if (!window.MediaRecorder) {
+      const err = RECORDING_ERRORS.BROWSER_NOT_SUPPORTED;
       toast({
-        title: 'Recording Error',
-        description: 'MediaRecorder API is not supported in this browser.',
+        title: err.title,
+        description: err.description,
         status: 'error',
         duration: 3000,
         isClosable: true,
@@ -123,11 +128,26 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
       mediaRecorder.onstop = async () => {
         try {
           const webmBlob = new Blob(audioChunksRef.current, { type: actualMimeType });
-          
-          if (webmBlob.size < 1000) {
+          const duration = recordingDurationRef.current;
+
+          if (duration < MIN_RECORDING_DURATION) {
+            const err = RECORDING_ERRORS.REC_TOO_SHORT;
             toast({
-              title: 'Recording Failed',
-              description: 'No audio data was captured. Please try again.',
+              title: err.title,
+              description: err.description,
+              status: 'error',
+              duration: 5000,
+              isClosable: true,
+            });
+            setIsRecording(false);
+            return;
+          }
+
+          if (webmBlob.size < 1000) {
+            const err = RECORDING_ERRORS.NO_AUDIO_DETECTED;
+            toast({
+              title: err.title,
+              description: err.description,
               status: 'error',
               duration: 5000,
               isClosable: true,
@@ -160,9 +180,10 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
             }
           };
           reader.onerror = () => {
+            const err = RECORDING_ERRORS.REC_INTERRUPTED;
             toast({
-              title: 'Recording Error',
-              description: 'Failed to process recording.',
+              title: err.title,
+              description: err.description,
               status: 'error',
               duration: 5000,
               isClosable: true,
@@ -171,9 +192,10 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
           reader.readAsDataURL(blobToSend);
         } catch (err) {
           console.error('Error processing recording:', err);
+          const recErr = RECORDING_ERRORS.REC_INTERRUPTED;
           toast({
-            title: 'Recording Error',
-            description: 'Failed to process recording.',
+            title: recErr.title,
+            description: recErr.description,
             status: 'error',
             duration: 5000,
             isClosable: true,
@@ -186,9 +208,10 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
 
       mediaRecorder.onerror = (event) => {
         console.error('MediaRecorder error:', event);
+        const err = RECORDING_ERRORS.REC_INTERRUPTED;
         toast({
-          title: 'Recording Error',
-          description: 'An error occurred during recording.',
+          title: err.title,
+          description: err.description,
           status: 'error',
           duration: 5000,
           isClosable: true,
@@ -201,9 +224,10 @@ export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
       mediaRecorder.start(1000); // Collect data every second
     } catch (err) {
       console.error('Error starting recording:', err);
+      const recErr = RECORDING_ERRORS.REC_START_FAILED;
       toast({
-        title: 'Recording Error',
-        description: 'Failed to start recording.',
+        title: recErr.title,
+        description: recErr.description,
         status: 'error',
         duration: 5000,
         isClosable: true,

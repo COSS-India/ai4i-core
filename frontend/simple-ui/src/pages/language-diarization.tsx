@@ -13,7 +13,6 @@ import {
   Select,
   Spinner,
   Text,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
@@ -23,9 +22,10 @@ import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
 import { performLanguageDiarizationInference, listLanguageDiarizationServices } from "../services/languageDiarizationService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const LanguageDiarizationPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const [audioData, setAudioData] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
