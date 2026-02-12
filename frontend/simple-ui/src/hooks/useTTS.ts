@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToast } from '@chakra-ui/react';
+import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { performTTSInference } from '../services/ttsService';
 import { getWordCount } from '../utils/helpers';
 import { UseTTSReturn, TTSInferenceRequest, Gender, AudioFormat, SampleRate } from '../types/tts';
@@ -49,7 +49,7 @@ export const useTTS = (serviceId?: string): UseTTSReturn => {
   const hasShownTextLimitToastRef = useRef(false);
 
   // Toast hook
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   // TTS inference mutation
   const ttsMutation = useMutation({

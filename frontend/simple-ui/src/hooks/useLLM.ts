@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToast } from '@chakra-ui/react';
+import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { performLLMInference } from '../services/llmService';
 import { performNMTInference } from '../services/nmtService';
 import { getWordCount } from '../utils/helpers';
@@ -38,7 +38,7 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
   const hasShownTextLimitToastRef = useRef(false);
 
   // Toast hook
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   // LLM inference mutation
   const llmMutation = useMutation({

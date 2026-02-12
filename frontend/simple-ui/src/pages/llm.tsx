@@ -12,7 +12,6 @@ import {
   Select,
   Spinner,
   Text,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
@@ -26,9 +25,10 @@ import TextInput from "../components/llm/TextInput";
 import { LLM_SUPPORTED_LANGUAGES } from "../config/constants";
 import { useLLM } from "../hooks/useLLM";
 import { listLLMModels, listLLMServices } from "../services/llmService";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const LLMPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const {
     selectedModelId,

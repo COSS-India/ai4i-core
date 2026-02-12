@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToast } from '@chakra-ui/react';
+import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { performASRInference, transcribeAudio } from '../services/asrService';
 import { getWordCount, convertWebmToWav } from '../utils/helpers';
 import { UseASRReturn, ASRInferenceRequest } from '../types/asr';
@@ -42,7 +42,7 @@ export const useASR = (): UseASRReturn => {
   const recordingDurationRef = useRef<number>(0);
 
   // Toast hook
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   // Initialize audio stream on mount
   useEffect(() => {

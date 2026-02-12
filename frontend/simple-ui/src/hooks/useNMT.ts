@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToast } from '@chakra-ui/react';
+import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { performNMTInference } from '../services/nmtService';
 import { getWordCount } from '../utils/helpers';
 import { UseNMTReturn, NMTInferenceRequest, NMTInferenceResponse, LanguagePair } from '../types/nmt';
@@ -29,7 +29,7 @@ export const useNMT = (): UseNMTReturn => {
   const hasShownTextLimitToastRef = useRef(false);
 
   // Toast hook
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   // NMT inference mutation
   const nmtMutation = useMutation({

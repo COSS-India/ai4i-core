@@ -13,7 +13,6 @@ import {
   Select,
   Spinner,
   Text,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import Head from "next/head";
@@ -25,9 +24,10 @@ import { performAudioLanguageDetectionInference, listAudioLanguageDetectionServi
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { AUDIO_LANGUAGE_DETECTION_ERRORS } from "../config/constants";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const AudioLanguageDetectionPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [audioData, setAudioData] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);

@@ -1,6 +1,6 @@
 // Custom hook for audio recording functionality
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { useToast } from '@chakra-ui/react';
+import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { convertWebmToWav } from '../utils/helpers';
 import { MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS } from '../config/constants';
 
@@ -11,7 +11,7 @@ interface UseAudioRecorderOptions {
 
 export const useAudioRecorder = (options: UseAudioRecorderOptions = {}) => {
   const { sampleRate = 16000, onRecordingComplete } = options;
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   
   const [isRecording, setIsRecording] = useState(false);
   const [timer, setTimer] = useState<number>(0);

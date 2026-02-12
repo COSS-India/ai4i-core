@@ -1,7 +1,7 @@
 // Custom hook for pipeline functionality
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { useToast } from '@chakra-ui/react';
+import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { runPipelineInference } from '../services/pipelineService';
 import { convertWebmToWav } from '../utils/helpers';
 import { 
@@ -26,7 +26,7 @@ export const usePipeline = () => {
   const processRecordedAudioRef = useRef<((base64Audio: string) => Promise<void>) | null>(null);
   const microphoneErrorToastShownRef = useRef(false);
   const recordingDurationRef = useRef<number>(0);
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   // Initialize audio stream on mount
   useEffect(() => {
