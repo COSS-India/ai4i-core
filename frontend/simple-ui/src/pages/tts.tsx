@@ -27,9 +27,10 @@ import TTSResults from "../components/tts/TTSResults";
 import VoiceSelector from "../components/tts/VoiceSelector";
 import { useTTS } from "../hooks/useTTS";
 import { listVoices, listTTSServices } from "../services/ttsService";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const TTSPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const {
     language,

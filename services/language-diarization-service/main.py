@@ -386,13 +386,17 @@ async def health(request: Request):
     db_ok = False
     triton_ok = False
 
+    # Check if health logs should be excluded
+    exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+    
     try:
         rc = getattr(request.app.state, "redis_client", None)
         if rc is not None:
             await rc.ping()
             redis_ok = True
     except Exception as e:
-        logger.warning("/health: Redis check failed: %s", e)
+        if not exclude_health_logs:
+            logger.warning("/health: Redis check failed: %s", e)
 
     try:
         session_factory = getattr(request.app.state, "db_session_factory", None)
@@ -401,7 +405,8 @@ async def health(request: Request):
                 await session.execute(text("SELECT 1"))
             db_ok = True
     except Exception as e:
-        logger.warning("/health: PostgreSQL check failed: %s", e)
+        if not exclude_health_logs:
+            logger.warning("/health: PostgreSQL check failed: %s", e)
 
     try:
         triton_endpoint = getattr(request.app.state, "triton_endpoint", "")
@@ -410,7 +415,8 @@ async def health(request: Request):
             if triton_client_instance.client.is_server_live() and triton_client_instance.client.is_server_ready():
                 triton_ok = True
     except Exception as e:
-        logger.warning("/health: Triton check failed: %s", e)
+        if not exclude_health_logs:
+            logger.warning("/health: Triton check failed: %s", e)
 
     status_str = "ok" if (redis_ok and db_ok and triton_ok) else "degraded"
     status_code = 200 if status_str == "ok" else 503

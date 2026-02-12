@@ -18,7 +18,7 @@ import {
 import Head from "next/head";
 import { useRouter } from "next/router";
 import React from "react";
-import { useToast } from "@chakra-ui/react";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 import { FaMicrophone } from "react-icons/fa";
 import {
   IoGitMergeOutline,
@@ -147,7 +147,7 @@ const getColor = (service: { id?: string; color?: string }, shade: 50 | 300 | 40
 
 const HomePage: React.FC = () => {
   const router = useRouter();
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const { isAuthenticated, isLoading } = useAuth();
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
