@@ -29,6 +29,91 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     def __init__(self, app):
         super().__init__(app)
+        
+        # Read filtering configuration from environment variables
+        import logging
+        exclude_health_env = os.getenv("EXCLUDE_HEALTH_LOGS", "false")
+        exclude_metrics_env = os.getenv("EXCLUDE_METRICS_LOGS", "false")
+        allowed_log_levels_env = os.getenv("ALLOWED_LOG_LEVELS", "DEBUG,INFO,WARNING,ERROR")
+        
+        # Parse boolean values - handle "true", "True", "TRUE", "1", etc.
+        self.exclude_health_logs = exclude_health_env.lower().strip() in ("true", "1", "yes", "on")
+        self.exclude_metrics_logs = exclude_metrics_env.lower().strip() in ("true", "1", "yes", "on")
+        
+        # Parse allowed log levels (comma-separated: "INFO,ERROR" or "DEBUG,INFO,WARNING,ERROR")
+        allowed_levels_str = [level.strip().upper() for level in allowed_log_levels_env.split(",")]
+        self.allowed_log_levels = set()
+        for level_str in allowed_levels_str:
+            level_value = getattr(logging, level_str, None)
+            if level_value is not None:
+                self.allowed_log_levels.add(level_value)
+        
+        # If no valid levels found, default to all levels
+        if not self.allowed_log_levels:
+            self.allowed_log_levels = {logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR}
+        
+        # Log configuration at startup (only once per service instance)
+        # This is CRITICAL for debugging - verify env vars are being read
+        logger.info(
+            f"RequestLoggingMiddleware initialized: EXCLUDE_HEALTH_LOGS={self.exclude_health_logs} (env='{exclude_health_env}'), "
+            f"EXCLUDE_METRICS_LOGS={self.exclude_metrics_logs} (env='{exclude_metrics_env}'), "
+            f"ALLOWED_LOG_LEVELS={allowed_levels_str}",
+            extra={"context": {
+                "exclude_health_logs": self.exclude_health_logs,
+                "exclude_health_env_raw": exclude_health_env,
+                "exclude_metrics_logs": self.exclude_metrics_logs,
+                "exclude_metrics_env_raw": exclude_metrics_env,
+                "allowed_log_levels": allowed_levels_str,
+            }}
+        )
+        
+        # Health endpoint patterns
+        self.health_patterns = [
+            "/health",
+            "/api/v1/health",
+            "/api/v1/asr/health",
+        ]
+        
+        # Metrics endpoint patterns
+        self.metrics_patterns = [
+            "/metrics",
+            "/enterprise/metrics",
+            "/api/v1/metrics",
+        ]
+    
+    def _should_skip_logging(self, path: str, status_code: int) -> bool:
+        """Check if logging should be skipped based on path and configuration."""
+        # Normalize path: remove trailing slash, convert to lowercase, remove query params
+        path_clean = path.split('?')[0].lower().rstrip('/')
+        
+        # Check health endpoints - match any path containing /health
+        if self.exclude_health_logs:
+            if '/health' in path_clean or path_clean.endswith('/health'):
+                return True
+        
+        # Check metrics endpoints - match any path containing /metrics
+        # This will match: /metrics, /enterprise/metrics, /api/v1/metrics, etc.
+        if self.exclude_metrics_logs:
+            if '/metrics' in path_clean or path_clean.endswith('/metrics'):
+                return True
+        
+        return False
+    
+    def _should_log_by_level(self, status_code: int) -> bool:
+        """Check if log should be written based on allowed log levels and status code."""
+        import logging
+        # Map status codes to log levels
+        if 200 <= status_code < 300:
+            log_level = logging.INFO
+        elif 400 <= status_code < 500:
+            log_level = logging.WARNING
+        elif 500 <= status_code < 600:
+            log_level = logging.ERROR
+        else:
+            log_level = logging.INFO
+        
+        # Check if log level is in the allowed list
+        return log_level in self.allowed_log_levels
 
     async def dispatch(self, request: Request, call_next):
         """Log request and response information with structured logging."""
@@ -66,6 +151,20 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # Determine log level based on status code
         status_code = response.status_code
+        
+        # Check if logging should be skipped (health/metrics filtering)
+        should_skip = self._should_skip_logging(path, status_code)
+        if should_skip:
+            # Debug: Log when we skip (only if metrics filtering is enabled, to avoid spam)
+            if self.exclude_metrics_logs and '/metrics' in path.lower():
+                logger.debug(f"Skipping metrics log for path: {path} (EXCLUDE_METRICS_LOGS={self.exclude_metrics_logs})")
+            response.headers["X-Process-Time"] = f"{processing_time:.3f}"
+            return response
+        
+        # Check if log level meets minimum threshold
+        if not self._should_log_by_level(status_code):
+            response.headers["X-Process-Time"] = f"{processing_time:.3f}"
+            return response
 
         # Extract trace_id from OpenTelemetry context for Jaeger URL
         # IMPORTANT: Extract AFTER request processing to ensure span is fully initialized

@@ -13,7 +13,6 @@ import {
   HStack,
   Progress,
   Text,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
@@ -33,9 +32,10 @@ import {
   listNMTServices,
 } from "../services/nmtService";
 import { getRemainingTryItRequests, shouldWarnAboutRateLimit } from "../services/tryItService";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const NMTPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [showRateLimitWarning, setShowRateLimitWarning] = useState(false);

@@ -5,6 +5,7 @@ Adapted from Ai4V-C health check patterns.
 """
 
 import logging
+import os
 import time
 from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, status
@@ -15,6 +16,13 @@ from services.constants.error_messages import SERVICE_UNAVAILABLE, SERVICE_UNAVA
 from main import redis_client, db_engine
 
 logger = logging.getLogger(__name__)
+
+# Check if health logs should be excluded
+EXCLUDE_HEALTH_LOGS = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+
+def _should_log_health() -> bool:
+    """Check if health-related logs should be written."""
+    return not EXCLUDE_HEALTH_LOGS
 
 # Create router
 health_router = APIRouter(prefix="/api/v1/asr", tags=["Health"])
@@ -46,6 +54,7 @@ async def health_check() -> Dict[str, Any]:
         else:
             health_status["redis"] = "unavailable"
     except Exception as e:
+        if _should_log_health():
         logger.error(f"Redis health check failed: {e}")
         health_status["redis"] = "unhealthy"
     
@@ -58,6 +67,7 @@ async def health_check() -> Dict[str, Any]:
         else:
             health_status["postgres"] = "unavailable"
     except Exception as e:
+        if _should_log_health():
         logger.error(f"PostgreSQL health check failed: {e}")
         health_status["postgres"] = "unhealthy"
     
@@ -68,6 +78,7 @@ async def health_check() -> Dict[str, Any]:
         
         # Triton endpoint must be resolved via Model Management - no hardcoded fallback
         # Skip Triton check in health endpoint (requires Model Management serviceId)
+        if _should_log_health():
         logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
         
         if client.is_server_ready():
@@ -77,6 +88,7 @@ async def health_check() -> Dict[str, Any]:
     except ImportError:
         health_status["triton"] = "unhealthy"
     except Exception as e:
+        if _should_log_health():
         logger.warning(f"Triton health check failed: {e}")
         health_status["triton"] = "unhealthy"
     
@@ -163,14 +175,17 @@ async def readiness_check() -> Dict[str, Any]:
             
             # Triton endpoint must be resolved via Model Management - no hardcoded fallback
             # Skip Triton check in readiness endpoint (requires Model Management serviceId)
+            if _should_log_health():
             logger.debug("/ready: Skipping Triton check (requires Model Management serviceId)")
             # Skip Triton validation - only check Redis and DB
 
         except Exception as e:
+            if _should_log_health():
             logger.warning(f"Triton readiness check skipped: {e}")
             # Triton client not available, but that's okay for readiness
             pass
         except Exception as e:
+            if _should_log_health():
             logger.warning(f"Triton readiness check failed: {e}")
             # Don't fail readiness for Triton issues
         
@@ -179,6 +194,7 @@ async def readiness_check() -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
+        if _should_log_health():
         logger.error(f"Readiness check failed: {e}")
         readiness_status["status"] = "not_ready"
         readiness_status["reason"] = str(e)

@@ -17,12 +17,12 @@ import {
   Link,
   Select,
   FormErrorMessage,
-  useToast,
 } from '@chakra-ui/react';
 import { ViewIcon, ViewOffIcon } from '@chakra-ui/icons';
 import { useAuth } from '../../hooks/useAuth';
 import { RegisterRequest } from '../../types/auth';
 import LoadingSpinner from '../common/LoadingSpinner';
+import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
 
 interface RegisterFormProps {
   onSuccess?: () => void;
@@ -33,7 +33,7 @@ interface RegisterFormProps {
 
 const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin, onRegisterSuccess, isActive = true }) => {
   const { register, isLoading, error, clearError } = useAuth();
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [formData, setFormData] = useState<RegisterRequest>({
     email: '',
     username: '',

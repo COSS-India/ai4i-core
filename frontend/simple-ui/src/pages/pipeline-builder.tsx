@@ -14,7 +14,6 @@ import {
   Textarea,
   VStack,
   Box,
-  useToast,
   Alert,
   AlertIcon,
   AlertDescription,
@@ -31,9 +30,10 @@ import ContentLayout from '../components/common/ContentLayout';
 import { PipelineInferenceRequest } from '../types/pipeline';
 import { runPipelineInference } from '../services/pipelineService';
 import { ASR_SUPPORTED_LANGUAGES, TTS_SUPPORTED_LANGUAGES } from '../config/constants';
+import { useToastWithDeduplication } from '../hooks/useToastWithDeduplication';
 
 const PipelineBuilderPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const router = useRouter();
   
   // Pipeline configuration

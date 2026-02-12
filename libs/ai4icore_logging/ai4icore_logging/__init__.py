@@ -22,6 +22,7 @@ from .formatters import JSONFormatter
 from .handlers import KafkaHandler
 from .middleware import (
     CorrelationMiddleware,
+    RequestLoggingMiddleware,
     get_correlation_id,
     get_trace_id_from_request,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "JSONFormatter",
     "KafkaHandler",
     "CorrelationMiddleware",
+    "RequestLoggingMiddleware",
     "get_correlation_id",
     "get_trace_id_from_request",
 ]

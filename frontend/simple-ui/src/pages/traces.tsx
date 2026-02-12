@@ -10,7 +10,6 @@ import {
   Input,
   Text,
   VStack,
-  useToast,
   Badge,
   Spinner,
   Flex,
@@ -39,6 +38,7 @@ import {
   Trace,
   Span,
 } from "../services/observabilityService";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 // Utility functions to extract and categorize spans
 interface ProcessedSpan {
@@ -1154,7 +1154,7 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
 };
 
 const TracesPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const [traceIdSearch, setTraceIdSearch] = useState<string>("");
@@ -1799,7 +1799,7 @@ const TracesPage: React.FC = () => {
                                 </Text>
                                         </VStack>
                                       </HStack>
-                                      <Badge fontSize="xs" colorScheme={processed.hasError ? "red" : "orange"} px={2} py={1} borderRadius="full">
+                                      <Badge fontSize="xs" colorScheme={processed.hasError ? "red" : "orange"} px={2} py={1} borderRadius="full" textTransform="none">
                                         {duration}
                                   </Badge>
                                 </HStack>
@@ -2111,6 +2111,7 @@ const TracesPage: React.FC = () => {
                                           px={2}
                                           py={0.5}
                                           borderRadius="full"
+                                          textTransform="none"
                                         >
                                           {formatDuration(processed.span.duration)}
                                         </Badge>

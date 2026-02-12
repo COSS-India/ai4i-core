@@ -1,6 +1,7 @@
 """
 Global error handler middleware for consistent error responses.
 """
+import os
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from middleware.exceptions import (
@@ -238,15 +239,27 @@ def add_error_handlers(app: FastAPI) -> None:
             except Exception:
                 pass  # Don't fail if tracing fails
         
-        # Log the full error with traceback and context
-        error_message = str(exc)
-        logger.error(
-            f"Unexpected error in ASR service: {exc}",
-            extra={
-                "context": {
-                    "error_type": type(exc).__name__,
-                    "error_message": error_message,
-                    "status_code": 500,
+        # Check if health/metrics logs should be excluded
+        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+        exclude_metrics_logs = os.getenv("EXCLUDE_METRICS_LOGS", "false").lower() == "true"
+        
+        path = request.url.path.lower().rstrip('/')
+        should_skip = False
+        if exclude_health_logs and ('/health' in path or path.endswith('/health')):
+            should_skip = True
+        if exclude_metrics_logs and ('/metrics' in path or path.endswith('/metrics')):
+            should_skip = True
+        
+        # Log the full error with traceback and context (skip if health/metrics)
+        if not should_skip:
+            error_message = str(exc)
+            logger.error(
+                f"Unexpected error in ASR service: {exc}",
+                extra={
+                    "context": {
+                        "error_type": type(exc).__name__,
+                        "error_message": error_message,
+                        "status_code": 500,
                     "service_id": service_id,
                     "triton_endpoint": triton_endpoint,
                     "model_name": model_name,
