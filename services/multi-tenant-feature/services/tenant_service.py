@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError , NoResultFound
 
 import os
 import httpx
+from pydantic import BaseModel, EmailStr
 
 from utils.utils import (
     generate_tenant_id,
@@ -36,7 +37,7 @@ from models.service_create import ServiceCreateRequest , ServiceResponse , ListS
 from models.user_create import UserRegisterRequest, UserRegisterResponse
 from models.services_update import ServiceUpdateRequest , FieldChange , ServiceUpdateResponse
 from models.billing_update import BillingUpdateRequest, BillingUpdateResponse
-from models.tenant_email import TenantResendEmailVerificationResponse
+from models.tenant_email import TenantSendEmailVerificationResponse,TenantResendEmailVerificationResponse
 from models.tenant_subscription import TenantSubscriptionResponse
 from models.tenant_status import TenantStatusUpdateRequest , TenantStatusUpdateResponse
 from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
@@ -579,7 +580,7 @@ async def create_new_tenant(
         background_tasks: BackgroundTasks
         ) -> TenantRegisterResponse:
     """
-    Create a new tenant with PENDING status and send verification email.
+    Create a new tenant with PENDING status.
     
     Args:
         payload: Tenant registration request payload
@@ -587,7 +588,7 @@ async def create_new_tenant(
         background_tasks: BackgroundTasks to send email asynchronously
     
     Returns:
-        TenantRegisterResponse with tenant details and verification token
+        TenantRegisterResponse with tenant details. Verification email is sent via a separate API.
     """
 
     if payload.contact_email:
@@ -601,23 +602,9 @@ async def create_new_tenant(
         if existing:
             # Check status
             if existing.status == TenantStatus.PENDING:
-                resend = await resend_verification_email(
-                    tenant_id=existing.tenant_id,  # Use string tenant_id, not UUID
-                    db=db,
-                    background_tasks=background_tasks,
-                )
-
-                return TenantRegisterResponse(
-                    id=existing.id,
-                    tenant_id=existing.tenant_id,
-                    schema_name=existing.schema_name,
-                    subscriptions=existing.subscriptions or [],
-                    quotas=existing.quotas or {},
-                    usage_quota=existing.usage or {},
-                    status=existing.status.value,
-                    token=resend.token,
-                    message="Email verification pending. Link resent , please check your inbox.",
-                )
+                # Tenant already exists and is pending verification.
+                # Do NOT automatically resend verification email here to avoid confusion.
+                raise ValueError("Tenant registration already pending email verification")
             elif existing.status in [TenantStatus.IN_PROGRESS]:
                 raise ValueError("Email already verified")
             elif existing.status == TenantStatus.ACTIVE:
@@ -693,15 +680,6 @@ async def create_new_tenant(
     result = await db.execute(stmt)
     created: Tenant = result.scalar_one()
 
-    # Email verification
-    token = await send_verification_link(
-        created=created, 
-        payload=payload, 
-        db=db, 
-        subdomain=None,
-        background_tasks=background_tasks,
-    )
-    
     billing = BillingRecord(
         tenant_id=created.id,
         # billing_plan=payload.billing_plan, # TODO : add billing plan if required
@@ -743,11 +721,54 @@ async def create_new_tenant(
         quotas=created.quotas or {},
         usage_quota=created.usage or {},
         status=created.status.value if hasattr(created.status, "value") else str(created.status),
-        token=token,
+        # Token will be generated when verification email is sent via dedicated API
     )
 
     return resposne
 
+
+async def send_initial_verification_email(
+    tenant_id: str,
+    db: AsyncSession,
+    background_tasks: BackgroundTasks,
+) -> TenantSendEmailVerificationResponse:
+    """
+    Generate and send the initial email verification link for a tenant.
+
+    This is intended for the first-time send after registration.
+    """
+    tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    if tenant.status != TenantStatus.PENDING:
+        raise HTTPException(
+            status_code=400,
+            detail="Verification link can only be sent when tenant status is PENDING",
+        )
+
+    # Construct a minimal payload-like object for email helper
+    class _Payload(BaseModel):
+        contact_email: EmailStr
+
+    payload = _Payload(contact_email=tenant.contact_email)
+
+    # Reuse the existing token creation + email send helper
+    token = await send_verification_link(
+        created=tenant,
+        payload=payload,  # only contact_email is used
+        db=db,
+        subdomain=None,
+        background_tasks=background_tasks,
+    )
+
+    return TenantSendEmailVerificationResponse(
+        tenant_uuid=tenant.id,
+        tenant_id=tenant.tenant_id,
+        token=token,
+        message="Verification email sent successfully",
+    )
 
 
 async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: AsyncSession, background_tasks: BackgroundTasks):
@@ -2190,16 +2211,19 @@ async def list_all_tenants(db: AsyncSession) -> ListTenantsResponse:
     )
 
 
-async def list_all_users(db: AsyncSession) -> ListUsersResponse:
+async def list_all_users(db: AsyncSession, tenant_id: Optional[str] = None) -> ListUsersResponse:
     """
-    List all tenant users across all tenants.
-    
-    Args:
-        db: Database session
-    Returns:
-        ListUsersResponse: List of all tenant users and their details
+    List tenant users.
+
+    If tenant_id is provided, only users belonging to that tenant are returned.
+    If tenant_id is not provided, users across all tenants are returned.
     """
-    result = await db.execute(select(TenantUser).order_by(TenantUser.created_at.desc()))
+    stmt = select(TenantUser)
+    if tenant_id:
+        stmt = stmt.where(TenantUser.tenant_id == tenant_id)
+    stmt = stmt.order_by(TenantUser.created_at.desc())
+
+    result = await db.execute(stmt)
     users = result.scalars().all()
     
     user_list = [
