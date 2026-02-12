@@ -2,10 +2,9 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from logger import logger
 from db_connection import create_tables , auth_db_engine, AuthDBSessionLocal , app_db_engine , AppDBSessionLocal
-from routers.router_admin import router_admin
-from routers.router_details import router_details
+from routers.router_models import router_models
+from routers.router_services import router_services
 from routers.router_health import router_health
-from routers.router_restful import router_restful
 from routers.router_experiments import router_experiments, router_experiments_public
 from cache.app_cache import get_cache_connection, get_async_cache_connection
 import uvicorn
@@ -128,13 +127,13 @@ else:
 # Register error handlers
 add_error_handlers(app)
 
-# Register routers
-app.include_router(router_admin)
-app.include_router(router_details)
-app.include_router(router_restful)  # RESTful endpoints for frontend compatibility
+# Register routers - paths match API gateway /api/v1/model-management/*
+API_PREFIX = "/api/v1/model-management"
+app.include_router(router_models, prefix=API_PREFIX)
+app.include_router(router_services, prefix=API_PREFIX)
 app.include_router(router_health)
-app.include_router(router_experiments)  # A/B testing experiment management (authenticated)
-app.include_router(router_experiments_public)  # A/B testing variant selection (public/internal)
+app.include_router(router_experiments, prefix=API_PREFIX)
+app.include_router(router_experiments_public, prefix=API_PREFIX)
 
 
 @app.get("/")
