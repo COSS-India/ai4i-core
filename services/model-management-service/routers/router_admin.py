@@ -1,10 +1,14 @@
 from fastapi import HTTPException, status, APIRouter, Depends, Request
 from typing import Optional, Dict, Any
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from models.model_create import ModelCreateRequest
 from models.model_update import ModelUpdateRequest
 from models.service_create import ServiceCreateRequest
 from models.service_update import ServiceUpdateRequest
 from models.service_health import ServiceHeartbeatRequest
+from models.service_policy import ServicePolicyRequest, ServicePolicyResponse
+from models.db_models import Service
 from db_operations import (
     save_model_to_db , 
     update_model , 
@@ -12,7 +16,9 @@ from db_operations import (
     save_service_to_db,
     update_service,
     delete_service_by_uuid,
-    update_service_health
+    update_service_health,
+    add_or_update_service_policy,
+    AppDatabase
     )
 from middleware.auth_provider import AuthProvider
 from logger import logger
@@ -203,4 +209,67 @@ async def update_service_health_request(payload: ServiceHeartbeatRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"kind": "DBError", "message": "Service health status update not successful"}
+        )
+
+
+#################################################### Policy apis ####################################################
+
+
+@router_admin.post("/add/service/policy", response_model=ServicePolicyResponse)
+async def add_or_update_service_policy_request(payload: ServicePolicyRequest, request: Request):
+    """
+    Add or update policy for a service.
+    
+    This endpoint handles both operations:
+    - Adding a new policy if the service doesn't have one (policy is null)
+    - Updating an existing policy if the service already has one
+    
+    Policy data includes:
+    - latency: low, medium, or high
+    - cost: tier_1, tier_2, or tier_3
+    - accuracy: sensitive or standard
+    
+    The policy is stored in the database and will be used for smart routing decisions.
+    
+    Returns:
+        ServicePolicyResponse with serviceId and policy data
+    """
+    try:
+        user_id = get_user_id_from_request(request)
+        
+        # Check if service exists and has existing policy to determine operation type
+        db: AsyncSession = AppDatabase()
+        is_update = False
+        try:
+            result = await db.execute(select(Service).where(Service.service_id == payload.serviceId))
+            service = result.scalars().first()
+            if not service:
+                raise HTTPException(status_code=404, detail=f"Service with ID '{payload.serviceId}' not found")
+            is_update = service.policy is not None
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Error checking existing policy: {e}")
+        finally:
+            await db.close()
+        
+        result = await add_or_update_service_policy(
+            service_id=payload.serviceId,
+            policy_data=payload.policy,
+            updated_by=user_id
+        )
+        
+        # Log appropriate message based on operation
+        operation = "updated" if is_update else "added"
+        logger.info(f"Policy {operation} for service '{payload.serviceId}' by user {user_id}.")
+        
+        return ServicePolicyResponse(**result)
+        
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error while adding/updating service policy.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"kind": "DBError", "message": "Service policy add/update not successful"}
         )
