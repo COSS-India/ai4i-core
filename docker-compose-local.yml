@@ -516,6 +516,8 @@ services:
       - ALLOW_ANONYMOUS_ACCESS=true
       - TRITON_ENDPOINT=http://13.200.133.97:9000
       - TRITON_TIMEOUT=120
+    env_file:
+      - ./services/asr-service/.env
     depends_on:
       config-service:
         condition: service_healthy
@@ -605,6 +607,8 @@ services:
       - "8099:8099"
     environment:
       - ENV_FILE=.env
+    env_file:
+      - ./services/ocr-service/.env
     depends_on:
       config-service:
         condition: service_healthy
