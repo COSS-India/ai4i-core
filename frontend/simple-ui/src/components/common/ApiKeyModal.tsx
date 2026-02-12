@@ -17,10 +17,10 @@ import {
   InputGroup,
   InputRightElement,
   IconButton,
-  useToast,
 } from '@chakra-ui/react';
 import { ViewIcon, ViewOffIcon } from '@chakra-ui/icons';
 import { useApiKey } from '../../hooks/useApiKey';
+import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
 
 interface ApiKeyModalProps {
   isOpen: boolean;
@@ -34,7 +34,7 @@ const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ isOpen, onClose }) => {
   const [isLoading, setIsLoading] = useState(false);
 
   const { setApiKey } = useApiKey();
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   const handleSave = async () => {
     setError(null);

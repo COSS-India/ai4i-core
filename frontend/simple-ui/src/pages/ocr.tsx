@@ -18,7 +18,6 @@ import {
   TabPanels,
   Tab,
   TabPanel,
-  useToast,
   VStack,
   IconButton,
   Icon,
@@ -32,9 +31,10 @@ import ContentLayout from "../components/common/ContentLayout";
 import { performOCRInference, listOCRServices } from "../services/ocrService";
 import { OCR_ERRORS, MAX_IMAGE_FILE_SIZE } from "../config/constants";
 import { extractErrorInfo } from "../utils/errorHandler";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const OCRPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUri, setImageUri] = useState("");
   const [sourceLanguage, setSourceLanguage] = useState("en");

@@ -10,12 +10,12 @@ import {
   Input,
   Stack,
   Text,
-  useToast,
 } from "@chakra-ui/react";
 import React, { useRef } from "react";
 import { FaMicrophone, FaMicrophoneSlash, FaUpload } from "react-icons/fa";
 import { formatDuration, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS } from "../../config/constants";
 import { AudioRecorderProps } from "../../types/asr";
+import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
 
 const AudioRecorder: React.FC<AudioRecorderProps> = ({
   onAudioReady,
@@ -26,7 +26,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
   timer = 0,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];

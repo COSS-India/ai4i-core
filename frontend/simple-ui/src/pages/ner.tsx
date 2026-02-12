@@ -14,7 +14,6 @@ import {
   Spinner,
   Text,
   Textarea,
-  useToast,
   VStack,
   Badge,
 } from "@chakra-ui/react";
@@ -25,9 +24,10 @@ import ContentLayout from "../components/common/ContentLayout";
 import { performNERInference, listNERServices } from "../services/nerService";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { NER_ERRORS, MIN_NER_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const NERPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [inputText, setInputText] = useState("");
   const [sourceLanguage, setSourceLanguage] = useState("en");
   const [fetching, setFetching] = useState(false);

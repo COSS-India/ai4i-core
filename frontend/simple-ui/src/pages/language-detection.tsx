@@ -14,7 +14,6 @@ import {
   Spinner,
   Text,
   Textarea,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
@@ -24,9 +23,10 @@ import ContentLayout from "../components/common/ContentLayout";
 import { performLanguageDetectionInference, listLanguageDetectionServices } from "../services/languageDetectionService";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { LANGUAGE_DETECTION_ERRORS, MIN_LANGUAGE_DETECTION_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const LanguageDetectionPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const [inputTexts, setInputTexts] = useState("");
   const [fetching, setFetching] = useState(false);

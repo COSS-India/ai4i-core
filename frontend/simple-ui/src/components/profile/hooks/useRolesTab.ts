@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useToast } from "@chakra-ui/react";
+import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import roleService, { Role } from "../../../services/roleService";
 import type { User } from "../../../types/auth";
 
@@ -16,7 +16,7 @@ export interface SelectedUserInfo {
 }
 
 export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions) {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [roles, setRoles] = useState<Role[]>([]);
   const [selectedUser, setSelectedUser] = useState<SelectedUserInfo | null>(null);
   const [selectedUserRoles, setSelectedUserRoles] = useState<string[]>([]);
