@@ -448,12 +448,16 @@ async def health(request: Request):
     redis_ok = False
     db_ok = False
 
+    # Check if health logs should be excluded
+    exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+
     try:
         rc = getattr(request.app.state, "redis_client", None)
         if rc is not None:
             await rc.ping()
             redis_ok = True
     except Exception as e:
+        if not exclude_health_logs:
         logger.warning("/health: Redis check failed: %s", e)
 
     try:
@@ -463,6 +467,7 @@ async def health(request: Request):
                 await session.execute(text("SELECT 1"))
             db_ok = True
     except Exception as e:
+        if not exclude_health_logs:
         logger.warning("/health: PostgreSQL check failed: %s", e)
 
     status_str = "ok" if (redis_ok and db_ok) else "degraded"

@@ -303,6 +303,9 @@ async def health_check() -> Dict[str, Any]:
         import time
         health_status["timestamp"] = time.time()
         
+        # Check if health logs should be excluded
+        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+        
         # Check Redis connectivity
         global redis_client
         if redis_client:
@@ -310,7 +313,8 @@ async def health_check() -> Dict[str, Any]:
                 await redis_client.ping()
                 health_status["redis"] = "healthy"
             except Exception as e:
-                logger.error(f"Redis health check failed: {e}")
+                if not exclude_health_logs:
+                    logger.error(f"Redis health check failed: {e}")
                 health_status["redis"] = "unhealthy"
         else:
             health_status["redis"] = "unavailable"
@@ -366,7 +370,9 @@ async def health_check() -> Dict[str, Any]:
                 health_status["status"] = "unhealthy"
         
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
+        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+        if not exclude_health_logs:
+            logger.error(f"Health check failed: {e}")
         health_status["status"] = "unhealthy"
         health_status["error"] = str(e)
     

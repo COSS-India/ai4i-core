@@ -516,6 +516,8 @@ services:
       - ALLOW_ANONYMOUS_ACCESS=true
       - TRITON_ENDPOINT=http://13.200.133.97:9000
       - TRITON_TIMEOUT=120
+    env_file:
+      - ./services/asr-service/.env
     depends_on:
       config-service:
         condition: service_healthy
@@ -605,6 +607,8 @@ services:
       - "8099:8099"
     environment:
       - ENV_FILE=.env
+    env_file:
+      - ./services/ocr-service/.env
     depends_on:
       config-service:
         condition: service_healthy
@@ -1217,6 +1221,13 @@ services:
   fluent-bit:
     image: fluent/fluent-bit:latest
     container_name: ai4v-fluent-bit
+    env_file:
+      - ./.env
+    # Log filtering configuration is read from .env file (no hardcoding)
+    # - EXCLUDE_INIT_LOGS: Filter initialization/noise logs (startup messages)
+    # - INCLUDE_SERVICE_LOGS: Service allowlist (comma-separated list of services to keep)
+    #   Example: INCLUDE_SERVICE_LOGS=asr,tts,ocr,ner,nmt,llm,pipeline,transliteration,language-detection,language-diarization,audio-lang-detection,speaker-diarization,auth
+    #   If not set, all logs are kept (no filtering)
     volumes:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
