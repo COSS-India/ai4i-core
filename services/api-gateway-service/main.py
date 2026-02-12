@@ -1627,6 +1627,11 @@ class UserRegisterRequest(BaseModel):
     full_name: Optional[str] = Field(None, description="Full name of the user")
     services: List[str] = Field(..., description="List of services the user has access to", example=["tts", "asr"])
     is_approved: bool = Field(False, description="Indicates if the user is approved by tenant admin")
+    role: Optional[str] = Field(
+        None,
+        description="Role for the user (key-value: {'role': 'USER'}). Allowed: ADMIN, USER, GUEST, MODERATOR.",
+        example="USER",
+    )
 
 class UserRegisterResponse(BaseModel):
     """Response model for user registration."""
@@ -1635,7 +1640,9 @@ class UserRegisterResponse(BaseModel):
     username: str = Field(..., description="Username")
     email: str = Field(..., description="User email")
     services: List[str] = Field(..., description="List of services")
+    schema: str = Field(..., description="Tenant schema name")
     created_at: datetime = Field(..., description="Creation timestamp")
+    role: str = Field(..., description="Role for the user (key-value: {'role': 'USER'})")
 
 class TenantStatusUpdateRequest(BaseModel):
     """Request model for updating tenant status."""
@@ -1811,6 +1818,8 @@ class TenantUserViewResponse(BaseModel):
     status: str = Field(..., description="User status")
     created_at: str = Field(..., description="Creation timestamp")
     updated_at: str = Field(..., description="Update timestamp")
+    is_approved: bool = Field(False, description="Whether the user is approved by tenant admin")
+    role: str = Field("", description="Role for the user (key-value: {'role': 'USER'})")
 
 
 class ListTenantsResponse(BaseModel):
@@ -1832,6 +1841,10 @@ class TenantUserUpdateRequest(BaseModel):
     username: Optional[str] = Field(None,min_length=3,max_length=100,description="Username for the tenant user")
     email: Optional[EmailStr] = Field(None,description="Email address for the tenant user")
     is_approved: Optional[bool] = Field(None,description="Whether the tenant user is approved by the tenant admin")
+    role: Optional[str] = Field(
+        None,
+        description="Role for the user (key-value: {'role': 'USER'}). Allowed: ADMIN, USER, GUEST, MODERATOR.",
+    )
 
 
 class TenantUserUpdateResponse(BaseModel):
@@ -1841,6 +1854,7 @@ class TenantUserUpdateResponse(BaseModel):
     message: str = Field(..., description="Update message")
     changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
     updated_fields: List[str] = Field(..., description="List of updated field names")
+    role: Optional[str] = Field(None, description="Current role after update (key-value: {'role': 'USER'})")
 
 
 class TenantUserDeleteRequest(BaseModel):
@@ -2887,18 +2901,19 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             req.state.subscriptions = tenant_context.get("subscriptions", [])
                             req.state.user_subscriptions = tenant_context.get("user_subscriptions", [])
                         else:
+                            pass
                             # Tenant is required - return error if not present
-                            if auth_span:
-                                auth_span.set_attribute("error", True)
-                                auth_span.set_attribute("error.type", "TenantMissing")
-                                auth_span.set_status(Status(StatusCode.ERROR, "Tenant ID missing from token"))
-                            raise HTTPException(
-                                status_code=403,
-                                detail={
-                                    "code": "TENANT_REQUIRED",
-                                    "message": "Tenant ID is required for this operation. Your account is not associated with any tenant. Please contact your administrator."
-                                }
-                            )
+                            # if auth_span:
+                            #     auth_span.set_attribute("error", True)
+                            #     auth_span.set_attribute("error.type", "TenantMissing")
+                            #     auth_span.set_status(Status(StatusCode.ERROR, "Tenant ID missing from token"))
+                            # raise HTTPException(
+                            #     status_code=403,
+                            #     detail={
+                            #         "code": "TENANT_REQUIRED",
+                            #         "message": "Tenant ID is required for this operation. Your account is not associated with any tenant. Please contact your administrator."
+                            #     }
+                            # )
                     if auth_span:
                         auth_span.set_attribute("auth.authenticated", True)
                         auth_span.set_attribute("auth.authorized", True)  # Bearer token implies authorization
@@ -7209,8 +7224,9 @@ async def update_tenant_user_for_multi_tenant(
     api_key: Optional[str] = Security(api_key_scheme),
 ):
     """
-    Update tenant user information (username, email, is_approved) via API Gateway.
-    Supports partial updates - only provided fields will be updated..
+    Update tenant user information (username, email, is_approved, role) via API Gateway.
+    Supports partial updates - only provided fields will be updated.
+    Role: ADMIN, USER, GUEST, MODERATOR (key-value: {"role": "USER"}).
     """
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
