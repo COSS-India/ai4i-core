@@ -195,5 +195,126 @@ function add_jaeger_url(tag, timestamp, record)
     return 1, timestamp, record
 end
 
+-- Function to filter logs based on service allowlist (INCLUDE_SERVICE_LOGS)
+function filter_dashboard_logs(tag, timestamp, record)
+    -- Read environment variables (no hardcoding)
+    local include_services = os.getenv("INCLUDE_SERVICE_LOGS") or ""
+    local exclude_init_logs = os.getenv("EXCLUDE_INIT_LOGS") or "false"
+    
+    -- Parse exclude_init_logs boolean
+    local exclude_init = exclude_init_logs:lower():match("^%s*(true|1|yes|on)%s*$") ~= nil
+    
+    -- Filter initialization/noise logs if enabled
+    if exclude_init then
+        local message = record["message"] or ""
+        local logger = record["logger"] or ""
+        local level = record["level"] or ""
+        
+        -- Filter logs from "main" logger with INFO level (most initialization logs)
+        if type(logger) == "string" and logger:lower() == "main" then
+            if type(level) == "string" and level:upper() == "INFO" then
+                return -1, timestamp, record
+            end
+        end
+        
+        -- Filter initialization messages by pattern (case-insensitive)
+        if type(message) == "string" and message ~= "" then
+            local msg_lower = message:lower()
+            
+            -- Filter initialization messages (comprehensive patterns)
+            if msg_lower:match("distributed tracing initialized") or
+               msg_lower:match("fastapi instrumentation") or
+               msg_lower:match("redis client created") or
+               msg_lower:match("rate limiting middleware") or
+               msg_lower:match("observability plugin") or
+               msg_lower:match("model management plugin") or
+               msg_lower:match("plugin initialized") or
+               msg_lower:match("connected to redis") or
+               msg_lower:match("connected to postgres") or
+               msg_lower:match("starting.*service") or
+               msg_lower:match("initialized for.*service") or
+               (msg_lower:match("initialized") and msg_lower:match("service")) or
+               (msg_lower:match("created") and (msg_lower:match("middleware") or msg_lower:match("for"))) or
+               msg_lower:match("middleware added") then
+                return -1, timestamp, record
+            end
+        end
+    end
+    
+    -- If INCLUDE_SERVICE_LOGS is not set or empty, keep all logs (no filtering)
+    if include_services == nil or include_services == "" then
+        return 1, timestamp, record
+    end
+    
+    -- Parse comma-separated service list and normalize service names
+    local allowed_services = {}
+    for service in include_services:gmatch("([^,]+)") do
+        service = service:gsub("^%s+", ""):gsub("%s+$", ""):lower()  -- Trim whitespace and lowercase
+        if service ~= "" then
+            -- Map user-friendly names to actual service names in logs
+            local service_mapping = {
+                ["asr"] = "asr-service",
+                ["audio lang detection"] = "audio-lang-detection-service",
+                ["audio-lang-detection"] = "audio-lang-detection-service",
+                ["language detection"] = "language-detection-service",
+                ["language-detection"] = "language-detection-service",
+                ["language diarization"] = "language-diarization-service",
+                ["language-diarization"] = "language-diarization-service",
+                ["llm"] = "llm-service",
+                ["ner"] = "ner-service",
+                ["nmt"] = "nmt-service",
+                ["ocr"] = "ocr-service",
+                ["pipeline"] = "pipeline-service",
+                ["speaker diarization"] = "speaker-diarization-service",
+                ["speaker-diarization"] = "speaker-diarization-service",
+                ["transliteration"] = "transliteration-service",
+                ["tts"] = "tts-service",
+                ["auth"] = "auth-service"
+            }
+            
+            -- Use mapping if available, otherwise assume it's already a service name
+            local mapped_service = service_mapping[service] or service
+            -- If user provided name without "-service", add it
+            if not mapped_service:match("%-service$") then
+                mapped_service = mapped_service .. "-service"
+            end
+            allowed_services[mapped_service] = true
+        end
+    end
+    
+    -- If no valid services in allowlist, keep all logs (backward compatible)
+    if next(allowed_services) == nil then
+        return 1, timestamp, record
+    end
+    
+    -- Get service from log record
+    local service = record["service"] or ""
+    
+    -- If log has no service field, drop it (dashboard logs, Kafka logs, etc. don't have service field)
+    if service == nil or service == "" then
+        return -1, timestamp, record
+    end
+    
+    -- Normalize service name for comparison
+    local service_lower = service:lower()
+    
+    -- Check if service is in allowed list
+    local is_allowed = false
+    for allowed_service, _ in pairs(allowed_services) do
+        if service_lower == allowed_service:lower() or 
+           service_lower:match("^" .. allowed_service:lower()) then
+            is_allowed = true
+            break
+        end
+    end
+    
+    -- Keep log if service is in allowlist, otherwise drop it
+    if is_allowed then
+        return 1, timestamp, record
+    else
+        return -1, timestamp, record
+    end
+end
+
 
 
