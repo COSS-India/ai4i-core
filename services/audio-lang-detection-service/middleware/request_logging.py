@@ -30,7 +30,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     def __init__(self, app):
         super().__init__(app)
-        
+
         # Read filtering configuration from environment variables
         exclude_health_env = os.getenv("EXCLUDE_HEALTH_LOGS", "false")
         exclude_metrics_env = os.getenv("EXCLUDE_METRICS_LOGS", "false")
