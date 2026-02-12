@@ -27,7 +27,6 @@ import {
   TabPanels,
   Tab,
   TabPanel,
-  useToast,
   Textarea,
   SimpleGrid,
   Grid,
@@ -56,6 +55,7 @@ import { getAllModels, getModelById } from "../services/modelManagementService";
 import { useAuth } from "../hooks/useAuth";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { extractErrorInfo } from "../utils/errorHandler";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const ServicesManagementPage: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
@@ -82,7 +82,7 @@ const ServicesManagementPage: React.FC = () => {
   const [publishingServiceUuid, setPublishingServiceUuid] = useState<string | null>(null);
   const [unpublishingServiceUuid, setUnpublishingServiceUuid] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const { user } = useAuth();
 
   const router = useRouter();

@@ -128,7 +128,7 @@ const ProfilePage: React.FC = () => {
       { id: "api-key", label: "API Key", show: true },
       { id: "roles", label: "Roles", show: isAdmin },
       { id: "create-api-key", label: "Create API Key", show: isAdmin },
-      { id: "api-key-management", label: "API Key Management", show: isAdmin || isModerator },
+      { id: "api-key-management", label: "API Key Management", show: isAdmin },
       { id: "multi-tenant", label: "Multi Tenant Management", show: false },
     ];
     return tabs.filter((t) => t.show);

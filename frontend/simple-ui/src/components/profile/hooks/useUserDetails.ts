@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useToast } from "@chakra-ui/react";
+import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import type { User, UserUpdateRequest } from "../../../types/auth";
 
 export interface UseUserDetailsOptions {
@@ -9,7 +9,7 @@ export interface UseUserDetailsOptions {
 }
 
 export function useUserDetails({ user, updateUser, checkSessionExpiry }: UseUserDetailsOptions) {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [isEditingUser, setIsEditingUser] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [userFormData, setUserFormData] = useState<UserUpdateRequest>({
