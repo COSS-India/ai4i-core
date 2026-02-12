@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Query
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Query, Request
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
@@ -68,15 +68,17 @@ async def register_tenant_request(
 
 
 
-@router.post("/register/users",response_model=UserRegisterResponse,status_code=status.HTTP_201_CREATED,)
+@router.post("/register/users", response_model=UserRegisterResponse, status_code=status.HTTP_201_CREATED)
 async def register_user_request(
+    request: Request,
     payload: UserRegisterRequest,
     background_tasks: BackgroundTasks,
     tenant_db: AsyncSession = Depends(get_tenant_db_session),
     auth_db: AsyncSession = Depends(get_auth_db_session),
 ):
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        return await register_user(payload, tenant_db, auth_db, background_tasks)
+        return await register_user(payload, tenant_db, auth_db, background_tasks, auth_header=auth_header)
 
     except HTTPException:
         raise
@@ -132,15 +134,17 @@ async def change_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
 
 @router.patch("/update/user", response_model=TenantUserUpdateResponse, status_code=status.HTTP_200_OK)
 async def update_tenant_user_info(
+    request: Request,
     payload: TenantUserUpdateRequest,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
-    Update tenant user information (username, email, is_approved).
+    Update tenant user information (username, email, is_approved, roles).
     Supports partial updates - only provided fields will be updated.
     """
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        return await update_tenant_user(payload, db)
+        return await update_tenant_user(payload, db, auth_header=auth_header)
     except HTTPException:
         raise
     except IntegrityError as ie:
@@ -240,15 +244,16 @@ async def view_tenant(
 
 @router.get("/view/user", status_code=status.HTTP_200_OK)
 async def view_tenant_user(
+    request: Request,
     user_id: int,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
-    View tenant user details by tenant_id and auth user_id.
-
+    View tenant user details by auth user_id. Includes roles from auth service when authorized.
     """
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        result = await view_tenant_user_details(user_id, db)
+        result = await view_tenant_user_details(user_id, db, auth_header=auth_header)
 
         if not result:
             raise HTTPException(status_code=404, detail="Tenant user not found")
@@ -280,17 +285,17 @@ async def list_tenants(
 
 @router.get("/list/users", response_model=ListUsersResponse, status_code=status.HTTP_200_OK)
 async def list_users(
+    request: Request,
     tenant_id: Optional[str] = Query(None, description="Filter users by tenant_id"),
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
-    List tenant users.
-
+    List tenant users. Includes roles from auth service when authorized.
     If tenant_id is provided, only users for that tenant are returned.
-    If tenant_id is omitted, users across all tenants are returned.
     """
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        return await list_all_users(db, tenant_id=tenant_id)
+        return await list_all_users(db, tenant_id=tenant_id, auth_header=auth_header)
     except HTTPException:
         raise
     except Exception as exc:
