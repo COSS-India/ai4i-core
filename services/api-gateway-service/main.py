@@ -1782,6 +1782,10 @@ class TenantUpdateRequest(BaseModel):
     domain: Optional[str] = Field(None, min_length=3, max_length=255, description="Domain name")
     requested_quotas: Optional[QuotaStructure] = Field(None, description="Requested quota limits (characters_length, audio_length_in_min)")
     usage_quota: Optional[QuotaStructure] = Field(None, description="Usage quota values (characters_length, audio_length_in_min)")
+    role: Optional[str] = Field(
+        None,
+        description="Role for tenant admin (key-value: {'role': 'ADMIN'}). Allowed: ADMIN, USER, GUEST, MODERATOR.",
+    )
 
 class TenantUpdateResponse(BaseModel):
     """Response model for tenant update"""
@@ -1789,6 +1793,7 @@ class TenantUpdateResponse(BaseModel):
     message: str = Field(..., description="Update message")
     changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
     updated_fields: List[str] = Field(..., description="List of updated field names")
+    role: Optional[str] = Field(None, description="Current tenant admin role after update")
 
 class TenantViewResponse(BaseModel):
     """Response model for viewing tenant information."""
@@ -1805,6 +1810,7 @@ class TenantViewResponse(BaseModel):
     usage_quota: Optional[Dict[str, Any]] = Field(None, description="Usage quota values")
     created_at: str = Field(..., description="Creation timestamp")
     updated_at: str = Field(..., description="Update timestamp")
+    role: str = Field("", description="Role for tenant admin (key-value: {'role': 'ADMIN'})")
 
 
 class TenantUserViewResponse(BaseModel):
