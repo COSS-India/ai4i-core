@@ -92,6 +92,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # SMR Service Configuration
+SMR_ENABLED = os.getenv("SMR_ENABLED", "true").lower() == "true"
 SMR_SERVICE_URL = os.getenv("SMR_SERVICE_URL", "http://smr-service:8097")
 
 # Create router with authentication dependency
@@ -122,8 +123,17 @@ async def resolve_service_id_if_needed(
 
     # Logic: First check if serviceId is in request body
     # If yes, use it (skip SMR)
-    # If no, call SMR to get serviceId
+    # If no, call SMR to get serviceId (if SMR is enabled)
     if not request.config.serviceId:
+        # Check if SMR is enabled
+        if not SMR_ENABLED:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "SMR_DISABLED",
+                    "message": "SMR is disabled and serviceId is required in request body",
+                },
+            )
         user_id = getattr(http_request.state, "user_id", None)
 
         # Extract tenant_id ONLY from auth token (JWT payload).
