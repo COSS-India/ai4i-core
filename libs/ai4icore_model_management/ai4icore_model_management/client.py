@@ -180,7 +180,7 @@ class ModelManagementClient:
         # Fetch from API
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/api/v1/model-management/services/"
+            url = f"{self.base_url}/api/v1/model-management/services"
             headers = self._get_headers(auth_headers)
             
             # Add task_type as query parameter if provided
