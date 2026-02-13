@@ -111,9 +111,11 @@ class AuthMiddleware:
             )
             if response.status_code == 200:
                 data = response.json()
+                user_id = str(data.get("user_id", ""))
                 # Return token payload format expected by API Gateway
                 return {
-                    "sub": str(data.get("user_id")),
+                    "sub": user_id,
+                    "user_id": user_id,  # Include user_id for compatibility
                     "username": data.get("username"),
                     "permissions": data.get("permissions", []),
                     "roles": data.get("roles", []),

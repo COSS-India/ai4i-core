@@ -11,7 +11,8 @@ class UserDB(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), unique=True, index=True, nullable=False)
     username = Column(String(100), unique=True, index=True, nullable=False)
-    password_hash = Column(String(255), nullable=False)
+    # Match auth-service schema: column name is 'hashed_password'
+    hashed_password = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

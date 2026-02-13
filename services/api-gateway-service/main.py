@@ -2198,10 +2198,19 @@ def is_multi_tenant_request(request: Request) -> bool:
     """Multi-tenant endpoints should use only auth tokens (no API key)."""
     return request.url.path.lower().startswith("/api/v1/multi-tenant")
 
-async def validate_api_key_permissions(api_key: str, service: str, action: str) -> None:
-    """Call auth-service to validate API key permissions."""
+async def validate_api_key_permissions(api_key: str, service: str, action: str, user_id: Optional[int] = None) -> None:
+    """Call auth-service to validate API key permissions.
+    
+    Args:
+        api_key: The API key to validate
+        service: Service name (ocr, asr, etc.)
+        action: Action type (read, inference)
+        user_id: Optional user ID from JWT for ownership check in BOTH mode
+    """
     url = f"{AUTH_SERVICE_URL}/api/v1/auth/validate-api-key"
     request_body = {"api_key": api_key, "service": service, "action": action}
+    if user_id is not None:
+        request_body["user_id"] = user_id
     
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -2711,7 +2720,9 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                         authz_span.set_attribute("auth.method", "API_KEY")
                     
                     try:
-                        await validate_api_key_permissions(api_key, service, action)
+                        # In BOTH mode, pass user_id to validate API key ownership
+                        jwt_user_id = getattr(req.state, "user_id", None)
+                        await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
                         if authz_span:
                             authz_span.set_attribute("auth.authorized", True)
                             authz_span.set_status(Status(StatusCode.OK))
@@ -2788,7 +2799,8 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             authz_span.set_attribute("auth.method", "API_KEY")
                         
                         try:
-                            await validate_api_key_permissions(api_key, service, action)
+                            # For API_KEY-only mode, no user_id to check ownership
+                            await validate_api_key_permissions(api_key, service, action, user_id=None)
                             if authz_span:
                                 authz_span.set_attribute("auth.authorized", True)
                                 authz_span.set_status(Status(StatusCode.OK))
@@ -5250,7 +5262,7 @@ async def audio_lang_detection_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Audio Language Detection service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "audio-lang-detection-service", method="GET", headers=headers)
 
@@ -5273,7 +5285,7 @@ async def audio_lang_detection_inference(
     )
     
     try:
-        ensure_authenticated_for_request(request, credentials, api_key)
+        await ensure_authenticated_for_request(request, credentials, api_key)
     except HTTPException as e:
         logger.warning(
             f"Authentication failed for audio-lang-detection inference: status={e.status_code}, detail={e.detail}, path={request.url.path}"
@@ -5903,11 +5915,9 @@ async def ocr_inference(
 
     body = json.dumps(body_dict).encode("utf-8")
 
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    # Use build_auth_headers which automatically sets X-Auth-Source to BOTH when both JWT and API key are present
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
 
     return await proxy_to_service(
         None, "/api/v1/ocr/inference", "ocr-service", method="POST", body=body, headers=headers
@@ -7054,7 +7064,7 @@ async def get_user_profile(request: Request):
     """Get user profile (requires authentication)"""
     user = await auth_middleware.require_auth(request)
     return {
-        "user_id": user.get("user_id"),
+        "user_id": user.get("user_id") or user.get("sub"),
         "username": user.get("username"),
         "permissions": user.get("permissions", []),
         "message": "User profile data would be fetched here"
