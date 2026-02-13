@@ -24,6 +24,11 @@ class ServicePolicyRequest(BaseModel):
     policy: ServicePolicyData = Field(..., description="Policy data (latency, cost, accuracy)")
 
 
+class ServicePolicyUpdateRequest(BaseModel):
+    """Request to add or update policy when service_id is in path (POST /services/{service_id}/policy)"""
+    policy: ServicePolicyData = Field(..., description="Policy data (latency, cost, accuracy)")
+
+
 class ServicePolicyResponse(BaseModel):
     """Response containing service policy information"""
     serviceId: str
