@@ -143,7 +143,7 @@ export const listVoices = async (filters?: VoiceFilterOptions): Promise<VoiceLis
 
     const response = await apiClient.get<VoiceListResponse>(
       apiEndpoints.tts.voices,
-      { params }
+      { params, timeout: 15000 }
     );
 
     return response.data;
