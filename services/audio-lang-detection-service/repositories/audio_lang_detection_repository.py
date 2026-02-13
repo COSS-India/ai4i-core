@@ -26,6 +26,44 @@ class AudioLangDetectionRepository:
     
     def __init__(self, db: AsyncSession):
         self.db = db
+        self._is_tenant_schema: Optional[bool] = None
+
+    async def _is_tenant_context(self) -> bool:
+        """
+        Check if we're in a tenant schema context by querying search_path.
+        Mirrors the pattern used in ASR/NMT repositories.
+        """
+        if self._is_tenant_schema is not None:
+            return self._is_tenant_schema
+
+        try:
+            # Query current search_path to detect tenant schema
+            result = await self.db.execute(text("SHOW search_path"))
+            search_path = result.scalar()
+
+            logger.info(f"AudioLangDetectionRepository checking search_path: {search_path}")
+
+            if search_path:
+                # Remove quotes and split by comma
+                schemas = [s.strip().strip('"').strip("'") for s in search_path.split(",")]
+                logger.info(f"AudioLangDetectionRepository parsed schemas from search_path: {schemas}")
+                # If first schema is not 'public' or '$user', assume tenant context
+                if schemas and schemas[0] not in ("public", "$user", ""):
+                    self._is_tenant_schema = True
+                    logger.info(f"AudioLangDetectionRepository detected tenant schema: {schemas[0]}")
+                    return True
+
+            self._is_tenant_schema = False
+            logger.info(
+                "AudioLangDetectionRepository: no tenant schema detected, using public schema. "
+                f"search_path was: {search_path}"
+            )
+            return False
+        except Exception as e:
+            logger.error(f"AudioLangDetectionRepository: failed to detect tenant context: {e}", exc_info=True)
+            # On error, assume non-tenant (public) to avoid breaking inference
+            self._is_tenant_schema = False
+            return False
     
     async def create_request(
         self,
@@ -37,6 +75,25 @@ class AudioLangDetectionRepository:
     ) -> AudioLangDetectionRequestDB:
         """Create new audio language detection request record"""
         try:
+            # Log database and search_path for routing verification
+            try:
+                db_name_result = await self.db.execute(text("SELECT current_database()"))
+                current_db = db_name_result.scalar()
+                search_path_result = await self.db.execute(text("SHOW search_path"))
+                current_search_path = search_path_result.scalar()
+                is_tenant = await self._is_tenant_context()
+                logger.info(
+                    "AudioLangDetectionRepository.create_request: "
+                    "database=%s, search_path=%s, is_tenant_schema=%s, model_id=%s, user_id=%s",
+                    current_db,
+                    current_search_path,
+                    is_tenant,
+                    model_id,
+                    user_id,
+                )
+            except Exception as log_exc:
+                logger.warning(f"AudioLangDetectionRepository: failed to log DB routing info: {log_exc}")
+
             request = AudioLangDetectionRequestDB(
                 user_id=user_id,
                 api_key_id=api_key_id,

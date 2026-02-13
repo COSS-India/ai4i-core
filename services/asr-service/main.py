@@ -377,6 +377,8 @@ except Exception as e:
 # so that Observability runs first and caches the body, then Model Management can use cached body
 
 # Add middleware after FastAPI app creation
+# Tenant middleware (MUST be early to mark tenant-aware routes)
+app.add_middleware(TenantMiddleware)
 # Correlation middleware (MUST be before RequestLoggingMiddleware)
 app.add_middleware(CorrelationMiddleware)
 # Structured request logging middleware (logs to OpenSearch)
