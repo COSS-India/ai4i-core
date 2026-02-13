@@ -290,6 +290,11 @@ class APIKeyValidationRequest(BaseModel):
     api_key: str
     service: str = Field(..., description="Service name: asr, tts, nmt, pipeline, model-management")
     action: str = Field(..., description="Action type: read, inference")
+    user_id: Optional[int] = Field(
+        default=None,
+        description="Authenticated user id (for BOTH mode ownership enforcement). "
+                    "When provided, the API key must belong to this user."
+    )
 
 class APIKeyValidationResponse(BaseModel):
     valid: bool

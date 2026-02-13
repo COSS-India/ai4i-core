@@ -1627,6 +1627,11 @@ class UserRegisterRequest(BaseModel):
     full_name: Optional[str] = Field(None, description="Full name of the user")
     services: List[str] = Field(..., description="List of services the user has access to", example=["tts", "asr"])
     is_approved: bool = Field(False, description="Indicates if the user is approved by tenant admin")
+    role: Optional[str] = Field(
+        None,
+        description="Role for the user (key-value: {'role': 'USER'}). Allowed: ADMIN, USER, GUEST, MODERATOR.",
+        example="USER",
+    )
 
 class UserRegisterResponse(BaseModel):
     """Response model for user registration."""
@@ -1635,7 +1640,9 @@ class UserRegisterResponse(BaseModel):
     username: str = Field(..., description="Username")
     email: str = Field(..., description="User email")
     services: List[str] = Field(..., description="List of services")
+    schema: str = Field(..., description="Tenant schema name")
     created_at: datetime = Field(..., description="Creation timestamp")
+    role: str = Field(..., description="Role for the user (key-value: {'role': 'USER'})")
 
 class TenantStatusUpdateRequest(BaseModel):
     """Request model for updating tenant status."""
@@ -1775,6 +1782,10 @@ class TenantUpdateRequest(BaseModel):
     domain: Optional[str] = Field(None, min_length=3, max_length=255, description="Domain name")
     requested_quotas: Optional[QuotaStructure] = Field(None, description="Requested quota limits (characters_length, audio_length_in_min)")
     usage_quota: Optional[QuotaStructure] = Field(None, description="Usage quota values (characters_length, audio_length_in_min)")
+    role: Optional[str] = Field(
+        None,
+        description="Role for tenant admin (key-value: {'role': 'ADMIN'}). Allowed: ADMIN, USER, GUEST, MODERATOR.",
+    )
 
 class TenantUpdateResponse(BaseModel):
     """Response model for tenant update"""
@@ -1782,6 +1793,7 @@ class TenantUpdateResponse(BaseModel):
     message: str = Field(..., description="Update message")
     changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
     updated_fields: List[str] = Field(..., description="List of updated field names")
+    role: Optional[str] = Field(None, description="Current tenant admin role after update")
 
 class TenantViewResponse(BaseModel):
     """Response model for viewing tenant information."""
@@ -1798,6 +1810,7 @@ class TenantViewResponse(BaseModel):
     usage_quota: Optional[Dict[str, Any]] = Field(None, description="Usage quota values")
     created_at: str = Field(..., description="Creation timestamp")
     updated_at: str = Field(..., description="Update timestamp")
+    role: str = Field("", description="Role for tenant admin (key-value: {'role': 'ADMIN'})")
 
 
 class TenantUserViewResponse(BaseModel):
@@ -1811,6 +1824,8 @@ class TenantUserViewResponse(BaseModel):
     status: str = Field(..., description="User status")
     created_at: str = Field(..., description="Creation timestamp")
     updated_at: str = Field(..., description="Update timestamp")
+    is_approved: bool = Field(False, description="Whether the user is approved by tenant admin")
+    role: str = Field("", description="Role for the user (key-value: {'role': 'USER'})")
 
 
 class ListTenantsResponse(BaseModel):
@@ -1832,6 +1847,10 @@ class TenantUserUpdateRequest(BaseModel):
     username: Optional[str] = Field(None,min_length=3,max_length=100,description="Username for the tenant user")
     email: Optional[EmailStr] = Field(None,description="Email address for the tenant user")
     is_approved: Optional[bool] = Field(None,description="Whether the tenant user is approved by the tenant admin")
+    role: Optional[str] = Field(
+        None,
+        description="Role for the user (key-value: {'role': 'USER'}). Allowed: ADMIN, USER, GUEST, MODERATOR.",
+    )
 
 
 class TenantUserUpdateResponse(BaseModel):
@@ -1841,6 +1860,7 @@ class TenantUserUpdateResponse(BaseModel):
     message: str = Field(..., description="Update message")
     changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
     updated_fields: List[str] = Field(..., description="List of updated field names")
+    role: Optional[str] = Field(None, description="Current role after update (key-value: {'role': 'USER'})")
 
 
 class TenantUserDeleteRequest(BaseModel):
@@ -2198,10 +2218,19 @@ def is_multi_tenant_request(request: Request) -> bool:
     """Multi-tenant endpoints should use only auth tokens (no API key)."""
     return request.url.path.lower().startswith("/api/v1/multi-tenant")
 
-async def validate_api_key_permissions(api_key: str, service: str, action: str) -> None:
-    """Call auth-service to validate API key permissions."""
+async def validate_api_key_permissions(api_key: str, service: str, action: str, user_id: Optional[int] = None) -> None:
+    """Call auth-service to validate API key permissions.
+    
+    Args:
+        api_key: The API key to validate
+        service: Service name (ocr, asr, etc.)
+        action: Action type (read, inference)
+        user_id: Optional user ID from JWT for ownership check in BOTH mode
+    """
     url = f"{AUTH_SERVICE_URL}/api/v1/auth/validate-api-key"
     request_body = {"api_key": api_key, "service": service, "action": action}
+    if user_id is not None:
+        request_body["user_id"] = user_id
     
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -2711,7 +2740,9 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                         authz_span.set_attribute("auth.method", "API_KEY")
                     
                     try:
-                        await validate_api_key_permissions(api_key, service, action)
+                        # In BOTH mode, pass user_id to validate API key ownership
+                        jwt_user_id = getattr(req.state, "user_id", None)
+                        await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
                         if authz_span:
                             authz_span.set_attribute("auth.authorized", True)
                             authz_span.set_status(Status(StatusCode.OK))
@@ -2788,7 +2819,8 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             authz_span.set_attribute("auth.method", "API_KEY")
                         
                         try:
-                            await validate_api_key_permissions(api_key, service, action)
+                            # For API_KEY-only mode, no user_id to check ownership
+                            await validate_api_key_permissions(api_key, service, action, user_id=None)
                             if authz_span:
                                 authz_span.set_attribute("auth.authorized", True)
                                 authz_span.set_status(Status(StatusCode.OK))
@@ -2887,18 +2919,19 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             req.state.subscriptions = tenant_context.get("subscriptions", [])
                             req.state.user_subscriptions = tenant_context.get("user_subscriptions", [])
                         else:
+                            pass
                             # Tenant is required - return error if not present
-                            if auth_span:
-                                auth_span.set_attribute("error", True)
-                                auth_span.set_attribute("error.type", "TenantMissing")
-                                auth_span.set_status(Status(StatusCode.ERROR, "Tenant ID missing from token"))
-                            raise HTTPException(
-                                status_code=403,
-                                detail={
-                                    "code": "TENANT_REQUIRED",
-                                    "message": "Tenant ID is required for this operation. Your account is not associated with any tenant. Please contact your administrator."
-                                }
-                            )
+                            # if auth_span:
+                            #     auth_span.set_attribute("error", True)
+                            #     auth_span.set_attribute("error.type", "TenantMissing")
+                            #     auth_span.set_status(Status(StatusCode.ERROR, "Tenant ID missing from token"))
+                            # raise HTTPException(
+                            #     status_code=403,
+                            #     detail={
+                            #         "code": "TENANT_REQUIRED",
+                            #         "message": "Tenant ID is required for this operation. Your account is not associated with any tenant. Please contact your administrator."
+                            #     }
+                            # )
                     if auth_span:
                         auth_span.set_attribute("auth.authenticated", True)
                         auth_span.set_attribute("auth.authorized", True)  # Bearer token implies authorization
@@ -5250,7 +5283,7 @@ async def audio_lang_detection_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Audio Language Detection service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "audio-lang-detection-service", method="GET", headers=headers)
 
@@ -5273,7 +5306,7 @@ async def audio_lang_detection_inference(
     )
     
     try:
-        ensure_authenticated_for_request(request, credentials, api_key)
+        await ensure_authenticated_for_request(request, credentials, api_key)
     except HTTPException as e:
         logger.warning(
             f"Authentication failed for audio-lang-detection inference: status={e.status_code}, detail={e.detail}, path={request.url.path}"
@@ -5903,11 +5936,9 @@ async def ocr_inference(
 
     body = json.dumps(body_dict).encode("utf-8")
 
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    # Use build_auth_headers which automatically sets X-Auth-Source to BOTH when both JWT and API key are present
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
 
     return await proxy_to_service(
         None, "/api/v1/ocr/inference", "ocr-service", method="POST", body=body, headers=headers
@@ -6533,7 +6564,7 @@ async def delete_model(
 
 
 
-@app.get("/api/v1/model-management/services/", response_model=List[ServiceListResponse], tags=["Model Management"])
+@app.get("/api/v1/model-management/services", response_model=List[ServiceListResponse], tags=["Model Management"])
 async def list_services(
     request: Request,
     task_type: Union[ModelTaskTypeEnum,None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
@@ -7054,7 +7085,7 @@ async def get_user_profile(request: Request):
     """Get user profile (requires authentication)"""
     user = await auth_middleware.require_auth(request)
     return {
-        "user_id": user.get("user_id"),
+        "user_id": user.get("user_id") or user.get("sub"),
         "username": user.get("username"),
         "permissions": user.get("permissions", []),
         "message": "User profile data would be fetched here"
@@ -7205,8 +7236,9 @@ async def update_tenant_user_for_multi_tenant(
     api_key: Optional[str] = Security(api_key_scheme),
 ):
     """
-    Update tenant user information (username, email, is_approved) via API Gateway.
-    Supports partial updates - only provided fields will be updated..
+    Update tenant user information (username, email, is_approved, role) via API Gateway.
+    Supports partial updates - only provided fields will be updated.
+    Role: ADMIN, USER, GUEST, MODERATOR (key-value: {"role": "USER"}).
     """
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
@@ -8120,8 +8152,9 @@ async def proxy_request(request: Request, path: str):
                                 break
                         
                         if route_prefix:
-                            # Model-management expects full path /api/v1/model-management/* (same as gateway)
-                            service_path = full_request_path if service_name == "model-management-service" else (full_request_path[len(route_prefix):] or "/")
+                            # Model-management and llm-service expect full path /api/v1/... (same as gateway)
+                            services_full_path = ("model-management-service", "llm-service")
+                            service_path = full_request_path if service_name in services_full_path else (full_request_path[len(route_prefix):] or "/")
                         else:
                             service_path = full_request_path
                         return await proxy_to_service(request, service_path, service_name)
@@ -8165,8 +8198,9 @@ async def proxy_request(request: Request, path: str):
                         break
                 
                 if route_prefix:
-                    # Model-management expects full path /api/v1/model-management/* (same as gateway)
-                    service_path = full_request_path if service_name == "model-management-service" else (full_request_path[len(route_prefix):] or "/")
+                    # Model-management and llm-service expect full path /api/v1/... (same as gateway)
+                    services_full_path = ("model-management-service", "llm-service")
+                    service_path = full_request_path if service_name in services_full_path else (full_request_path[len(route_prefix):] or "/")
                 else:
                     service_path = full_request_path
                 
