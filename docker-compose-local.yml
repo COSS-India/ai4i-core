@@ -100,6 +100,7 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
     container_name: ai4v-zookeeper
