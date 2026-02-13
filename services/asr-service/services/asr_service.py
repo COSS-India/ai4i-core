@@ -74,14 +74,24 @@ class ASRService:
         request: ASRInferenceRequest,
         user_id: Optional[int] = None,
         api_key_id: Optional[int] = None,
-        session_id: Optional[int] = None
+        session_id: Optional[int] = None,
+        http_request_state: Optional[Any] = None
     ) -> ASRInferenceResponse:
         """Run ASR inference on audio inputs."""
         start_time = time.time()
         
         try:
             # Extract configuration
+            # Get service_id from request, with fallback to request.state (set by dependency)
             service_id = request.config.serviceId
+            if not service_id and http_request_state:
+                service_id = getattr(http_request_state, "service_id", None)
+            
+            if not service_id:
+                raise TritonInferenceError(
+                    "serviceId is required. It should be provided in the request or resolved via SMR."
+                )
+            
             language = request.config.language.sourceLanguage
             pre_processors = request.config.preProcessors or []
             post_processors = request.config.postProcessors or []
@@ -107,9 +117,18 @@ class ASRService:
             
             standard_rate = 16000  # Target sample rate
             
+            # Get model_id for database record - use service_id (which should be set by SMR or provided)
+            # The model_id field in database stores the serviceId
+            model_id_for_db = service_id
+            if not model_id_for_db:
+                raise TritonInferenceError(
+                    "Cannot create database record: serviceId is missing. "
+                    "Please ensure serviceId is provided in the request or resolved via SMR."
+                )
+            
             # Create database request record
             db_request = await self.repository.create_request(
-                model_id=service_id,
+                model_id=model_id_for_db,
                 language=language,
                 user_id=user_id,
                 api_key_id=api_key_id,
