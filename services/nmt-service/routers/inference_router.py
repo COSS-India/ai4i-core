@@ -109,11 +109,25 @@ async def resolve_service_id_if_needed(
     # Check if serviceId is missing
     if not request.config.serviceId:
         user_id = getattr(http_request.state, "user_id", None)
-        tenant_id = getattr(http_request.state, "tenant_id", None)
+        
+        # Only use tenant_id if it's from JWT token, not from fallback lookup
+        # Check if tenant_id exists in JWT payload (authentic tenant_id)
+        jwt_payload = getattr(http_request.state, "jwt_payload", None)
+        tenant_id_from_jwt = None
+        if jwt_payload:
+            tenant_id_from_jwt = jwt_payload.get("tenant_id")
+        
+        # Only pass tenant_id to SMR if it's from JWT token
+        # If tenant_id is from fallback lookup (not in JWT), treat as free user
+        tenant_id = tenant_id_from_jwt if tenant_id_from_jwt else None
         
         logger.info(
             "serviceId not provided, calling SMR service (dependency)",
-            extra={"user_id": user_id, "tenant_id": tenant_id}
+            extra={
+                "user_id": user_id,
+                "tenant_id_from_jwt": tenant_id_from_jwt,
+                "tenant_id_passed_to_smr": tenant_id,
+            }
         )
         
         # Call SMR service to get serviceId
