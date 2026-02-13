@@ -9,12 +9,7 @@ import logging
 
 from middleware.tenant_context import try_get_tenant_context
 
-# Use structured logging if available
-try:
-    from ai4icore_logging import get_logger
-    logger = get_logger(__name__)
-except ImportError:
-    logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 async def _get_shared_db_session(request: Request) -> AsyncSession:
@@ -31,7 +26,7 @@ async def _get_shared_db_session(request: Request) -> AsyncSession:
             detail="Database session factory not initialized",
         )
 
-    logger.info("Using shared auth_db session for ASR request (no tenant context).")
+    logger.debug("Using shared auth_db session for OCR request (no tenant context).")
     return db_session_factory()
 
 
@@ -41,15 +36,13 @@ async def get_tenant_db_session(request: Request) -> AsyncSession:
     - If tenant context can be resolved → returns a session bound to the tenant schema in multi_tenant_db.
     - If no tenant context (normal user) → falls back to shared auth_db session.
 
-    TenantMiddleware marks `/api/v1/nmt` requests with `needs_tenant_context = True`,
+    TenantMiddleware marks `/api/v1/ocr` requests with `needs_tenant_context = True`,
     so for those endpoints we always *try* tenant resolution first, then gracefully
     fall back to shared auth_db tables when the user is not a tenant/tenant-user.
     """
     # Check if tenant schema is already set (e.g., from JWT)
     schema_name = getattr(request.state, "tenant_schema", None)
-    
-    if schema_name:
-        logger.info(f"Using tenant schema from request.state: {schema_name}")
+    logger.info(f"get_tenant_db_session: schema_name from request.state={schema_name}, needs_tenant_context={getattr(request.state, 'needs_tenant_context', False)}")
 
     # If not set and this endpoint is tenant-aware, try to resolve tenant context
     if not schema_name and getattr(request.state, "needs_tenant_context", False):
@@ -61,17 +54,18 @@ async def get_tenant_db_session(request: Request) -> AsyncSession:
                 request.state.tenant_schema = schema_name
                 request.state.tenant_id = tenant_context.get("tenant_id")
                 logger.info(
-                    "Tenant context extracted for ASR: tenant_id=%s, schema=%s",
+                    "Tenant context extracted for OCR: tenant_id=%s, schema=%s",
                     tenant_context.get("tenant_id"),
                     schema_name,
                 )
             else:
                 # No tenant association → use shared auth_db
-                logger.debug("No tenant context found, using shared auth_db session")
+                user_id = getattr(request.state, "user_id", None)
+                logger.warning(f"No tenant context found for user_id={user_id}, falling back to shared auth_db")
                 return await _get_shared_db_session(request)
         except Exception as e:
             logger.error("Failed to extract tenant context: %s", e, exc_info=True)
-            # On errors resolving tenant, also fall back to shared auth_db to keep ASR functional
+            # On errors resolving tenant, also fall back to shared auth_db to keep OCR functional
             return await _get_shared_db_session(request)
 
     # If schema still not set, fall back to shared auth_db
