@@ -29,5 +29,4 @@ class TenantRegisterResponse(BaseModel):
     quotas: Dict[str, Any]
     usage_quota: Optional[Dict[str, Any]] = None
     status: str
-    token: str
     message: Optional[str] = None
