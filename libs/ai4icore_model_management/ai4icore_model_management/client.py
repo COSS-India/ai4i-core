@@ -391,7 +391,7 @@ class ModelManagementClient:
         """
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/experiments/select-variant"
+            url = f"{self.base_url}/api/v1/model-management/experiments/select-variant"
             headers = self._get_headers(auth_headers)
             payload = {
                 "task_type": task_type,
@@ -433,7 +433,7 @@ class ModelManagementClient:
         """
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/experiments/track-metric"
+            url = f"{self.base_url}/api/v1/model-management/experiments/track-metric"
             headers = self._get_headers(auth_headers)
             payload = {
                 "experiment_id": experiment_id,
