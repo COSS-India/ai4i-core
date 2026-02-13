@@ -10,7 +10,6 @@ import {
   Progress,
   Select,
   Text,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
@@ -23,9 +22,10 @@ import LoadingSpinner from "../components/common/LoadingSpinner";
 import { ASR_SUPPORTED_LANGUAGES } from "../config/constants";
 import { useASR } from "../hooks/useASR";
 import { listASRServices, ASRServiceDetails } from "../services/asrService";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const ASRPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const {
     language,
     sampleRate,

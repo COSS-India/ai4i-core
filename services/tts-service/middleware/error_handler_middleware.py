@@ -1,6 +1,7 @@
 """
 Global error handler middleware for consistent error responses.
 """
+import os
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -437,26 +438,38 @@ def add_error_handlers(app: FastAPI) -> None:
             except Exception:
                 pass
         
-        # Log the full error with traceback and context
-        logger.error(
-            f"Unexpected error in TTS service: {exc}",
-            extra={
-                "context": {
-                    "error_type": type(exc).__name__,
-                    "error_message": str(exc),
-                    "status_code": 500,
-                    "service_id": service_id,
-                    "triton_endpoint": triton_endpoint,
-                    "model_name": model_name,
-                    "user_id": user_id,
-                    "api_key_id": api_key_id,
-                    "correlation_id": correlation_id,
-                    "path": request.url.path,
-                    "method": request.method,
-                }
-            },
-            exc_info=True
-        )
+        # Check if health/metrics logs should be excluded
+        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+        exclude_metrics_logs = os.getenv("EXCLUDE_METRICS_LOGS", "false").lower() == "true"
+        
+        path = request.url.path.lower().rstrip('/')
+        should_skip = False
+        if exclude_health_logs and ('/health' in path or path.endswith('/health')):
+            should_skip = True
+        if exclude_metrics_logs and ('/metrics' in path or path.endswith('/metrics')):
+            should_skip = True
+        
+        # Log the full error with traceback and context (skip if health/metrics)
+        if not should_skip:
+            logger.error(
+                f"Unexpected error in TTS service: {exc}",
+                extra={
+                    "context": {
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                        "status_code": 500,
+                        "service_id": service_id,
+                        "triton_endpoint": triton_endpoint,
+                        "model_name": model_name,
+                        "user_id": user_id,
+                        "api_key_id": api_key_id,
+                        "correlation_id": correlation_id,
+                        "path": request.url.path,
+                        "method": request.method,
+                    }
+                },
+                exc_info=True
+            )
         
         error_detail = ErrorDetail(
             message=str(exc) if str(exc) else INTERNAL_SERVER_ERROR_MESSAGE,

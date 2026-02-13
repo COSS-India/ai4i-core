@@ -9,13 +9,14 @@ import hashlib
 
 from models.db_models import Model , Service, VersionStatus, Experiment, ExperimentVariant, ExperimentMetrics, ExperimentStatus
 from models.cache_models_services import ModelCache , ServiceCache
-from models.model_create import ModelCreateRequest
+from models.model_create import ModelCreateRequest, TaskResponse
 from models.model_update import ModelUpdateRequest
 from models.service_create import ServiceCreateRequest
 from models.service_update import ServiceUpdateRequest
 from models.service_view import ServiceViewResponse
 from models.service_list import ServiceListResponse
 from models.service_health import ServiceHeartbeatRequest
+from models.service_policy import ServicePolicyData
 from models.type_enum import TaskTypeEnum
 
 from db_connection import AppDatabase
@@ -431,7 +432,7 @@ async def update_model(payload: ModelUpdateRequest, updated_by: str = None):
                 detail={
                     "kind": "DeprecatedModelUpdateNotAllowed",
                     "message": f"Model version '{payload.modelId}' v{payload.version} cannot be modified because it is "
-                               f"DEPRECATED and ALLOW_DEPRECATED_MODEL_CHANGES is set to false."
+                               f"deprecated."
                 }
             )
 
@@ -1237,6 +1238,7 @@ async def get_service_details(service_id: str) -> Dict[str, Any]:
             "api_key": service.api_key,
             "healthStatus": service.health_status,
             "benchmarks": service.benchmarks,
+            "policy": dict(service.policy) if service.policy else None,
             "isPublished": service.is_published,
             "publishedAt": datetime.fromtimestamp(service.published_at).isoformat() if service.published_at else None,
             "unpublishedAt": datetime.fromtimestamp(service.unpublished_at).isoformat() if service.unpublished_at else None,
@@ -1403,7 +1405,8 @@ async def list_all_services(
             raise
 
         if not rows:
-            logger.info(f"[DB] No services found for type :{task_type.value}")
+            task_type_str = task_type.value if task_type else "all"
+            logger.info(f"[DB] No services found for task_type={task_type_str}")
             return None
 
         services_list = []
@@ -1415,20 +1418,60 @@ async def list_all_services(
                 )
                 return None
             
+            # Get policy - access directly from service object (same approach as list_services_with_policies)
+            # JSONB columns should be accessible directly from the ORM object
+            service_policy = None
+            try:
+                # Access policy directly from the service object
+                if hasattr(service, 'policy') and service.policy is not None:
+                    # Convert to dict if it's not already (JSONB should auto-deserialize to dict)
+                    service_policy = dict(service.policy) if not isinstance(service.policy, dict) else service.policy
+                else:
+                    service_policy = None
+            except Exception as e:
+                logger.warning(f"[DB] Error accessing policy for {service.service_id}: {e}")
+                service_policy = None
+            
+            # Convert languages to List[dict] format - handle both string lists and dict lists
+            languages_raw = getattr(model, "languages", []) if model else []
+            languages = []
+            if languages_raw:
+                for lang in languages_raw:
+                    if isinstance(lang, dict):
+                        languages.append(lang)
+                    elif isinstance(lang, str):
+                        # Convert string to dict format: {"sourceLanguage": "hi"}
+                        languages.append({"sourceLanguage": lang})
+                    else:
+                        # Skip invalid entries
+                        continue
+            
+            # Convert task dict to TaskResponse object
+            task_dict = getattr(model, "task", {}) if model else {}
+            if task_dict and isinstance(task_dict, dict) and task_dict.get("type"):
+                task = TaskResponse(**task_dict)
+            else:
+                task = TaskResponse(type="unknown")
+            
+            # Ensure required string fields are not None
+            service_description = getattr(service, "service_description", None) or ""
+            hardware_description = getattr(service, "hardware_description", None) or ""
+            published_on = getattr(service, "published_on", None) or 0
             
             services_list.append(
                 ServiceListResponse(
                     serviceId=str(service.service_id),
                     uuid=str(service.id),
                     name=service.name,
-                    serviceDescription=getattr(service, "service_description", None),
-                    hardwareDescription=getattr(service, "hardware_description", None),
-                    publishedOn=getattr(service, "published_on", None),
+                    serviceDescription=service_description,
+                    hardwareDescription=hardware_description,
+                    publishedOn=published_on,
                     modelId=service.model_id,
                     # Persist service endpoint and api key details
                     endpoint=getattr(service, "endpoint", None),
                     healthStatus=getattr(service, "health_status", None),
                     benchmarks=getattr(service, "benchmarks", None),
+                    policy=service_policy,  # Use the policy we fetched above
                     # Publish status fields
                     isPublished=getattr(service, "is_published", False),
                     publishedAt=datetime.fromtimestamp(service.published_at).isoformat() if service.published_at else None,
@@ -1436,10 +1479,9 @@ async def list_all_services(
                     # User tracking fields
                     createdBy=getattr(service, "created_by", None),
                     updatedBy=getattr(service, "updated_by", None),
-
                     # From MODEL table
-                    task=getattr(model, "task", {}) if model else {},
-                    languages=getattr(model, "languages", []) if model else [],
+                    task=task,
+                    languages=languages,
                     # Model version info
                     modelVersion=service.model_version,
                     versionStatus=model.version_status.value if model and model.version_status else None
@@ -1610,6 +1652,205 @@ async def unpublish_service(service_id: str):
         await db.rollback()
         logger.exception("Error while unpublishing service.")
         raise Exception("Unpublish failed due to internal DB error") from e
+    finally:
+        await db.close()
+
+
+async def add_or_update_service_policy(service_id: str, policy_data: ServicePolicyData, updated_by: str = None) -> Dict[str, Any]:
+    """
+    Add or update policy for a service.
+    
+    This function handles both adding a new policy (if service has no policy) 
+    and updating an existing policy. The policy is stored in the database 
+    and will be used for smart routing decisions.
+    
+    Args:
+        service_id: Service ID to add/update policy for
+        policy_data: Policy data (latency, cost, accuracy)
+        updated_by: User ID who is adding/updating the policy
+        
+    Returns:
+        Dictionary with service_id and policy
+        
+    Raises:
+        HTTPException:
+            - 400 if the policy combination is against global policy constraints
+            - 404 if service not found
+            - 500 on database error
+    """
+    db: AsyncSession = AppDatabase()
+    
+    try:
+        # ------------------------------------------------------------------
+        # Cross-field policy constraints (mirror API Gateway header rules)
+        #
+        # Business rules:
+        # - High accuracy ("sensitive") cannot be combined with low cost ("tier_1").
+        # - Low latency ("low") cannot be combined with low cost ("tier_1").
+        #
+        # Enforced at write-time so invalid policies cannot be stored in
+        # Model Management; this keeps behavior consistent with gateway
+        # request-time validation.
+        # ------------------------------------------------------------------
+        latency = (policy_data.latency or "").strip().lower() if policy_data.latency else None
+        cost = (policy_data.cost or "").strip().lower() if policy_data.cost else None
+        accuracy = (policy_data.accuracy or "").strip().lower() if policy_data.accuracy else None
+
+        if cost == "tier_1":
+            # Low cost + high accuracy (sensitive) is not allowed
+            if accuracy == "sensitive":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "POLICY_CONSTRAINT_VIOLATION",
+                        "message": (
+                            "Requested combination accuracy='sensitive' with "
+                            "cost='tier_1' is against policy. "
+                            "Please choose a higher cost tier or lower accuracy profile."
+                        ),
+                    },
+                )
+
+            # Low cost + low latency is not allowed
+            if latency == "low":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "code": "POLICY_CONSTRAINT_VIOLATION",
+                        "message": (
+                            "Requested combination latency='low' with "
+                            "cost='tier_1' is against policy. "
+                            "Please choose a higher cost tier or higher latency profile."
+                        ),
+                    },
+                )
+
+        # Check if service exists
+        result = await db.execute(select(Service).where(Service.service_id == service_id))
+        service = result.scalars().first()
+        
+        if not service:
+            raise HTTPException(status_code=404, detail=f"Service with ID '{service_id}' not found")
+        
+        # Convert policy data to dict (excluding None values)
+        policy_dict = policy_data.model_dump(exclude_none=True)
+        
+        # Update policy column
+        await db.execute(
+            update(Service)
+            .where(Service.service_id == service_id)
+            .values(
+                policy=policy_dict,
+                updated_by=updated_by
+            )
+        )
+        
+        await db.commit()
+        logger.info(f"Policy updated for service {service_id} by user {updated_by}")
+        
+        return {
+            "serviceId": service_id,
+            "policy": policy_dict
+        }
+        
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.exception(f"Error while updating policy for service {service_id}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"kind": "DBError", "message": f"Policy update failed for service {service_id}"}
+        ) from e
+    finally:
+        await db.close()
+
+
+async def get_service_policy(service_id: str) -> Dict[str, Any]:
+    """
+    Get policy for a specific service by service_id.
+    
+    Args:
+        service_id: Service ID to get policy for
+        
+    Returns:
+        Dictionary with service_id and policy (or None if no policy set)
+    """
+    db: AsyncSession = AppDatabase()
+    
+    try:
+        result = await db.execute(select(Service).where(Service.service_id == service_id))
+        service = result.scalars().first()
+        
+        if not service:
+            raise HTTPException(status_code=404, detail=f"Service with ID '{service_id}' not found")
+        
+        policy_dict = dict(service.policy) if service.policy else None
+        
+        return {
+            "serviceId": service_id,
+            "policy": policy_dict
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error while fetching policy for service {service_id}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"kind": "DBError", "message": f"Error fetching policy for service {service_id}"}
+        ) from e
+    finally:
+        await db.close()
+
+
+async def list_services_with_policies(task_type: TaskTypeEnum | None = None) -> List[Dict[str, Any]]:
+    """
+    List all services with their policies, optionally filtered by task_type.
+    
+    Args:
+        task_type: Optional filter by task type (asr, nmt, tts, etc.)
+        
+    Returns:
+        List of dictionaries with service_id and policy for each service
+    """
+    db: AsyncSession = AppDatabase()
+    
+    try:
+        query = select(Service, Model).join(
+            Model,
+            and_(
+                Model.model_id == Service.model_id,
+                Model.version == Service.model_version
+            )
+        )
+        
+        if task_type:
+            query = query.where(Model.task['type'].astext == task_type.value)
+        
+        # Order by service_id for consistent results
+        query = query.order_by(Service.service_id)
+        
+        result = await db.execute(query)
+        rows = result.all()
+        
+        services_with_policies = []
+        for service, model in rows:
+            policy_dict = dict(service.policy) if service.policy else None
+            services_with_policies.append({
+                "serviceId": service.service_id,
+                "policy": policy_dict
+            })
+        
+        return services_with_policies
+        
+    except Exception as e:
+        logger.exception("Error while listing services with policies")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"kind": "DBError", "message": "Error listing services with policies"}
+        ) from e
     finally:
         await db.close()
 

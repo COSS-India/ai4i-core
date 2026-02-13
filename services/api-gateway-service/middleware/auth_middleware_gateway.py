@@ -139,7 +139,7 @@ class AuthGatewayMiddleware(BaseHTTPMiddleware):
                     user = await auth_middleware.optional_auth(request)
                     if user:
                         request.state.user = user
-                        request.state.user_id = user.get("user_id")
+                        request.state.user_id = user.get("user_id") or user.get("sub")
                         request.state.is_authenticated = True
                 except Exception:
                     pass  # Ignore errors for optional auth
@@ -217,18 +217,23 @@ class AuthGatewayMiddleware(BaseHTTPMiddleware):
                         verify_span.set_attribute("auth.decision.result", "passed")
                         verify_span.set_status(Status(StatusCode.OK))
                     
-                    # Set user context in request state
+                    # Set user context in request state (JWT uses "sub", verify_token returns "sub")
                     request.state.user = user
-                    request.state.user_id = user.get("user_id")
+                    request.state.user_id = user.get("user_id") or user.get("sub")
                     request.state.username = user.get("username")
                     request.state.permissions = user.get("permissions", [])
+                    # Optional multi-tenant context from auth-service (if present)
+                    request.state.tenant_id = user.get("tenant_id")
+                    request.state.tenant_uuid = user.get("tenant_uuid")
+                    request.state.schema_name = user.get("schema_name")
                     request.state.is_authenticated = True
                     
-                    # Add user info to auth span
+                    # Add user info to auth span (user_id from "user_id" or JWT "sub")
+                    _uid = user.get("user_id") or user.get("sub")
                     if auth_span:
                         auth_span.set_attribute("auth.authorized", True)
                         auth_span.set_attribute("auth.method", "JWT")
-                        auth_span.set_attribute("user.id", str(user.get("user_id", "unknown")))
+                        auth_span.set_attribute("user.id", str(_uid or "unknown"))
                         auth_span.set_attribute("user.username", user.get("username", "unknown"))
                         auth_span.set_attribute("user.permissions_count", len(user.get("permissions", [])))
                         auth_span.set_status(Status(StatusCode.OK))
@@ -239,7 +244,7 @@ class AuthGatewayMiddleware(BaseHTTPMiddleware):
                             "context": {
                                 "method": method,
                                 "path": path,
-                                "user_id": user.get("user_id"),
+                                "user_id": _uid,
                                 "username": user.get("username"),
                                 "correlation_id": correlation_id,
                             }
@@ -403,6 +408,9 @@ class AuthGatewayMiddleware(BaseHTTPMiddleware):
             # Add user info to response headers for debugging (optional)
             if hasattr(request.state, "user_id"):
                 response.headers["X-User-ID"] = str(request.state.user_id)
+            # Add tenant context headers for debugging (if available)
+            if hasattr(request.state, "tenant_id") and request.state.tenant_id:
+                response.headers["X-Tenant-Id"] = str(request.state.tenant_id)
             
             return response
 
