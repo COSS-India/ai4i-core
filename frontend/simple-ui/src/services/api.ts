@@ -383,6 +383,17 @@ apiClient.interceptors.request.use(
           config.headers['X-Auth-Source'] = 'BOTH';
         }
       }
+
+      // Multi-tenant admin endpoints require JWT token (Authorization: Bearer)
+      if (isMultiTenantEndpoint) {
+        if (jwtToken) {
+          config.headers['Authorization'] = `Bearer ${jwtToken}`;
+          config.headers['x-auth-source'] = 'AUTH_TOKEN';
+          config.headers['X-Auth-Source'] = 'AUTH_TOKEN';
+        } else {
+          console.warn('Multi-tenant: No JWT token available', { url: config.url });
+        }
+      }
       
       // All services require BOTH JWT token AND API key
       if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint || isNEREndpoint ||

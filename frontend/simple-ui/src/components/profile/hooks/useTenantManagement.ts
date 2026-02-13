@@ -556,6 +556,31 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
+  // ----- Send Verification Email -----
+  const [sendingVerificationTenantId, setSendingVerificationTenantId] = useState<string | null>(null);
+
+  /** Validate email format */
+  const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+  /** Send verification email to a PENDING tenant. Validates email first. */
+  const handleSendVerificationEmail = async (tenantId: string, email: string | undefined) => {
+    if (!email || !isValidEmail(email)) {
+      toast({ title: "Invalid Email", description: "Cannot send verification email. The tenant's contact email is invalid or missing.", status: "error", isClosable: true, duration: 5000 });
+      return;
+    }
+    setSendingVerificationTenantId(tenantId);
+    try {
+      await multiTenantService.sendVerificationEmail(tenantId);
+      toast({ title: "Verification Email Sent", description: `Verification email sent to ${email}.`, status: "success", isClosable: true, duration: 5000 });
+    } catch (err) {
+      console.error("Failed to send verification email:", err);
+      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
+      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
+    } finally {
+      setSendingVerificationTenantId(null);
+    }
+  };
+
   // ----- Manage Services -----
   const openManageServices = (t: TenantView) => {
     setManageServicesTenant(t);
@@ -864,6 +889,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleOpenDeleteUser,
     handleConfirmDeleteUser,
     closeDeleteUserDialog,
+    // Send verification email
+    sendingVerificationTenantId,
+    handleSendVerificationEmail,
     // Fetch
     handleFetchTenants,
     handleFetchTenantUsers,
