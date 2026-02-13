@@ -22,7 +22,7 @@ from datetime import datetime, date
 from typing import Dict, Any, List, Optional, Tuple, Union
 from enum import Enum
 from uuid import UUID
-from urllib.parse import urlencode, urlparse, parse_qs
+from urllib.parse import urlencode, urlparse, parse_qs, quote
 from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security, status
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
@@ -5875,7 +5875,7 @@ async def ocr_health(
 
     """OCR service health check"""
 
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
 
     headers = build_auth_headers(request, credentials, api_key)
 
@@ -5897,7 +5897,7 @@ async def ocr_inference(
     If config.serviceId is omitted, Smart Model Router will select the best OCR service
     based on Policy Engine + Model Management and inject the chosen serviceId.
     """
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
 
     import json
 
@@ -6110,7 +6110,7 @@ async def transliteration_inference(
     If config.serviceId is omitted, Smart Model Router will select the best transliteration
     service based on Policy Engine + Model Management and inject the chosen serviceId.
     """
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
 
@@ -6152,7 +6152,7 @@ async def get_transliteration_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available transliteration models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/models", "transliteration-service", headers=headers)
 
@@ -6163,7 +6163,7 @@ async def get_transliteration_services(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available transliteration services"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/services", "transliteration-service", headers=headers)
 
@@ -6174,7 +6174,7 @@ async def get_transliteration_languages(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get supported languages for transliteration"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/languages", "transliteration-service", headers=headers)
 
@@ -6185,7 +6185,7 @@ async def transliteration_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Transliteration service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "transliteration-service", headers=headers)
 
@@ -6310,7 +6310,7 @@ async def get_transliteration_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available transliteration models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/models", "transliteration-service", headers=headers)
 
@@ -6321,7 +6321,7 @@ async def get_transliteration_services(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available transliteration services"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/services", "transliteration-service", headers=headers)
 
@@ -6332,7 +6332,7 @@ async def get_transliteration_languages(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get supported languages for transliteration"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/languages", "transliteration-service", headers=headers)
 
@@ -6343,7 +6343,7 @@ async def transliteration_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Transliteration service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "transliteration-service", headers=headers)
 
@@ -6433,7 +6433,7 @@ async def list_models(
         params["created_by"] = created_by
     return await proxy_to_service_with_params(
         None, 
-        "/services/details/list_models", 
+        "/api/v1/model-management/models", 
         "model-management-service",
         params, 
         method="GET",
@@ -6457,7 +6457,7 @@ async def get_model_get(
         query_params["version"] = version
     return await proxy_to_service_with_params(
         None,
-        f"/models/{model_id}",
+        f"/api/v1/model-management/models/{model_id}",
         "model-management-service",
         query_params,
         method="GET",
@@ -6483,7 +6483,7 @@ async def get_model(
     payload_body = json.dumps(payload_dict).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/details/view_model",
+        f"/api/v1/model-management/models/{model_id}",
         "model-management-service",
         method="POST",
         body=payload_body,
@@ -6505,7 +6505,7 @@ async def create_model(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/create/model",
+        "/api/v1/model-management/models",
         "model-management-service",
         method="POST",
         body=body,
@@ -6527,7 +6527,7 @@ async def update_model(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/update/model",
+        "/api/v1/model-management/models",
         "model-management-service",
         method="PATCH",
         body=body,
@@ -6544,11 +6544,10 @@ async def delete_model(
     """Delete a model by ID. Requires Bearer token authentication with 'model.delete' permission."""
     await check_permission("model.delete", request, credentials)
     headers = build_auth_headers(request, credentials, None)
-    return await proxy_to_service_with_params(
+    return await proxy_to_service(
         None,
-        "/services/admin/delete/model",
+        f"/api/v1/model-management/models/{uuid}",
         "model-management-service",
-        {"id": uuid},
         method="DELETE",
         headers=headers,
     )
@@ -6572,13 +6571,13 @@ async def list_services(
     if created_by:
         params["created_by"] = created_by
     return await proxy_to_service_with_params(
-        None, 
-        "/services/details/list_services", 
+        None,
+        "/api/v1/model-management/services",
         "model-management-service",
-        params, 
-        method="GET", 
-        headers=headers
-        )
+        params,
+        method="GET",
+        headers=headers,
+    )
 
 
 # Note: This route is intentionally placed before the catch-all route
@@ -6591,14 +6590,10 @@ async def get_service_details(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Fetch metadata for a specific runtime service. Requires Bearer token authentication with 'service.read' permission."""
-    # Exclude admin routes - they should be handled by the catch-all route
-    # FastAPI matches routes in order, but this route uses {service_id:path} which is too general
-    # We need to explicitly exclude admin routes here by checking if service_id contains "/"
-    # Admin routes have paths like "admin/add/service/policy" which contain "/"
-    # Regular service IDs should not contain "/"
-    if "/" in service_id or service_id.startswith("admin"):
-        # This is likely an admin route (e.g., "admin/add/service/policy")
-        # Re-construct the path and forward to catch-all route handler
+    # Exclude admin routes - they should be handled by the catch-all route.
+    # Only paths whose first segment is "admin" are admin routes (e.g. "admin/add/service/policy").
+    if service_id == "admin" or service_id.startswith("admin/"):
+        # This is an admin route; forward to catch-all route handler
         # Extract the path after /api/v1/model-management
         full_path = request.url.path
         if full_path.startswith("/api/v1/model-management/"):
@@ -6612,9 +6607,11 @@ async def get_service_details(
     headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     payload = json.dumps({"serviceId": service_id}).encode("utf-8")
+    # Encode service_id so IDs with "/" (e.g. ai4bharat/surya-ocr-v1--gpu--t4) are one path segment for backend
+    encoded_service_id = quote(service_id, safe="")
     return await proxy_to_service(
         None,
-        "/services/details/view_service",
+        f"/api/v1/model-management/services/{encoded_service_id}",
         "model-management-service",
         method="POST",
         body=payload,
@@ -6636,7 +6633,7 @@ async def create_service_entry(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/create/service",
+        "/api/v1/model-management/services",
         "model-management-service",
         method="POST",
         body=body,
@@ -6663,7 +6660,7 @@ async def update_service_entry(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/update/service",
+        "/api/v1/model-management/services",
         "model-management-service",
         method="PATCH",
         body=body,
@@ -6680,11 +6677,10 @@ async def delete_service_entry(
     """Delete a service entry. Requires Bearer token authentication with 'service.delete' permission."""
     await check_permission("service.delete", request, credentials)
     headers = build_auth_headers(request, credentials, None)
-    return await proxy_to_service_with_params(
+    return await proxy_to_service(
         None,
-        "/services/admin/delete/service",
+        f"/api/v1/model-management/services/{uuid}",
         "model-management-service",
-        {"id": uuid},
         method="DELETE",
         headers=headers,
     )
@@ -6708,7 +6704,7 @@ async def update_service_health(
     body = json.dumps(body_data).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/health",
+        f"/api/v1/model-management/services/{service_id}/health",
         "model-management-service",
         method="PATCH",
         body=body,
@@ -6731,7 +6727,7 @@ async def create_experiment(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/experiments",
+        "/api/v1/model-management/experiments",
         "model-management-service",
         method="POST",
         body=body,
@@ -6759,7 +6755,7 @@ async def list_experiments(
         params["created_by"] = created_by
     return await proxy_to_service_with_params(
         None,
-        "/experiments",
+        "/api/v1/model-management/experiments",
         "model-management-service",
         params,
         method="GET",
@@ -6778,7 +6774,7 @@ async def get_experiment(
     headers = build_auth_headers(request, credentials, None)
     return await proxy_to_service(
         None,
-        f"/experiments/{experiment_id}",
+        f"/api/v1/model-management/experiments/{experiment_id}",
         "model-management-service",
         method="GET",
         headers=headers,
@@ -6795,7 +6791,7 @@ async def get_experiment_metrics(
     headers = build_auth_headers(request, credentials, None)
     return await proxy_to_service(
         None,
-        f"/experiments/{experiment_id}/metrics",
+        f"/api/v1/model-management/experiments/{experiment_id}/metrics",
         "model-management-service",
         method="GET",
         headers=headers,
@@ -6816,7 +6812,7 @@ async def update_experiment(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
     return await proxy_to_service(
         None,
-        f"/experiments/{experiment_id}",
+        f"/api/v1/model-management/experiments/{experiment_id}",
         "model-management-service",
         method="PATCH",
         body=body,
@@ -6848,7 +6844,7 @@ async def update_experiment_status(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
-        f"/experiments/{experiment_id}/status",
+        f"/api/v1/model-management/experiments/{experiment_id}/status",
         "model-management-service",
         method="POST",
         body=body,
@@ -6867,7 +6863,7 @@ async def delete_experiment(
     headers = build_auth_headers(request, credentials, None)
     return await proxy_to_service(
         None,
-        f"/experiments/{experiment_id}",
+        f"/api/v1/model-management/experiments/{experiment_id}",
         "model-management-service",
         method="DELETE",
         headers=headers,
@@ -6888,7 +6884,7 @@ async def select_experiment_variant(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/experiments/select-variant",
+        "/api/v1/model-management/experiments/select-variant",
         "model-management-service",
         method="POST",
         body=body,
@@ -8146,7 +8142,8 @@ async def proxy_request(request: Request, path: str):
                                 break
                         
                         if route_prefix:
-                            service_path = full_request_path[len(route_prefix):] or "/"
+                            # Model-management expects full path /api/v1/model-management/* (same as gateway)
+                            service_path = full_request_path if service_name == "model-management-service" else (full_request_path[len(route_prefix):] or "/")
                         else:
                             service_path = full_request_path
                         return await proxy_to_service(request, service_path, service_name)
@@ -8190,7 +8187,8 @@ async def proxy_request(request: Request, path: str):
                         break
                 
                 if route_prefix:
-                    service_path = full_request_path[len(route_prefix):] or "/"
+                    # Model-management expects full path /api/v1/model-management/* (same as gateway)
+                    service_path = full_request_path if service_name == "model-management-service" else (full_request_path[len(route_prefix):] or "/")
                 else:
                     service_path = full_request_path
                 
