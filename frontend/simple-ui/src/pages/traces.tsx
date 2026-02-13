@@ -2110,6 +2110,20 @@ const TracesPage: React.FC = () => {
                             
                             const depth = calculateDisplayedDepth(processed.span.spanID);
                             const indentPx = depth * 24; // 24px per level of nesting
+                            
+                            // Calculate sum of visible child spans to explain duration discrepancy
+                            const childSpans = processedSpans?.filter((p: ProcessedSpan) => {
+                              const parentId = spanRelationships.spanToParent.get(p.span.spanID);
+                              return parentId === processed.span.spanID;
+                            }) || [];
+                            
+                            const childSpansDuration = childSpans.reduce((sum: number, child: ProcessedSpan) => {
+                              return sum + (child.span.duration || 0);
+                            }, 0);
+                            
+                            const parentDuration = processed.span.duration || 0;
+                            const overheadTime = parentDuration - childSpansDuration;
+                            const hasSignificantOverhead = overheadTime > 1000 && childSpans.length > 0; // > 1ms overhead with visible children
 
                             return (
                               <Card
@@ -2343,6 +2357,30 @@ const TracesPage: React.FC = () => {
                                         );
                                       }
                                     })()}
+                                    
+                                    {/* Duration overhead explanation - show when parent has significant overhead vs children */}
+                                    {hasSignificantOverhead && (
+                                      <Box 
+                                        p={2} 
+                                        bg="yellow.50" 
+                                        borderRadius="md" 
+                                        borderLeft="3px solid" 
+                                        borderLeftColor="yellow.400"
+                                        boxShadow="sm"
+                                      >
+                                        <HStack spacing={2} align="start">
+                                          <Icon as={FiInfo} color="yellow.700" boxSize={3} mt={0.5} flexShrink={0} />
+                                          <VStack align="start" spacing={0.5} flex={1}>
+                                            <Text fontSize="xs" color="yellow.800" fontWeight="medium">
+                                              Duration Breakdown:
+                                            </Text>
+                                            <Text fontSize="xs" color="yellow.700" lineHeight="1.4">
+                                              This step duration ({formatDuration(parentDuration)}) includes {childSpans.length} visible child step{childSpans.length !== 1 ? 's' : ''} ({formatDuration(childSpansDuration)}) plus {formatDuration(overheadTime)} of overhead (framework processing, middleware, network latency, and filtered spans not shown here).
+                                            </Text>
+                                          </VStack>
+                                        </HStack>
+                                      </Box>
+                                    )}
 
                                     {/* Technical details - collapsible */}
                                     {relevantTags.length > 0 && (
