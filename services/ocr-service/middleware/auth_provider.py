@@ -4,7 +4,9 @@ Uses local JWT signature + expiry verification (no auth-service calls for JWT).
 Uses auth-service for API key permission validation.
 """
 import os
-from fastapi import Request, Header, HTTPException
+import hashlib
+from fastapi import Request, Header, HTTPException, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, Dict, Any, Tuple
 import logging
 import httpx
@@ -13,6 +15,8 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from middleware.exceptions import AuthenticationError, AuthorizationError
+from repositories.api_key_repository import ApiKeyRepository
+from repositories.ocr_repository import get_db_session
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("ocr-service")
@@ -38,6 +42,37 @@ def get_api_key_from_header(authorization: Optional[str] = Header(None)) -> Opti
         return authorization[7:]
     else:
         return authorization
+
+
+def hash_api_key(api_key: str) -> str:
+    """Hash API key using SHA256."""
+    return hashlib.sha256(api_key.encode()).hexdigest()
+
+
+async def get_api_key_info(api_key: str, db: AsyncSession) -> Tuple[Optional[int], Optional[int]]:
+    """
+    Look up API key in database and return (api_key_id, user_id).
+    Returns (None, None) if not found or invalid.
+    """
+    try:
+        key_hash = hash_api_key(api_key)
+        api_key_repo = ApiKeyRepository(db)
+        api_key_db = await api_key_repo.find_by_key_hash(key_hash)
+        
+        if not api_key_db:
+            return None, None
+        
+        # Validate the key is active and not expired
+        if not await api_key_repo.is_key_valid(api_key_db):
+            return None, None
+        
+        # Update last used
+        await api_key_repo.update_last_used(api_key_db.id)
+        
+        return api_key_db.id, api_key_db.user_id
+    except Exception as e:
+        logger.debug(f"Error looking up API key: {e}")
+        return None, None
 
 
 def determine_service_and_action(request: Request) -> Tuple[str, str]:
@@ -534,6 +569,7 @@ async def AuthProvider(
     authorization: Optional[str] = Header(None, alias="Authorization"),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     x_auth_source: str = Header(default="API_KEY", alias="X-Auth-Source"),
+    db: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """Authentication provider for OCR - supports AUTH_TOKEN, API_KEY, BOTH."""
     if not tracer:
@@ -627,15 +663,37 @@ async def AuthProvider(
                 service, action = determine_service_and_action(request)
                 await validate_api_key_permissions(api_key, service, action)
                 
-                request.state.user_id = None
-                request.state.api_key_id = None
-                request.state.api_key_name = None
-                request.state.user_email = None
+                # Look up API key in database to get actual IDs
+                api_key_id, user_id = await get_api_key_info(api_key, db)
+                
+                # Get API key name if we found it
+                api_key_name = None
+                user_email = None
+                if api_key_id:
+                    try:
+                        api_key_repo = ApiKeyRepository(db)
+                        api_key_db = await api_key_repo.find_by_id(api_key_id)
+                        if api_key_db:
+                            api_key_name = api_key_db.name
+                            if api_key_db.user:
+                                user_email = api_key_db.user.email
+                    except Exception as e:
+                        logger.debug(f"Error getting API key details: {e}")
+                
+                request.state.user_id = user_id
+                request.state.api_key_id = api_key_id
+                request.state.api_key_name = api_key_name
+                request.state.user_email = user_email
                 request.state.is_authenticated = True
                 
                 auth_span.set_attribute("auth.authorized", True)
                 auth_span.set_status(Status(StatusCode.OK))
-                return {"user_id": None, "api_key_id": None, "user": None, "api_key": None}
+                return {
+                    "user_id": user_id,
+                    "api_key_id": api_key_id,
+                    "user": {"email": user_email} if user_email else None,
+                    "api_key": {"id": api_key_id, "name": api_key_name} if api_key_id else None,
+                }
                 
         except AuthenticationError as exc:
             # Mark auth span as failed (error handler will create request.reject span)
@@ -684,6 +742,9 @@ async def _auth_provider_impl(
     service, action = determine_service_and_action(request)
     await _validate_api_key_permissions_impl(api_key, service, action)
 
+    # Look up API key in database to get actual IDs
+    # Note: This fallback function doesn't have db access, so we can't look up here
+    # The main AuthProvider function handles this
     request.state.user_id = None
     request.state.api_key_id = None
     request.state.api_key_name = None

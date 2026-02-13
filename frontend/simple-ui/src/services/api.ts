@@ -6,7 +6,6 @@ import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestCo
 // For production this should be set to the browser-facing API gateway URL
 // (for example, https://dev.ai4inclusion.org or a dedicated API domain).
 // Default to localhost:8080 for local development if not set.
-// const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 // Debug: Log the API base URL in development
@@ -28,19 +27,13 @@ const getAuthToken = (): string | null => {
   return null;
 };
 
-// Get API key from localStorage (user-provided) or environment variable (fallback)
-// Priority: localStorage > env file
+// Get API key from localStorage only (user-provided via "manage API key")
+// Do not use env - API key must be set by the user
 const getApiKey = (): string | null => {
   if (typeof window !== 'undefined') {
-    // First check localStorage (user-provided via "manage API key")
     const storedApiKey = localStorage.getItem('api_key');
     if (storedApiKey && storedApiKey.trim() !== '') {
       return storedApiKey.trim();
-    }
-    // Fallback to environment variable if no API key is provided
-    const envApiKey = process.env.NEXT_PUBLIC_API_KEY;
-    if (envApiKey && envApiKey.trim() !== '' && envApiKey !== 'your_api_key_here') {
-      return envApiKey.trim();
     }
   }
   return null;
@@ -112,6 +105,7 @@ const apiClient: AxiosInstance = axios.create({
   timeout: 300000, // 5 minutes (300 seconds) for most requests
   headers: {
     'Content-Type': 'application/json',
+    'Accept': 'application/json',
   },
 });
 
@@ -270,7 +264,7 @@ asrApiClient.interceptors.response.use(
 );
 
 // Get JWT token from auth service
-const getJwtToken = (): string | null => {
+export const getJwtToken = (): string | null => {
   if (typeof window === 'undefined') return null;
   // Check both localStorage and sessionStorage for token (same logic as authService)
   const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
@@ -317,6 +311,8 @@ apiClient.interceptors.request.use(
     const isSpeakerDiarizationEndpoint = url.includes('/api/v1/speaker-diarization');
     const isLanguageDiarizationEndpoint = url.includes('/api/v1/language-diarization');
     const isAudioLangDetectionEndpoint = url.includes('/api/v1/audio-lang-detection');
+    const isObservabilityEndpoint = url.includes('/api/v1/observability');
+    const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
     
@@ -325,7 +321,9 @@ apiClient.interceptors.request.use(
                         isTTSEndpoint || isLLMEndpoint || isPipelineEndpoint ||
                         isAudioLangDetectionEndpoint || isLanguageDetectionEndpoint ||
                         isLanguageDiarizationEndpoint || isSpeakerDiarizationEndpoint ||
-                        isNEREndpoint || isOCREndpoint || isTransliterationEndpoint;
+                        isNEREndpoint || isOCREndpoint || isTransliterationEndpoint ||
+                        isObservabilityEndpoint ||
+                        isMultiTenantEndpoint;
     
     // Proactively refresh token if it's expiring soon (skip for refresh and login endpoints)
     if ((requiresJWT || (isAuthEndpoint && !isAuthRefreshEndpoint)) && !isAuthRefreshEndpoint) {
@@ -343,17 +341,56 @@ apiClient.interceptors.request.use(
     if (requiresJWT && !isAuthEndpoint) {
       // For services that require JWT tokens, use JWT token
       const jwtToken = getJwtToken();
-      if (jwtToken) {
-        config.headers['Authorization'] = `Bearer ${jwtToken}`;
-        if (isModelManagementEndpoint) {
+      const apiKey = getApiKey();
+      
+      // Model management endpoints support both JWT and API key authentication
+      if (isModelManagementEndpoint) {
+        if (jwtToken && apiKey) {
+          // Both JWT and API key present - use BOTH
+          config.headers['Authorization'] = `Bearer ${jwtToken}`;
+          config.headers['X-API-Key'] = apiKey;
+          config.headers['x-auth-source'] = 'BOTH';
+          config.headers['X-Auth-Source'] = 'BOTH';
+          console.log('🔐 Model-management: Sending BOTH JWT + API key', {
+            url: config.url,
+            hasJWT: !!jwtToken,
+            hasAPIKey: !!apiKey,
+            apiKeyLength: apiKey?.length || 0,
+          });
+        } else if (jwtToken) {
+          // Only JWT token present - use AUTH_TOKEN
+          config.headers['Authorization'] = `Bearer ${jwtToken}`;
           config.headers['x-auth-source'] = 'AUTH_TOKEN';
+          config.headers['X-Auth-Source'] = 'AUTH_TOKEN';
+          console.log('🔐 Model-management: Sending JWT only (AUTH_TOKEN)', {
+            url: config.url,
+            hasJWT: !!jwtToken,
+            hasAPIKey: false,
+            jwtLength: jwtToken?.length || 0,
+          });
+        } else {
+          console.error('❌ Model-management: No JWT token available!', {
+            url: config.url,
+          });
         }
       } 
+      
+      // Observability endpoints use JWT token with x-auth-source: BOTH
+      if (isObservabilityEndpoint) {
+        if (jwtToken) {
+          config.headers['Authorization'] = `Bearer ${jwtToken}`;
+          config.headers['x-auth-source'] = 'BOTH';
+          config.headers['X-Auth-Source'] = 'BOTH';
+        }
+      }
       
       // All services require BOTH JWT token AND API key
       if (isASREndpoint || isNMSEndpoint || isTTSEndpoint || isPipelineEndpoint || isLLMEndpoint || isNEREndpoint ||
           isOCREndpoint || isTransliterationEndpoint || isLanguageDetectionEndpoint || 
           isSpeakerDiarizationEndpoint || isLanguageDiarizationEndpoint || isAudioLangDetectionEndpoint) {
+        if (jwtToken) {
+          config.headers['Authorization'] = `Bearer ${jwtToken}`;
+        }
         const apiKey = getApiKey();
         if (apiKey) {
           config.headers['X-API-Key'] = apiKey;
@@ -414,6 +451,7 @@ apiClient.interceptors.response.use(
           if (typeof window !== 'undefined') {
             const url = (error.config?.url || '').toLowerCase();
             const isModelManagementEndpoint = url.includes('/model-management');
+            const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
             
             // Check if it's a service endpoint or model-management endpoint
             // These should NOT automatically logout - let the UI handle the error
@@ -429,9 +467,11 @@ apiClient.interceptors.response.use(
                                      url.includes('/api/v1/speaker-diarization') ||
                                      url.includes('/api/v1/language-diarization') ||
                                      url.includes('/api/v1/audio-lang-detection') ||
-                                     isModelManagementEndpoint;
+                                     url.includes('/api/v1/observability') ||
+                                     isModelManagementEndpoint ||
+                                     isMultiTenantEndpoint;
             
-            if (isServiceEndpoint || isModelManagementEndpoint) {
+            if (isServiceEndpoint || isModelManagementEndpoint || isMultiTenantEndpoint) {
               // For service endpoints and model-management endpoints
               // Check if it's a token expiration issue - if so, redirect to sign-in
               

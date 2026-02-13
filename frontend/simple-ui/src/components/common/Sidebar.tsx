@@ -32,6 +32,8 @@ import {
   IoPricetagOutline,
   IoAppsOutline,
   IoChevronDownOutline,
+  IoAnalyticsOutline,
+  IoPulseOutline,
 } from "react-icons/io5";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
@@ -123,6 +125,18 @@ const safeColorMap = {
     400: "#4DD0E1",
     600: "#00ACC1",
   },
+  "logs": { // Green → Pastel Green
+    50:  "#E8F5E9",
+    300: "#81C784",
+    400: "#66BB6A",
+    600: "#43A047",
+  },
+  "traces": { // Purple → Pastel Purple
+    50:  "#F3E5F5",
+    300: "#BA68C8",
+    400: "#AB47BC",
+    600: "#8E24AA",
+  },
 };
 
 const getColor = (serviceId: string, shade: 50 | 300 | 400 | 600) => {
@@ -178,6 +192,24 @@ const topNavItems: NavItem[] = [
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
     featureFlag: "services-management-enabled",
+  },
+  {
+    id: "logs",
+    label: "Logs Dashboard",
+    path: "/logs",
+    icon: IoDocumentTextOutline,
+    iconSize: 10,
+    iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
+  },
+  {
+    id: "traces",
+    label: "Traces Dashboard",
+    path: "/traces",
+    icon: IoPulseOutline,
+    iconSize: 10,
+    iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
   },
 ];
 
@@ -307,11 +339,18 @@ const baseNavItems: NavItem[] = [
 
 const Sidebar: React.FC = () => {
   const router = useRouter();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const { checkSessionExpiry } = useSessionExpiry();
   const [isExpanded, setIsExpanded] = useState(false);
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
   const [isMobile] = useMediaQuery("(max-width: 1080px)");
+  
+  // Check if user is GUEST or USER
+  const isGuest = user?.roles?.includes('GUEST') || false;
+  const isUser = user?.roles?.includes('USER') || false;
+
+  // Check if user is ADMIN
+  const isAdmin = user?.roles?.includes('ADMIN') || false;
 
   // Feature flags for each service
   const asrEnabled = useFeatureFlag({ flagName: "asr-enabled" });
@@ -350,6 +389,14 @@ const Sidebar: React.FC = () => {
   // Filter top nav items (Home and Model Management)
   const topItems = topNavItems.filter((item) => {
     if (item.id === "home") return true;
+    // Hide Model Management and Services Management for GUEST and USER users
+    if ((isGuest || isUser) && (item.id === "model-management" || item.id === "services-management")) {
+      return false;
+    }
+    // Hide Logs Dashboard and Traces Dashboard for non-ADMIN users
+    if ((item.id === "logs" || item.id === "traces") && !isAdmin) {
+      return false;
+    }
     if (item.featureFlag) {
       return featureFlagMap[item.featureFlag] ?? true;
     }

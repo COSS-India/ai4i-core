@@ -11,11 +11,13 @@ authors = [
 ]
 keywords = ["telemetry", "tracing", "opentelemetry", "jaeger", "opensearch", "fastapi", "ai4icore"]
 dependencies = [
+    "packaging>=21.0",  # Required by opentelemetry-instrumentation
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-instrumentation-fastapi>=0.41b0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.20.0",
-    "elasticsearch>=8.10.0",  # Compatible with OpenSearch
+    "packaging>=21.0",  # Required by opentelemetry-instrumentation
+    "httpx>=0.25.0",  # For Jaeger Query API calls and OpenSearch requests (replaces elasticsearch client)
 ]
 
 [project.optional-dependencies]
