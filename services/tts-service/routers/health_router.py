@@ -57,7 +57,7 @@ async def health_check(request: Request) -> Dict[str, Any]:
             health_status["redis"] = "unavailable"
     except Exception as e:
         if _should_log_health():
-        logger.error(f"Redis health check failed: {e}")
+            logger.error(f"Redis health check failed: {e}")
         health_status["redis"] = "unhealthy"
     
     # Check PostgreSQL connectivity
@@ -70,7 +70,7 @@ async def health_check(request: Request) -> Dict[str, Any]:
             health_status["postgres"] = "unavailable"
     except Exception as e:
         if _should_log_health():
-        logger.error(f"PostgreSQL health check failed: {e}")
+            logger.error(f"PostgreSQL health check failed: {e}")
         health_status["postgres"] = "unhealthy"
     
     # Check Triton server connectivity
@@ -89,7 +89,7 @@ async def health_check(request: Request) -> Dict[str, Any]:
         health_status["triton"] = "unavailable"
     except Exception as e:
         if _should_log_health():
-        logger.error(f"Triton health check failed: {e}")
+            logger.error(f"Triton health check failed: {e}")
         health_status["triton"] = "unhealthy"
     
     # Determine overall status
@@ -184,7 +184,7 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
             pass
         except Exception as e:
             if _should_log_health():
-            logger.warning(f"Triton readiness check failed: {e}")
+                logger.warning(f"Triton readiness check failed: {e}")
             # Don't fail readiness for Triton issues
         
         return readiness_status
@@ -193,7 +193,7 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
         raise
     except Exception as e:
         if _should_log_health():
-        logger.error(f"Readiness check failed: {e}")
+            logger.error(f"Readiness check failed: {e}")
         readiness_status["status"] = "not_ready"
         readiness_status["reason"] = str(e)
         raise HTTPException(

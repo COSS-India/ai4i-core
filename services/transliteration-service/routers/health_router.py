@@ -52,7 +52,7 @@ async def health_check(request: Request) -> Dict[str, Any]:
             redis_ok = True
     except Exception as e:
         if _should_log_health():
-        logger.warning(f"/health: Redis check failed: {e}")
+            logger.warning(f"/health: Redis check failed: {e}")
     
     # Check DB
     try:
@@ -63,7 +63,7 @@ async def health_check(request: Request) -> Dict[str, Any]:
             db_ok = True
     except Exception as e:
         if _should_log_health():
-        logger.warning(f"/health: PostgreSQL check failed: {e}")
+            logger.warning(f"/health: PostgreSQL check failed: {e}")
     
     # Check Triton (optional - don't fail health if Triton is down)
     try:
@@ -73,7 +73,7 @@ async def health_check(request: Request) -> Dict[str, Any]:
         triton_ok = triton_client.is_server_ready()
     except Exception as e:
         if _should_log_health():
-        logger.warning(f"/health: Triton check failed: {e}")
+            logger.warning(f"/health: Triton check failed: {e}")
     
     status_str = "ok" if (redis_ok and db_ok) else "degraded"
     status_code = 200 if status_str == "ok" else 503

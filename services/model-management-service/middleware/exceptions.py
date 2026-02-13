@@ -62,6 +62,7 @@ class ErrorDetail(BaseModel):
     message: str
     code: Optional[str] = None
     timestamp: float = time.time()
+    details: Optional[str] = None  # Optional technical details for debugging (e.g. exception message)
 
 
 class ErrorResponse(BaseModel):
