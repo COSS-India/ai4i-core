@@ -136,7 +136,7 @@ async def fetch_candidate_services_for_task(
     )
     try:
         resp = await http_client.get(
-            f"{MODEL_MANAGEMENT_SERVICE_URL}/api/v1/model-management/services/",
+            f"{MODEL_MANAGEMENT_SERVICE_URL}/api/v1/model-management/services",
             params=params,
             timeout=15.0,
         )
