@@ -2010,6 +2010,37 @@ const TracesPage: React.FC = () => {
                               
                               return getPriority(aKey) - getPriority(bKey);
                             });
+                            
+                            // Calculate depth for indentation - only count displayed parent spans
+                            // This ensures indentation reflects the visible hierarchy
+                            const calculateDisplayedDepth = (spanId: string): number => {
+                              let depth = 0;
+                              let currentId: string | undefined = spanId;
+                              const visited = new Set<string>();
+                              const displayedSpanIds = new Set(processedSpans?.map((p: ProcessedSpan) => p.span.spanID) || []);
+                              
+                              while (currentId) {
+                                if (visited.has(currentId)) break; // Prevent infinite loops
+                                visited.add(currentId);
+                                
+                                const parentId: string | undefined = spanRelationships.spanToParent.get(currentId);
+                                if (parentId) {
+                                  // Only increment depth if the parent is actually displayed
+                                  if (displayedSpanIds.has(parentId)) {
+                                    depth++;
+                                  }
+                                  // Continue traversing up the chain
+                                  currentId = parentId;
+                                } else {
+                                  break;
+                                }
+                              }
+                              
+                              return depth;
+                            };
+                            
+                            const depth = calculateDisplayedDepth(processed.span.spanID);
+                            const indentPx = depth * 24; // 24px per level of nesting
 
                             return (
                               <Card
@@ -2022,6 +2053,7 @@ const TracesPage: React.FC = () => {
                                 boxShadow="sm"
                                 borderRadius="lg"
                                 overflow="hidden"
+                                ml={indentPx > 0 ? `${indentPx}px` : 0}
                                 _hover={{
                                   bg: processed.hasError ? "red.50" : "blue.50",
                                   borderColor: processed.hasError ? "red.300" : "blue.300",
