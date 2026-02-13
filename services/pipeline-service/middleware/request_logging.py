@@ -69,7 +69,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     # Format trace_id as hex string (Jaeger format)
                     trace_id = format(span_context.trace_id, '032x')
                     # Create full Jaeger URL
-                    jaeger_trace_url = f"{JAEGER_UI_URL}/trace/{trace_id}"
+                    # Store only trace_id - OpenSearch will use URL template to construct full URL
+                    jaeger_trace_url = trace_id
             except Exception:
                 # If trace extraction fails, continue without it
                 pass

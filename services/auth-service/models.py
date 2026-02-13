@@ -33,6 +33,7 @@ class User(Base):
     phone_number = Column(String(20), nullable=True)
     timezone = Column(String(50), default="UTC")
     language = Column(String(10), default="en")
+    selected_api_key_id = Column(Integer, ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True)
     
     # Relationships
     user_roles = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
@@ -173,6 +174,7 @@ class UserResponse(UserBase):
     is_active: bool
     is_verified: bool
     is_superuser: bool
+    is_tenant: Optional[bool] = None
     created_at: datetime
     updated_at: Optional[datetime]
     last_login: Optional[datetime]
@@ -245,6 +247,9 @@ class APIKeyUpdate(BaseModel):
     permissions: Optional[List[str]] = None
     is_active: Optional[bool] = None
 
+class APIKeySelectRequest(BaseModel):
+    api_key_id: int = Field(..., description="API key ID to mark as selected for the current user.")
+
 class APIKeyResponse(BaseModel):
     id: int
     key_name: str
@@ -257,6 +262,11 @@ class APIKeyResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class APIKeyListResponse(BaseModel):
+    selected_api_key_id: Optional[int]
+    api_keys: List[APIKeyResponse]
 
 
 class AdminAPIKeyWithUserResponse(APIKeyResponse):

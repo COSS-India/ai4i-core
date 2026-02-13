@@ -4,16 +4,18 @@ FastAPI router for ASR inference endpoints.
 
 import logging
 import time
+import base64
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.asr_request import ASRInferenceRequest
 from models.asr_response import ASRInferenceResponse
-from repositories.asr_repository import ASRRepository, get_db_session
+from repositories.asr_repository import ASRRepository
 from services.asr_service import ASRService
 from services.audio_service import AudioService
 from utils.triton_client import TritonClient
+from utils.audio_utils import get_audio_duration
 from utils.validation_utils import (
     validate_language_code,
     validate_service_id,
@@ -37,6 +39,7 @@ from utils.validation_utils import (
 )
 from middleware.exceptions import AuthenticationError, AuthorizationError, ErrorDetail
 from middleware.auth_provider import AuthProvider
+from middleware.tenant_db_dependency import get_tenant_db_session
 from services.constants.error_messages import (
     LANGUAGE_NOT_SUPPORTED,
     LANGUAGE_NOT_SUPPORTED_MESSAGE,
@@ -93,7 +96,7 @@ inference_router = APIRouter(
 
 async def get_asr_service(
     request: Request,
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_tenant_db_session)
 ) -> ASRService:
     """
     Dependency to get configured ASR service.
@@ -411,12 +414,37 @@ async def _run_asr_inference_internal(
         # Validate request
         await validate_request(request)
         
+        # Calculate input metrics (audio duration)
+        total_input_audio_duration = 0.0
+        for audio_input in request.audio:
+            duration = calculate_audio_duration(audio_input)
+            total_input_audio_duration += duration
+        
+        # Store input details in request.state for middleware to access
+        http_request.state.input_details = {
+            "audio_length_seconds": total_input_audio_duration,
+            "audio_length_ms": total_input_audio_duration * 1000.0,
+            "input_count": len(request.audio)
+        }
+        
         # Log request
         logger.info(
-            "Processing ASR inference request with %d audio inputs - user_id=%s api_key_id=%s",
+            "Processing ASR inference request with %d audio inputs, audio_duration=%.2fs - user_id=%s api_key_id=%s",
             len(request.audio),
+            total_input_audio_duration,
             user_id,
             api_key_id,
+            extra={
+                # Common input/output details structure (general fields for all services)
+                "input_details": {
+                    "audio_length_seconds": total_input_audio_duration,
+                    "audio_length_ms": total_input_audio_duration * 1000.0,
+                    "input_count": len(request.audio)
+                },
+                # Service metadata (for filtering)
+                "service_id": request.config.serviceId if request.config else None,
+                "source_language": request.config.language.sourceLanguage if request.config and request.config.language else None,
+            }
         )
         
         # Run inference with auth context
@@ -427,9 +455,69 @@ async def _run_asr_inference_internal(
             session_id=session_id,
         )
         
+        # Calculate output metrics (character length and word count) for successful responses
+        output_texts = [output.source for output in response.output]
+        total_output_characters = sum(len(text) for text in output_texts)
+        total_output_words = sum(count_words(text) for text in output_texts)
+        
+        # Store output details in request.state for middleware to access
+        http_request.state.output_details = {
+            "character_length": total_output_characters,
+            "word_count": total_output_words,
+            "output_count": len(response.output)
+        }
+        
+        # Add output metrics to trace span
+        if TRACING_AVAILABLE and trace:
+            try:
+                current_span = trace.get_current_span()
+                if current_span and current_span.is_recording():
+                    current_span.set_attribute("asr.output_count", len(response.output))
+                    current_span.set_attribute("asr.output.character_length", total_output_characters)
+                    current_span.set_attribute("asr.output.word_count", total_output_words)
+                    current_span.set_attribute("http.status_code", 200)
+                    # Track response size (approximate)
+                    try:
+                        import json
+                        response_size = len(json.dumps(response.dict()).encode('utf-8'))
+                        current_span.set_attribute("http.response.size_bytes", response_size)
+                    except Exception:
+                        pass
+                    # Add span event for successful completion
+                    current_span.add_event("asr.inference.completed", {
+                        "output_count": len(response.output),
+                        "output_character_length": total_output_characters,
+                        "output_word_count": total_output_words,
+                        "status": "success"
+                    })
+            except Exception:
+                pass  # Don't fail if tracing fails
+        
         # Log completion
         processing_time = time.time() - start_time
-        logger.info("ASR inference completed in %.2fs", processing_time)
+        logger.info(
+            "ASR inference completed in %.2fs, output_characters=%d, output_words=%d",
+            processing_time,
+            total_output_characters,
+            total_output_words,
+            extra={
+                # Common input/output details structure (general fields for all services)
+                "input_details": {
+                    "audio_length_seconds": total_input_audio_duration,
+                    "audio_length_ms": total_input_audio_duration * 1000.0,
+                    "input_count": len(request.audio)
+                },
+                "output_details": {
+                    "character_length": total_output_characters,
+                    "word_count": total_output_words,
+                    "output_count": len(response.output)
+                },
+                # Service metadata (for filtering)
+                "service_id": request.config.serviceId if request.config else None,
+                "source_language": request.config.language.sourceLanguage if request.config and request.config.language else None,
+                "http_status_code": 200,
+            }
+        )
         
         # Debug: Log response structure
         logger.info("Response contains %d transcript(s)", len(response.output))
@@ -608,6 +696,30 @@ async def list_models() -> Dict[str, Any]:
         "supported_formats": ["wav", "mp3", "flac", "ogg", "pcm"],
         "transcription_formats": ["transcript", "srt", "webvtt"]
     }
+
+
+def calculate_audio_duration(audio_input) -> float:
+    """Calculate audio duration in seconds from AudioInput"""
+    try:
+        if audio_input.audioContent:
+            audio_bytes = base64.b64decode(audio_input.audioContent)
+            return get_audio_duration(audio_bytes)
+        elif audio_input.audioUri:
+            # For URI, we can't calculate duration here without downloading
+            # Return 0 and let service calculate it
+            return 0.0
+        return 0.0
+    except Exception:
+        return 0.0
+
+
+def count_words(text: str) -> int:
+    """Count words in text"""
+    try:
+        words = [word for word in text.split() if word.strip()]
+        return len(words)
+    except Exception:
+        return 0
 
 
 async def validate_request(request: ASRInferenceRequest) -> None:

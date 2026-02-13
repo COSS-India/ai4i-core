@@ -27,15 +27,46 @@ The Model Management Service now supports comprehensive model versioning, allowi
 - Services are associated with a specific model version
 - Services can be updated to use different model versions
 
-## Database Schema Changes
+## Database Schema
+
+### ID Generation
+
+Both `model_id` and `service_id` are generated using **deterministic SHA256 hashing** (truncated to 32 hex characters).
+
+#### Model ID Formula
+```
+model_id = SHA256(lowercase(name) + ":" + lowercase(version))[:32]
+```
+
+| Component | Example |
+|-----------|---------|
+| Input | name="ASR Model", version="1.0.0" |
+| Normalized | "asr model:1.0.0" |
+| Output | 32-character hex hash |
+
+#### Service ID Formula
+```
+service_id = SHA256(lowercase(model_name) + ":" + lowercase(model_version) + ":" + lowercase(service_name))[:32]
+```
+
+| Component | Example |
+|-----------|---------|
+| Input | model_name="ASR Model", model_version="1.0.0", service_name="ASR Service" |
+| Normalized | "asr model:1.0.0:asr service" |
+| Output | 32-character hex hash |
+
+**Key Benefits:**
+- IDs are reproducible from the same inputs
+- No user-provided ID conflicts
+- URL-safe identifiers
 
 ### Models Table
 
 ```sql
--- Composite unique constraint on (model_id, version)
-CONSTRAINT uq_model_id_version UNIQUE (model_id, version)
+-- Unique constraint on (name, version)
+CONSTRAINT uq_name_version UNIQUE (name, version)
 
--- New columns
+-- Version status columns
 version_status version_status NOT NULL DEFAULT 'ACTIVE'
 version_status_updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 ```
@@ -43,37 +74,43 @@ version_status_updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 ### Services Table
 
 ```sql
--- New column for model version
+-- model_version column for version association
 model_version VARCHAR(100) NOT NULL
 
--- Services now reference models by both model_id and model_version
+-- Unique constraint for service naming
+CONSTRAINT uq_model_id_version_service_name UNIQUE (model_id, model_version, name)
+
+-- Composite foreign key
+FOREIGN KEY (model_id, model_version) REFERENCES models(model_id, version)
 ```
 
 ## API Changes
 
 ### Creating Models
 
-When creating a model, you can optionally specify the version status:
+When creating a model, provide the name and version. The `model_id` is auto-generated from these values.
 
 ```json
 {
-  "modelId": "asr-model",
+  "name": "ASR Model",
   "version": "1.0.0",
   "versionStatus": "ACTIVE",  // Optional, defaults to "ACTIVE"
-  "name": "ASR Model",
-  // ... other fields
+  "task": { "type": "asr" },
+  "languages": [{ "sourceLanguage": "en" }],
+  "submitter": { "name": "Team" },
+  "inferenceEndpoint": { "url": "http://model:8000" }
 }
 ```
 
 **Behavior:**
-- If `versionStatus` is not provided, it defaults to `ACTIVE`
-- System checks for duplicate `(model_id, version)` combinations
+- `model_id` is **auto-generated** as hash of (name, version)
+- `versionStatus` defaults to `ACTIVE` if not provided
+- System checks for duplicate `(name, version)` combinations
 - If creating as `ACTIVE`, system enforces max active versions limit
-- Returns error if max active versions limit is reached
 
 **Example Response:**
 ```
-Model 'ASR Model' (ID: asr-model) created successfully.
+Model 'ASR Model' (ID: a7f3b2c1d4e5f678...) created successfully.
 ```
 
 ### Updating Models
@@ -103,27 +140,26 @@ Model 'asr-model' updated successfully.
 
 ### Creating Services
 
-Services must now specify both `modelId` and `modelVersion`:
+Services require the model's `name`, `modelVersion`, and service `name`. The `service_id` is auto-generated.
 
 ```json
 {
-  "serviceId": "asr-service-1",
   "name": "ASR Service",
-  "modelId": "asr-model",
-  "modelVersion": "1.0.0",  // Required: specifies which model version to use
-  "endpoint": "http://asr-service:8087",
-  // ... other fields
+  "modelId": "a7f3b2c1d4e5f678...",  // model_id of the target model
+  "modelVersion": "1.0.0",           // Required: specifies which model version to use
+  "endpoint": "http://asr-service:8087"
 }
 ```
 
 **Behavior:**
+- `service_id` is **auto-generated** as hash of (model_name, model_version, service_name)
 - `modelVersion` is **required**
-- System validates that the specified `(model_id, model_version)` combination exists
+- System validates that the specified model version exists
 - Returns error if model version doesn't exist
 
 **Example Response:**
 ```
-Service 'ASR Service' (ID: asr-service-1) created successfully.
+Service 'ASR Service' (ID: b8e4c5d6f7a89012...) created successfully.
 ```
 
 ### Updating Services
@@ -284,37 +320,41 @@ MAX_ACTIVE_VERSIONS_PER_MODEL=5
 ### Example 1: Creating Multiple Versions
 
 ```bash
-# Create version 1.0.0
+# Create version 1.0.0 (model_id auto-generated)
 curl -X POST http://api/models \
   -H "Content-Type: application/json" \
   -d '{
-    "modelId": "asr-model",
+    "name": "ASR Model",
     "version": "1.0.0",
     "versionStatus": "ACTIVE",
-    "name": "ASR Model v1",
-    ...
+    "task": { "type": "asr" },
+    "languages": [{ "sourceLanguage": "en" }],
+    "submitter": { "name": "Team" },
+    "inferenceEndpoint": { "url": "http://model:8000" }
   }'
 
-# Create version 2.0.0
+# Create version 2.0.0 (same name, different version = different model_id)
 curl -X POST http://api/models \
   -H "Content-Type: application/json" \
   -d '{
-    "modelId": "asr-model",
+    "name": "ASR Model",
     "version": "2.0.0",
     "versionStatus": "ACTIVE",
-    "name": "ASR Model v2",
-    ...
+    "task": { "type": "asr" },
+    "languages": [{ "sourceLanguage": "en" }],
+    "submitter": { "name": "Team" },
+    "inferenceEndpoint": { "url": "http://model-v2:8000" }
   }'
 ```
 
 ### Example 2: Deprecating an Old Version
 
 ```bash
-# Deprecate version 1.0.0
+# Deprecate version 1.0.0 using its model_id
 curl -X PATCH http://api/models \
   -H "Content-Type: application/json" \
   -d '{
-    "modelId": "asr-model",
+    "modelId": "<model_id_hash>",
     "version": "1.0.0",
     "versionStatus": "DEPRECATED"
   }'
@@ -323,15 +363,14 @@ curl -X PATCH http://api/models \
 ### Example 3: Creating Service with Specific Version
 
 ```bash
+# service_id is auto-generated from (model_name, model_version, service_name)
 curl -X POST http://api/services/admin/create/service \
   -H "Content-Type: application/json" \
   -d '{
-    "serviceId": "asr-service",
     "name": "ASR Service",
-    "modelId": "asr-model",
+    "modelId": "<model_id_hash>",
     "modelVersion": "2.0.0",
-    "endpoint": "http://asr-service:8087",
-    ...
+    "endpoint": "http://asr-service:8087"
   }'
 ```
 
@@ -341,8 +380,8 @@ curl -X POST http://api/services/admin/create/service \
 curl -X PATCH http://api/services/admin/update/service \
   -H "Content-Type: application/json" \
   -d '{
-    "serviceId": "asr-service",
-    "modelId": "asr-model",
+    "serviceId": "<service_id_hash>",
+    "modelId": "<model_id_hash>",
     "modelVersion": "2.0.0"
   }'
 ```
@@ -387,10 +426,12 @@ curl -X PATCH http://api/services/admin/update/service \
 
 ## Additional Notes
 
+- **ID Generation**: `model_id` and `service_id` are deterministic hashes (SHA256, 32 chars), not user-provided
 - Version status changes are automatically timestamped
 - The system maintains referential integrity between services and model versions
 - Cache invalidation occurs automatically when models are updated
 - All version-related operations are logged for audit purposes
+- `created_by` and `updated_by` fields track user actions for audit purposes
 
 ## Support
 

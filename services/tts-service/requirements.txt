@@ -55,6 +55,12 @@ python-socketio==5.11.2
 # =========================================================
 python-multipart==0.0.9
 python-dotenv==1.0.1
+packaging==23.2
+
+# =========================================================
+# Packaging (required by opentelemetry-instrumentation-fastapi)
+# =========================================================
+packaging>=21.0
 
 # =========================================================
 # Authentication & Security
