@@ -59,7 +59,7 @@ import {
   IconButton,
   Tooltip,
 } from "@chakra-ui/react";
-import { FiBriefcase, FiUsers, FiMoreVertical, FiEye, FiEdit2, FiUserPlus, FiPlayCircle, FiRefreshCw, FiPlus, FiSettings, FiArrowLeft } from "react-icons/fi";
+import { FiBriefcase, FiUsers, FiMoreVertical, FiEye, FiEdit2, FiUserPlus, FiPlayCircle, FiRefreshCw, FiPlus, FiSettings, FiArrowLeft, FiMail } from "react-icons/fi";
 import { useAuth } from "../../hooks/useAuth";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import { TENANT_USER_ROLE_OPTIONS } from "./types";
@@ -386,7 +386,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
               </Button>
               <HStack spacing={3} flexWrap="wrap" align="center">
                 <Heading size="md" color="gray.800">{tm.tenantDetailView.organization_name || tm.tenantDetailView.tenant_id}</Heading>
-                <Badge colorScheme={tm.tenantDetailView.status === "ACTIVE" ? "green" : tm.tenantDetailView.status === "SUSPENDED" ? "orange" : "gray"} fontSize="sm">
+                <Badge colorScheme={tm.tenantDetailView.status === "ACTIVE" ? "green" : tm.tenantDetailView.status === "SUSPENDED" ? "orange" : tm.tenantDetailView.status === "PENDING" ? "blue" : "gray"} fontSize="sm">
                   {tm.tenantDetailView.status}
                 </Badge>
                 <Text fontSize="sm" color="gray.600">Tenant ID: {tm.tenantDetailView.tenant_id}</Text>
@@ -434,9 +434,23 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                         </Box>
                         <Box>
                           <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={2}>Status</Text>
-                          <Badge colorScheme={tm.viewTenantDetail.status === "ACTIVE" ? "green" : tm.viewTenantDetail.status === "SUSPENDED" ? "orange" : "gray"} fontSize="sm">
-                            {tm.viewTenantDetail.status}
-                          </Badge>
+                          <HStack spacing={3} align="center">
+                            <Badge colorScheme={tm.viewTenantDetail.status === "ACTIVE" ? "green" : tm.viewTenantDetail.status === "SUSPENDED" ? "orange" : tm.viewTenantDetail.status === "PENDING" ? "blue" : "gray"} fontSize="sm">
+                              {tm.viewTenantDetail.status}
+                            </Badge>
+                            {tm.viewTenantDetail.status === "PENDING" && (
+                              <Button
+                                size="xs"
+                                colorScheme="blue"
+                                leftIcon={<FiMail />}
+                                onClick={() => tm.handleSendVerificationEmail(tm.viewTenantDetail!.tenant_id, tm.viewTenantDetail!.email)}
+                                isLoading={tm.sendingVerificationTenantId === tm.viewTenantDetail.tenant_id}
+                                loadingText="Sending..."
+                              >
+                                Send Verification Email
+                              </Button>
+                            )}
+                          </HStack>
                         </Box>
                       </SimpleGrid>
                     ) : (
@@ -501,7 +515,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                           </HStack>
                         </Td>
                         <Td>
-                          <Badge colorScheme={t.status === "ACTIVE" ? "green" : t.status === "SUSPENDED" ? "orange" : "gray"}>{t.status}</Badge>
+                          <Badge colorScheme={t.status === "ACTIVE" ? "green" : t.status === "SUSPENDED" ? "orange" : t.status === "PENDING" ? "blue" : "gray"}>{t.status}</Badge>
                         </Td>
                         <Td fontSize="sm">{t.created_at ? new Date(t.created_at).toLocaleDateString() : "—"}</Td>
                         <Td onClick={(e) => e.stopPropagation()}>
@@ -527,6 +541,15 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                                   </MenuItem>
                                 </Box>
                               </Tooltip>
+                              {t.status === "PENDING" && (
+                                <MenuItem
+                                  icon={<FiMail />}
+                                  onClick={() => tm.handleSendVerificationEmail(t.tenant_id, t.email)}
+                                  isDisabled={tm.sendingVerificationTenantId === t.tenant_id}
+                                >
+                                  {tm.sendingVerificationTenantId === t.tenant_id ? "Sending..." : "Send Verification Email"}
+                                </MenuItem>
+                              )}
                               {t.status === "ACTIVE" && (
                                 <>
                                   <MenuItem onClick={() => tm.handleOpenTenantStatus(t, "SUSPENDED")}>Suspend Tenant</MenuItem>
