@@ -29,7 +29,7 @@ from ai4icore_logging import (
 )
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig, AuthContextMiddleware
 
 from routers import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
@@ -334,6 +334,10 @@ try:
     model_mgmt_plugin = ModelManagementPlugin(config=mm_config)
     model_mgmt_plugin.register_plugin(app, redis_client=redis_client)
     logger.info("✅ Model Management Plugin initialized for OCR service")
+    # Auth context runs first (last added): set request.state.user_id from JWT so Model Resolution
+    # can use it for A/B variant hashing when frontend calls service directly (no gateway).
+    app.add_middleware(AuthContextMiddleware, path_prefixes=mm_config.middleware_paths or ["/api/v1/ocr"])
+    logger.info("✅ Auth context middleware registered for user_id from JWT (A/B sticky variant)")
 except Exception as e:
     logger.warning(f"Failed to initialize Model Management Plugin: {e}")
 
