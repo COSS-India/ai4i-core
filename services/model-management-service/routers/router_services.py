@@ -101,9 +101,9 @@ async def list_services_policies(
         )
 
 
-@router_services.post("/{service_id}", dependencies=[Depends(AuthProvider)])
+@router_services.post("/{service_id:path}", dependencies=[Depends(AuthProvider)])
 async def view_service(service_id: str):
-    """View service details by ID - POST /services/{service_id} (body can include serviceId for override)"""
+    """View service details by ID - POST /services/{service_id} (service_id may contain slashes, e.g. ai4bharat/surya-ocr-v1--gpu--t4)"""
     try:
         data = await get_service_details(service_id)
         if not data:
@@ -170,9 +170,9 @@ async def update_service_endpoint(payload: ServiceUpdateRequest, request: Reques
         )
 
 
-@router_services.delete("/{service_id}", response_model=str, dependencies=[Depends(AuthProvider)])
+@router_services.delete("/{service_id:path}", response_model=str, dependencies=[Depends(AuthProvider)])
 async def delete_service(service_id: str):
-    """Delete a service - DELETE /services/{service_id}"""
+    """Delete a service - DELETE /services/{service_id} (service_id may contain slashes)"""
     try:
         result = await delete_service_by_uuid(service_id)
 
@@ -194,9 +194,9 @@ async def delete_service(service_id: str):
         )
 
 
-@router_services.patch("/{service_id}/health", dependencies=[Depends(AuthProvider)])
+@router_services.patch("/{service_id:path}/health", dependencies=[Depends(AuthProvider)])
 async def update_service_health_endpoint(service_id: str, payload: ServiceHeartbeatRequest, request: Request):
-    """Update health status for a service - PATCH /services/{service_id}/health"""
+    """Update health status for a service - PATCH /services/{service_id}/health (service_id may contain slashes)"""
     try:
         # Override serviceId from path
         merged_payload = ServiceHeartbeatRequest(serviceId=service_id, status=payload.status)
@@ -221,9 +221,9 @@ async def update_service_health_endpoint(service_id: str, payload: ServiceHeartb
         )
 
 
-@router_services.post("/{service_id}/policy", response_model=ServicePolicyResponse, dependencies=[Depends(AuthProvider)], include_in_schema=False)
+@router_services.post("/{service_id:path}/policy", response_model=ServicePolicyResponse, dependencies=[Depends(AuthProvider)], include_in_schema=False)
 async def add_or_update_service_policy_endpoint(service_id: str, payload: ServicePolicyUpdateRequest, request: Request):
-    """Add or update policy for a service - POST /services/{service_id}/policy"""
+    """Add or update policy for a service - POST /services/{service_id}/policy (service_id may contain slashes)"""
     try:
         user_id = get_user_id_from_request(request)
         result = await add_or_update_service_policy(

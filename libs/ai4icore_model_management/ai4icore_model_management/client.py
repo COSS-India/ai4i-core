@@ -4,11 +4,12 @@ Client for interacting with the model management service API
 with caching support for efficient and scalable operations
 """
 
+import json
 import logging
 import os
-from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
-import json
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel
@@ -289,7 +290,9 @@ class ModelManagementClient:
         # Fetch from API
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/api/v1/model-management/services/{service_id}"
+            # Encode service_id so IDs containing '/' (e.g. "ai4bharat/surya-ocr-v1--gpu--t4") are one path segment
+            encoded_service_id = quote(service_id, safe="")
+            url = f"{self.base_url}/api/v1/model-management/services/{encoded_service_id}"
             headers = self._get_headers(auth_headers)
             
             logger.debug(f"Fetching service {service_id} from {url}")
