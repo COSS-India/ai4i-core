@@ -180,6 +180,7 @@ class UserResponse(UserBase):
     last_login: Optional[datetime]
     avatar_url: Optional[str]
     roles: List[str] = []
+    tenant_id: Optional[str] = Field(None, description="Tenant identifier when user is a tenant admin or tenant user")
     
     class Config:
         from_attributes = True
