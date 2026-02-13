@@ -61,6 +61,8 @@ class SMRSelectResponse(BaseModel):
     service_policy: Optional[Dict[str, Any]] = None
     # Scoring details (tie breaker information), null if context-aware
     scoring_details: Optional[Dict[str, Any]] = None
+    # Context-aware result (only populated when context-aware is enabled for NMT)
+    context_aware_result: Optional[Dict[str, Any]] = None
 
 
 app = FastAPI(
@@ -340,19 +342,22 @@ def _compute_policy_match_score_for_service(
     max_score = 0
     service_policy = svc.get("policy")
     if service_policy and isinstance(service_policy, dict):
+        # Check both "latency" and "latency_policy" keys (policy may use either)
         service_latency = (
-            str(service_policy.get("latency", "")).lower()
-            if service_policy.get("latency")
+            str(service_policy.get("latency_policy") or service_policy.get("latency", "")).lower()
+            if (service_policy.get("latency_policy") or service_policy.get("latency"))
             else None
         )
+        # Check both "cost" and "cost_policy" keys
         service_cost = (
-            str(service_policy.get("cost", "")).lower()
-            if service_policy.get("cost")
+            str(service_policy.get("cost_policy") or service_policy.get("cost", "")).lower()
+            if (service_policy.get("cost_policy") or service_policy.get("cost"))
             else None
         )
+        # Check both "accuracy" and "accuracy_policy" keys
         service_accuracy = (
-            str(service_policy.get("accuracy", "")).lower()
-            if service_policy.get("accuracy")
+            str(service_policy.get("accuracy_policy") or service_policy.get("accuracy", "")).lower()
+            if (service_policy.get("accuracy_policy") or service_policy.get("accuracy"))
             else None
         )
 
@@ -411,6 +416,52 @@ def _compute_policy_match_score_for_service(
     return score
 
 
+def validate_policy_combinations(
+    latency_policy: Optional[str],
+    cost_policy: Optional[str],
+    accuracy_policy: Optional[str],
+) -> None:
+    """
+    Validate policy combinations and raise HTTPException for invalid combinations.
+    
+    Invalid combinations:
+    - sensitive accuracy with Tier 1 cost
+    - Low latency with Tier 1 cost
+    """
+    if not cost_policy:
+        return  # No cost policy specified, skip validation
+    
+    cost_policy_lower = str(cost_policy).lower() if cost_policy else None
+    
+    # Check for invalid combinations
+    if cost_policy_lower == "tier_1":
+        if accuracy_policy and str(accuracy_policy).lower() == "sensitive":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_POLICY_COMBINATION",
+                    "message": "Invalid policy combination: sensitive accuracy cannot be used with Tier 1 cost. Sensitive accuracy requires higher cost tiers (Tier 2 or Tier 3).",
+                    "invalid_combination": {
+                        "accuracy_policy": accuracy_policy,
+                        "cost_policy": cost_policy,
+                    }
+                },
+            )
+        
+        if latency_policy and str(latency_policy).lower() == "low":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_POLICY_COMBINATION",
+                    "message": "Invalid policy combination: low latency cannot be used with Tier 1 cost. Low latency requires higher cost tiers (Tier 2 or Tier 3).",
+                    "invalid_combination": {
+                        "latency_policy": latency_policy,
+                        "cost_policy": cost_policy,
+                    }
+                },
+            )
+
+
 def select_service_deterministically(
     services: List[Dict[str, Any]],
     preferred_language: Optional[str],
@@ -457,6 +508,18 @@ def select_service_deterministically(
         )
         if policy_score is not None:
             policy_scored.append((policy_score, service_id, svc))
+            # Log policy score for debugging tie detection
+            logger.info(
+                "SMR: Service has policy score",
+                extra={
+                    "service_id": service_id,
+                    "policy_score": policy_score,
+                    "service_policy": svc.get("policy"),
+                    "latency_policy": latency_policy,
+                    "cost_policy": cost_policy,
+                    "accuracy_policy": accuracy_policy,
+                }
+            )
             continue
 
         latency_score = _compute_latency_score_for_service(svc, preferred_language)
@@ -486,20 +549,55 @@ def select_service_deterministically(
         )
         selected = policy_scored[0][2]
         
-        # Check for ties
+        # Check for ties at policy score level
+        # We check BEFORE considering cost_tier, so we can detect if multiple services
+        # have the same policy score (even if they have different cost tiers)
         top_score = policy_scored[0][0]
         tied_services = [x for x in policy_scored if x[0] == top_score]
+        
+        # Log all services with their scores for debugging
+        logger.info(
+            "SMR: Checking for ties in policy_scored",
+            extra={
+                "total_services": len(policy_scored),
+                "top_score": top_score,
+                "tied_count": len(tied_services),
+                "tied_service_ids": [x[1] for x in tied_services],
+                "all_scores": [{"service_id": x[1], "score": x[0], "cost_tier": _get_cost_tier_value(x[2].get("policy"))} for x in policy_scored[:10]],  # First 10
+            }
+        )
+        
         if len(tied_services) > 1:
+            # There is a tie at policy score level
             scoring_details["tie_level"] = 1
-            # Check if tie broken by cost
+            scoring_details["tie_breaker_level"]["first"] = "lowest_cost"
+            
+            # Check if tie was broken by cost tier
             top_cost_tier = _get_cost_tier_value(tied_services[0][2].get("policy"))
             cost_tied = [x for x in tied_services if _get_cost_tier_value(x[2].get("policy")) == top_cost_tier]
+            
+            logger.info(
+                "SMR: Tie detected, checking cost tier break",
+                extra={
+                    "tied_count": len(tied_services),
+                    "top_cost_tier": top_cost_tier,
+                    "cost_tied_count": len(cost_tied),
+                    "tied_service_ids": [x[1] for x in tied_services],
+                }
+            )
+            
             if len(cost_tied) > 1:
+                # Tie still exists after cost tier - broken by lexicographic order
                 scoring_details["tie_level"] = 2
-                scoring_details["tie_breaker_level"]["first"] = "lowest_cost"
                 scoring_details["tie_breaker_level"]["second"] = "lexicographic_order"
             else:
-                scoring_details["tie_breaker_level"]["first"] = "lowest_cost"
+                # Tie was broken by cost tier (already set first = "lowest_cost")
+                scoring_details["tie_breaker_level"]["second"] = None
+        else:
+            # No tie at policy score level - selection was unambiguous
+            # Don't populate tie_breaker_level when there's no tie
+            scoring_details["tie_breaker_level"]["first"] = None
+            scoring_details["tie_breaker_level"]["second"] = None
         
         return selected, scoring_details
 
@@ -513,11 +611,23 @@ def select_service_deterministically(
         )
         selected = scored[0][2]
         
-        # Check for ties
+        # Check for ties at latency score level
         top_score = scored[0][0]
         tied_services = [x for x in scored if x[0] == top_score]
+        
+        logger.debug(
+            "SMR: Checking for ties in scored (latency-based)",
+            extra={
+                "total_services": len(scored),
+                "top_score": top_score,
+                "tied_count": len(tied_services),
+                "tied_service_ids": [x[1] for x in tied_services],
+            }
+        )
+        
         if len(tied_services) > 1:
             scoring_details["tie_level"] = 1
+            scoring_details["tie_breaker_level"]["first"] = "lowest_cost"
             top_cost_tier = _get_cost_tier_value(tied_services[0][2].get("policy"))
             cost_tied = [x for x in tied_services if _get_cost_tier_value(x[2].get("policy")) == top_cost_tier]
             if len(cost_tied) > 1:
@@ -525,7 +635,12 @@ def select_service_deterministically(
                 scoring_details["tie_breaker_level"]["first"] = "lowest_cost"
                 scoring_details["tie_breaker_level"]["second"] = "lexicographic_order"
             else:
-                scoring_details["tie_breaker_level"]["first"] = "lowest_cost"
+                # Tie was broken by cost tier
+                scoring_details["tie_breaker_level"]["second"] = None
+        else:
+            # No tie - don't populate tie_breaker_level
+            scoring_details["tie_breaker_level"]["first"] = None
+            scoring_details["tie_breaker_level"]["second"] = None
         
         return selected, scoring_details
 
@@ -546,7 +661,9 @@ def select_service_deterministically(
             scoring_details["tie_breaker_level"]["first"] = "lowest_cost"
             scoring_details["tie_breaker_level"]["second"] = "lexicographic_order"
         else:
-            scoring_details["tie_breaker_level"]["first"] = "lowest_cost"
+            # No tie - don't populate tie_breaker_level
+            scoring_details["tie_breaker_level"]["first"] = None
+            scoring_details["tie_breaker_level"]["second"] = None
         
         return selected, scoring_details
 
@@ -559,6 +676,201 @@ def select_service_deterministically(
     )
 
 
+async def handle_context_aware_nmt(
+    http_client: httpx.AsyncClient,
+    body_dict: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Handle context-aware NMT by calling LLM translate API directly.
+    
+    Returns the translation result in NMT format.
+    """
+    # Language code to full name mapping
+    LANGUAGE_CODE_TO_NAME = {
+        "en": "English", "hi": "Hindi", "ta": "Tamil", "te": "Telugu",
+        "kn": "Kannada", "ml": "Malayalam", "bn": "Bengali", "gu": "Gujarati",
+        "mr": "Marathi", "pa": "Punjabi", "or": "Oriya", "as": "Assamese",
+        "ur": "Urdu", "sa": "Sanskrit", "ks": "Kashmiri", "ne": "Nepali",
+        "sd": "Sindhi", "kok": "Konkani", "doi": "Dogri", "mai": "Maithili",
+        "brx": "Bodo", "mni": "Manipuri", "sat": "Santali", "gom": "Goan Konkani",
+        "fr": "French", "es": "Spanish", "de": "German", "it": "Italian",
+        "pt": "Portuguese", "ru": "Russian", "ja": "Japanese", "ko": "Korean",
+        "zh": "Chinese", "ar": "Arabic", "th": "Thai", "vi": "Vietnamese"
+    }
+    
+    # Extract input text, language configuration, and required context
+    nmt_config = body_dict.get("config") or {}
+    if not isinstance(nmt_config, dict):
+        logger.error(
+            "SMR: config is not a dict in context-aware request",
+            extra={
+                "context": {
+                    "body_dict_keys": list(body_dict.keys()),
+                    "config_type": type(nmt_config).__name__,
+                    "config_value": str(nmt_config)[:200],
+                }
+            }
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_CONFIG",
+                "message": "config must be an object when X-Context-Aware is true"
+            }
+        )
+    
+    # When context-aware routing is enabled, config.context is required
+    # Check if context exists and is not None/empty
+    context_value = nmt_config.get("context")
+    if not context_value:
+        logger.error(
+            "SMR: context is missing or empty in context-aware request",
+            extra={
+                "context": {
+                    "nmt_config_keys": list(nmt_config.keys()),
+                    "nmt_config": str(nmt_config)[:500],
+                    "body_dict": str(body_dict)[:500],
+                }
+            }
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "CONTEXT_REQUIRED",
+                "message": "config.context is required when X-Context-Aware is true. Please provide a non-empty context value in config.context."
+            }
+        )
+    
+    lang_cfg = nmt_config.get("language") or {}
+    source_lang_code = lang_cfg.get("sourceLanguage", "en")
+    target_lang_code = lang_cfg.get("targetLanguage", "en")
+    
+    # Map language codes to full names
+    source_language = LANGUAGE_CODE_TO_NAME.get(source_lang_code, source_lang_code.capitalize())
+    target_language = LANGUAGE_CODE_TO_NAME.get(target_lang_code, target_lang_code.capitalize())
+    
+    # Get input text (use first input if multiple)
+    input_list = body_dict.get("input", [])
+    if not input_list:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_INPUT",
+                "message": "Input text is required"
+            }
+        )
+    
+    # Combine all input texts or use first one
+    text = " ".join([item.get("source", "") for item in input_list if item.get("source")])
+    if not text:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_INPUT",
+                "message": "Source text cannot be empty"
+            }
+        )
+    
+    # Prepare translate API request (include context from config)
+    translate_payload = {
+        "text": text,
+        "source_language": source_language,
+        "target_language": target_language,
+        "context": context_value,
+    }
+    
+    logger.info(
+        "SMR: Calling LLM translate API for context-aware NMT",
+        extra={
+            "context": {
+                "source_language": source_language,
+                "target_language": target_language,
+                "text_length": len(text),
+            }
+        }
+    )
+    
+    # Call translate API directly
+    # Use environment variable for translate API URL, fallback to default
+    translate_api_url = os.getenv("LLM_TRANSLATE_API_URL", "http://13.201.75.118:8000/api/translate")
+    try:
+        translate_response = await http_client.post(
+            translate_api_url,
+            json=translate_payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30.0
+        )
+        
+        translate_response.raise_for_status()
+        translate_result = translate_response.json()
+        
+        # Extract translated text from response
+        translated_text = None
+        
+        # Try common response field names
+        if "translated_text" in translate_result and translate_result.get("translated_text"):
+            translated_text = str(translate_result["translated_text"])
+        elif "translation" in translate_result and translate_result.get("translation"):
+            translated_text = str(translate_result["translation"])
+        elif "result" in translate_result and translate_result.get("result"):
+            translated_text = str(translate_result["result"])
+        elif "text" in translate_result and translate_result.get("text"):
+            translated_text = str(translate_result["text"])
+        elif "output" in translate_result and translate_result.get("output"):
+            translated_text = str(translate_result["output"])
+        elif isinstance(translate_result, str):
+            translated_text = translate_result
+        
+        if not translated_text:
+            logger.warning(
+                "Translate API response format unexpected",
+                extra={"context": {"response": translate_result}}
+            )
+            translated_text = "Translation unavailable"
+        
+        # Format response in NMT format
+        output_list = []
+        for item in input_list:
+            output_list.append({
+                "source": item.get("source", ""),
+                "target": translated_text  # Use same translation for all inputs
+            })
+        
+        return {"output": output_list}
+        
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "SMR: Translate API returned error",
+            extra={
+                "context": {
+                    "status_code": e.response.status_code,
+                    "response_text": e.response.text[:500] if e.response else None,
+                }
+            },
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=e.response.status_code if e.response else 500,
+            detail={
+                "code": "TRANSLATE_API_ERROR",
+                "message": f"Translation service error: {e.response.text[:200] if e.response else str(e)}",
+            },
+        )
+    except httpx.RequestError as e:
+        logger.error(
+            "SMR: Translate API connection error",
+            extra={"context": {"error": str(e)}},
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "TRANSLATE_API_UNAVAILABLE",
+                "message": "Translation service is temporarily unavailable. Please try again later.",
+            },
+        )
+
+
 async def inject_service_id_if_missing(
     http_client: httpx.AsyncClient,
     task_type: str,
@@ -569,12 +881,45 @@ async def inject_service_id_if_missing(
     cost_policy: Optional[str] = None,
     accuracy_policy: Optional[str] = None,
     is_context_aware: bool = False,
-) -> Tuple[str, Dict[str, Any], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+) -> Tuple[str, Dict[str, Any], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """
     Ensure that body_dict.config.serviceId is populated, using SMR selection if needed.
+    
+    For context-aware requests:
+    - If task_type is "nmt", calls LLM translate API directly and returns result
+    - If task_type is not "nmt", returns error that context-aware is only available for NMT
 
-    Returns (service_id, updated_body_dict, tenant_policy_result, selected_service_dict, scoring_details).
+    Returns (service_id, updated_body_dict, tenant_policy_result, selected_service_dict, scoring_details, context_aware_result).
     """
+    # Handle context-aware requests
+    if is_context_aware:
+        if task_type.lower() != "nmt":
+            raise HTTPException(
+                status_code=501,
+                detail={
+                    "code": "CONTEXT_AWARE_NOT_AVAILABLE",
+                    "message": f"Context-aware routing is currently only available for NMT (Neural Machine Translation) inference. This feature for {task_type.upper()} is under development and will be available in a future release.",
+                },
+            )
+        
+        # For NMT, handle context-aware by calling LLM translate API
+        logger.info(
+            "SMR: Context-aware routing enabled for NMT, calling LLM translate API",
+            extra={
+                "context": {
+                    "task_type": task_type,
+                    "user_id": user_id,
+                    "tenant_id": tenant_id,
+                }
+            }
+        )
+        
+        context_aware_result = await handle_context_aware_nmt(http_client, body_dict)
+        
+        # Return special serviceId to indicate context-aware was used
+        # The context_aware_result will be included in the response
+        return "llm_context_aware", body_dict, None, None, None, context_aware_result
+    
     config = body_dict.get("config") or {}
     if not isinstance(config, dict):
         raise HTTPException(
@@ -591,7 +936,7 @@ async def inject_service_id_if_missing(
             "SMR: serviceId already present in request, skipping routing",
             extra={"context": {"service_id": str(existing_service_id), "task_type": task_type}},
         )
-        return str(existing_service_id), body_dict, None, None, None
+        return str(existing_service_id), body_dict, None, None, None, None
 
     headers_provided = (
         latency_policy is not None or cost_policy is not None or accuracy_policy is not None
@@ -603,11 +948,11 @@ async def inject_service_id_if_missing(
     actual_accuracy_policy: Optional[str] = None
 
     # Priority 1: Headers have HIGHEST priority (as per flow diagram)
-    # If headers are provided, use them directly and skip Policy Engine
-    # policy_result remains None so tenant_policy will be null in response
+    # If headers are provided, use them directly for routing
+    # But still call Policy Engine for observability (to show what tenant policy would be)
     if headers_provided:
         logger.info(
-            "SMR: Using policy headers directly (highest priority, skipping Policy Engine)",
+            "SMR: Using policy headers directly (highest priority for routing)",
             extra={
                 "context": {
                     "task_type": task_type,
@@ -631,9 +976,18 @@ async def inject_service_id_if_missing(
         if actual_accuracy_policy and hasattr(actual_accuracy_policy, "value"):
             actual_accuracy_policy = actual_accuracy_policy.value
 
-        # policy_result remains None when headers are used
-        # This ensures tenant_policy is null in the response
+        # Headers take priority - skip Policy Engine call since headers are used for routing
+        # tenant_policy will be None in response when headers are provided
         policy_result = None
+        logger.info(
+            "SMR: Headers provided, skipping Policy Engine call (headers used for routing)",
+            extra={
+                "context": {
+                    "tenant_id": tenant_id,
+                    "routing_decision": "headers_priority",
+                }
+            }
+        )
     # Priority 2: No headers provided - call Policy Engine
     elif tenant_id is None:
         # Free user: call Policy Engine with tenant_id="free-user" to get policy from DB
@@ -728,6 +1082,29 @@ async def inject_service_id_if_missing(
             },
         )
 
+    # Validate policy combinations before service selection
+    # Invalid combinations: sensitive accuracy with Tier 1 cost, Low latency with Tier 1 cost
+    validate_policy_combinations(
+        latency_policy=actual_latency_policy,
+        cost_policy=actual_cost_policy,
+        accuracy_policy=actual_accuracy_policy,
+    )
+
+    # Log candidate services for debugging
+    logger.info(
+        "SMR: Selecting from candidate services",
+        extra={
+            "context": {
+                "task_type": task_type,
+                "candidate_count": len(candidate_services),
+                "latency_policy": actual_latency_policy,
+                "cost_policy": actual_cost_policy,
+                "accuracy_policy": actual_accuracy_policy,
+                "candidate_service_ids": [str(s.get("serviceId", "")) for s in candidate_services[:10]],  # First 10
+            }
+        },
+    )
+    
     selected_service, scoring_details = select_service_deterministically(
         candidate_services,
         preferred_language=None,
@@ -736,6 +1113,18 @@ async def inject_service_id_if_missing(
         accuracy_policy=actual_accuracy_policy,
     )
     service_id = str(selected_service.get("serviceId"))
+    
+    # Log selection details
+    logger.info(
+        "SMR: Service selected with scoring details",
+        extra={
+            "context": {
+                "selected_service_id": service_id,
+                "tie_level": scoring_details.get("tie_level", 0),
+                "tie_breaker_level": scoring_details.get("tie_breaker_level", {}),
+            }
+        },
+    )
 
     logger.info(
         "SMR: Selected service for routing",
@@ -752,11 +1141,7 @@ async def inject_service_id_if_missing(
     config["serviceId"] = service_id
     body_dict["config"] = config
 
-    # If context-aware, set scoring_details to None
-    if is_context_aware:
-        scoring_details = None
-
-    return service_id, body_dict, policy_result, selected_service, scoring_details
+    return service_id, body_dict, policy_result, selected_service, scoring_details, None
 
 
 @app.post("/api/v1/smr/select-service", response_model=SMRSelectResponse)
@@ -796,7 +1181,7 @@ async def select_service(request: Request, payload: SMRSelectRequest) -> SMRSele
     # Reuse a short‑lived httpx client for the SMR core helpers
     async with httpx.AsyncClient(timeout=30.0) as http_client:
         try:
-            service_id, updated_body, tenant_policy_result, selected_service, scoring_details = await inject_service_id_if_missing(
+            service_id, updated_body, tenant_policy_result, selected_service, scoring_details, context_aware_result = await inject_service_id_if_missing(
                 http_client=http_client,
                 task_type=payload.task_type,
                 body_dict=body_dict,
@@ -860,6 +1245,7 @@ async def select_service(request: Request, payload: SMRSelectRequest) -> SMRSele
         tenant_policy=tenant_policy_dict,
         service_policy=service_policy_dict,
         scoring_details=scoring_details,
+        context_aware_result=context_aware_result,
     )
 
 
