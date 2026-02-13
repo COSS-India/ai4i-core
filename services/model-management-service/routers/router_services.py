@@ -1,6 +1,6 @@
 """
 Standard RESTful API router for Services - aligned with API Gateway paths.
-Routes: /services/ (GET), /services/{service_id} (POST for view), /services (POST, PATCH, DELETE),
+Routes: /services (GET, POST, PATCH, DELETE), /services/{service_id} (POST for view),
 /services/{service_id}/health (PATCH), /services/policies (GET for SMR)
 """
 from fastapi import HTTPException, status, APIRouter, Depends, Query, Request
@@ -47,7 +47,7 @@ async def list_services(
     is_published: Optional[bool] = Query(None, description="Filter by publish status. True = published only, False = unpublished only, None = all services"),
     created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the service.")
 ):
-    """List all services - GET /services/ or GET /services"""
+    """List all services - GET /services"""
     try:
         if not task_type or task_type.lower() == "none":
             task_type_enum = None
