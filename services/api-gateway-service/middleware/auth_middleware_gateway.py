@@ -139,10 +139,7 @@ class AuthGatewayMiddleware(BaseHTTPMiddleware):
                     user = await auth_middleware.optional_auth(request)
                     if user:
                         request.state.user = user
-<<<<<<< Updated upstream
-=======
                         # Use user_id if available, otherwise fall back to sub (JWT standard)
->>>>>>> Stashed changes
                         request.state.user_id = user.get("user_id") or user.get("sub")
                         request.state.is_authenticated = True
                 except Exception:
@@ -223,10 +220,7 @@ class AuthGatewayMiddleware(BaseHTTPMiddleware):
                     
                     # Set user context in request state (JWT uses "sub", verify_token returns "sub")
                     request.state.user = user
-<<<<<<< Updated upstream
-=======
                     # Use user_id if available, otherwise fall back to sub (JWT standard)
->>>>>>> Stashed changes
                     request.state.user_id = user.get("user_id") or user.get("sub")
                     request.state.username = user.get("username")
                     request.state.permissions = user.get("permissions", [])
@@ -241,12 +235,8 @@ class AuthGatewayMiddleware(BaseHTTPMiddleware):
                     if auth_span:
                         auth_span.set_attribute("auth.authorized", True)
                         auth_span.set_attribute("auth.method", "JWT")
-<<<<<<< Updated upstream
-                        auth_span.set_attribute("user.id", str(_uid or "unknown"))
-=======
                         user_id_for_span = user.get("user_id") or user.get("sub") or "unknown"
                         auth_span.set_attribute("user.id", str(user_id_for_span))
->>>>>>> Stashed changes
                         auth_span.set_attribute("user.username", user.get("username", "unknown"))
                         auth_span.set_attribute("user.permissions_count", len(user.get("permissions", [])))
                         auth_span.set_status(Status(StatusCode.OK))
