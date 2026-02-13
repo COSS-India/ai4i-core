@@ -158,3 +158,12 @@ export async function removeUserSubscriptions(payload: UserSubscriptionRemoveReq
   const { data } = await apiClient.post<UserSubscriptionResponse>(`${BASE}/user/subscriptions/remove`, payload);
   return data;
 }
+
+/**
+ * Send verification email to a tenant. POST /admin/email/send/verification.
+ * Used for tenants in PENDING status to re-send verification.
+ */
+export async function sendVerificationEmail(tenant_id: string): Promise<{ message: string }> {
+  const { data } = await apiClient.post<{ message: string }>(`${BASE}/email/send-verification`, { tenant_id });
+  return data;
+}
