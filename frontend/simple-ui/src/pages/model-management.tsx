@@ -47,6 +47,7 @@ import { listServices as listServicesForModels } from "../services/servicesManag
 import { useAuth } from "../hooks/useAuth";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { extractErrorInfo } from "../utils/errorHandler";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 // TypeScript interfaces for model data
 interface OAuthId {
@@ -129,7 +130,7 @@ const ModelManagementPage: React.FC = () => {
   const [updatingModelId, setUpdatingModelId] = useState<string | null>(null);
   const [modelIdsWithService, setModelIdsWithService] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const {  user } = useAuth();
 
   const { checkSessionExpiry } = useSessionExpiry();

@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToast } from '@chakra-ui/react';
+import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { performASRInference, transcribeAudio } from '../services/asrService';
 import { getWordCount, convertWebmToWav } from '../utils/helpers';
 import { UseASRReturn, ASRInferenceRequest } from '../types/asr';
-import { DEFAULT_ASR_CONFIG, MAX_RECORDING_DURATION } from '../config/constants';
+import { DEFAULT_ASR_CONFIG, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, RECORDING_ERRORS, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS } from '../config/constants';
 import { extractErrorInfo } from '../utils/errorHandler';
 
 // MediaRecorder is a standard Web API, no need to extend Window
@@ -39,9 +39,10 @@ export const useASR = (): UseASRReturn => {
   const justCompletedRequestRef = useRef<boolean>(false);
   const stopRecordingRef = useRef<(() => void) | null>(null);
   const performInferenceRef = useRef<((audioContent: string) => Promise<void>) | null>(null);
+  const recordingDurationRef = useRef<number>(0);
 
   // Toast hook
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   // Initialize audio stream on mount
   useEffect(() => {
@@ -57,10 +58,10 @@ export const useASR = (): UseASRReturn => {
         setError(null);
       } catch (err) {
         console.error('Error accessing microphone:', err);
-        setError('Microphone permission denied. Please enable microphone access.');
+        setError('Microphone access is required to record audio. Please allow microphone permissions in your browser settings.');
         toast({
           title: 'Microphone Access Denied',
-          description: 'Please enable microphone access to use ASR recording.',
+          description: 'Microphone access is required to record audio. Please allow microphone permissions in your browser settings.',
           status: 'error',
           duration: 5000,
           isClosable: true,
@@ -87,20 +88,22 @@ export const useASR = (): UseASRReturn => {
 
   // Timer effect
   useEffect(() => {
-    if (recording && timer < 60) {
+    if (recording && timer < MAX_RECORDING_DURATION) {
       timerRef.current = setInterval(() => {
         setTimer(prev => {
           const newTimer = prev + 1;
-          if (newTimer >= 60 && stopRecordingRef.current) {
+          if (newTimer >= MAX_RECORDING_DURATION && stopRecordingRef.current) {
             stopRecordingRef.current();
+            const err = RECORDING_ERRORS.REC_TOO_LONG;
             toast({
-              title: 'Recording Time Limit',
-              description: 'Maximum recording time of 1 minute reached.',
+              title: err.title,
+              description: err.description,
               status: 'warning',
               duration: 3000,
               isClosable: true,
             });
           }
+          recordingDurationRef.current = newTimer;
           return newTimer;
         });
       }, 1000);
@@ -187,8 +190,8 @@ export const useASR = (): UseASRReturn => {
       if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current === languageRef.current) {
         console.log('✓ Error accepted - languages match, showing error');
         
-        // Use centralized error handler
-        const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
+        // Use centralized error handler (asr context so backend message shown as default when no specific mapping)
+        const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error, 'asr');
         
         setError(errorMessage);
         setFetching(false);
@@ -224,11 +227,14 @@ export const useASR = (): UseASRReturn => {
         console.log('Audio stream not available, initializing new stream...');
         streamToUse = await navigator.mediaDevices.getUserMedia({ audio: true });
         setAudioStream(streamToUse);
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error reinitializing audio stream:', err);
+        const isNotFoundError = err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError';
         toast({
-          title: 'Recording Error',
-          description: 'Audio stream not available. Please check microphone permissions.',
+          title: isNotFoundError ? 'No Microphone Detected' : 'Recording Error',
+          description: isNotFoundError 
+            ? 'No microphone detected. Please connect a microphone and try again.'
+            : 'Audio stream not available. Please check microphone permissions.',
           status: 'error',
           duration: 3000,
           isClosable: true,
@@ -249,11 +255,14 @@ export const useASR = (): UseASRReturn => {
         // Get new stream
         streamToUse = await navigator.mediaDevices.getUserMedia({ audio: true });
         setAudioStream(streamToUse);
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error reinitializing audio stream:', err);
+        const isNotFoundError = err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError';
         toast({
-          title: 'Recording Error',
-          description: 'Failed to access microphone. Please check permissions.',
+          title: isNotFoundError ? 'No Microphone Detected' : 'Microphone Access Denied',
+          description: isNotFoundError
+            ? 'No microphone detected. Please connect a microphone and try again.'
+            : 'Microphone access is required to record audio. Please allow microphone permissions in your browser settings.',
           status: 'error',
           duration: 3000,
           isClosable: true,
@@ -264,9 +273,10 @@ export const useASR = (): UseASRReturn => {
 
     // Check if MediaRecorder is supported
     if (!window.MediaRecorder) {
+      const err = RECORDING_ERRORS.BROWSER_NOT_SUPPORTED;
       toast({
-        title: 'Recording Error',
-        description: 'MediaRecorder API is not supported in this browser.',
+        title: err.title,
+        description: err.description,
         status: 'error',
         duration: 3000,
         isClosable: true,
@@ -284,9 +294,10 @@ export const useASR = (): UseASRReturn => {
       const audioTracks = streamToUse.getAudioTracks();
       if (audioTracks.length === 0 || audioTracks.every(track => track.readyState !== 'live')) {
         console.error('No active audio tracks available');
+        const err = RECORDING_ERRORS.REC_START_FAILED;
         toast({
-          title: 'Recording Error',
-          description: 'No active audio tracks available.',
+          title: err.title,
+          description: err.description,
           status: 'error',
           duration: 3000,
           isClosable: true,
@@ -336,14 +347,31 @@ export const useASR = (): UseASRReturn => {
           const webmBlob = new Blob(audioChunksRef.current, { type: actualMimeType });
           console.log('Recording completed, WebM blob size:', webmBlob.size);
           
+          // Check minimum recording duration
+          const duration = recordingDurationRef.current;
+          if (duration < MIN_RECORDING_DURATION) {
+            const err = RECORDING_ERRORS.REC_TOO_SHORT;
+            setError(err.description);
+            setRecording(false);
+            toast({
+              title: err.title,
+              description: err.description,
+              status: 'error',
+              duration: 5000,
+              isClosable: true,
+            });
+            return;
+          }
+
           // Validate blob has actual audio data (not just header)
           if (webmBlob.size < 1000) {
             console.error('Recording blob too small, likely contains no audio data');
-            setError('Recording failed: No audio data captured. Please try again and ensure your microphone is working.');
+            const err = RECORDING_ERRORS.NO_AUDIO_DETECTED;
+            setError(err.description);
             setRecording(false);
             toast({
-              title: 'Recording Failed',
-              description: 'No audio data was captured. Please check your microphone and try again.',
+              title: err.title,
+              description: err.description,
               status: 'error',
               duration: 5000,
               isClosable: true,
@@ -415,11 +443,12 @@ export const useASR = (): UseASRReturn => {
       // Handle errors
       mediaRecorder.onerror = (event) => {
         console.error('MediaRecorder error:', event);
-        setError('Recording error occurred.');
+        const err = RECORDING_ERRORS.REC_INTERRUPTED;
+        setError(err.description);
         setRecording(false);
         toast({
-          title: 'Recording Error',
-          description: 'An error occurred during recording.',
+          title: err.title,
+          description: err.description,
           status: 'error',
           duration: 3000,
           isClosable: true,
@@ -454,11 +483,12 @@ export const useASR = (): UseASRReturn => {
       });
     } catch (err) {
       console.error('Error starting recording:', err);
-      setError('Failed to start recording. Please try again.');
+      const recErr = RECORDING_ERRORS.REC_START_FAILED;
+      setError(recErr.description);
       setRecording(false);
       toast({
-        title: 'Recording Error',
-        description: 'Failed to start recording. Please try again.',
+        title: recErr.title,
+        description: recErr.description,
         status: 'error',
         duration: 3000,
         isClosable: true,
@@ -502,7 +532,7 @@ export const useASR = (): UseASRReturn => {
       // State and toast are already handled by the mutation's onError; only update state
       // here in case onError was skipped (e.g. language mismatch). Do not show a second toast.
       if (currentRequestLanguageRef.current !== null && currentRequestLanguageRef.current === languageRef.current) {
-        const { message: errorMessage } = extractErrorInfo(err);
+        const { message: errorMessage } = extractErrorInfo(err, 'asr');
         setError(errorMessage);
         setFetching(false);
         setFetched(false);
@@ -595,45 +625,84 @@ export const useASR = (): UseASRReturn => {
   const handleFileUpload = useCallback((file: File) => {
     if (!file) {
       console.log('handleFileUpload: No file provided');
+      const err = UPLOAD_ERRORS.NO_FILE_SELECTED;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      setError(err.description);
       return;
     }
 
     console.log('handleFileUpload: Processing file:', file.name, 'Size:', file.size, 'Type:', file.type);
+
+    // Validate file size
+    if (file.size > MAX_AUDIO_FILE_SIZE) {
+      const err = UPLOAD_ERRORS.FILE_TOO_LARGE;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      setError(err.description);
+      return;
+    }
 
     // Validate file type - only MP3 and WAV files are supported
     const isMP3 = file.type === 'audio/mpeg' || file.type === 'audio/mp3' || file.name.toLowerCase().endsWith('.mp3');
     const isWAV = file.type === 'audio/wav' || file.type === 'audio/wave' || file.type === 'audio/x-wav' || file.name.toLowerCase().endsWith('.wav');
     
     if (!isMP3 && !isWAV) {
+      const err = UPLOAD_ERRORS.UNSUPPORTED_FORMAT;
       toast({
-        title: 'Invalid File Type',
-        description: 'Only MP3 and WAV files are supported. Please select a valid audio file.',
+        title: err.title,
+        description: err.description,
         status: 'error',
         duration: 3000,
         isClosable: true,
       });
-      setError('Only MP3 and WAV files are supported. Please select a valid audio file.');
+      setError(err.description);
       return;
     }
 
-    // Validate audio duration (max 1 minute)
-    const validateAudioDuration = (file: File): Promise<boolean> => {
+    // Validate audio duration (min 1 second, max 60 seconds)
+    const validateAudioDuration = (file: File): Promise<{ isValid: boolean; duration: number; error?: string }> => {
       return new Promise((resolve) => {
         const audio = new Audio();
         const url = URL.createObjectURL(file);
         
+        const timeout = setTimeout(() => {
+          URL.revokeObjectURL(url);
+          resolve({ isValid: false, duration: 0, error: 'UPLOAD_TIMEOUT' });
+        }, 10000); // 10 second timeout
+        
         audio.addEventListener('loadedmetadata', () => {
+          clearTimeout(timeout);
           URL.revokeObjectURL(url);
           const duration = audio.duration;
           console.log('Audio duration:', duration, 'seconds');
-          resolve(duration <= MAX_RECORDING_DURATION);
+          
+          if (duration < MIN_RECORDING_DURATION) {
+            resolve({ isValid: false, duration, error: 'AUDIO_TOO_SHORT' });
+          } else if (duration > MAX_RECORDING_DURATION) {
+            resolve({ isValid: false, duration, error: 'AUDIO_TOO_LONG' });
+          } else if (isNaN(duration) || duration === 0) {
+            resolve({ isValid: false, duration, error: 'EMPTY_AUDIO_FILE' });
+          } else {
+            resolve({ isValid: true, duration });
+          }
         });
         
         audio.addEventListener('error', () => {
+          clearTimeout(timeout);
           URL.revokeObjectURL(url);
           console.error('Error loading audio metadata');
-          // If we can't determine duration, allow it but warn user
-          resolve(true);
+          resolve({ isValid: false, duration: 0, error: 'INVALID_FILE' });
         });
         
         audio.src = url;
@@ -642,16 +711,35 @@ export const useASR = (): UseASRReturn => {
 
     // Validate duration first, then process file
     validateAudioDuration(file)
-      .then((isValidDuration) => {
-        if (!isValidDuration) {
+      .then((result) => {
+        if (!result.isValid) {
+          let err;
+          switch (result.error) {
+            case 'AUDIO_TOO_SHORT':
+              err = UPLOAD_ERRORS.AUDIO_TOO_SHORT;
+              break;
+            case 'AUDIO_TOO_LONG':
+              err = UPLOAD_ERRORS.AUDIO_TOO_LONG;
+              break;
+            case 'EMPTY_AUDIO_FILE':
+              err = UPLOAD_ERRORS.EMPTY_AUDIO_FILE;
+              break;
+            case 'UPLOAD_TIMEOUT':
+              err = UPLOAD_ERRORS.UPLOAD_TIMEOUT;
+              break;
+            case 'INVALID_FILE':
+            default:
+              err = UPLOAD_ERRORS.INVALID_FILE;
+              break;
+          }
           toast({
-            title: 'Audio Too Long',
-            description: `Audio file exceeds the 1 minute limit. Please select a file that is ${MAX_RECORDING_DURATION} seconds or less.`,
+            title: err.title,
+            description: err.description,
             status: 'error',
             duration: 5000,
             isClosable: true,
           });
-          setError(`Audio file exceeds the 1 minute limit. Please select a file that is ${MAX_RECORDING_DURATION} seconds or less.`);
+          setError(err.description);
           return;
         }
 
@@ -688,7 +776,15 @@ export const useASR = (): UseASRReturn => {
           
           reader.onerror = (error) => {
             console.error('FileReader error:', error);
-            setError('Failed to read the selected file.');
+            const err = UPLOAD_ERRORS.INVALID_FILE;
+            toast({
+              title: err.title,
+              description: err.description,
+              status: 'error',
+              duration: 3000,
+              isClosable: true,
+            });
+            setError(err.description);
           };
           
           reader.onabort = () => {
@@ -699,19 +795,28 @@ export const useASR = (): UseASRReturn => {
           reader.readAsDataURL(file);
         } catch (err) {
           console.error('Error processing file upload:', err);
-          setError('Failed to process file upload. Please try again.');
+          const uploadErr = UPLOAD_ERRORS.UPLOAD_FAILED;
+          toast({
+            title: uploadErr.title,
+            description: uploadErr.description,
+            status: 'error',
+            duration: 3000,
+            isClosable: true,
+          });
+          setError(uploadErr.description);
         }
       })
       .catch((error) => {
         console.error('Error validating audio duration:', error);
+        const err = UPLOAD_ERRORS.INVALID_FILE;
         toast({
-          title: 'File Validation Error',
-          description: 'Failed to validate audio file. Please try again.',
+          title: err.title,
+          description: err.description,
           status: 'error',
           duration: 3000,
           isClosable: true,
         });
-        setError('Failed to validate audio file. Please try again.');
+        setError(err.description);
       });
   }, [performInference, toast]);
 
