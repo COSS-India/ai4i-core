@@ -22,7 +22,7 @@ from datetime import datetime, date
 from typing import Dict, Any, List, Optional, Tuple, Union
 from enum import Enum
 from uuid import UUID
-from urllib.parse import urlencode, urlparse, parse_qs
+from urllib.parse import urlencode, urlparse, parse_qs, quote
 from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security, status
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
@@ -5854,7 +5854,7 @@ async def ocr_health(
 
     """OCR service health check"""
 
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
 
     headers = build_auth_headers(request, credentials, api_key)
 
@@ -5876,7 +5876,7 @@ async def ocr_inference(
     If config.serviceId is omitted, Smart Model Router will select the best OCR service
     based on Policy Engine + Model Management and inject the chosen serviceId.
     """
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
 
     import json
 
@@ -6089,7 +6089,7 @@ async def transliteration_inference(
     If config.serviceId is omitted, Smart Model Router will select the best transliteration
     service based on Policy Engine + Model Management and inject the chosen serviceId.
     """
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
 
@@ -6131,7 +6131,7 @@ async def get_transliteration_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available transliteration models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/models", "transliteration-service", headers=headers)
 
@@ -6142,7 +6142,7 @@ async def get_transliteration_services(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available transliteration services"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/services", "transliteration-service", headers=headers)
 
@@ -6153,7 +6153,7 @@ async def get_transliteration_languages(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get supported languages for transliteration"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/languages", "transliteration-service", headers=headers)
 
@@ -6164,7 +6164,7 @@ async def transliteration_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Transliteration service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "transliteration-service", headers=headers)
 
@@ -6289,7 +6289,7 @@ async def get_transliteration_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available transliteration models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/models", "transliteration-service", headers=headers)
 
@@ -6300,7 +6300,7 @@ async def get_transliteration_services(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available transliteration services"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/services", "transliteration-service", headers=headers)
 
@@ -6311,7 +6311,7 @@ async def get_transliteration_languages(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get supported languages for transliteration"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/languages", "transliteration-service", headers=headers)
 
@@ -6322,7 +6322,7 @@ async def transliteration_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Transliteration service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "transliteration-service", headers=headers)
 
@@ -6550,13 +6550,13 @@ async def list_services(
     if created_by:
         params["created_by"] = created_by
     return await proxy_to_service_with_params(
-        None, 
-        "/api/v1/model-management/services/", 
+        None,
+        "/api/v1/model-management/services",
         "model-management-service",
-        params, 
-        method="GET", 
-        headers=headers
-        )
+        params,
+        method="GET",
+        headers=headers,
+    )
 
 
 # Note: This route is intentionally placed before the catch-all route
@@ -6569,14 +6569,10 @@ async def get_service_details(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Fetch metadata for a specific runtime service. Requires Bearer token authentication with 'service.read' permission."""
-    # Exclude admin routes - they should be handled by the catch-all route
-    # FastAPI matches routes in order, but this route uses {service_id:path} which is too general
-    # We need to explicitly exclude admin routes here by checking if service_id contains "/"
-    # Admin routes have paths like "admin/add/service/policy" which contain "/"
-    # Regular service IDs should not contain "/"
-    if "/" in service_id or service_id.startswith("admin"):
-        # This is likely an admin route (e.g., "admin/add/service/policy")
-        # Re-construct the path and forward to catch-all route handler
+    # Exclude admin routes - they should be handled by the catch-all route.
+    # Only paths whose first segment is "admin" are admin routes (e.g. "admin/add/service/policy").
+    if service_id == "admin" or service_id.startswith("admin/"):
+        # This is an admin route; forward to catch-all route handler
         # Extract the path after /api/v1/model-management
         full_path = request.url.path
         if full_path.startswith("/api/v1/model-management/"):
@@ -6590,9 +6586,11 @@ async def get_service_details(
     headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     payload = json.dumps({"serviceId": service_id}).encode("utf-8")
+    # Encode service_id so IDs with "/" (e.g. ai4bharat/surya-ocr-v1--gpu--t4) are one path segment for backend
+    encoded_service_id = quote(service_id, safe="")
     return await proxy_to_service(
         None,
-        f"/api/v1/model-management/services/{service_id}",
+        f"/api/v1/model-management/services/{encoded_service_id}",
         "model-management-service",
         method="POST",
         body=payload,
