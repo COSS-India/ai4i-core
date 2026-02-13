@@ -44,21 +44,54 @@ def determine_service_and_action(request: Request) -> Tuple[str, str]:
     return service, action
 
 
-async def validate_api_key_permissions(api_key: str, service: str, action: str) -> None:
+async def validate_api_key_permissions(
+    api_key: str,
+    service: str,
+    action: str,
+    user_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Validate API key has required permissions by calling auth-service.
+    If user_id is provided, auth-service will enforce that the API key belongs to that user.
+    Returns the auth-service response dict.
+    """
     try:
         validate_url = f"{AUTH_SERVICE_URL}/api/v1/auth/validate-api-key"
+        payload: Dict[str, Any] = {
+            "api_key": api_key,
+            "service": service,
+            "action": action,
+        }
+        if user_id is not None:
+            payload["user_id"] = int(user_id)
+
         async with httpx.AsyncClient(timeout=AUTH_HTTP_TIMEOUT) as client:
-            response = await client.post(
-                validate_url, json={"api_key": api_key, "service": service, "action": action}
-            )
+            response = await client.post(validate_url, json=payload)
+
         if response.status_code == 200:
             result = response.json()
-            if result.get("valid"):
-                return
-            raise AuthorizationError(result.get("message", "Permission denied"))
+            # Enforce auth-service 'valid' flag
+            if not result.get("valid", False):
+                error_msg = result.get("message", "Permission denied")
+                raise AuthorizationError(error_msg)
+
+            # Optional local ownership safety net
+            if user_id is not None and result.get("user_id") is not None:
+                try:
+                    api_key_user_id = int(result.get("user_id"))
+                    requested_user_id = int(user_id)
+                except (TypeError, ValueError):
+                    api_key_user_id = result.get("user_id")
+                    requested_user_id = user_id
+
+                if api_key_user_id != requested_user_id:
+                    raise AuthorizationError("API key does not belong to the authenticated user")
+
+            return result
 
         try:
-            err_msg = response.json().get("message", response.text)
+            err_json = response.json()
+            err_msg = err_json.get("message") or err_json.get("detail") or response.text
         except Exception:
             err_msg = response.text
         logger.error(f"Auth service returned status {response.status_code}: {err_msg}")
@@ -130,6 +163,8 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
         
     except JWTError as e:
         logger.warning(f"JWT verification failed: {e}")
+        if "expired" in str(e).lower() or "exp" in str(e).lower():
+            raise AuthenticationError("Authentication failed. Please log in again.")
         raise AuthenticationError("Invalid or expired token")
     except Exception as e:
         logger.error(f"Unexpected error during JWT verification: {e}")
@@ -146,17 +181,33 @@ async def AuthProvider(
     auth_source = (x_auth_source or "API_KEY").upper()
 
     if auth_source == "AUTH_TOKEN":
+        # This service always requires an API key
         raise AuthenticationError("Missing API key")
 
     api_key = x_api_key or get_api_key_from_header(authorization)
+
     if auth_source == "BOTH":
+        # 1) Authenticate user via JWT
         bearer_result = await authenticate_bearer_token(request, authorization)
+        jwt_user_id = bearer_result.get("user_id")
+
         if not api_key:
             raise AuthenticationError("Missing API key")
+
+        # 2) Validate API key + enforce ownership via auth-service (and local safety net)
         service, action = determine_service_and_action(request)
-        await validate_api_key_permissions(api_key, service, action)
+        await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
+
+        # 3) Populate request state with JWT identity
+        request.state.user_id = jwt_user_id
+        request.state.api_key_id = None
+        request.state.api_key_name = None
+        request.state.user_email = bearer_result.get("user", {}).get("email")
+        request.state.is_authenticated = True
+
         return bearer_result
 
+    # API_KEY-only mode
     if not api_key:
         raise AuthenticationError("Missing API key")
 
