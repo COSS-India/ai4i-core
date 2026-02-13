@@ -148,7 +148,7 @@ async def fetch_candidate_services_for_task(
     """Fetch candidate services for a given task type from model-management-service."""
     params = {
         "task_type": task_type,
-        "is_published": "true",
+        "is_published": True,  # Send as boolean, not string
     }
 
     logger.info(
@@ -157,7 +157,7 @@ async def fetch_candidate_services_for_task(
     )
     try:
         resp = await http_client.get(
-            f"{MODEL_MANAGEMENT_SERVICE_URL}/services/details/list_services",
+            f"{MODEL_MANAGEMENT_SERVICE_URL}/api/v1/model-management/services",
             params=params,
             timeout=15.0,
         )
@@ -172,15 +172,21 @@ async def fetch_candidate_services_for_task(
         )
 
     if resp.status_code != 200:
-        logger.warning(
+        error_body = resp.text[:500] if resp.text else "No response body"
+        logger.error(
             "Model Management returned non-200 status",
-            extra={"status_code": resp.status_code, "body": resp.text},
+            extra={
+                "status_code": resp.status_code,
+                "body": error_body,
+                "url": f"{MODEL_MANAGEMENT_SERVICE_URL}/api/v1/model-management/services",
+                "params": params,
+            },
         )
         raise HTTPException(
             status_code=resp.status_code,
             detail={
                 "code": "MODEL_MANAGEMENT_ERROR",
-                "message": "Failed to fetch candidate services for routing.",
+                "message": f"Failed to fetch candidate services for routing. Status: {resp.status_code}, Response: {error_body}",
             },
         )
 
@@ -207,7 +213,7 @@ async def fetch_policies_for_task(
 
     try:
         resp = await http_client.get(
-            f"{MODEL_MANAGEMENT_SERVICE_URL}/services/details/list/services/policies",
+            f"{MODEL_MANAGEMENT_SERVICE_URL}/api/v1/model-management/services/policies",
             params=params,
             timeout=10.0,
         )
@@ -990,9 +996,10 @@ async def inject_service_id_if_missing(
             }
         )
     # Priority 2: No headers provided - call Policy Engine
-    elif tenant_id is None or tenant_id == "free-user":
+    elif tenant_id is None or tenant_id == "" or tenant_id == "free-user":
         # Free user: call Policy Engine with tenant_id="free-user" to get policy from DB
         # Note: ObservabilityMiddleware may set tenant_id="free-user" for free users
+        # Empty string "" is also treated as free user
         logger.info(
             "SMR: No policy headers provided, calling Policy Engine for free-user policy",
             extra={
@@ -1246,16 +1253,30 @@ async def select_service(request: Request, payload: SMRSelectRequest) -> SMRSele
             )
 
     # Extract tenant_policy from Policy Engine result (tenant requirements)
+    # Only include tenant_policy if it's from DB (policy_id="tenant_db_policy"), not from defaults
     tenant_policy_dict = None
     if tenant_policy_result:
-        tenant_policy_dict = {
-            "latency_policy": tenant_policy_result.get("latency_policy"),
-            "cost_policy": tenant_policy_result.get("cost_policy"),
-            "accuracy_policy": tenant_policy_result.get("accuracy_policy"),
-        }
-        # Only include if at least one policy value is present
-        if not any(tenant_policy_dict.values()):
-            tenant_policy_dict = None
+        policy_id = tenant_policy_result.get("policy_id", "")
+        # Only return tenant_policy if it's from DB, not from defaults or free-user
+        if policy_id == "tenant_db_policy":
+            tenant_policy_dict = {
+                "latency_policy": tenant_policy_result.get("latency_policy"),
+                "cost_policy": tenant_policy_result.get("cost_policy"),
+                "accuracy_policy": tenant_policy_result.get("accuracy_policy"),
+            }
+            # Only include if at least one policy value is present
+            if not any(tenant_policy_dict.values()):
+                tenant_policy_dict = None
+        else:
+            # Policy is from defaults (tenant_default_policy, default_policy, free-user defaults, etc.)
+            # Don't include in response - tenant doesn't have a configured policy
+            logger.debug(
+                "SMR: Not including tenant_policy in response (policy is from defaults, not DB)",
+                extra={
+                    "policy_id": policy_id,
+                    "tenant_id": tenant_id,
+                }
+            )
 
     # Extract service_policy from selected service (service characteristics from Model Management)
     service_policy_dict = None
@@ -1275,9 +1296,9 @@ async def select_service(request: Request, payload: SMRSelectRequest) -> SMRSele
     
     # Determine tenant_id and is_free_user
     # ObservabilityMiddleware may set tenant_id="free-user" for free users (when JWT has no tenant_id)
-    # We treat both None and "free-user" as free users
+    # We treat None, empty string, and "free-user" as free users
     # In the response, we return null for free users (not "free-user")
-    is_free_user = (tenant_id is None or tenant_id == "free-user")
+    is_free_user = (tenant_id is None or tenant_id == "" or tenant_id == "free-user")
     # Return null for free users, actual tenant_id for tenant users
     # "free-user" is only used internally for Policy Engine lookup, not exposed in response
     actual_tenant_id = None if is_free_user else tenant_id
