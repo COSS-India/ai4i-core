@@ -610,8 +610,6 @@ services:
       - ./services/ocr-service/.env
     environment:
       - ENV_FILE=.env
-    env_file:
-      - ./services/ocr-service/.env
     depends_on:
       config-service:
         condition: service_healthy

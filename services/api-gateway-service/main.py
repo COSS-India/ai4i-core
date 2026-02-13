@@ -6567,7 +6567,7 @@ async def delete_model(
 
 
 
-@app.get("/api/v1/model-management/services/", response_model=List[ServiceListResponse], tags=["Model Management"])
+@app.get("/api/v1/model-management/services", response_model=List[ServiceListResponse], tags=["Model Management"])
 async def list_services(
     request: Request,
     task_type: Union[ModelTaskTypeEnum,None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
@@ -8155,8 +8155,9 @@ async def proxy_request(request: Request, path: str):
                                 break
                         
                         if route_prefix:
-                            # Model-management expects full path /api/v1/model-management/* (same as gateway)
-                            service_path = full_request_path if service_name == "model-management-service" else (full_request_path[len(route_prefix):] or "/")
+                            # Model-management and llm-service expect full path /api/v1/... (same as gateway)
+                            services_full_path = ("model-management-service", "llm-service")
+                            service_path = full_request_path if service_name in services_full_path else (full_request_path[len(route_prefix):] or "/")
                         else:
                             service_path = full_request_path
                         return await proxy_to_service(request, service_path, service_name)
@@ -8200,8 +8201,9 @@ async def proxy_request(request: Request, path: str):
                         break
                 
                 if route_prefix:
-                    # Model-management expects full path /api/v1/model-management/* (same as gateway)
-                    service_path = full_request_path if service_name == "model-management-service" else (full_request_path[len(route_prefix):] or "/")
+                    # Model-management and llm-service expect full path /api/v1/... (same as gateway)
+                    services_full_path = ("model-management-service", "llm-service")
+                    service_path = full_request_path if service_name in services_full_path else (full_request_path[len(route_prefix):] or "/")
                 else:
                     service_path = full_request_path
                 
