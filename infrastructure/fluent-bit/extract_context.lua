@@ -209,11 +209,17 @@ function filter_dashboard_logs(tag, timestamp, record)
         local message = record["message"] or ""
         local logger = record["logger"] or ""
         local level = record["level"] or ""
+        local trace_id = record["trace_id"] or ""
+        local method = record["method"] or ""
         
         -- Filter logs from "main" logger with INFO level (most initialization logs)
+        -- But keep them if they have a method (HTTP request logs)
         if type(logger) == "string" and logger:lower() == "main" then
             if type(level) == "string" and level:upper() == "INFO" then
-                return -1, timestamp, record
+                -- Only filter if it's not an HTTP request log (no method field)
+                if method == nil or method == "" then
+                    return -1, timestamp, record
+                end
             end
         end
         
@@ -221,8 +227,8 @@ function filter_dashboard_logs(tag, timestamp, record)
         if type(message) == "string" and message ~= "" then
             local msg_lower = message:lower()
             
-            -- Filter initialization messages (comprehensive patterns)
-            if msg_lower:match("distributed tracing initialized") or
+            -- Check if message matches initialization patterns
+            local is_init_log = msg_lower:match("distributed tracing initialized") or
                msg_lower:match("fastapi instrumentation") or
                msg_lower:match("redis client created") or
                msg_lower:match("rate limiting middleware") or
@@ -235,7 +241,23 @@ function filter_dashboard_logs(tag, timestamp, record)
                msg_lower:match("initialized for.*service") or
                (msg_lower:match("initialized") and msg_lower:match("service")) or
                (msg_lower:match("created") and (msg_lower:match("middleware") or msg_lower:match("for"))) or
-               msg_lower:match("middleware added") then
+               msg_lower:match("middleware added") or
+               -- Additional patterns for service startup logs
+               msg_lower:match("registered.*service.*registry") or
+               msg_lower:match(".*service started successfully") or
+               msg_lower:match(".*service started") or
+               msg_lower:match("database tables verified") or
+               msg_lower:match("database tables created") or
+               msg_lower:match("tables verified/created") or
+               msg_lower:match("socket%.io.*endpoint mounted") or
+               msg_lower:match("streaming service initialized") or
+               msg_lower:match("streaming endpoint mounted") or
+               msg_lower:match("shutting down.*service") or
+               msg_lower:match("service shutdown") or
+               msg_lower:match("service registry registration")
+            
+            -- Filter initialization logs (especially those with trace_id that won't exist in Jaeger)
+            if is_init_log then
                 return -1, timestamp, record
             end
         end
