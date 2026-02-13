@@ -37,6 +37,14 @@ class OCRRepository:
     ) -> OCRRequestDB:
         """Create new OCR request record."""
         try:
+            # Verify search_path and database connection (like ASR service does)
+            from sqlalchemy import text
+            result = await self.db.execute(text("SHOW search_path"))
+            current_search_path = result.scalar()
+            result_db = await self.db.execute(text("SELECT current_database()"))
+            current_db = result_db.scalar()
+            logger.info(f"OCRRepository.create_request: database={current_db}, search_path={current_search_path}, model_id={model_id}, user_id={user_id}")
+            
             request = OCRRequestDB(
                 model_id=model_id,
                 language=language,
@@ -51,7 +59,7 @@ class OCRRepository:
             await self.db.commit()
             await self.db.refresh(request)
             
-            logger.info(f"Created OCR request {request.id} for model {model_id}")
+            logger.info(f"Created OCR request {request.id} for model {model_id} in database={current_db}, schema={current_search_path}")
             return request
             
         except Exception as e:
@@ -161,6 +169,7 @@ class OCRRepository:
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency function to get a database session from the global factory.
+    DEPRECATED: Use get_tenant_db_session from middleware.tenant_db_dependency instead.
     """
     from main import db_session_factory
 

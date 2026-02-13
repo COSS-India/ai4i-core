@@ -89,11 +89,21 @@ def determine_service_and_action(request: Request) -> Tuple[str, str]:
     return service, action
 
 
-async def validate_api_key_permissions(api_key: str, service: str, action: str) -> None:
-    """Validate API key has required permissions by calling auth-service."""
+async def validate_api_key_permissions(api_key: str, service: str, action: str, user_id: Optional[int] = None) -> Dict[str, Any]:
+    """Validate API key has required permissions by calling auth-service.
+    
+    Args:
+        api_key: The API key to validate
+        service: Service name (ocr, etc.)
+        action: Action type (read, inference)
+        user_id: Optional user ID from JWT for ownership check in BOTH mode
+    
+    Returns:
+        Dict with validation result including 'valid', 'message', 'user_id', 'permissions'
+    """
     if not tracer:
         # Fallback if tracing not available
-        return await _validate_api_key_permissions_impl(api_key, service, action)
+        return await _validate_api_key_permissions_impl(api_key, service, action, user_id=user_id)
     
     with tracer.start_as_current_span("auth.validate") as validate_span:
         validate_span.set_attribute("auth.operation", "validate_api_key")
@@ -135,63 +145,91 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
                     "action": action
                 })
                 
+                payload = {"api_key": api_key, "service": service, "action": action}
+                if user_id is not None:
+                    payload["user_id"] = user_id
+                
                 async with httpx.AsyncClient(timeout=AUTH_HTTP_TIMEOUT) as client:
-                    response = await client.post(
-                        validate_url, json={"api_key": api_key, "service": service, "action": action}
-                    )
+                    response = await client.post(validate_url, json=payload)
                 
                 span.set_attribute("http.status_code", response.status_code)
                 span.set_attribute("auth.response_status", response.status_code)
                 
                 if response.status_code == 200:
                     result = response.json()
+                    logger.info(f"Auth-service response: valid={result.get('valid')}, message={result.get('message')}, user_id={result.get('user_id')}, requested_user_id={user_id}")
                     # Decision point: Check if API key is valid
                     with tracer.start_as_current_span("auth.decision.check_validity") as validity_span:
                         validity_span.set_attribute("auth.decision", "check_api_key_validity")
-                        if result.get("valid"):
-                            validity_span.set_attribute("auth.decision.result", "approved")
-                            validity_span.set_attribute("auth.valid", True)
-                            validity_span.set_status(Status(StatusCode.OK))
-                            span.set_attribute("auth.valid", True)
-                            span.add_event("auth.validation.success")
-                            span.set_status(Status(StatusCode.OK))
-                            validate_span.set_attribute("auth.valid", True)
-                            validate_span.set_status(Status(StatusCode.OK))
-                            return
-                        # API key invalid - extract detailed reason
-                        error_msg = result.get("message", "Permission denied")
-                        error_code = result.get("code", "PERMISSION_DENIED")
-                        error_reason = result.get("reason", "unknown")
+                        # CRITICAL: Check valid=False FIRST - this means the API key doesn't belong to the user
+                        if not result.get("valid", False):
+                            # API key invalid - extract detailed reason
+                            error_msg = result.get("message", "Permission denied")
+                            error_code = result.get("code", "PERMISSION_DENIED")
+                            error_reason = result.get("reason", "unknown")
+                            logger.error(f"Auth-service returned valid=False: {error_msg}, user_id={result.get('user_id')}, requested_user_id={user_id}")
+                            
+                            validity_span.set_attribute("auth.decision.result", "rejected")
+                            validity_span.set_attribute("error", True)
+                            validity_span.set_attribute("error.type", "AuthorizationError")
+                            validity_span.set_attribute("error.reason", error_reason)
+                            validity_span.set_attribute("error.code", error_code)
+                            validity_span.set_attribute("error.message", error_msg)
+                            validity_span.set_status(Status(StatusCode.ERROR, error_msg))
+                            
+                            span.set_attribute("auth.valid", False)
+                            span.set_attribute("error", True)
+                            span.set_attribute("error.type", "AuthorizationError")
+                            span.set_attribute("error.reason", error_reason)
+                            span.set_attribute("error.code", error_code)
+                            span.set_attribute("error.message", error_msg)
+                            span.add_event("auth.validation.failed", {
+                                "reason": error_reason,
+                                "code": error_code,
+                                "message": error_msg
+                            })
+                            span.set_status(Status(StatusCode.ERROR, error_msg))
+                            
+                            validate_span.set_attribute("auth.valid", False)
+                            validate_span.set_attribute("error", True)
+                            validate_span.set_attribute("error.type", "AuthorizationError")
+                            validate_span.set_attribute("error.reason", error_reason)
+                            validate_span.set_attribute("error.code", error_code)
+                            validate_span.set_status(Status(StatusCode.ERROR, error_msg))
+                            
+                            raise AuthorizationError(error_msg)
                         
-                        validity_span.set_attribute("auth.decision.result", "rejected")
-                        validity_span.set_attribute("error", True)
-                        validity_span.set_attribute("error.type", "AuthorizationError")
-                        validity_span.set_attribute("error.reason", error_reason)
-                        validity_span.set_attribute("error.code", error_code)
-                        validity_span.set_attribute("error.message", error_msg)
-                        validity_span.set_status(Status(StatusCode.ERROR, error_msg))
+                        # API key is valid - check ownership if user_id provided
+                        if user_id is not None and result.get("user_id") is not None:
+                            if int(result.get("user_id")) != int(user_id):
+                                logger.error(f"API key ownership mismatch: requested_user_id={user_id}, api_key_user_id={result.get('user_id')}")
+                                validity_span.set_attribute("auth.decision.result", "rejected")
+                                validity_span.set_attribute("error", True)
+                                validity_span.set_attribute("error.type", "AuthorizationError")
+                                validity_span.set_attribute("error.reason", "ownership_mismatch")
+                                validity_span.set_attribute("error.message", "API key does not belong to the authenticated user")
+                                validity_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
+                                span.set_attribute("auth.valid", False)
+                                span.set_attribute("error", True)
+                                span.set_attribute("error.type", "AuthorizationError")
+                                span.set_attribute("error.reason", "ownership_mismatch")
+                                span.set_attribute("error.message", "API key does not belong to the authenticated user")
+                                span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
+                                validate_span.set_attribute("auth.valid", False)
+                                validate_span.set_attribute("error", True)
+                                validate_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
+                                raise AuthorizationError("API key does not belong to the authenticated user")
                         
-                        span.set_attribute("auth.valid", False)
-                        span.set_attribute("error", True)
-                        span.set_attribute("error.type", "AuthorizationError")
-                        span.set_attribute("error.reason", error_reason)
-                        span.set_attribute("error.code", error_code)
-                        span.set_attribute("error.message", error_msg)
-                        span.add_event("auth.validation.failed", {
-                            "reason": error_reason,
-                            "code": error_code,
-                            "message": error_msg
-                        })
-                        span.set_status(Status(StatusCode.ERROR, error_msg))
-                        
-                        validate_span.set_attribute("auth.valid", False)
-                        validate_span.set_attribute("error", True)
-                        validate_span.set_attribute("error.type", "AuthorizationError")
-                        validate_span.set_attribute("error.reason", error_reason)
-                        validate_span.set_attribute("error.code", error_code)
-                        validate_span.set_status(Status(StatusCode.ERROR, error_msg))
-                        
-                        raise AuthorizationError(error_msg)
+                        # API key is valid and ownership matches
+                        validity_span.set_attribute("auth.decision.result", "approved")
+                        validity_span.set_attribute("auth.valid", True)
+                        validity_span.set_status(Status(StatusCode.OK))
+                        span.set_attribute("auth.valid", True)
+                        span.add_event("auth.validation.success")
+                        span.set_status(Status(StatusCode.OK))
+                        validate_span.set_attribute("auth.valid", True)
+                        validate_span.set_status(Status(StatusCode.OK))
+                        return result
 
                 # Handle non-200 responses - extract error from detail or message field
                 try:
@@ -320,19 +358,30 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
                 raise AuthorizationError("Permission validation failed")
 
 
-async def _validate_api_key_permissions_impl(api_key: str, service: str, action: str) -> None:
+async def _validate_api_key_permissions_impl(api_key: str, service: str, action: str, user_id: Optional[int] = None) -> Dict[str, Any]:
     """Fallback implementation when tracing is not available."""
     validate_url = f"{AUTH_SERVICE_URL}/api/v1/auth/validate-api-key"
+    payload = {"api_key": api_key, "service": service, "action": action}
+    if user_id is not None:
+        payload["user_id"] = user_id
+        logger.info(f"Validating API key with user_id={user_id} for ownership check")
+    
     async with httpx.AsyncClient(timeout=AUTH_HTTP_TIMEOUT) as client:
-        response = await client.post(
-            validate_url, json={"api_key": api_key, "service": service, "action": action}
-        )
+        response = await client.post(validate_url, json=payload)
     if response.status_code == 200:
         result = response.json()
-        if result.get("valid"):
-            return
-        error_msg = result.get("message", "Permission denied")
-        raise AuthorizationError(error_msg)
+        logger.info(f"Auth-service response: valid={result.get('valid')}, message={result.get('message')}, user_id={result.get('user_id')}, requested_user_id={user_id}")
+        if not result.get("valid", False):
+            # CRITICAL: Auth-service returned valid=False - this means the API key doesn't belong to the user
+            error_msg = result.get("message", "Permission denied")
+            logger.error(f"Auth-service returned valid=False: {error_msg}, requested_user_id={user_id}, api_key_user_id={result.get('user_id')}")
+            raise AuthorizationError(error_msg)
+        # Additional check: if user_id was provided, verify the API key's user_id matches
+        if user_id is not None and result.get("user_id") is not None:
+            if int(result.get("user_id")) != int(user_id):
+                logger.error(f"API key ownership mismatch: requested_user_id={user_id}, api_key_user_id={result.get('user_id')}")
+                raise AuthorizationError("API key does not belong to the authenticated user")
+        return result
 
     try:
         error_data = response.json()
@@ -382,12 +431,14 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
             with tracer.start_as_current_span("auth.decision.verify_jwt_signature") as verify_span:
                 verify_span.set_attribute("auth.decision", "verify_jwt_signature")
                 # Verify JWT signature and expiry locally
+                logger.info(f"Attempting to decode JWT token (length: {len(token)}), secret key present: {bool(JWT_SECRET_KEY)}")
                 payload = jwt.decode(
                     token,
                     JWT_SECRET_KEY,
                     algorithms=[JWT_ALGORITHM],
                     options={"verify_signature": True, "verify_exp": True}
                 )
+                logger.info(f"JWT decode successful. Payload keys: {list(payload.keys())}")
                 verify_span.set_attribute("auth.decision.result", "passed")
                 verify_span.set_status(Status(StatusCode.OK))
             
@@ -397,6 +448,9 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
             username = payload.get("username") or payload.get("email", "")
             roles = payload.get("roles", [])
             token_type = payload.get("type", "")
+            
+            # Debug logging
+            logger.info(f"JWT payload extracted - sub: {payload.get('sub')}, user_id: {payload.get('user_id')}, extracted user_id: {user_id}, type: {token_type}, full payload: {payload}")
             
             # Decision point: Check token type
             with tracer.start_as_current_span("auth.decision.check_token_type") as type_span:
@@ -422,7 +476,9 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
             # Decision point: Check user ID presence
             with tracer.start_as_current_span("auth.decision.check_user_id") as user_span:
                 user_span.set_attribute("auth.decision", "check_user_id")
+                logger.info(f"Checking user_id - extracted value: {user_id}, type: {type(user_id)}, truthy: {bool(user_id)}")
                 if not user_id:
+                    logger.error(f"User ID not found in token! Payload: {payload}, sub: {payload.get('sub')}, user_id: {payload.get('user_id')}")
                     user_span.set_attribute("auth.decision.result", "rejected")
                     user_span.set_attribute("error", True)
                     user_span.set_attribute("error.type", "MissingUserID")
@@ -446,6 +502,18 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
             request.state.api_key_name = None
             request.state.user_email = email
             request.state.is_authenticated = True
+            request.state.jwt_payload = payload  # Store JWT payload for tenant context resolution
+            
+            # Extract tenant schema from JWT if available (like ASR service does)
+            if payload.get("schema_name"):
+                request.state.tenant_schema = payload.get("schema_name")
+                request.state.tenant_id = payload.get("tenant_id")
+                request.state.tenant_uuid = payload.get("tenant_uuid")
+                logger.info(
+                    f"Extracted tenant schema from JWT: schema={payload.get('schema_name')}, tenant_id={payload.get('tenant_id')}"
+                )
+            else:
+                logger.info(f"JWT payload does not contain schema_name. Available keys: {list(payload.keys())}")
 
             span.set_attribute("auth.user_id", str(user_id))
             span.set_attribute("auth.valid", True)
@@ -465,6 +533,7 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
             
         except JWTError as exc:
             # Decision point: JWT verification failed
+            logger.error(f"JWT verification failed with JWTError: {type(exc).__name__}, message: {str(exc)}, token length: {len(token) if token else 0}")
             with tracer.start_as_current_span("auth.decision.jwt_verification_failed") as fail_span:
                 fail_span.set_attribute("auth.decision", "handle_jwt_verification_failure")
                 fail_span.set_attribute("auth.decision.result", "rejected")
@@ -520,12 +589,14 @@ async def _authenticate_bearer_token_impl(request: Request, authorization: Optio
     token = authorization.split(" ", 1)[1]
 
     try:
+        logger.info(f"Attempting to decode JWT token (fallback, length: {len(token)}), secret key present: {bool(JWT_SECRET_KEY)}")
         payload = jwt.decode(
             token,
             JWT_SECRET_KEY,
             algorithms=[JWT_ALGORITHM],
             options={"verify_signature": True, "verify_exp": True}
         )
+        logger.info(f"JWT decode successful (fallback). Payload keys: {list(payload.keys())}")
         
         user_id = payload.get("sub") or payload.get("user_id")
         email = payload.get("email", "")
@@ -533,10 +604,15 @@ async def _authenticate_bearer_token_impl(request: Request, authorization: Optio
         roles = payload.get("roles", [])
         token_type = payload.get("type", "")
         
+        # Debug logging
+        logger.info(f"JWT payload extracted (fallback) - sub: {payload.get('sub')}, user_id: {payload.get('user_id')}, extracted user_id: {user_id}, type: {token_type}, full payload: {payload}")
+        
         if token_type != "access":
             raise AuthenticationError("Invalid token type")
         
+        logger.info(f"Checking user_id (fallback) - extracted value: {user_id}, type: {type(user_id)}, truthy: {bool(user_id)}")
         if not user_id:
+            logger.error(f"User ID not found in token (fallback)! Payload: {payload}, sub: {payload.get('sub')}, user_id: {payload.get('user_id')}")
             raise AuthenticationError("User ID not found in token")
 
         request.state.user_id = int(user_id) if isinstance(user_id, (str, int)) else user_id
@@ -544,6 +620,18 @@ async def _authenticate_bearer_token_impl(request: Request, authorization: Optio
         request.state.api_key_name = None
         request.state.user_email = email
         request.state.is_authenticated = True
+        request.state.jwt_payload = payload  # Store JWT payload for tenant context resolution
+        
+        # Extract tenant schema from JWT if available (like ASR service does)
+        if payload.get("schema_name"):
+            request.state.tenant_schema = payload.get("schema_name")
+            request.state.tenant_id = payload.get("tenant_id")
+            request.state.tenant_uuid = payload.get("tenant_uuid")
+            logger.info(
+                f"Extracted tenant schema from JWT (non-tracing): schema={payload.get('schema_name')}, tenant_id={payload.get('tenant_id')}"
+            )
+        else:
+            logger.info(f"JWT payload does not contain schema_name (non-tracing). Available keys: {list(payload.keys())}")
 
         return {
             "user_id": int(user_id) if isinstance(user_id, (str, int)) else user_id,
@@ -557,9 +645,11 @@ async def _authenticate_bearer_token_impl(request: Request, authorization: Optio
         }
         
     except JWTError as e:
+        logger.error(f"JWT verification failed (fallback) with JWTError: {type(e).__name__}, message: {str(e)}, token length: {len(token) if token else 0}")
         logger.warning(f"JWT verification failed: {e}")
         raise AuthenticationError("Invalid or expired token")
     except Exception as e:
+        logger.error(f"Unexpected error during JWT verification (fallback): {type(e).__name__}, message: {str(e)}")
         logger.error(f"Unexpected error during JWT verification: {e}")
         raise AuthenticationError("Failed to verify token")
 
@@ -569,7 +659,6 @@ async def AuthProvider(
     authorization: Optional[str] = Header(None, alias="Authorization"),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     x_auth_source: str = Header(default="API_KEY", alias="X-Auth-Source"),
-    db: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """Authentication provider for OCR - supports AUTH_TOKEN, API_KEY, BOTH."""
     if not tracer:
@@ -608,32 +697,85 @@ async def AuthProvider(
                     method_span.set_status(Status(StatusCode.OK))
                     auth_span.set_attribute("auth.method", "JWT+API_KEY")
                     
-                    # Decision point: Check API key for BOTH mode
-                    with tracer.start_as_current_span("auth.decision.check_api_key_both") as both_span:
-                        both_span.set_attribute("auth.decision", "check_api_key_for_both_mode")
-                        bearer_result = await authenticate_bearer_token(request, authorization)
-                        if not api_key:
-                            both_span.set_attribute("auth.decision.result", "rejected")
-                            both_span.set_attribute("error", True)
-                            both_span.set_attribute("error.type", "MissingAPIKey")
-                            both_span.set_attribute("error.reason", "api_key_missing_in_both_mode")
-                            both_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
+                    try:
+                        # Decision point: Check API key for BOTH mode
+                        with tracer.start_as_current_span("auth.decision.check_api_key_both") as both_span:
+                            both_span.set_attribute("auth.decision", "check_api_key_for_both_mode")
+                            logger.info(f"AuthProvider BOTH mode: Starting authentication. Authorization header present: {bool(authorization)}")
+                            bearer_result = await authenticate_bearer_token(request, authorization)
+                            jwt_user_id = bearer_result.get("user_id")
+                            logger.info(f"AuthProvider BOTH mode: JWT authenticated, user_id={jwt_user_id}")
                             
-                            auth_span.set_attribute("auth.authorized", False)
-                            auth_span.set_attribute("error", True)
-                            auth_span.set_attribute("error.type", "MissingAPIKey")
-                            auth_span.set_attribute("error.reason", "api_key_missing_in_both_mode")
-                            auth_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
-                            raise AuthenticationError("Missing API key")
-                        both_span.set_attribute("auth.decision.result", "passed")
-                        both_span.set_status(Status(StatusCode.OK))
-                    
-                    service, action = determine_service_and_action(request)
-                    await validate_api_key_permissions(api_key, service, action)
-                    auth_span.set_attribute("auth.authorized", True)
-                    auth_span.set_attribute("auth.user_id", str(bearer_result.get("user_id", "")))
-                    auth_span.set_status(Status(StatusCode.OK))
-                    return bearer_result
+                            # Extract tenant schema from JWT payload (already decoded by authenticate_bearer_token)
+                            jwt_payload = getattr(request.state, "jwt_payload", None)
+                            if jwt_payload:
+                                # Extract tenant schema directly from JWT (like ASR service does)
+                                schema_name = jwt_payload.get("schema_name")
+                                tenant_id = jwt_payload.get("tenant_id")
+                                if schema_name:
+                                    request.state.tenant_schema = schema_name
+                                    request.state.tenant_id = tenant_id
+                                    request.state.tenant_uuid = jwt_payload.get("tenant_uuid")
+                                    logger.info(f"AuthProvider BOTH mode: Extracted tenant schema from JWT: schema_name={schema_name}, tenant_id={tenant_id}")
+                                else:
+                                    logger.warning(f"AuthProvider BOTH mode: JWT decoded but no schema_name found. JWT keys: {list(jwt_payload.keys())}, tenant_id={tenant_id}")
+                            else:
+                                logger.warning(f"AuthProvider BOTH mode: JWT payload not found in request.state after authenticate_bearer_token")
+                            
+                            if not api_key:
+                                both_span.set_attribute("auth.decision.result", "rejected")
+                                both_span.set_attribute("error", True)
+                                both_span.set_attribute("error.type", "MissingAPIKey")
+                                both_span.set_attribute("error.reason", "api_key_missing_in_both_mode")
+                                both_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
+                                
+                                auth_span.set_attribute("auth.authorized", False)
+                                auth_span.set_attribute("error", True)
+                                auth_span.set_attribute("error.type", "MissingAPIKey")
+                                auth_span.set_attribute("error.reason", "api_key_missing_in_both_mode")
+                                auth_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
+                                raise AuthenticationError("Missing API key")
+                            both_span.set_attribute("auth.decision.result", "passed")
+                            both_span.set_status(Status(StatusCode.OK))
+                        
+                        service, action = determine_service_and_action(request)
+                        # 3) Validate API key + permissions via auth-service (single source of truth),
+                        # passing jwt_user_id so auth-service can enforce ownership.
+                        auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
+                        
+                        # CRITICAL: Always check valid field - auth-service may return valid=false for ownership mismatch
+                        if not auth_result.get("valid", False):
+                            error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
+                            # Raise AuthenticationError - the error handler will format it with error + message
+                            raise AuthenticationError(error_msg)
+                        
+                        # 4) Populate request.state – keep JWT as primary identity
+                        request.state.user_id = jwt_user_id
+                        request.state.api_key_id = None
+                        request.state.api_key_name = None
+                        request.state.user_email = bearer_result.get("user", {}).get("email")
+                        request.state.is_authenticated = True
+
+                        auth_span.set_attribute("auth.authorized", True)
+                        auth_span.set_attribute("auth.user_id", str(jwt_user_id))
+                        auth_span.set_status(Status(StatusCode.OK))
+                        return bearer_result
+                    except (AuthenticationError, AuthorizationError) as e:
+                        # For ANY auth/key error in BOTH mode, surface a single, consistent message
+                        logger.error(f"OCR BOTH mode (tracing): Authentication/Authorization error: {e}")
+                        auth_span.set_attribute("auth.authorized", False)
+                        auth_span.set_attribute("error", True)
+                        auth_span.set_attribute("error.type", type(e).__name__)
+                        auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
+                        raise AuthenticationError("API key does not belong to the authenticated user")
+                    except Exception as e:
+                        logger.error(f"OCR BOTH mode (tracing): Unexpected error: {e}", exc_info=True)
+                        auth_span.set_attribute("auth.authorized", False)
+                        auth_span.set_attribute("error", True)
+                        auth_span.set_attribute("error.type", type(e).__name__)
+                        auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
+                        # Even on unexpected errors we normalize the external message
+                        raise AuthenticationError("API key does not belong to the authenticated user")
 
                 # Default: API_KEY
                 method_span.set_attribute("auth.decision.result", "api_key")
@@ -661,24 +803,54 @@ async def AuthProvider(
                     key_span.set_status(Status(StatusCode.OK))
 
                 service, action = determine_service_and_action(request)
-                await validate_api_key_permissions(api_key, service, action)
+                try:
+                    auth_result = await validate_api_key_permissions(api_key, service, action)
+                except (AuthorizationError, AuthenticationError) as e:
+                    logger.error(f"API key permission validation failed: {e}")
+                    auth_span.set_attribute("auth.authorized", False)
+                    auth_span.set_attribute("error", True)
+                    auth_span.set_attribute("error.type", "AuthenticationError")
+                    auth_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    raise AuthenticationError("API key does not belong to the authenticated user")
+                
+                # Explicitly check if auth-service returned valid=false
+                if not auth_result.get("valid", False):
+                    error_msg = auth_result.get("message", "Permission denied")
+                    logger.error(f"Auth-service returned valid=false: {error_msg}")
+                    auth_span.set_attribute("auth.authorized", False)
+                    auth_span.set_attribute("error", True)
+                    auth_span.set_attribute("error.type", "AuthenticationError")
+                    auth_span.set_status(Status(StatusCode.ERROR, error_msg))
+                    raise AuthenticationError("API key does not belong to the authenticated user")
                 
                 # Look up API key in database to get actual IDs
-                api_key_id, user_id = await get_api_key_info(api_key, db)
-                
-                # Get API key name if we found it
+                # Get DB session only when needed (for API_KEY mode)
+                api_key_id = None
+                user_id = None
                 api_key_name = None
                 user_email = None
-                if api_key_id:
-                    try:
-                        api_key_repo = ApiKeyRepository(db)
-                        api_key_db = await api_key_repo.find_by_id(api_key_id)
-                        if api_key_db:
-                            api_key_name = api_key_db.name
-                            if api_key_db.user:
-                                user_email = api_key_db.user.email
-                    except Exception as e:
-                        logger.debug(f"Error getting API key details: {e}")
+                
+                try:
+                    from repositories.ocr_repository import get_db_session
+                    async for db in get_db_session():
+                        api_key_id, user_id = await get_api_key_info(api_key, db)
+                        
+                        # Get API key name if we found it
+                        if api_key_id:
+                            try:
+                                api_key_repo = ApiKeyRepository(db)
+                                api_key_db = await api_key_repo.find_by_id(api_key_id)
+                                if api_key_db:
+                                    api_key_name = api_key_db.name
+                                    if api_key_db.user:
+                                        user_email = api_key_db.user.email
+                            except Exception as e:
+                                logger.debug(f"Error getting API key details: {e}")
+                        break
+                except Exception as e:
+                    # If DB session couldn't be obtained, use auth-service result
+                    logger.warning(f"Could not get DB session for API key lookup: {e}")
+                    user_id = auth_result.get("user_id")
                 
                 request.state.user_id = user_id
                 request.state.api_key_id = api_key_id
@@ -728,19 +900,67 @@ async def _auth_provider_impl(
     api_key = x_api_key or get_api_key_from_header(authorization)
 
     if auth_source == "BOTH":
-        bearer_result = await _authenticate_bearer_token_impl(request, authorization)
-        if not api_key:
-            raise AuthenticationError("Missing API key")
-        service, action = determine_service_and_action(request)
-        await _validate_api_key_permissions_impl(api_key, service, action)
-        return bearer_result
+        try:
+            bearer_result = await _authenticate_bearer_token_impl(request, authorization)
+            jwt_user_id = bearer_result.get("user_id")
+            
+            # Extract tenant schema from JWT payload (already decoded by _authenticate_bearer_token_impl)
+            jwt_payload = getattr(request.state, "jwt_payload", None)
+            if jwt_payload:
+                # Extract tenant schema directly from JWT (like ASR service does)
+                schema_name = jwt_payload.get("schema_name")
+                tenant_id = jwt_payload.get("tenant_id")
+                if schema_name:
+                    request.state.tenant_schema = schema_name
+                    request.state.tenant_id = tenant_id
+                    request.state.tenant_uuid = jwt_payload.get("tenant_uuid")
+                    logger.info(f"AuthProvider BOTH mode (non-tracing): Extracted tenant schema from JWT: schema_name={schema_name}, tenant_id={tenant_id}")
+                else:
+                    logger.warning(f"AuthProvider BOTH mode (non-tracing): JWT decoded but no schema_name found. JWT keys: {list(jwt_payload.keys())}, tenant_id={tenant_id}")
+            else:
+                logger.warning(f"AuthProvider BOTH mode (non-tracing): JWT payload not found in request.state after authenticate_bearer_token")
+            
+            if not api_key:
+                raise AuthenticationError("Missing API key")
+            
+            service, action = determine_service_and_action(request)
+            logger.info(f"BOTH mode: Validating API key for user_id={jwt_user_id}, service={service}, action={action}")
+            try:
+                auth_result = await _validate_api_key_permissions_impl(api_key, service, action, user_id=jwt_user_id)
+                logger.info(f"BOTH mode: Auth-service response: valid={auth_result.get('valid')}, message={auth_result.get('message')}, user_id={auth_result.get('user_id')}")
+            except (AuthorizationError, AuthenticationError) as e:
+                logger.error(f"API key validation failed in BOTH mode: {e}")
+                raise AuthenticationError("API key does not belong to the authenticated user")
+            
+            # Explicitly check if auth-service returned valid=false
+            if not auth_result.get("valid", False):
+                error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
+                logger.error(f"Auth-service returned valid=false: {error_msg}, jwt_user_id={jwt_user_id}, api_key_user_id={auth_result.get('user_id')}")
+                raise AuthenticationError("API key does not belong to the authenticated user")
+            
+            return bearer_result
+        except AuthenticationError:
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in BOTH authentication mode: {e}", exc_info=True)
+            raise AuthenticationError("API key does not belong to the authenticated user")
 
     # Default: API_KEY
     if not api_key:
         raise AuthenticationError("Missing API key")
 
     service, action = determine_service_and_action(request)
-    await _validate_api_key_permissions_impl(api_key, service, action)
+    try:
+        auth_result = await _validate_api_key_permissions_impl(api_key, service, action)
+    except (AuthorizationError, AuthenticationError) as e:
+        logger.error(f"API key permission validation failed: {e}")
+        raise AuthenticationError("API key does not belong to the authenticated user")
+    
+    # Explicitly check if auth-service returned valid=false
+    if not auth_result.get("valid", False):
+        error_msg = auth_result.get("message", "Permission denied")
+        logger.error(f"Auth-service returned valid=false: {error_msg}")
+        raise AuthenticationError("API key does not belong to the authenticated user")
 
     # Look up API key in database to get actual IDs
     # Note: This fallback function doesn't have db access, so we can't look up here

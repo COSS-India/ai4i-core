@@ -58,7 +58,8 @@ class PipelineService:
         self,
         request: PipelineInferenceRequest,
         jwt_token: Optional[str] = None,
-        api_key: Optional[str] = None
+        api_key: Optional[str] = None,
+        user_id: Optional[int] = None
     ) -> PipelineInferenceResponse:
         """
         Execute a multi-task AI pipeline.
@@ -67,6 +68,7 @@ class PipelineService:
             request: Pipeline inference request with tasks and input data
             jwt_token: JWT token for authentication
             api_key: API key for authentication
+            user_id: User ID for tenant routing in downstream services
             
         Returns:
             Pipeline inference response with outputs from each task
@@ -94,11 +96,11 @@ class PipelineService:
                 }
             ):
                 return await self._execute_pipeline_tasks(
-                    request, results, previous_output, jwt_token, api_key
+                    request, results, previous_output, jwt_token, api_key, user_id
                 )
         else:
             return await self._execute_pipeline_tasks(
-                request, results, previous_output, jwt_token, api_key
+                request, results, previous_output, jwt_token, api_key, user_id
             )
     
     async def _execute_pipeline_tasks(
@@ -107,7 +109,8 @@ class PipelineService:
         results: List[PipelineTaskOutput],
         previous_output: Dict[str, Any],
         jwt_token: Optional[str],
-        api_key: Optional[str]
+        api_key: Optional[str],
+        user_id: Optional[int] = None
     ) -> PipelineInferenceResponse:
         """Execute all pipeline tasks in sequence."""
         # Execute each task in sequence
@@ -138,7 +141,8 @@ class PipelineService:
                             input_data=previous_output,
                             jwt_token=jwt_token,
                             api_key=api_key,
-                            control_config=request.controlConfig
+                            control_config=request.controlConfig,
+                            user_id=user_id
                         )
                         
                         # Add success attributes to span
@@ -151,7 +155,8 @@ class PipelineService:
                         input_data=previous_output,
                         jwt_token=jwt_token,
                         api_key=api_key,
-                        control_config=request.controlConfig
+                        control_config=request.controlConfig,
+                        user_id=user_id
                     )
                 
                 # Store result
@@ -339,7 +344,8 @@ class PipelineService:
         input_data: Dict[str, Any],
         jwt_token: Optional[str] = None,
         api_key: Optional[str] = None,
-        control_config: Optional[Dict[str, Any]] = None
+        control_config: Optional[Dict[str, Any]] = None,
+        user_id: Optional[int] = None
     ) -> PipelineTaskOutput:
         """Execute a single pipeline task with distributed tracing."""
         
@@ -386,7 +392,7 @@ class PipelineService:
                     call_span.set_attribute("asr.service_id", task.config.serviceId)
                     call_span.add_event("asr.request.started")
                     
-                    response = await self.service_client.call_asr_service(asr_request, jwt_token=jwt_token, api_key=api_key)
+                    response = await self.service_client.call_asr_service(asr_request, jwt_token=jwt_token, api_key=api_key, user_id=user_id)
                     
                     output_count = len(response.get("output", []))
                     call_span.set_attribute("asr.output_count", output_count)
@@ -458,7 +464,7 @@ class PipelineService:
                     call_span.set_attribute("nmt.service_id", task.config.serviceId)
                     call_span.add_event("nmt.request.started")
                     
-                    response = await self.service_client.call_nmt_service(nmt_request, jwt_token=jwt_token, api_key=api_key)
+                    response = await self.service_client.call_nmt_service(nmt_request, jwt_token=jwt_token, api_key=api_key, user_id=user_id)
                     
                     output_count = len(response.get("output", []))
                     call_span.set_attribute("nmt.output_count", output_count)
@@ -532,7 +538,7 @@ class PipelineService:
                     call_span.set_attribute("tts.service_id", task.config.serviceId)
                     call_span.add_event("tts.request.started")
                     
-                    response = await self.service_client.call_tts_service(tts_request, jwt_token=jwt_token, api_key=api_key)
+                    response = await self.service_client.call_tts_service(tts_request, jwt_token=jwt_token, api_key=api_key, user_id=user_id)
                     
                     audio_count = len(response.get("audio", []))
                     call_span.set_attribute("tts.audio_count", audio_count)
