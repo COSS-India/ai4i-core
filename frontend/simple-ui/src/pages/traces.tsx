@@ -10,7 +10,6 @@ import {
   Input,
   Text,
   VStack,
-  useToast,
   Badge,
   Spinner,
   Flex,
@@ -39,6 +38,7 @@ import {
   Trace,
   Span,
 } from "../services/observabilityService";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 // Utility functions to extract and categorize spans
 interface ProcessedSpan {
@@ -613,16 +613,68 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
   const importantCount = processed.filter(p => p.isImportant).length;
   console.log(`Processed ${processed.length} spans, ${importantCount} marked as important`);
 
+  // Detect the primary service from the trace
+  // Primary service is the one with the most top-level important spans, or the longest duration
+  const topLevelSpans = processed.filter(p => p.isTopLevel && p.isImportant);
+  const serviceDuration = new Map<string, number>();
+  const serviceTopLevelCount = new Map<string, number>();
+  
+  processed.forEach(p => {
+    const current = serviceDuration.get(p.serviceName) || 0;
+    serviceDuration.set(p.serviceName, current + p.span.duration);
+    
+    if (p.isTopLevel && p.isImportant) {
+      const count = serviceTopLevelCount.get(p.serviceName) || 0;
+      serviceTopLevelCount.set(p.serviceName, count + 1);
+    }
+  });
+  
+  // Find primary service: prefer service with most top-level spans, then longest duration
+  let primaryService = "unknown";
+  let maxTopLevelCount = 0;
+  for (const [service, count] of Array.from(serviceTopLevelCount.entries())) {
+    if (count > maxTopLevelCount) {
+      maxTopLevelCount = count;
+      primaryService = service;
+    }
+  }
+  
+  // If no clear winner by top-level count, use duration
+  if (maxTopLevelCount === 0 || (maxTopLevelCount === 1 && serviceTopLevelCount.size > 1)) {
+    let maxDuration = 0;
+    for (const [service, duration] of Array.from(serviceDuration.entries())) {
+      if (duration > maxDuration) {
+        maxDuration = duration;
+        primaryService = service;
+      }
+    }
+  }
+  
+  const isAuthServiceTrace = primaryService.includes("auth-service");
+  console.log(`[DEBUG] Primary service detected: ${primaryService}, isAuthServiceTrace: ${isAuthServiceTrace}`);
+
   // Filter out child spans when we have a parent span of the same category
   const filtered: ProcessedSpan[] = [];
   const seenOperations = new Map<string, ProcessedSpan>(); // operationKey -> best span
   
-  // First, collect top-level spans
-  const topLevelSpans = processed.filter(p => p.isTopLevel && p.isImportant);
-  
   // Then, collect other important spans that aren't children of top-level spans
   for (const processedSpan of processed) {
     if (!processedSpan.isImportant) continue;
+    
+    // SPECIAL FILTERING: For non-auth-service traces, filter out child auth-service spans
+    // Only show top-level auth spans from auth-service when it's not the primary service
+    if (!isAuthServiceTrace && processedSpan.serviceName.includes("auth-service")) {
+      // Check if this is a child span (has a parent)
+      const parentId = spanToParent.get(processedSpan.span.spanID);
+      if (parentId) {
+        // This is a child span from auth-service - filter it out
+        // Only keep top-level auth spans (like POST /api/v1/auth/validate)
+        if (!processedSpan.isTopLevel || processedSpan.category === "database") {
+          console.log(`[DEBUG] Filtering out child auth-service span (non-auth trace): ${processedSpan.displayName}`);
+          continue;
+        }
+      }
+    }
     
     // Check if this span is a child of a top-level span with same category
     const parentId = spanToParent.get(processedSpan.span.spanID);
@@ -640,6 +692,23 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       filtered.push(processedSpan);
       console.log(`[DEBUG] Including error span (never deduplicated): ${processedSpan.displayName}`);
       continue; // Skip deduplication logic
+    }
+    
+    // SPECIAL: Database operations should NEVER be deduplicated - show all of them
+    // BUT: Only show all database operations for auth-service traces
+    // For other traces, database operations from auth-service are already filtered above
+    if (processedSpan.category === "database") {
+      // Only show all database operations if this is an auth-service trace
+      // OR if the database operation is not from auth-service
+      if (isAuthServiceTrace || !processedSpan.serviceName.includes("auth-service")) {
+        filtered.push(processedSpan);
+        console.log(`[DEBUG] Including database operation (never deduplicated): ${processedSpan.displayName}`);
+        continue; // Skip deduplication logic
+      } else {
+        // For non-auth traces, filter out auth-service database operations
+        console.log(`[DEBUG] Filtering out auth-service database operation (non-auth trace): ${processedSpan.displayName}`);
+        continue;
+      }
     }
     
     // Create a unique key for this operation (service + category + displayName)
@@ -1154,7 +1223,7 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
 };
 
 const TracesPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const [traceIdSearch, setTraceIdSearch] = useState<string>("");
@@ -1465,6 +1534,27 @@ const TracesPage: React.FC = () => {
     return rootSpan.operationName;
   };
 
+  // Extract client IP address from trace spans
+  const getClientIP = (trace: Trace): string | null => {
+    if (!trace.spans || trace.spans.length === 0) return null;
+    
+    // Look for IP in any span (usually in the root HTTP request span)
+    for (const span of trace.spans) {
+      const tags = span.tags || [];
+      // Check for client.ip or http.client_ip attributes
+      const ipTag = tags.find(t => 
+        t.key === "client.ip" || 
+        t.key === "http.client_ip" ||
+        t.key.toLowerCase() === "client.ip" ||
+        t.key.toLowerCase() === "http.client_ip"
+      );
+      if (ipTag && ipTag.value && String(ipTag.value) !== "unknown") {
+        return String(ipTag.value);
+      }
+    }
+    return null;
+  };
+
   return (
     <>
       <Head>
@@ -1604,6 +1694,16 @@ const TracesPage: React.FC = () => {
                           {processedSpans.length}
                         </Text>
                       </Box>
+                      {getClientIP(traceDetails) && (
+                        <Box minH="50px">
+                          <Text fontSize="xs" color="gray.600" mb={1}>
+                            Client IP
+                          </Text>
+                          <Text fontSize="sm" fontWeight="medium" color="gray.700" fontFamily="mono">
+                            {getClientIP(traceDetails)}
+                          </Text>
+                        </Box>
+                      )}
                       <Box minH="50px" display="flex" flexDirection="column" flex={1} minW="200px">
                         <Text fontSize="xs" color="gray.600" mb={1}>
                           Status
@@ -1768,7 +1868,7 @@ const TracesPage: React.FC = () => {
                                 </Text>
                                         </VStack>
                                       </HStack>
-                                      <Badge fontSize="xs" colorScheme={processed.hasError ? "red" : "orange"} px={2} py={1} borderRadius="full">
+                                      <Badge fontSize="xs" colorScheme={processed.hasError ? "red" : "orange"} px={2} py={1} borderRadius="full" textTransform="none">
                                         {duration}
                                   </Badge>
                                 </HStack>
@@ -1854,7 +1954,9 @@ const TracesPage: React.FC = () => {
                                        tagKey.startsWith('asr.') ||
                                        tagKey === 'correlation.id' ||
                                        tagKey === 'organization' ||
-                                       tagKey.startsWith('user.');
+                                       tagKey.startsWith('user.') ||
+                                       tagKey === 'client.ip' ||
+                                       tagKey === 'http.client_ip';
                               }
                               
                               // For auth spans, include auth-related and organization tags
@@ -1862,7 +1964,9 @@ const TracesPage: React.FC = () => {
                                 return tagKey.startsWith('auth.') ||
                                        tagKey === 'organization' ||
                                        tagKey.startsWith('user.') ||
-                                       tagKey === 'correlation.id';
+                                       tagKey === 'correlation.id' ||
+                                       tagKey === 'client.ip' ||
+                                       tagKey === 'http.client_ip';
                               }
                               
                               // For other spans, only include essential tags
@@ -1870,7 +1974,9 @@ const TracesPage: React.FC = () => {
                                      tagKey === 'organization' ||
                                      tagKey.startsWith('user.') ||
                                      tagKey.includes('.input.') ||
-                                     tagKey.includes('input_count');
+                                     tagKey.includes('input_count') ||
+                                     tagKey === 'client.ip' ||
+                                     tagKey === 'http.client_ip';
                             };
                             
                             // Traverse up the parent chain to collect tags from all ancestors
@@ -1958,6 +2064,8 @@ const TracesPage: React.FC = () => {
                                 // Highest priority: input-related tags (most important for understanding the request)
                                 if (key.includes(".input.") || key.includes("input_count") || key.includes("input_size") || 
                                     key.includes("request.size") || key.startsWith("http.request")) return 1;
+                                // High priority: client IP (important for request tracking)
+                                if (key === "client.ip" || key === "http.client_ip") return 1.5;
                                 // High priority: service-specific tags
                                 if (key.startsWith("nmt.") || key.startsWith("ocr.") || key.startsWith("tts.") || key.startsWith("asr.")) return 2;
                                 if (key === "http.status_code" || key === "otel.status_code") return 3;
@@ -1971,6 +2079,51 @@ const TracesPage: React.FC = () => {
                               
                               return getPriority(aKey) - getPriority(bKey);
                             });
+                            
+                            // Calculate depth for indentation - only count displayed parent spans
+                            // This ensures indentation reflects the visible hierarchy
+                            const calculateDisplayedDepth = (spanId: string): number => {
+                              let depth = 0;
+                              let currentId: string | undefined = spanId;
+                              const visited = new Set<string>();
+                              const displayedSpanIds = new Set(processedSpans?.map((p: ProcessedSpan) => p.span.spanID) || []);
+                              
+                              while (currentId) {
+                                if (visited.has(currentId)) break; // Prevent infinite loops
+                                visited.add(currentId);
+                                
+                                const parentId: string | undefined = spanRelationships.spanToParent.get(currentId);
+                                if (parentId) {
+                                  // Only increment depth if the parent is actually displayed
+                                  if (displayedSpanIds.has(parentId)) {
+                                    depth++;
+                                  }
+                                  // Continue traversing up the chain
+                                  currentId = parentId;
+                                } else {
+                                  break;
+                                }
+                              }
+                              
+                              return depth;
+                            };
+                            
+                            const depth = calculateDisplayedDepth(processed.span.spanID);
+                            const indentPx = depth * 24; // 24px per level of nesting
+                            
+                            // Calculate sum of visible child spans to explain duration discrepancy
+                            const childSpans = processedSpans?.filter((p: ProcessedSpan) => {
+                              const parentId = spanRelationships.spanToParent.get(p.span.spanID);
+                              return parentId === processed.span.spanID;
+                            }) || [];
+                            
+                            const childSpansDuration = childSpans.reduce((sum: number, child: ProcessedSpan) => {
+                              return sum + (child.span.duration || 0);
+                            }, 0);
+                            
+                            const parentDuration = processed.span.duration || 0;
+                            const overheadTime = parentDuration - childSpansDuration;
+                            const hasSignificantOverhead = overheadTime > 1000 && childSpans.length > 0; // > 1ms overhead with visible children
 
                             return (
                               <Card
@@ -1983,6 +2136,7 @@ const TracesPage: React.FC = () => {
                                 boxShadow="sm"
                                 borderRadius="lg"
                                 overflow="hidden"
+                                ml={indentPx > 0 ? `${indentPx}px` : 0}
                                 _hover={{
                                   bg: processed.hasError ? "red.50" : "blue.50",
                                   borderColor: processed.hasError ? "red.300" : "blue.300",
@@ -2072,6 +2226,7 @@ const TracesPage: React.FC = () => {
                                           px={2}
                                           py={0.5}
                                           borderRadius="full"
+                                          textTransform="none"
                                         >
                                           {formatDuration(processed.span.duration)}
                                         </Badge>
@@ -2202,6 +2357,30 @@ const TracesPage: React.FC = () => {
                                         );
                                       }
                                     })()}
+                                    
+                                    {/* Duration overhead explanation - show when parent has significant overhead vs children */}
+                                    {hasSignificantOverhead && (
+                                      <Box 
+                                        p={2} 
+                                        bg="yellow.50" 
+                                        borderRadius="md" 
+                                        borderLeft="3px solid" 
+                                        borderLeftColor="yellow.400"
+                                        boxShadow="sm"
+                                      >
+                                        <HStack spacing={2} align="start">
+                                          <Icon as={FiInfo} color="yellow.700" boxSize={3} mt={0.5} flexShrink={0} />
+                                          <VStack align="start" spacing={0.5} flex={1}>
+                                            <Text fontSize="xs" color="yellow.800" fontWeight="medium">
+                                              Duration Breakdown:
+                                            </Text>
+                                            <Text fontSize="xs" color="yellow.700" lineHeight="1.4">
+                                              This step duration ({formatDuration(parentDuration)}) includes {childSpans.length} visible child step{childSpans.length !== 1 ? 's' : ''} ({formatDuration(childSpansDuration)}) plus {formatDuration(overheadTime)} of overhead (framework processing, middleware, network latency, and filtered spans not shown here).
+                                            </Text>
+                                          </VStack>
+                                        </HStack>
+                                      </Box>
+                                    )}
 
                                     {/* Technical details - collapsible */}
                                     {relevantTags.length > 0 && (

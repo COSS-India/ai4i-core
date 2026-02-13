@@ -1,6 +1,7 @@
 """
 Global error handler middleware for consistent error responses.
 """
+import os
 import time
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -435,8 +436,20 @@ def add_error_handlers(app: FastAPI) -> None:
         elif isinstance(actual_exc, HTTPException):
             return await http_exception_handler(request, actual_exc)
         
-        logger.error(f"Unexpected error: {exc}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        # Check if health/metrics logs should be excluded
+        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+        exclude_metrics_logs = os.getenv("EXCLUDE_METRICS_LOGS", "false").lower() == "true"
+        
+        path = request.url.path.lower().rstrip('/')
+        should_skip = False
+        if exclude_health_logs and ('/health' in path or path.endswith('/health')):
+            should_skip = True
+        if exclude_metrics_logs and ('/metrics' in path or path.endswith('/metrics')):
+            should_skip = True
+        
+        if not should_skip:
+            logger.error(f"Unexpected error: {exc}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
         
         error_detail = ErrorDetail(
             message=str(exc) if str(exc) else INTERNAL_SERVER_ERROR_MESSAGE,

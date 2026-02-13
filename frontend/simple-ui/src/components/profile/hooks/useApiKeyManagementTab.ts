@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useToast } from "@chakra-ui/react";
+import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import authService from "../../../services/authService";
 import type { User } from "../../../types/auth";
 import type { AdminAPIKeyWithUserResponse, APIKeyUpdate } from "../../../types/auth";
@@ -14,7 +14,7 @@ export function useApiKeyManagementTab({
   user,
   users,
 }: UseApiKeyManagementTabOptions) {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [allApiKeys, setAllApiKeys] = useState<AdminAPIKeyWithUserResponse[]>([]);
   const [isLoadingAllApiKeys, setIsLoadingAllApiKeys] = useState(false);
   const [permissions, setPermissions] = useState<string[]>([]);
