@@ -24,7 +24,7 @@ from ai4icore_logging import (
 )
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig, AuthContextMiddleware
 
 # Import streaming service components
 from services.streaming_service import StreamingASRService
@@ -326,6 +326,7 @@ model_mgmt_config = ModelManagementConfig(
 )
 model_mgmt_plugin = ModelManagementPlugin(model_mgmt_config)
 model_mgmt_plugin.register_plugin(app, redis_client=redis_client)
+app.add_middleware(AuthContextMiddleware, path_prefixes=model_mgmt_config.middleware_paths or ["/api/v1"])
 logger.info("✅ Model Management Plugin initialized for ASR service")
 
 # Distributed Tracing (Jaeger)
