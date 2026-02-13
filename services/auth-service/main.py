@@ -1104,6 +1104,17 @@ async def validate_api_key(
             permissions=[]
         )
     
+    # Optional ownership enforcement: when caller provides user_id (BOTH mode),
+    # ensure the API key actually belongs to that user.
+    requested_user_id = validation_data.user_id
+    if requested_user_id is not None and api_key_obj and api_key_obj.user_id is not None:
+        if api_key_obj.user_id != requested_user_id:
+            return APIKeyValidationResponse(
+                valid=False,
+                message="API key does not belong to the authenticated user",
+                permissions=[]
+            )
+    
     # Return success with permissions
     return APIKeyValidationResponse(
         valid=True,

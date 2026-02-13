@@ -15,7 +15,8 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     email = Column(String(255), unique=True, nullable=False)
     username = Column(String(100), unique=True, nullable=False)
-    password_hash = Column(String(255), nullable=False)
+    # Match auth-service schema: column name is 'hashed_password'
+    hashed_password = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
     is_tenant = Column(Boolean, nullable=True)

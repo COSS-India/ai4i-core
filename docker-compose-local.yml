@@ -605,6 +605,8 @@ services:
     container_name: ai4v-ocr-service
     ports:
       - "8099:8099"
+    env_file:
+      - ./services/ocr-service/.env
     environment:
       - ENV_FILE=.env
     env_file:
