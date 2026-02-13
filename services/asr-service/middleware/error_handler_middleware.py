@@ -46,13 +46,29 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthenticationError)
     async def authentication_error_handler(request: Request, exc: AuthenticationError):
         """Handle authentication errors."""
-        error_detail = ErrorDetail(
-            message=AUTH_FAILED_MESSAGE,
-            code=AUTH_FAILED
-        )
+        # Check both message attribute and detail for the ownership error message
+        error_msg = getattr(exc, "message", None) or str(exc.detail) if exc.detail else ""
+        
+        logger.info(f"ASR AuthenticationError handler called: message={error_msg}, detail={exc.detail}")
+        
+        # For the ownership case, return explicit error + message fields with AUTHORIZATION_ERROR
+        if "API key does not belong to the authenticated user" in error_msg:
+            logger.info("Returning AUTHORIZATION_ERROR for ownership mismatch")
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "AUTHORIZATION_ERROR",
+                        "message": "API key does not belong to the authenticated user",
+                    }
+                },
+            )
+
+        # For other authentication errors, return structured format like TTS
+        logger.info(f"Returning AUTHENTICATION_ERROR: {error_msg or AUTH_FAILED_MESSAGE}")
         return JSONResponse(
             status_code=401,
-            content={"detail": error_detail.dict()}
+            content={"detail": {"error": "AUTHENTICATION_ERROR", "message": error_msg or AUTH_FAILED_MESSAGE}}
         )
     
     @app.exception_handler(AuthorizationError)
@@ -119,6 +135,34 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle generic HTTP exceptions."""
+        # Handle AuthenticationError here if it wasn't caught by the specific handler
+        from middleware.exceptions import AuthenticationError
+        if isinstance(exc, AuthenticationError):
+            # Check for ownership error message
+            error_msg = getattr(exc, "message", None) or str(exc.detail) if exc.detail else ""
+            logger.info(f"ASR HTTPException handler processing AuthenticationError: message={error_msg}, detail={exc.detail}, type={type(exc.detail)}")
+            if "API key does not belong to the authenticated user" in error_msg:
+                logger.info("HTTPException handler returning AUTHORIZATION_ERROR")
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "detail": {
+                            "error": "AUTHORIZATION_ERROR",
+                            "message": "API key does not belong to the authenticated user",
+                        }
+                    },
+                )
+            # For other AuthenticationErrors, use default auth failure response
+            logger.info(f"HTTPException handler returning default AUTH_FAILED for: {error_msg}")
+            error_detail = ErrorDetail(
+                message=AUTH_FAILED_MESSAGE,
+                code=AUTH_FAILED
+            )
+            return JSONResponse(
+                status_code=401,
+                content={"detail": error_detail.dict()}
+            )
+        
         # Extract context for logging
         from ai4icore_logging import get_correlation_id
         correlation_id = get_correlation_id(request)
@@ -168,13 +212,33 @@ def add_error_handlers(app: FastAPI) -> None:
         error_code = None
         error_message = str(exc.detail)
         
-        # Check if detail is already an ErrorDetail dict (from routers)
-        if isinstance(exc.detail, dict) and "code" in exc.detail and "message" in exc.detail:
-            # Already formatted as ErrorDetail, return as-is
-            return JSONResponse(
-                status_code=status_code,
-                content={"detail": exc.detail}
-            )
+        # Check if detail is already a structured error dict (from routers or auth middleware)
+        detail_dict = None
+        if isinstance(exc.detail, dict):
+            detail_dict = exc.detail
+        elif isinstance(exc.detail, str):
+            # FastAPI might convert dict to string, try to parse it
+            import json
+            try:
+                # Check if it looks like a dict string representation
+                if exc.detail.startswith("{") and exc.detail.endswith("}"):
+                    detail_dict = json.loads(exc.detail)
+            except (json.JSONDecodeError, ValueError):
+                pass
+        
+        if detail_dict:
+            # Check for ErrorDetail format (code + message)
+            if "code" in detail_dict and "message" in detail_dict:
+                return JSONResponse(
+                    status_code=status_code,
+                    content={"detail": detail_dict}
+                )
+            # Check for error + message format (from auth middleware)
+            if "error" in detail_dict and "message" in detail_dict:
+                return JSONResponse(
+                    status_code=status_code,
+                    content={"detail": detail_dict}
+                )
         
         # Map common status codes to error constants
         if status_code == 503:
