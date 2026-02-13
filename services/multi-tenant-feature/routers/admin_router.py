@@ -46,6 +46,9 @@ async def register_tenant_request(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
+    """
+    Register a new tenant.
+    """
     try:
         response = await create_new_tenant(payload, db, background_tasks)
 
@@ -196,16 +199,17 @@ async def delete_tenant_user_endpoint(
 
 @router.patch("/update/tenant", response_model=TenantUpdateResponse, status_code=status.HTTP_200_OK)
 async def update_tenant_info(
+    request: Request,
     payload: TenantUpdateRequest,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
     Update tenant information including organization_name, contact_email, domain,
-    requested_quotas, and usage_quota. Supports partial updates - only provided
-    fields will be updated.
+    requested_quotas, usage_quota, and tenant admin role. Supports partial updates.
     """
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        return await update_tenant(payload, db)
+        return await update_tenant(payload, db, auth_header=auth_header)
     except HTTPException:
         raise
     except IntegrityError as ie:
@@ -221,14 +225,17 @@ async def update_tenant_info(
 
 @router.get("/view/tenant", status_code=status.HTTP_200_OK)
 async def view_tenant(
+    request: Request,
     tenant_id: str,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
     View tenant details by tenant_id (human-readable tenant identifier).
+    Includes tenant admin role from auth when Authorization header is provided.
     """
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        result = await view_tenant_details(tenant_id, db)
+        result = await view_tenant_details(tenant_id, db, auth_header=auth_header)
 
         if not result:
             raise HTTPException(status_code=404, detail="Tenant not found")
@@ -268,14 +275,17 @@ async def view_tenant_user(
 
 @router.get("/list/tenants", response_model=ListTenantsResponse, status_code=status.HTTP_200_OK)
 async def list_tenants(
+    request: Request,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
     List all tenants with their details.
     Returns a list of all tenants registered in the system.
+    Includes tenant admin role from auth when Authorization header is provided.
     """
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        return await list_all_tenants(db)
+        return await list_all_tenants(db, auth_header=auth_header)
     except HTTPException:
         raise
     except Exception as exc:

@@ -766,6 +766,8 @@ async def create_new_tenant(
         await db.rollback()
         raise HTTPException(status_code=500,detail="Failed to create tenant")
 
+    role_value = (getattr(payload, "role", None) or "").strip().upper() or "ADMIN"
+
     resposne = TenantRegisterResponse(
         id=created.id,
         tenant_id=created.tenant_id,
@@ -774,7 +776,7 @@ async def create_new_tenant(
         quotas=created.quotas or {},
         usage_quota=created.usage or {},
         status=created.status.value if hasattr(created.status, "value") else str(created.status),
-        # Token will be generated when verification email is sent via dedicated API
+        role=role_value if role_value in {"ADMIN", "USER", "GUEST", "MODERATOR"} else "ADMIN",
     )
 
     return resposne
@@ -2060,21 +2062,25 @@ async def delete_tenant_user(
     )
 
 
-async def view_tenant_details(tenant_id: str, db: AsyncSession) -> TenantViewResponse:
+async def view_tenant_details(
+    tenant_id: str,
+    db: AsyncSession,
+    auth_header: Optional[str] = None,
+) -> TenantViewResponse:
     """
     View tenant details by tenant_id (human-readable tenant identifier).
-    
-    Args:
-        tenant_id: The tenant identifier
-        db: Database session
-    Returns:
-        TenantViewResponse: Details of the tenant
+    Includes tenant admin role from auth service when auth_header is provided.
     """
 
     tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == tenant_id))
 
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
+
+    role = ""
+    if tenant.user_id and auth_header:
+        auth_roles = await _get_roles_from_auth(tenant.user_id, auth_header)
+        role = auth_roles[0] if auth_roles else ""
 
     response = TenantViewResponse(
         id=tenant.id,
@@ -2090,21 +2096,21 @@ async def view_tenant_details(tenant_id: str, db: AsyncSession) -> TenantViewRes
         usage_quota=tenant.usage or {},
         created_at=tenant.created_at.isoformat(),
         updated_at=tenant.updated_at.isoformat(),
+        role=role,
     )
 
     return response
 
 
-async def update_tenant(payload: TenantUpdateRequest, db: AsyncSession) -> TenantUpdateResponse:
+async def update_tenant(
+    payload: TenantUpdateRequest,
+    db: AsyncSession,
+    auth_header: Optional[str] = None,
+) -> TenantUpdateResponse:
     """
-    Update tenant information including quotas and usage_quota.
+    Update tenant information including quotas, usage_quota, and tenant admin role.
     Supports partial updates - only provided fields will be updated.
-    
-    Args:
-        payload: Tenant update request payload with optional fields
-        db: Database session
-    Returns:
-        TenantUpdateResponse: Details of the updated tenant and changes made
+    Role is updated in auth service via tenant.user_id.
     """
     tenant = await db.scalar(select(Tenant).where(Tenant.tenant_id == payload.tenant_id))
     
@@ -2122,6 +2128,15 @@ async def update_tenant(payload: TenantUpdateRequest, db: AsyncSession) -> Tenan
     
     changes = {}
     updated_fields = []
+    
+    # Handle role update (tenant admin's role in auth service)
+    if "role" in update_data:
+        new_role = (update_data.pop("role") or "").strip().upper()
+        if new_role and tenant.user_id and auth_header:
+            assigned = await _assign_role_in_auth(tenant.user_id, new_role, auth_header)
+            if assigned:
+                updated_fields.append("role")
+                changes["role"] = FieldChange(old="(from auth)", new=new_role)
     
     # Handle organization_name update
     if "organization_name" in update_data:
@@ -2212,12 +2227,18 @@ async def update_tenant(payload: TenantUpdateRequest, db: AsyncSession) -> Tenan
         raise HTTPException(status_code=500, detail="Failed to update tenant")
     
     logger.info(f"Tenant updated successfully | tenant_id={payload.tenant_id} | updated_fields={updated_fields}")
-    
+
+    role_value: Optional[str] = None
+    if tenant.user_id and auth_header:
+        auth_roles = await _get_roles_from_auth(tenant.user_id, auth_header)
+        role_value = auth_roles[0] if auth_roles else None
+
     return TenantUpdateResponse(
         tenant_id=tenant.tenant_id,
         message=f"Tenant updated successfully. {len(updated_fields)} field(s) modified.",
         changes=changes,
         updated_fields=updated_fields,
+        role=role_value,
     )
 
 
@@ -2254,37 +2275,42 @@ async def view_tenant_user_details(
     return response
 
 
-async def list_all_tenants(db: AsyncSession) -> ListTenantsResponse:
+async def list_all_tenants(
+    db: AsyncSession,
+    auth_header: Optional[str] = None,
+) -> ListTenantsResponse:
     """
     List all tenants with their details.
-    
-    Args:
-        db: Database session
-    Returns:
-        ListTenantsResponse: List of all tenants and their details
+    Includes tenant admin role from auth service when auth_header is provided.
     """
     result = await db.execute(select(Tenant).order_by(Tenant.created_at.desc()))
     tenants = result.scalars().all()
-    
-    tenant_list = [
-        TenantViewResponse(
-            id=tenant.id,
-            tenant_id=tenant.tenant_id,
-            user_id=tenant.user_id or 0,
-            organization_name=tenant.organization_name,
-            email=tenant.contact_email,
-            domain=tenant.domain,
-            schema=tenant.schema_name,
-            subscriptions=tenant.subscriptions or [],
-            status=tenant.status.value if hasattr(tenant.status, "value") else str(tenant.status),
-            quotas=tenant.quotas or {},
-            usage_quota=tenant.usage or {},
-            created_at=tenant.created_at.isoformat(),
-            updated_at=tenant.updated_at.isoformat(),
+
+    tenant_list = []
+    for tenant in tenants:
+        role = ""
+        if tenant.user_id and auth_header:
+            auth_roles = await _get_roles_from_auth(tenant.user_id, auth_header)
+            role = auth_roles[0] if auth_roles else ""
+        tenant_list.append(
+            TenantViewResponse(
+                id=tenant.id,
+                tenant_id=tenant.tenant_id,
+                user_id=tenant.user_id or 0,
+                organization_name=tenant.organization_name,
+                email=tenant.contact_email,
+                domain=tenant.domain,
+                schema=tenant.schema_name,
+                subscriptions=tenant.subscriptions or [],
+                status=tenant.status.value if hasattr(tenant.status, "value") else str(tenant.status),
+                quotas=tenant.quotas or {},
+                usage_quota=tenant.usage or {},
+                created_at=tenant.created_at.isoformat(),
+                updated_at=tenant.updated_at.isoformat(),
+                role=role,
+            )
         )
-        for tenant in tenants
-    ]
-    
+
     return ListTenantsResponse(
         count=len(tenant_list),
         tenants=tenant_list,
