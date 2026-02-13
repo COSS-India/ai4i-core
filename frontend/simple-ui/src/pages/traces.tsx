@@ -613,16 +613,68 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
   const importantCount = processed.filter(p => p.isImportant).length;
   console.log(`Processed ${processed.length} spans, ${importantCount} marked as important`);
 
+  // Detect the primary service from the trace
+  // Primary service is the one with the most top-level important spans, or the longest duration
+  const topLevelSpans = processed.filter(p => p.isTopLevel && p.isImportant);
+  const serviceDuration = new Map<string, number>();
+  const serviceTopLevelCount = new Map<string, number>();
+  
+  processed.forEach(p => {
+    const current = serviceDuration.get(p.serviceName) || 0;
+    serviceDuration.set(p.serviceName, current + p.span.duration);
+    
+    if (p.isTopLevel && p.isImportant) {
+      const count = serviceTopLevelCount.get(p.serviceName) || 0;
+      serviceTopLevelCount.set(p.serviceName, count + 1);
+    }
+  });
+  
+  // Find primary service: prefer service with most top-level spans, then longest duration
+  let primaryService = "unknown";
+  let maxTopLevelCount = 0;
+  for (const [service, count] of Array.from(serviceTopLevelCount.entries())) {
+    if (count > maxTopLevelCount) {
+      maxTopLevelCount = count;
+      primaryService = service;
+    }
+  }
+  
+  // If no clear winner by top-level count, use duration
+  if (maxTopLevelCount === 0 || (maxTopLevelCount === 1 && serviceTopLevelCount.size > 1)) {
+    let maxDuration = 0;
+    for (const [service, duration] of Array.from(serviceDuration.entries())) {
+      if (duration > maxDuration) {
+        maxDuration = duration;
+        primaryService = service;
+      }
+    }
+  }
+  
+  const isAuthServiceTrace = primaryService.includes("auth-service");
+  console.log(`[DEBUG] Primary service detected: ${primaryService}, isAuthServiceTrace: ${isAuthServiceTrace}`);
+
   // Filter out child spans when we have a parent span of the same category
   const filtered: ProcessedSpan[] = [];
   const seenOperations = new Map<string, ProcessedSpan>(); // operationKey -> best span
   
-  // First, collect top-level spans
-  const topLevelSpans = processed.filter(p => p.isTopLevel && p.isImportant);
-  
   // Then, collect other important spans that aren't children of top-level spans
   for (const processedSpan of processed) {
     if (!processedSpan.isImportant) continue;
+    
+    // SPECIAL FILTERING: For non-auth-service traces, filter out child auth-service spans
+    // Only show top-level auth spans from auth-service when it's not the primary service
+    if (!isAuthServiceTrace && processedSpan.serviceName.includes("auth-service")) {
+      // Check if this is a child span (has a parent)
+      const parentId = spanToParent.get(processedSpan.span.spanID);
+      if (parentId) {
+        // This is a child span from auth-service - filter it out
+        // Only keep top-level auth spans (like POST /api/v1/auth/validate)
+        if (!processedSpan.isTopLevel || processedSpan.category === "database") {
+          console.log(`[DEBUG] Filtering out child auth-service span (non-auth trace): ${processedSpan.displayName}`);
+          continue;
+        }
+      }
+    }
     
     // Check if this span is a child of a top-level span with same category
     const parentId = spanToParent.get(processedSpan.span.spanID);
@@ -640,6 +692,23 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
       filtered.push(processedSpan);
       console.log(`[DEBUG] Including error span (never deduplicated): ${processedSpan.displayName}`);
       continue; // Skip deduplication logic
+    }
+    
+    // SPECIAL: Database operations should NEVER be deduplicated - show all of them
+    // BUT: Only show all database operations for auth-service traces
+    // For other traces, database operations from auth-service are already filtered above
+    if (processedSpan.category === "database") {
+      // Only show all database operations if this is an auth-service trace
+      // OR if the database operation is not from auth-service
+      if (isAuthServiceTrace || !processedSpan.serviceName.includes("auth-service")) {
+        filtered.push(processedSpan);
+        console.log(`[DEBUG] Including database operation (never deduplicated): ${processedSpan.displayName}`);
+        continue; // Skip deduplication logic
+      } else {
+        // For non-auth traces, filter out auth-service database operations
+        console.log(`[DEBUG] Filtering out auth-service database operation (non-auth trace): ${processedSpan.displayName}`);
+        continue;
+      }
     }
     
     // Create a unique key for this operation (service + category + displayName)
