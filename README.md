@@ -8,20 +8,6 @@
 
 ---
 
-## 📋 Suggested GitHub "About" Section
-
-**Copy this text for your GitHub repository's About section:**
-
-```
-Open-source codebase for AI/ML microservices platform supporting 22+ Indic languages. 
-Includes ASR, TTS, NMT, LLM services with FastAPI, Docker, Kong, and observability stack. 
-Deploy your own instance - not a hosted service.
-```
-
-**Topics to add**: `fastapi` `microservices` `indic-languages` `speech-to-text` `text-to-speech` `machine-translation` `docker` `kubernetes` `kong-gateway` `opentelemetry` `python` `typescript` `nextjs` `ai-ml` `open-source` `self-hosted`
-
----
-
 ## 🎯 What This Repository Provides
 
 An open-source microservices platform codebase built with FastAPI, providing a complete reference implementation for deploying scalable language AI services. This repository contains production-ready code following best practices for microservices architecture, observability, and progressive delivery.
@@ -32,7 +18,7 @@ An open-source microservices platform codebase built with FastAPI, providing a c
 
 <img width="413" height="392" alt="image" src="https://github.com/user-attachments/assets/78400e0a-d180-4c74-9e75-1c15b4b4c8bb" />
 
-This open-source codebase includes **21 microservices**, **1 frontend application**, **15+ infrastructure components**, and **4 shared libraries** that you can deploy in your own environment:
+This open-source codebase includes **22 microservices**, **1 frontend application**, **15+ infrastructure components**, and **4 shared libraries** that you can deploy in your own environment:
 
 ## 📦 What This Repository Provides
 
@@ -59,6 +45,7 @@ This repository contains:
 - **Metrics Service** (Port 8083) - Metrics collection and aggregation
 - **Telemetry Service** (Port 8084) - Distributed tracing and logging aggregation
 - **Alerting Service** (Port 8085) - Real-time alerting and notification system
+- **Alert Config Sync Service** - Alert configuration synchronization service
 - **Dashboard Service** (Port 8090/8501) - Streamlit-based analytics dashboard
 
 ### AI/ML Services
@@ -186,7 +173,6 @@ This repository provides all the code and configurations you need to deploy your
 - 16GB+ RAM recommended (for running all services locally)
 - 50GB+ disk space for all services and databases
 - Linux/macOS (Windows with WSL2)
-- Your own Triton Inference Server or compatible model serving endpoint (for AI/ML services)
 
 ### Quick Start (Local Deployment)
 
@@ -347,7 +333,7 @@ The platform includes comprehensive monitoring with pre-configured dashboards:
 
 ## 🏗️ Architecture Highlights
 
-- **Microservices Architecture**: 21 independent, scalable services
+- **Microservices Architecture**: 22 independent, scalable services
 - **API-First Design**: OpenAPI/Swagger documentation for all endpoints
 - **Event-Driven**: Kafka-based event streaming for decoupled services
 - **Multi-Layer Caching**: In-memory + Redis for optimal performance
