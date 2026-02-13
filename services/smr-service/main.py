@@ -51,7 +51,8 @@ class SMRSelectResponse(BaseModel):
     """Response schema for SMR selection."""
 
     serviceId: str
-    # Tenant ID used for policy lookup (actual tenant_id or "free-user" if no tenant_id provided)
+    # Tenant ID from the request (null for free users, actual tenant_id for tenant users)
+    # Note: "free-user" is used internally for Policy Engine lookup but not exposed in response
     tenant_id: Optional[str] = None
     # Whether this is a free user (no tenant_id was provided in the request)
     is_free_user: bool = False
@@ -989,8 +990,9 @@ async def inject_service_id_if_missing(
             }
         )
     # Priority 2: No headers provided - call Policy Engine
-    elif tenant_id is None:
+    elif tenant_id is None or tenant_id == "free-user":
         # Free user: call Policy Engine with tenant_id="free-user" to get policy from DB
+        # Note: ObservabilityMiddleware may set tenant_id="free-user" for free users
         logger.info(
             "SMR: No policy headers provided, calling Policy Engine for free-user policy",
             extra={
@@ -1083,12 +1085,50 @@ async def inject_service_id_if_missing(
         )
 
     # Validate policy combinations before service selection
+    # Only validate when policies come from user-provided headers, not from Policy Engine
+    # Policy Engine should return valid combinations, but if it doesn't, we'll handle it gracefully
     # Invalid combinations: sensitive accuracy with Tier 1 cost, Low latency with Tier 1 cost
-    validate_policy_combinations(
-        latency_policy=actual_latency_policy,
-        cost_policy=actual_cost_policy,
-        accuracy_policy=actual_accuracy_policy,
-    )
+    # Check if policies came from headers (user-provided) vs Policy Engine
+    policies_from_headers = (latency_policy is not None or cost_policy is not None or accuracy_policy is not None)
+    if policies_from_headers:
+        # Only validate user-provided policies
+        validate_policy_combinations(
+            latency_policy=actual_latency_policy,
+            cost_policy=actual_cost_policy,
+            accuracy_policy=actual_accuracy_policy,
+        )
+    else:
+        # Policies came from Policy Engine - log warning if invalid but don't fail
+        # This allows Policy Engine to return policies that may not be strictly valid
+        # but we'll still try to route (the service selection will handle it)
+        cost_policy_lower = str(actual_cost_policy).lower() if actual_cost_policy else None
+        if cost_policy_lower == "tier_1":
+            if actual_accuracy_policy and str(actual_accuracy_policy).lower() == "sensitive":
+                logger.warning(
+                    "Policy Engine returned invalid combination: sensitive accuracy with Tier 1 cost. "
+                    "This may result in suboptimal routing.",
+                    extra={
+                        "context": {
+                            "latency_policy": actual_latency_policy,
+                            "cost_policy": actual_cost_policy,
+                            "accuracy_policy": actual_accuracy_policy,
+                            "source": "policy_engine",
+                        }
+                    }
+                )
+            if actual_latency_policy and str(actual_latency_policy).lower() == "low":
+                logger.warning(
+                    "Policy Engine returned invalid combination: low latency with Tier 1 cost. "
+                    "This may result in suboptimal routing.",
+                    extra={
+                        "context": {
+                            "latency_policy": actual_latency_policy,
+                            "cost_policy": actual_cost_policy,
+                            "accuracy_policy": actual_accuracy_policy,
+                            "source": "policy_engine",
+                        }
+                    }
+                )
 
     # Log candidate services for debugging
     logger.info(
@@ -1234,13 +1274,17 @@ async def select_service(request: Request, payload: SMRSelectRequest) -> SMRSele
                 service_policy_dict = None
     
     # Determine tenant_id and is_free_user
-    # If original tenant_id was None, we used "free-user" for Policy Engine lookup
-    is_free_user = (tenant_id is None)
-    actual_tenant_id = "free-user" if is_free_user else tenant_id
+    # ObservabilityMiddleware may set tenant_id="free-user" for free users (when JWT has no tenant_id)
+    # We treat both None and "free-user" as free users
+    # In the response, we return null for free users (not "free-user")
+    is_free_user = (tenant_id is None or tenant_id == "free-user")
+    # Return null for free users, actual tenant_id for tenant users
+    # "free-user" is only used internally for Policy Engine lookup, not exposed in response
+    actual_tenant_id = None if is_free_user else tenant_id
     
     return SMRSelectResponse(
         serviceId=service_id,
-        tenant_id=actual_tenant_id,
+        tenant_id=actual_tenant_id,  # null for free users, actual tenant_id for tenant users
         is_free_user=is_free_user,
         tenant_policy=tenant_policy_dict,
         service_policy=service_policy_dict,
