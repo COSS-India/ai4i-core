@@ -8,14 +8,32 @@ import asyncpg
 import httpx
 from typing import Optional, List, Dict, Any
 from fastapi import HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
+
+# Import audit logger
+try:
+    from utils.audit_logger import (
+        log_alert_definition_create, log_alert_definition_update,
+        log_alert_definition_delete, log_alert_definition_toggle,
+        log_receiver_create, log_receiver_update, log_receiver_delete,
+        log_routing_rule_create, log_routing_rule_update, log_routing_rule_delete,
+        log_config_sync
+    )
+    AUDIT_LOGGING_AVAILABLE = True
+except ImportError:
+    AUDIT_LOGGING_AVAILABLE = False
+
+# Use ai4icore_logging (same as nmt-service, ocr-service)
+from ai4icore_logging import get_logger
+logger = get_logger(__name__)
 
 # Valid organizations (until organization info is added to API headers)
 VALID_ORGANIZATIONS = ["irctc", "kisanmitra", "bashadaan", "beml"]
 
 # Database connection pool (will be initialized on startup)
 db_pool: Optional[asyncpg.Pool] = None
+auth_db_pool: Optional[asyncpg.Pool] = None
 
 # Database configuration
 DB_HOST = os.getenv("POSTGRES_HOST", "postgres")
@@ -24,13 +42,16 @@ DB_USER = os.getenv("POSTGRES_USER", "dhruva_user")
 DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "dhruva_secure_password_2024")
 DB_NAME = "alerting_db"
 
+# Auth database configuration (for querying users by role)
+AUTH_DB_NAME = "auth_db"
+
 # Sync service configuration
 SYNC_SERVICE_URL = os.getenv("ALERT_CONFIG_SYNC_SERVICE_URL", "http://alert-config-sync-service:8097")
 SYNC_ENABLED = os.getenv("ALERT_SYNC_ENABLED", "true").lower() == "true"
 
 async def init_db_pool():
-    """Initialize database connection pool"""
-    global db_pool
+    """Initialize database connection pools for alerting_db and auth_db"""
+    global db_pool, auth_db_pool
     if db_pool is None:
         db_pool = await asyncpg.create_pool(
             host=DB_HOST,
@@ -44,18 +65,36 @@ async def init_db_pool():
             max_queries=50000,  # Maximum queries per connection before recycling
             command_timeout=60  # Timeout for database commands
         )
+    
+    # Initialize auth_db connection pool for querying users by role
+    if auth_db_pool is None:
+        auth_db_pool = await asyncpg.create_pool(
+            host=DB_HOST,
+            port=DB_PORT,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=AUTH_DB_NAME,
+            min_size=2,
+            max_size=10,
+            max_inactive_connection_lifetime=300,
+            max_queries=50000,
+            command_timeout=60
+        )
 
 async def close_db_pool():
-    """Close database connection pool"""
-    global db_pool
+    """Close database connection pools"""
+    global db_pool, auth_db_pool
     if db_pool:
         await db_pool.close()
         db_pool = None
+    if auth_db_pool:
+        await auth_db_pool.close()
+        auth_db_pool = None
 
 async def ensure_db_pool():
-    """Ensure database connection pool is initialized"""
-    global db_pool
-    if db_pool is None:
+    """Ensure database connection pools are initialized"""
+    global db_pool, auth_db_pool
+    if db_pool is None or auth_db_pool is None:
         await init_db_pool()
     if db_pool is None:
         raise HTTPException(
@@ -63,7 +102,92 @@ async def ensure_db_pool():
             detail="Database connection pool not initialized"
         )
 
-async def trigger_config_sync() -> None:
+async def get_users_by_role(role_name: str) -> List[str]:
+    """
+    Query users with a specific RBAC role from auth_db and return their email addresses.
+    
+    Args:
+        role_name: RBAC role name (ADMIN, MODERATOR, USER, GUEST)
+    
+    Returns:
+        List of email addresses for users with the specified role
+    
+    Raises:
+        HTTPException: If role is invalid or database error occurs
+    """
+    # Validate role name
+    valid_roles = ["ADMIN", "MODERATOR", "USER", "GUEST"]
+    if role_name not in valid_roles:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid RBAC role '{role_name}'. Must be one of: {', '.join(valid_roles)}"
+        )
+    
+    await ensure_db_pool()
+    
+    if auth_db_pool is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Auth database connection pool not initialized"
+        )
+    
+    try:
+        async with auth_db_pool.acquire() as conn:
+            # Query users with the specified role
+            # Join users -> user_roles -> roles to get users with the role
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT u.email
+                FROM users u
+                INNER JOIN user_roles ur ON u.id = ur.user_id
+                INNER JOIN roles r ON ur.role_id = r.id
+                WHERE r.name = $1
+                AND u.is_active = true
+                ORDER BY u.email
+                """,
+                role_name
+            )
+            
+            emails = [row['email'] for row in rows]
+            
+            if not emails:
+                logger.warning(
+                    f"No active users found with role '{role_name}'",
+                    extra={"context": {"role_name": role_name}}
+                )
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No active users found with role '{role_name}'"
+                )
+            
+            logger.info(
+                f"Found {len(emails)} user(s) with role '{role_name}': {', '.join(emails)}",
+                extra={"context": {"role_name": role_name, "user_count": len(emails)}}
+            )
+            return emails
+            
+    except HTTPException:
+        raise
+    except asyncpg.exceptions.TooManyConnectionsError:
+        logger.error(
+            "Auth database connection pool exhausted",
+            extra={"context": {"error": "pool_exhausted"}}
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Database connection pool exhausted. Please try again later."
+        )
+    except Exception as e:
+        logger.error(
+            f"Error querying users by role '{role_name}': {e}",
+            extra={"context": {"role_name": role_name, "error": str(e)}}
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to query users by role: {str(e)}"
+        )
+
+async def trigger_config_sync(actor: Optional[str] = None, request: Optional[Request] = None) -> None:
     """
     Trigger configuration sync in the sync service.
     This is called after create/update/delete operations to immediately sync changes.
@@ -75,21 +199,30 @@ async def trigger_config_sync() -> None:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(f"{SYNC_SERVICE_URL}/sync")
             if response.status_code == 200:
-                logger.info("Configuration sync triggered successfully")
+                logger.info(
+                    "Configuration sync triggered successfully",
+                    extra={"context": {"status": "success", "status_code": 200}}
+                )
+                # Log audit event for config sync
+                if AUDIT_LOGGING_AVAILABLE:
+                    log_config_sync(
+                        organization=None,  # Sync affects all organizations
+                        actor=actor or "system",
+                        sync_details={"status": "success", "sync_service_url": SYNC_SERVICE_URL}
+                    )
             else:
-                logger.warning(f"Sync service returned status {response.status_code}: {response.text}")
+                logger.warning(
+                    f"Sync service returned status {response.status_code}: {response.text}",
+                    extra={"context": {"status_code": response.status_code, "response_preview": (response.text[:500] if response.text else None)}}
+                )
     except Exception as e:
         # Don't fail the main operation if sync fails
         # Sync will happen on next periodic run anyway
-        logger.warning(f"Failed to trigger configuration sync: {e}")
+        logger.warning(
+            f"Failed to trigger configuration sync: {e}",
+            extra={"context": {"error": str(e)}}
+        )
 
-# Import logger
-try:
-    from ai4icore_logging import get_logger
-    logger = get_logger(__name__)
-except ImportError:
-    import logging
-    logger = logging.getLogger(__name__)
 
 def _get_organization_from_api_key(api_key: str) -> str:
     """Map API key to organization name using consistent hashing.
@@ -161,6 +294,31 @@ def validate_organization(org: str) -> None:
             detail=f"Invalid organization. Allowed values: {', '.join(VALID_ORGANIZATIONS)}"
         )
 
+
+def _is_valid_organization(org: Optional[str]) -> bool:
+    """Return True if org is in the allowed list (no raise)."""
+    if not org:
+        return False
+    return org.lower() in [o.lower() for o in VALID_ORGANIZATIONS]
+
+
+def get_organization_for_audit_from_request(
+    request: Request,
+    admin_provided_org: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Return organization for audit logging only from explicit sources (header or admin input).
+    Never use API-key-based mapping. Use this so audit logs record which org's resource
+    is affected when that org is known from header or admin; otherwise leave audit org unset.
+    """
+    if admin_provided_org and _is_valid_organization(admin_provided_org):
+        return admin_provided_org.lower()
+    org_header = request.headers.get("X-Organization") or request.headers.get("x-organization")
+    if org_header and _is_valid_organization(org_header):
+        return org_header.lower()
+    return None
+
+
 # Pydantic Models for Request/Response
 
 class AlertAnnotation(BaseModel):
@@ -221,17 +379,53 @@ class NotificationReceiverCreate(BaseModel):
     category: str = Field(..., description="Category: 'application' or 'infrastructure'")
     severity: str = Field(..., description="Severity: 'critical', 'warning', or 'info'")
     alert_type: Optional[str] = Field(None, description="Optional alert type filter (e.g., 'latency', 'error_rate')")
-    email_to: List[str] = Field(..., description="Email addresses (required)", min_items=1)
+    email_to: Optional[List[str]] = Field(None, description="Email addresses (required if rbac_role not provided)", min_items=1)
+    rbac_role: Optional[str] = Field(None, description="RBAC role name (ADMIN, MODERATOR, USER, GUEST) - if provided, emails will be resolved from users with this role")
     email_subject_template: Optional[str] = Field(None, description="Email subject template")
     email_body_template: Optional[str] = Field(None, description="Email body template (HTML)")
+    
+    @field_validator('rbac_role')
+    @classmethod
+    def validate_rbac_role(cls, v):
+        """Validate RBAC role if provided"""
+        if v is not None:
+            valid_roles = ["ADMIN", "MODERATOR", "USER", "GUEST"]
+            if v not in valid_roles:
+                raise ValueError(f"Invalid RBAC role '{v}'. Must be one of: {', '.join(valid_roles)}")
+        return v
+    
+    def model_post_init(self, __context):
+        """Validate that either email_to or rbac_role is provided, but not both"""
+        if not self.email_to and not self.rbac_role:
+            raise ValueError("Either 'email_to' or 'rbac_role' must be provided")
+        if self.email_to and self.rbac_role:
+            raise ValueError("Cannot provide both 'email_to' and 'rbac_role'. Use one or the other.")
 
 class NotificationReceiverUpdate(BaseModel):
     """Request model for updating a notification receiver"""
     receiver_name: Optional[str] = None
-    email_to: Optional[List[str]] = Field(None, description="Email addresses", min_items=1)
+    email_to: Optional[List[str]] = Field(None, description="Email addresses (required if rbac_role not provided)", min_items=1)
+    rbac_role: Optional[str] = Field(None, description="RBAC role name (ADMIN, MODERATOR, USER, GUEST) - if provided, emails will be resolved from users with this role")
     email_subject_template: Optional[str] = None
     email_body_template: Optional[str] = None
     enabled: Optional[bool] = None
+    
+    @field_validator('rbac_role')
+    @classmethod
+    def validate_rbac_role(cls, v):
+        """Validate RBAC role if provided"""
+        if v is not None:
+            valid_roles = ["ADMIN", "MODERATOR", "USER", "GUEST"]
+            if v not in valid_roles:
+                raise ValueError(f"Invalid RBAC role '{v}'. Must be one of: {', '.join(valid_roles)}")
+        return v
+    
+    def model_post_init(self, __context):
+        """Validate that if updating email/rbac, either email_to or rbac_role is provided, but not both"""
+        # Only validate if at least one is provided (both can be None for other updates)
+        if self.email_to is not None or self.rbac_role is not None:
+            if self.email_to and self.rbac_role:
+                raise ValueError("Cannot provide both 'email_to' and 'rbac_role'. Use one or the other.")
 
 class NotificationReceiverResponse(BaseModel):
     """Response model for notification receiver"""
@@ -239,6 +433,7 @@ class NotificationReceiverResponse(BaseModel):
     organization: str
     receiver_name: str
     email_to: List[str]
+    rbac_role: Optional[str] = None
     email_subject_template: Optional[str]
     email_body_template: Optional[str]
     enabled: bool
@@ -363,7 +558,13 @@ def inject_organization_into_promql(promql_expr: str, organization: str) -> str:
     
     return result
 
-async def create_alert_definition(organization: str, data: AlertDefinitionCreate, created_by: str) -> AlertDefinitionResponse:
+async def create_alert_definition(
+    organization: str,
+    data: AlertDefinitionCreate,
+    created_by: str,
+    request: Optional[Request] = None,
+    organization_for_audit: Optional[str] = None,
+) -> AlertDefinitionResponse:
     """Create a new alert definition"""
     validate_organization(organization)
     
@@ -406,7 +607,19 @@ async def create_alert_definition(organization: str, data: AlertDefinitionCreate
                 )
         
         # Fetch with annotations
-        return await get_alert_definition_by_id(alert_id, organization)
+        result = await get_alert_definition_by_id(alert_id, organization)
+        
+        # Log audit event (org = resource's org; for create use header/admin only, never API-key-derived)
+        if AUDIT_LOGGING_AVAILABLE:
+            log_alert_definition_create(
+                alert_id=alert_id,
+                organization=organization_for_audit,
+                actor=created_by,
+                request=request,
+                alert_data=result.model_dump() if hasattr(result, 'model_dump') else result.dict()
+            )
+        
+        return result
 
 async def get_alert_definition_by_id(alert_id: int, organization: Optional[str] = None) -> AlertDefinitionResponse:
     """
@@ -525,7 +738,7 @@ async def list_alert_definitions(organization: Optional[str] = None, enabled_onl
         
         return result
 
-async def update_alert_definition(alert_id: int, organization: Optional[str], data: AlertDefinitionUpdate, updated_by: str) -> AlertDefinitionResponse:
+async def update_alert_definition(alert_id: int, organization: Optional[str], data: AlertDefinitionUpdate, updated_by: str, request: Optional[Request] = None) -> AlertDefinitionResponse:
     """
     Update an alert definition
     
@@ -646,20 +859,58 @@ async def update_alert_definition(alert_id: int, organization: Optional[str], da
         
         result = await get_alert_definition_by_id(alert_id, organization)
         
+        # Log audit event
+        if AUDIT_LOGGING_AVAILABLE:
+            # Convert existing and result to dict for audit log
+            before_dict = dict(existing) if existing else None
+            after_dict = result.model_dump() if hasattr(result, 'model_dump') else result.dict()
+            log_alert_definition_update(
+                alert_id=alert_id,
+                organization=actual_organization,
+                actor=updated_by,
+                request=request,
+                before_values=before_dict,
+                after_values=after_dict
+            )
+        
         # Trigger configuration sync to update YAML files and reload Prometheus/Alertmanager
-        await trigger_config_sync()
+        await trigger_config_sync(actor=created_by, request=request)
         
         return result
 
-async def delete_alert_definition(alert_id: int, organization: Optional[str] = None) -> None:
+async def delete_alert_definition(alert_id: int, organization: Optional[str] = None, deleted_by: Optional[str] = None, request: Optional[Request] = None) -> None:
     """
     Delete an alert definition
     
     Args:
         alert_id: Alert definition ID
         organization: Organization to filter by. If None (admin), deletes alert regardless of organization
+        deleted_by: Username of the user making the deletion
+        request: FastAPI Request object for audit logging context
     """
     await ensure_db_pool()
+    
+    # Get alert data before deletion for audit log
+    alert_data = None
+    actual_organization = organization
+    try:
+        if organization:
+            validate_organization(organization)
+            async with db_pool.acquire() as conn:
+                alert_data = await conn.fetchrow(
+                    "SELECT * FROM alert_definitions WHERE id = $1 AND organization = $2",
+                    alert_id, organization
+                )
+        else:
+            async with db_pool.acquire() as conn:
+                alert_data = await conn.fetchrow(
+                    "SELECT * FROM alert_definitions WHERE id = $1",
+                    alert_id
+                )
+                if alert_data:
+                    actual_organization = alert_data['organization']
+    except Exception:
+        pass  # If we can't get the data, continue with deletion
     
     try:
         async with db_pool.acquire() as conn:
@@ -678,20 +929,37 @@ async def delete_alert_definition(alert_id: int, organization: Optional[str] = N
             
             if result == "DELETE 0":
                 raise HTTPException(status_code=404, detail="Alert definition not found")
+            
+            # Log audit event
+            if AUDIT_LOGGING_AVAILABLE and alert_data:
+                log_alert_definition_delete(
+                    alert_id=alert_id,
+                    organization=actual_organization,
+                    actor=deleted_by or "system",
+                    request=request,
+                    alert_data=dict(alert_data)
+                )
     except asyncpg.exceptions.TooManyConnectionsError:
-        logger.error("Database connection pool exhausted")
+        logger.error(
+            "Database connection pool exhausted",
+            extra={"context": {"error": "pool_exhausted"}}
+        )
         raise HTTPException(
             status_code=503,
             detail="Database connection pool exhausted. Please try again later."
         )
     except Exception as e:
-        logger.error(f"Error deleting alert definition: {e}")
+        logger.error(
+            f"Error deleting alert definition: {e}",
+            extra={"context": {"error": str(e)}},
+            exc_info=True
+        )
         raise
     
     # Trigger configuration sync to update YAML files and reload Prometheus/Alertmanager
-    await trigger_config_sync()
+    await trigger_config_sync(actor=deleted_by or "system", request=request)
 
-async def toggle_alert_definition(alert_id: int, organization: Optional[str], enabled: bool, updated_by: str) -> AlertDefinitionResponse:
+async def toggle_alert_definition(alert_id: int, organization: Optional[str], enabled: bool, updated_by: str, request: Optional[Request] = None) -> AlertDefinitionResponse:
     """
     Enable or disable an alert definition
     
@@ -738,8 +1006,18 @@ async def toggle_alert_definition(alert_id: int, organization: Optional[str], en
         
         result_obj = await get_alert_definition_by_id(alert_id, organization)
         
+        # Log audit event
+        if AUDIT_LOGGING_AVAILABLE:
+            log_alert_definition_toggle(
+                alert_id=alert_id,
+                organization=actual_organization,
+                enabled=enabled,
+                actor=updated_by,
+                request=request
+            )
+        
         # Trigger configuration sync to update YAML files and reload Prometheus/Alertmanager
-        await trigger_config_sync()
+        await trigger_config_sync(actor=created_by, request=request)
         
         return result_obj
 
@@ -757,13 +1035,22 @@ DEFAULT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{ if eq .GroupLabels.severit
 <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
 """
 
-async def create_notification_receiver(organization: str, data: NotificationReceiverCreate, created_by: str) -> NotificationReceiverResponse:
+async def create_notification_receiver(
+    organization: str,
+    data: NotificationReceiverCreate,
+    created_by: str,
+    request: Optional[Request] = None,
+    organization_for_audit: Optional[str] = None,
+) -> NotificationReceiverResponse:
     """
     Create a new notification receiver and automatically create a routing rule.
     
     Receiver name is auto-generated as: <organization>-<severity>-<category>
     A routing rule is automatically created to match alerts with the specified
     category, severity, and optional alert_type.
+    
+    Supports both direct email addresses (email_to) and RBAC roles (rbac_role).
+    If rbac_role is provided, emails will be resolved from users with that role.
     """
     validate_organization(organization)
     
@@ -773,6 +1060,24 @@ async def create_notification_receiver(organization: str, data: NotificationRece
     if data.severity not in ['critical', 'warning', 'info']:
         raise HTTPException(status_code=400, detail="severity must be 'critical', 'warning', or 'info'")
     
+    # Resolve email addresses from RBAC role if provided
+    email_to = data.email_to
+    rbac_role = data.rbac_role
+    
+    if rbac_role:
+        # Resolve emails from role
+        email_to = await get_users_by_role(rbac_role)
+        logger.info(
+            f"Resolved RBAC role '{rbac_role}' to {len(email_to)} email address(es)",
+            extra={"context": {"rbac_role": rbac_role, "email_count": len(email_to)}}
+        )
+    elif not email_to:
+        # This should not happen due to model validation, but double-check
+        raise HTTPException(
+            status_code=400,
+            detail="Either 'email_to' or 'rbac_role' must be provided"
+        )
+    
     # Auto-generate receiver name: <severity>-<category>
     # Note: Organization prefix is added by the sync service when generating alertmanager.yml
     receiver_name = f"{data.severity}-{data.category}"
@@ -780,6 +1085,8 @@ async def create_notification_receiver(organization: str, data: NotificationRece
     # Use default templates if not provided
     email_subject_template = data.email_subject_template or DEFAULT_EMAIL_SUBJECT_TEMPLATE
     email_body_template = data.email_body_template or DEFAULT_EMAIL_BODY_TEMPLATE
+    
+    await ensure_db_pool()
     
     async with db_pool.acquire() as conn:
         # Check if receiver with this name already exists
@@ -793,16 +1100,16 @@ async def create_notification_receiver(organization: str, data: NotificationRece
                 detail=f"Receiver with name '{receiver_name}' already exists for organization '{organization}'"
             )
         
-        # Create the receiver
+        # Create the receiver (store both email_to and rbac_role)
         receiver_row = await conn.fetchrow(
             """
             INSERT INTO notification_receivers (
-                organization, receiver_name, email_to, email_subject_template,
-                email_body_template, created_by
-            ) VALUES ($1, $2, $3, $4, $5, $6)
+                organization, receiver_name, email_to, rbac_role,
+                email_subject_template, email_body_template, created_by
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING *
             """,
-            organization, receiver_name, data.email_to,
+            organization, receiver_name, email_to, rbac_role,
             email_subject_template, email_body_template, created_by
         )
         
@@ -830,7 +1137,15 @@ async def create_notification_receiver(organization: str, data: NotificationRece
             logger.warning(
                 f"Routing rule already exists for organization={organization}, "
                 f"severity={data.severity}, category={data.category}, alert_type={data.alert_type}. "
-                f"Receiver created but routing rule not created."
+                f"Receiver created but routing rule not created.",
+                extra={
+                    "context": {
+                        "organization": organization,
+                        "severity": data.severity,
+                        "category": data.category,
+                        "alert_type": data.alert_type,
+                    }
+                }
             )
         else:
             # Create routing rule with default values
@@ -854,13 +1169,33 @@ async def create_notification_receiver(organization: str, data: NotificationRece
             )
             logger.info(
                 f"Auto-created routing rule '{rule_name}' for receiver '{receiver_name}' "
-                f"(organization={organization}, severity={data.severity}, category={data.category}, alert_type={data.alert_type})"
+                f"(organization={organization}, severity={data.severity}, category={data.category}, alert_type={data.alert_type})",
+                extra={
+                    "context": {
+                        "organization": organization,
+                        "receiver_name": receiver_name,
+                        "rule_name": rule_name,
+                        "severity": data.severity,
+                        "category": data.category,
+                        "alert_type": data.alert_type,
+                    }
+                }
             )
         
         result = NotificationReceiverResponse(**dict(receiver_row))
         
+        # Log audit event
+        if AUDIT_LOGGING_AVAILABLE:
+            log_receiver_create(
+                receiver_id=receiver_id,
+                organization=organization_for_audit,
+                actor=created_by,
+                request=request,
+                receiver_data=result.model_dump() if hasattr(result, 'model_dump') else result.dict()
+            )
+        
         # Trigger configuration sync to update YAML files and reload Prometheus/Alertmanager
-        await trigger_config_sync()
+        await trigger_config_sync(actor=created_by, request=request)
         
         return result
 
@@ -895,7 +1230,13 @@ async def list_notification_receivers(organization: Optional[str] = None, enable
         rows = await conn.fetch(query, *params)
         return [NotificationReceiverResponse(**dict(row)) for row in rows]
 
-async def create_routing_rule(organization: str, data: RoutingRuleCreate, created_by: str) -> RoutingRuleResponse:
+async def create_routing_rule(
+    organization: str,
+    data: RoutingRuleCreate,
+    created_by: str,
+    request: Optional[Request] = None,
+    organization_for_audit: Optional[str] = None,
+) -> RoutingRuleResponse:
     """Create a new routing rule"""
     validate_organization(organization)
     
@@ -927,8 +1268,18 @@ async def create_routing_rule(organization: str, data: RoutingRuleCreate, create
         
         result = RoutingRuleResponse(**dict(row))
         
+        # Log audit event (org = resource's org; for create use header/admin only)
+        if AUDIT_LOGGING_AVAILABLE:
+            log_routing_rule_create(
+                rule_id=row['id'],
+                organization=organization_for_audit,
+                actor=created_by,
+                request=request,
+                rule_data=result.model_dump() if hasattr(result, 'model_dump') else result.dict()
+            )
+        
         # Trigger configuration sync to update YAML files and reload Prometheus/Alertmanager
-        await trigger_config_sync()
+        await trigger_config_sync(actor=created_by, request=request)
         
         return result
 
@@ -960,7 +1311,7 @@ async def get_notification_receiver_by_id(receiver_id: int, organization: Option
             raise HTTPException(status_code=404, detail="Notification receiver not found")
         return NotificationReceiverResponse(**dict(row))
 
-async def update_notification_receiver(receiver_id: int, organization: Optional[str], data: NotificationReceiverUpdate, updated_by: str) -> NotificationReceiverResponse:
+async def update_notification_receiver(receiver_id: int, organization: Optional[str], data: NotificationReceiverUpdate, updated_by: str, request: Optional[Request] = None) -> NotificationReceiverResponse:
     """
     Update a notification receiver
     
@@ -993,6 +1344,22 @@ async def update_notification_receiver(receiver_id: int, organization: Optional[
         # Use existing organization for the update query
         actual_organization = existing['organization']
         
+        # Handle RBAC role resolution if provided
+        email_to = data.email_to
+        rbac_role = data.rbac_role
+        
+        if rbac_role:
+            # Resolve emails from role
+            email_to = await get_users_by_role(rbac_role)
+            logger.info(
+                f"Resolved RBAC role '{rbac_role}' to {len(email_to)} email address(es) for receiver update",
+                extra={"context": {"rbac_role": rbac_role, "email_count": len(email_to), "operation": "update_receiver"}}
+            )
+        elif data.email_to is None and data.rbac_role is None:
+            # Neither email_to nor rbac_role provided - keep existing values
+            email_to = None
+            rbac_role = None
+        
         # Build update query dynamically
         updates = []
         params = []
@@ -1002,10 +1369,17 @@ async def update_notification_receiver(receiver_id: int, organization: Optional[
             updates.append(f"receiver_name = ${param_idx}")
             params.append(data.receiver_name)
             param_idx += 1
-        if data.email_to is not None:
+        if email_to is not None:
             updates.append(f"email_to = ${param_idx}")
-            params.append(data.email_to)
+            params.append(email_to)
             param_idx += 1
+        if rbac_role is not None:
+            updates.append(f"rbac_role = ${param_idx}")
+            params.append(rbac_role)
+            param_idx += 1
+        elif data.email_to is not None:
+            # If email_to is explicitly provided (not from rbac_role), clear rbac_role
+            updates.append(f"rbac_role = NULL")
         if data.email_subject_template is not None:
             updates.append(f"email_subject_template = ${param_idx}")
             params.append(data.email_subject_template)
@@ -1033,20 +1407,57 @@ async def update_notification_receiver(receiver_id: int, organization: Optional[
         
         result = await get_notification_receiver_by_id(receiver_id, actual_organization)
         
+        # Log audit event
+        if AUDIT_LOGGING_AVAILABLE:
+            before_dict = dict(existing) if existing else None
+            after_dict = result.model_dump() if hasattr(result, 'model_dump') else result.dict()
+            log_receiver_update(
+                receiver_id=receiver_id,
+                organization=actual_organization,
+                actor=updated_by,
+                request=request,
+                before_values=before_dict,
+                after_values=after_dict
+            )
+        
         # Trigger configuration sync to update YAML files and reload Prometheus/Alertmanager
-        await trigger_config_sync()
+        await trigger_config_sync(actor=created_by, request=request)
         
         return result
 
-async def delete_notification_receiver(receiver_id: int, organization: Optional[str] = None) -> None:
+async def delete_notification_receiver(receiver_id: int, organization: Optional[str] = None, deleted_by: Optional[str] = None, request: Optional[Request] = None) -> None:
     """
     Delete a notification receiver
     
     Args:
         receiver_id: Receiver ID
         organization: Organization to filter by. If None (admin), deletes receiver regardless of organization
+        deleted_by: Username of the user making the deletion
+        request: FastAPI Request object for audit logging context
     """
     await ensure_db_pool()
+    
+    # Get receiver data before deletion for audit log
+    receiver_data = None
+    actual_organization = organization
+    try:
+        if organization:
+            validate_organization(organization)
+            async with db_pool.acquire() as conn:
+                receiver_data = await conn.fetchrow(
+                    "SELECT * FROM notification_receivers WHERE id = $1 AND organization = $2",
+                    receiver_id, organization
+                )
+        else:
+            async with db_pool.acquire() as conn:
+                receiver_data = await conn.fetchrow(
+                    "SELECT * FROM notification_receivers WHERE id = $1",
+                    receiver_id
+                )
+                if receiver_data:
+                    actual_organization = receiver_data['organization']
+    except Exception:
+        pass  # If we can't get the data, continue with deletion
     
     async with db_pool.acquire() as conn:
         if organization:
@@ -1064,9 +1475,19 @@ async def delete_notification_receiver(receiver_id: int, organization: Optional[
         
         if result == "DELETE 0":
             raise HTTPException(status_code=404, detail="Notification receiver not found")
+        
+        # Log audit event
+        if AUDIT_LOGGING_AVAILABLE and receiver_data:
+            log_receiver_delete(
+                receiver_id=receiver_id,
+                organization=actual_organization,
+                actor=deleted_by or "system",
+                request=request,
+                receiver_data=dict(receiver_data)
+            )
     
     # Trigger configuration sync to update YAML files and reload Prometheus/Alertmanager
-    await trigger_config_sync()
+    await trigger_config_sync(actor=deleted_by or "system", request=request)
 
 async def get_routing_rule_by_id(rule_id: int, organization: Optional[str] = None) -> RoutingRuleResponse:
     """
@@ -1096,7 +1517,7 @@ async def get_routing_rule_by_id(rule_id: int, organization: Optional[str] = Non
             raise HTTPException(status_code=404, detail="Routing rule not found")
         return RoutingRuleResponse(**dict(row))
 
-async def update_routing_rule(rule_id: int, organization: Optional[str], data: RoutingRuleUpdate, updated_by: str) -> RoutingRuleResponse:
+async def update_routing_rule(rule_id: int, organization: Optional[str], data: RoutingRuleUpdate, updated_by: str, request: Optional[Request] = None) -> RoutingRuleResponse:
     """
     Update a routing rule
     
@@ -1208,20 +1629,57 @@ async def update_routing_rule(rule_id: int, organization: Optional[str], data: R
         
         result = await get_routing_rule_by_id(rule_id, actual_organization)
         
+        # Log audit event
+        if AUDIT_LOGGING_AVAILABLE:
+            before_dict = dict(existing) if existing else None
+            after_dict = result.model_dump() if hasattr(result, 'model_dump') else result.dict()
+            log_routing_rule_update(
+                rule_id=rule_id,
+                organization=actual_organization,
+                actor=updated_by,
+                request=request,
+                before_values=before_dict,
+                after_values=after_dict
+            )
+        
         # Trigger configuration sync to update YAML files and reload Prometheus/Alertmanager
-        await trigger_config_sync()
+        await trigger_config_sync(actor=created_by, request=request)
         
         return result
 
-async def delete_routing_rule(rule_id: int, organization: Optional[str] = None) -> None:
+async def delete_routing_rule(rule_id: int, organization: Optional[str] = None, deleted_by: Optional[str] = None, request: Optional[Request] = None) -> None:
     """
     Delete a routing rule
     
     Args:
         rule_id: Rule ID
         organization: Organization to filter by. If None (admin), deletes rule regardless of organization
+        deleted_by: Username of the user making the deletion
+        request: FastAPI Request object for audit logging context
     """
     await ensure_db_pool()
+    
+    # Get rule data before deletion for audit log
+    rule_data = None
+    actual_organization = organization
+    try:
+        if organization:
+            validate_organization(organization)
+            async with db_pool.acquire() as conn:
+                rule_data = await conn.fetchrow(
+                    "SELECT * FROM routing_rules WHERE id = $1 AND organization = $2",
+                    rule_id, organization
+                )
+        else:
+            async with db_pool.acquire() as conn:
+                rule_data = await conn.fetchrow(
+                    "SELECT * FROM routing_rules WHERE id = $1",
+                    rule_id
+                )
+                if rule_data:
+                    actual_organization = rule_data['organization']
+    except Exception:
+        pass  # If we can't get the data, continue with deletion
     
     async with db_pool.acquire() as conn:
         if organization:
@@ -1239,14 +1697,25 @@ async def delete_routing_rule(rule_id: int, organization: Optional[str] = None) 
         
         if result == "DELETE 0":
             raise HTTPException(status_code=404, detail="Routing rule not found")
+        
+        # Log audit event
+        if AUDIT_LOGGING_AVAILABLE and rule_data:
+            log_routing_rule_delete(
+                rule_id=rule_id,
+                organization=actual_organization,
+                actor=deleted_by or "system",
+                request=request,
+                rule_data=dict(rule_data)
+            )
     
     # Trigger configuration sync to update YAML files and reload Prometheus/Alertmanager
-    await trigger_config_sync()
+    await trigger_config_sync(actor=deleted_by or "system", request=request)
 
 async def update_routing_rule_timing(
     organization: Optional[str],
     data: RoutingRuleTimingUpdate,
-    updated_by: str
+    updated_by: str,
+    request: Optional[Request] = None
 ) -> Dict[str, Any]:
     """
     Update timing parameters (group_wait, group_interval, repeat_interval) for routing rules
@@ -1380,7 +1849,7 @@ async def update_routing_rule_timing(
         updated_count = int(result.split()[-1]) if result.startswith("UPDATE") else len(matching_rules)
         
         # Trigger configuration sync
-        await trigger_config_sync()
+        await trigger_config_sync(actor=updated_by, request=request)
         
         return {
             "updated_count": updated_count,
