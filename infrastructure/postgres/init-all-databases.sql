@@ -1178,6 +1178,7 @@ CREATE TABLE IF NOT EXISTS notification_receivers (
     receiver_name VARCHAR(255) NOT NULL, -- Unique receiver name per customer
     -- Email configuration
     email_to TEXT[] NOT NULL, -- Array of email addresses (required)
+    rbac_role VARCHAR(50), -- RBAC role name (ADMIN, MODERATOR, USER, GUEST) - if set, email_to will be resolved from users with this role
     email_subject_template TEXT, -- Custom subject template
     email_body_template TEXT, -- Custom HTML body template
     enabled BOOLEAN DEFAULT true,
