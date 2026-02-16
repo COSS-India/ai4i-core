@@ -40,7 +40,14 @@ from utils.validation_utils import (
     EmptyAudioFileError,
     UploadTimeoutError
 )
-from middleware.exceptions import AuthenticationError, AuthorizationError, ErrorDetail
+from middleware.exceptions import (
+    AuthenticationError,
+    AuthorizationError,
+    ErrorDetail,
+    TritonInferenceError,
+    ModelNotFoundError,
+    ServiceUnavailableError,
+)
 from middleware.auth_provider import AuthProvider
 from middleware.tenant_db_dependency import get_tenant_db_session
 from services.constants.error_messages import (
@@ -193,6 +200,18 @@ async def resolve_service_id_if_needed(
                     "code": "SMR_NO_SERVICE_ID",
                     "message": "SMR service did not return a serviceId",
                 },
+            )
+
+        # Extract fallback service ID from SMR response
+        fallback_service_id = smr_response_data.get("fallbackServiceId")
+        if fallback_service_id:
+            http_request.state.fallback_service_id = fallback_service_id
+            logger.info(
+                "ASR: Extracted fallback service ID from SMR response",
+                extra={
+                    "primary_service_id": service_id,
+                    "fallback_service_id": fallback_service_id,
+                }
             )
 
         request.config.serviceId = service_id
@@ -421,6 +440,146 @@ async def resolve_service_id_if_needed(
         return smr_response_data
 
     return None
+
+
+async def switch_to_fallback_service(
+    request: ASRInferenceRequest,
+    http_request: Request,
+    fallback_service_id: str,
+) -> None:
+    """
+    Switch to fallback service by resolving its endpoint and updating request state.
+    
+    Args:
+        request: ASR inference request
+        http_request: FastAPI request object
+        fallback_service_id: Fallback service ID from SMR
+    """
+    logger.info(
+        "ASR: Switching to fallback service",
+        extra={
+            "primary_service_id": request.config.serviceId,
+            "fallback_service_id": fallback_service_id,
+        }
+    )
+    
+    # Update request with fallback service ID
+    request.config.serviceId = fallback_service_id
+    http_request.state.service_id = fallback_service_id
+    
+    # Resolve Triton endpoint for fallback service
+    model_management_client = getattr(http_request.app.state, "model_management_client", None)
+    redis_client = getattr(http_request.app.state, "redis_client", None)
+    
+    if not model_management_client:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "MODEL_MANAGEMENT_UNAVAILABLE",
+                "message": "Model Management client not available for fallback service resolution",
+            },
+        )
+    
+    try:
+        # Extract auth headers from request (case-insensitive)
+        auth_headers: Dict[str, str] = {}
+        authorization = http_request.headers.get("Authorization") or http_request.headers.get("authorization")
+        if authorization:
+            auth_headers["Authorization"] = authorization
+        x_api_key = http_request.headers.get("X-API-Key") or http_request.headers.get("x-api-key")
+        if x_api_key:
+            auth_headers["X-API-Key"] = x_api_key
+        x_auth_source = http_request.headers.get("X-Auth-Source") or http_request.headers.get("x-auth-source")
+        if x_auth_source:
+            auth_headers["X-Auth-Source"] = x_auth_source
+        
+        service_info = await model_management_client.get_service(
+            service_id=fallback_service_id,
+            use_cache=True,
+            redis_client=redis_client,
+            auth_headers=auth_headers,
+        )
+        
+        if not service_info or not service_info.endpoint:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "FALLBACK_SERVICE_UNAVAILABLE",
+                    "message": f"Fallback service {fallback_service_id} not found or has no endpoint configured",
+                },
+            )
+        
+        triton_endpoint = service_info.endpoint
+        triton_api_key = service_info.api_key or ""
+        
+        # Extract model name (same logic as primary service resolution)
+        triton_model_name = None
+        if service_info.model_inference_endpoint:
+            inference_endpoint = service_info.model_inference_endpoint
+            if isinstance(inference_endpoint, dict):
+                schema = inference_endpoint.get("schema", {})
+                if isinstance(schema, dict):
+                    triton_model_name = (
+                        schema.get("model_name")
+                        or schema.get("modelName")
+                        or schema.get("name")
+                    )
+                if not triton_model_name:
+                    triton_model_name = (
+                        inference_endpoint.get("model_name")
+                        or inference_endpoint.get("modelName")
+                        or inference_endpoint.get("model")
+                    )
+        if not triton_model_name:
+            triton_model_name = service_info.triton_model
+        if not triton_model_name:
+            triton_model_name = service_info.model_name
+        if not triton_model_name and fallback_service_id:
+            parts = fallback_service_id.split("/")
+            if len(parts) > 1:
+                model_part = parts[-1]
+                if "--" in model_part:
+                    triton_model_name = model_part.split("--")[0]
+                else:
+                    triton_model_name = model_part
+        if not triton_model_name:
+            triton_model_name = "unknown"
+        
+        # Update request state with fallback service endpoint
+        http_request.state.triton_endpoint = triton_endpoint
+        http_request.state.triton_api_key = triton_api_key
+        http_request.state.triton_model_name = triton_model_name
+        http_request.state.using_fallback_service = True
+        
+        # Store model_id for database record
+        model_id_for_db = service_info.model_id or fallback_service_id
+        http_request.state.model_id = model_id_for_db
+        
+        logger.info(
+            "ASR: Successfully switched to fallback service",
+            extra={
+                "fallback_service_id": fallback_service_id,
+                "triton_endpoint": triton_endpoint,
+                "triton_model_name": triton_model_name,
+                "model_id": model_id_for_db,
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "ASR: Failed to resolve fallback service endpoint",
+            extra={"fallback_service_id": fallback_service_id, "error": str(e)},
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "FALLBACK_SERVICE_RESOLUTION_FAILED",
+                "message": f"Failed to resolve endpoint for fallback service {fallback_service_id}: {str(e)}",
+            },
+        ) from e
 
 
 async def call_smr_service(
@@ -911,14 +1070,174 @@ async def _run_asr_inference_internal(
             }
         )
         
-        # Run inference with auth context
-        response = await asr_service.run_inference(
-            request=request,
-            user_id=user_id,
-            api_key_id=api_key_id,
-            session_id=session_id,
-            http_request_state=http_request.state
-        )
+        # Get fallback service ID from request state
+        fallback_service_id = getattr(http_request.state, "fallback_service_id", None)
+        using_fallback = False
+        original_service_id = request.config.serviceId
+        
+        # Run inference with auth context - with fallback support
+        try:
+            response = await asr_service.run_inference(
+                request=request,
+                user_id=user_id,
+                api_key_id=api_key_id,
+                session_id=session_id,
+                http_request_state=http_request.state
+            )
+        except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError) as primary_error:
+            # Primary service failed - try fallback if available and different from primary
+            if fallback_service_id and fallback_service_id != original_service_id:
+                logger.warning(
+                    "ASR: Primary service failed, attempting fallback",
+                    extra={
+                        "primary_service_id": original_service_id,
+                        "fallback_service_id": fallback_service_id,
+                        "error_type": type(primary_error).__name__,
+                        "error_message": str(primary_error),
+                    },
+                    exc_info=True
+                )
+                
+                # Add span event for fallback trigger if tracing is available
+                if TRACING_AVAILABLE and trace:
+                    try:
+                        current_span = trace.get_current_span()
+                        if current_span and current_span.is_recording():
+                            current_span.add_event("asr.fallback.triggered", {
+                                "primary_service_id": original_service_id,
+                                "fallback_service_id": fallback_service_id,
+                                "error_type": type(primary_error).__name__,
+                            })
+                    except Exception:
+                        pass
+                
+                try:
+                    # Switch to fallback service
+                    await switch_to_fallback_service(
+                        request=request,
+                        http_request=http_request,
+                        fallback_service_id=fallback_service_id,
+                    )
+                    
+                    # Create new ASR service with fallback endpoint
+                    from repositories.asr_repository import ASRRepository
+                    from services.audio_service import AudioService
+                    from utils.triton_client import TritonClient
+                    from middleware.tenant_db_dependency import get_tenant_db_session
+                    
+                    triton_endpoint = getattr(http_request.state, "triton_endpoint")
+                    triton_api_key = getattr(http_request.state, "triton_api_key", "")
+                    triton_model_name = getattr(http_request.state, "triton_model_name", "unknown")
+                    
+                    # Strip http:// or https:// scheme from URL if present
+                    triton_url = triton_endpoint
+                    if triton_url.startswith(('http://', 'https://')):
+                        triton_url = triton_url.split('://', 1)[1]
+                    
+                    fallback_triton_client = TritonClient(triton_url, triton_api_key)
+                    
+                    # Get database session for fallback service
+                    fallback_db = await get_tenant_db_session(http_request)
+                    fallback_repository = ASRRepository(fallback_db)
+                    fallback_audio_service = AudioService()
+                    fallback_asr_service = ASRService(
+                        fallback_repository,
+                        fallback_audio_service,
+                        fallback_triton_client,
+                        resolved_model_name=triton_model_name
+                    )
+                    
+                    # Retry inference with fallback service
+                    logger.info(
+                        "ASR: Retrying inference with fallback service",
+                        extra={"fallback_service_id": fallback_service_id}
+                    )
+                    
+                    response = await fallback_asr_service.run_inference(
+                        request=request,
+                        user_id=user_id,
+                        api_key_id=api_key_id,
+                        session_id=session_id,
+                        http_request_state=http_request.state
+                    )
+                    
+                    using_fallback = True
+                    
+                    # Add span event for fallback success if tracing is available
+                    if TRACING_AVAILABLE and trace:
+                        try:
+                            current_span = trace.get_current_span()
+                            if current_span and current_span.is_recording():
+                                current_span.add_event("asr.fallback.success", {
+                                    "fallback_service_id": fallback_service_id,
+                                })
+                                current_span.set_attribute("asr.fallback_used", True)
+                                current_span.set_attribute("asr.fallback_service_id", fallback_service_id)
+                        except Exception:
+                            pass
+                    
+                    logger.info(
+                        "ASR: Fallback service succeeded",
+                        extra={"fallback_service_id": fallback_service_id}
+                    )
+                    
+                except Exception as fallback_error:
+                    # Fallback also failed - create detailed error message
+                    primary_error_msg = str(primary_error)
+                    fallback_error_msg = str(fallback_error)
+                    primary_error_type = type(primary_error).__name__
+                    fallback_error_type = type(fallback_error).__name__
+                    
+                    logger.error(
+                        "ASR: Both primary and fallback services failed",
+                        extra={
+                            "primary_service_id": original_service_id,
+                            "fallback_service_id": fallback_service_id,
+                            "primary_error_type": primary_error_type,
+                            "primary_error": primary_error_msg,
+                            "fallback_error_type": fallback_error_type,
+                            "fallback_error": fallback_error_msg,
+                        },
+                        exc_info=True
+                    )
+                    
+                    # Add span event for fallback failure if tracing is available
+                    if TRACING_AVAILABLE and trace:
+                        try:
+                            current_span = trace.get_current_span()
+                            if current_span and current_span.is_recording():
+                                current_span.add_event("asr.fallback.failed", {
+                                    "primary_service_id": original_service_id,
+                                    "fallback_service_id": fallback_service_id,
+                                    "primary_error_type": primary_error_type,
+                                    "fallback_error_type": fallback_error_type,
+                                })
+                        except Exception:
+                            pass
+                    
+                    # Store error details in request state for error handler to access
+                    http_request.state.fallback_failure_details = {
+                        "primary_service_id": original_service_id,
+                        "fallback_service_id": fallback_service_id,
+                        "primary_error": {
+                            "type": primary_error_type,
+                            "message": primary_error_msg,
+                        },
+                        "fallback_error": {
+                            "type": fallback_error_type,
+                            "message": fallback_error_msg,
+                        },
+                    }
+                    
+                    # Re-raise with combined error message
+                    combined_error_message = (
+                        f"Primary service ({original_service_id}) failed: {primary_error_msg}. "
+                        f"Fallback service ({fallback_service_id}) also failed: {fallback_error_msg}"
+                    )
+                    raise TritonInferenceError(combined_error_message) from fallback_error
+            else:
+                # No fallback available - re-raise original error
+                raise
         
         # Calculate output metrics (character length and word count) for successful responses
         output_texts = [output.source for output in response.output]
@@ -961,6 +1280,33 @@ async def _run_asr_inference_internal(
         # Include SMR response in the final response (null if SMR was not called)
         smr_response_data = getattr(http_request.state, "smr_response_data", None)
         
+        # Update SMR response with fallback information if fallback was used
+        if smr_response_data:
+            if using_fallback:
+                # Create a copy to avoid modifying the original
+                smr_response_data = smr_response_data.copy()
+                smr_response_data["fallback_used"] = True
+                original_service_id_from_smr = smr_response_data.get("serviceId")
+                smr_response_data["original_service_id"] = original_service_id_from_smr
+                smr_response_data["serviceId"] = fallback_service_id
+                smr_response_data["fallback_service_id"] = fallback_service_id
+                smr_response_data["fallback_message"] = (
+                    f"The service ID selected by SMR was '{original_service_id_from_smr}' but it didn't work. "
+                    f"Fallback service ID '{fallback_service_id}' is used instead."
+                )
+                logger.info(
+                    "ASR: Including SMR response with fallback usage",
+                    extra={
+                        "original_service_id": original_service_id_from_smr,
+                        "fallback_service_id": fallback_service_id,
+                        "fallback_message": smr_response_data["fallback_message"],
+                    }
+                )
+            else:
+                # Ensure fallback_used is False if not used
+                smr_response_data = smr_response_data.copy()
+                smr_response_data["fallback_used"] = False
+        
         # Log SMR response retrieval for debugging
         logger.info(
             "ASR: Retrieving SMR response for final response",
@@ -970,6 +1316,8 @@ async def _run_asr_inference_internal(
                 "smr_tenant_id": smr_response_data.get("tenant_id") if smr_response_data else None,
                 "smr_is_free_user": smr_response_data.get("is_free_user") if smr_response_data else None,
                 "smr_response_type": type(smr_response_data).__name__ if smr_response_data else None,
+                "using_fallback": using_fallback,
+                "fallback_service_id": fallback_service_id if using_fallback else None,
             },
         )
         
@@ -1092,6 +1440,9 @@ async def _run_asr_inference_internal(
         triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
         model_name = getattr(http_request.state, "triton_model_name", None)
         user_id = getattr(http_request.state, "user_id", None)
+        
+        # Check if both primary and fallback services failed
+        fallback_failure_details = getattr(http_request.state, "fallback_failure_details", None)
         api_key_id = getattr(http_request.state, "api_key_id", None)
         
         # Get correlation ID for logging
@@ -1139,14 +1490,41 @@ async def _run_asr_inference_internal(
         
         # Return appropriate error based on exception type
         if "Triton" in str(e) or "triton" in str(e).lower():
-            error_detail = f"Triton inference failed for serviceId '{service_id}'"
-            if triton_endpoint and model_name:
-                error_detail += f" at endpoint '{triton_endpoint}' with model '{model_name}': {str(e)}. "
-                error_detail += "Please verify the model is registered in Model Management and the Triton server is accessible."
-            elif service_id:
-                error_detail += f": {str(e)}. Please verify the service is registered in Model Management."
+            error_code = MODEL_UNAVAILABLE if model_name else SERVICE_UNAVAILABLE
+            
+            # If both services failed, provide detailed error message
+            if fallback_failure_details:
+                error_message = (
+                    f"Primary service ({fallback_failure_details['primary_service_id']}) failed: "
+                    f"{fallback_failure_details['primary_error']['message']}. "
+                    f"Fallback service ({fallback_failure_details['fallback_service_id']}) also failed: "
+                    f"{fallback_failure_details['fallback_error']['message']}"
+                )
             else:
-                error_detail += f": {str(e)}"
+                error_message = f"Triton inference failed for serviceId '{service_id}'"
+                if triton_endpoint and model_name:
+                    error_message += f" at endpoint '{triton_endpoint}' with model '{model_name}': {str(e)}. "
+                    error_message += "Please verify the model is registered in Model Management and the Triton server is accessible."
+                elif service_id:
+                    error_message += f": {str(e)}. Please verify the service is registered in Model Management."
+                else:
+                    error_message += f": {str(e)}"
+            
+            error_detail = ErrorDetail(code=error_code, message=error_message).dict()
+            
+            # Include detailed failure information if both services failed
+            if fallback_failure_details:
+                error_detail["primary_service_id"] = fallback_failure_details["primary_service_id"]
+                error_detail["fallback_service_id"] = fallback_failure_details["fallback_service_id"]
+                error_detail["primary_error"] = fallback_failure_details["primary_error"]
+                error_detail["fallback_error"] = fallback_failure_details["fallback_error"]
+            
+            # Include SMR response if available
+            smr_response_data = getattr(http_request.state, "smr_response_data", None)
+            if smr_response_data:
+                error_detail["smr_response"] = smr_response_data
+            else:
+                error_detail["smr_response"] = None
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=error_detail
