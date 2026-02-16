@@ -276,24 +276,6 @@ services:
       - microservices-network
     restart: unless-stopped
 
-  # Swagger UI for Kong-facing API documentation
-  swagger-kong-ui:
-    image: swaggerapi/swagger-ui
-    container_name: ai4v-swagger-kong-ui
-    ports:
-      - "8086:8080"
-    volumes:
-      # Generated OpenAPI spec that points to Kong and includes all endpoints.
-      # Mount it at a custom path; the swagger-ui entrypoint will copy it into
-      # /usr/share/nginx/html/openapi.json on startup.
-      - ./docs/kong-openapi.json:/kong-openapi.json:ro
-    environment:
-      SWAGGER_JSON: /kong-openapi.json
-    networks:
-      - microservices-network
-    depends_on:
-      - kong
-
   # Microservices
   api-gateway-service:
     build:
