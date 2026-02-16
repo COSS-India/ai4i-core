@@ -120,7 +120,7 @@ export const publishModel = async (modelId: string): Promise<any> => {
  */
 export const listServices = async (taskType?: string): Promise<any[]> => {
   try {
-    const url = '/api/v1/model-management/services/';
+    const url = '/api/v1/model-management/services';
     const params = taskType ? { task_type: taskType } : {};
     const response = await apiClient.get<any[]>(url, { params });
     return response.data;

@@ -120,7 +120,7 @@ const ProfilePage: React.FC = () => {
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN") || user?.is_superuser);
   const isModerator = Boolean(user?.roles?.includes("MODERATOR"));
-
+  const showMultiTenant = Boolean( user?.is_superuser || user?.is_tenant);
   // Single source of truth: tab order must match TabPanels 1:1
   const tabConfig = React.useMemo(() => {
     const tabs: { id: string; label: string; show: boolean }[] = [
@@ -129,10 +129,10 @@ const ProfilePage: React.FC = () => {
       { id: "roles", label: "Roles", show: isAdmin },
       { id: "create-api-key", label: "Create API Key", show: isAdmin },
       { id: "api-key-management", label: "API Key Management", show: isAdmin },
-      { id: "multi-tenant", label: "Multi Tenant Management", show: false },
+      { id: "multi-tenant", label: "Multi Tenant Management", show: showMultiTenant },
     ];
     return tabs.filter((t) => t.show);
-  }, [isAdmin, isModerator]);
+  }, [isAdmin, isModerator, showMultiTenant]);
 
   const apiKeyTabIndex = 1;
   const permissionsTabIndex = isAdmin ? 3 : -1;

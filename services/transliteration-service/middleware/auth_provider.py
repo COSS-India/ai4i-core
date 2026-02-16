@@ -117,19 +117,51 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
         raise AuthenticationError("Failed to verify token")
 
 
-async def validate_api_key_permissions(api_key: str, service: str, action: str) -> None:
+async def validate_api_key_permissions(
+    api_key: str,
+    service: str,
+    action: str,
+    user_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Validate API key has required permissions by calling auth-service.
+    If user_id is provided, auth-service will enforce that the API key belongs to that user
+    (same ownership semantics as nmt-service).
+    Returns the auth-service response dict on success.
+    """
+    # Explicitly handle missing API key BEFORE talking to auth-service so the
+    # client sees a clear "missing API key" error instead of "invalid API key".
+    if not api_key:
+        raise AuthorizationError("API key is missing")
+
     try:
         validate_url = f"{AUTH_SERVICE_URL}/api/v1/auth/validate-api-key"
+        payload: Dict[str, Any] = {
+            "api_key": api_key,
+            "service": service,
+            "action": action,
+        }
+        if user_id is not None:
+            payload["user_id"] = user_id
+
         async with httpx.AsyncClient(timeout=AUTH_HTTP_TIMEOUT) as client:
-            response = await client.post(
-                validate_url, json={"api_key": api_key, "service": service, "action": action}
-            )
+            response = await client.post(validate_url, json=payload)
+
         if response.status_code == 200:
             result = response.json()
             if result.get("valid"):
-                return
-            # Extract error message from auth-service response
+                return result
+
+            # API key invalid - extract detailed reason from auth-service
             error_msg = result.get("message", "Permission denied")
+            error_code = result.get("code", "PERMISSION_DENIED")
+            error_reason = result.get("reason", "unknown")
+            logger.error(
+                "Auth-service rejected API key: reason=%s code=%s message=%s",
+                error_reason,
+                error_code,
+                error_msg,
+            )
             raise AuthorizationError(error_msg)
 
         # Handle non-200 responses - extract error from detail or message field
@@ -148,6 +180,7 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
         logger.error(f"Error calling auth-service: {e}")
         raise AuthorizationError("Failed to validate API key permissions")
     except AuthorizationError:
+        # Re-raise explicit authorization failures without wrapping
         raise
     except Exception as e:
         logger.error(f"Unexpected error validating permissions: {e}")
@@ -228,26 +261,43 @@ async def AuthProvider(
     try:
         auth_source = (x_auth_source or "API_KEY").upper()
 
-        # AUTH_TOKEN flow: JWT only (decodes JWT and sets request.state.jwt_payload)
+        # AUTH_TOKEN flow: For this service, API key is required – do not allow JWT-only.
         if auth_source == "AUTH_TOKEN":
-            return await authenticate_bearer_token(request, authorization)
+            # Mirror behavior of other services (e.g. audio-lang) where an API key
+            # is mandatory and AUTH_TOKEN-only access is rejected explicitly.
+            raise AuthenticationError("Missing API key")
 
         # Resolve API key
         api_key = x_api_key or get_api_key_from_header(authorization)
         
         # BOTH flow: JWT + API key (decodes JWT and sets request.state.jwt_payload)
         if auth_source == "BOTH":
+            # 1) Authenticate via JWT
             bearer_result = await authenticate_bearer_token(request, authorization)
+            jwt_user_id = bearer_result.get("user_id")
+
             if not api_key:
                 raise AuthenticationError("Missing API key")
+
+            # 2) Permission + ownership check via auth-service (single source of truth).
+            #    Pass jwt_user_id so auth-service can enforce that the API key belongs
+            #    to this user and has the right permissions for transliteration.
             service, action = determine_service_and_action(request)
-            await validate_api_key_permissions(api_key, service, action)
+            await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
+
+            # 3) Populate request state with JWT identity; we don't need DB lookup here.
+            request.state.user_id = jwt_user_id
+            request.state.api_key_id = None
+            request.state.api_key_name = None
+            request.state.user_email = bearer_result.get("user", {}).get("email")
+            request.state.is_authenticated = True
+
             return bearer_result
 
         # API_KEY flow: API key only
         if not api_key:
             raise AuthenticationError("Missing API key")
-
+        
         # Determine service and action from request
         service, action = determine_service_and_action(request)
         
@@ -268,7 +318,16 @@ async def AuthProvider(
             "api_key": None,
         }
 
-    except (AuthenticationError, InvalidAPIKeyError, ExpiredAPIKeyError, AuthorizationError):
+    except (AuthenticationError, InvalidAPIKeyError, ExpiredAPIKeyError, AuthorizationError) as e:
+        # In BOTH mode, only convert explicit ownership mismatches to the stable
+        # "API key does not belong to the authenticated user" message.
+        # For all other auth/permission errors, preserve the real message so callers
+        # can distinguish "no permission for service/action" vs "wrong user's key".
+        if auth_source == "BOTH":
+            msg = getattr(e, "message", str(e))
+            if msg == "API key does not belong to the authenticated user":
+                raise AuthenticationError(msg)
+            # Otherwise, let the original exception bubble up
         raise
     except Exception as e:
         logger.error(f"Authentication error: {e}")

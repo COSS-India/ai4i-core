@@ -188,7 +188,7 @@ class ModelManagementClient:
         # Fetch from API
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/api/v1/model-management/services/"
+            url = f"{self.base_url}/api/v1/model-management/services"
             logger.info(f"About to call _get_headers with auth_headers: {auth_headers is not None}, keys: {list(auth_headers.keys()) if auth_headers else 'None'}")
             headers = self._get_headers(auth_headers)
             logger.info(f"After _get_headers, headers dict has keys: {list(headers.keys())}")
