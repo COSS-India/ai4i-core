@@ -1,0 +1,90 @@
+# Language Diarization Service - Public API (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: Language Diarization Service
+  description: Identify and segment languages in audio.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: Language Diarization
+paths:
+  /api/v1/language-diarization/inference:
+    post:
+      tags: [Language Diarization]
+      summary: Language diarization inference
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LanguageDiarizationInferenceRequest" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LanguageDiarizationInferenceResponse" }
+        "401": { description: Unauthorized }
+  /api/v1/language-diarization/health:
+    get:
+      tags: [Language Diarization]
+      summary: Health check
+      responses:
+        "200": { description: Health status }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+  schemas:
+    LanguageDiarizationControlConfig:
+      type: object
+      properties:
+        dataTracking: { type: boolean, default: true }
+    LanguageDiarizationConfig:
+      type: object
+      properties:
+        serviceId: { type: string, description: Language diarization service/model ID (optional; Smart Router will assign if omitted) }
+    LanguageDiarizationAudioInput:
+      type: object
+      properties:
+        audioContent: { type: string, format: byte }
+        audioUri: { type: string }
+    LanguageDiarizationInferenceRequest:
+      type: object
+      required: [config, audio]
+      properties:
+        controlConfig: { $ref: "#/components/schemas/LanguageDiarizationControlConfig" }
+        config: { $ref: "#/components/schemas/LanguageDiarizationConfig" }
+        audio:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/LanguageDiarizationAudioInput" }
+    LanguageDiarizationSegment:
+      type: object
+      properties:
+        start_time: { type: number }
+        end_time: { type: number }
+        duration: { type: number }
+        language: { type: string, description: "Language code with name (e.g. 'hi: Hindi')" }
+        confidence: { type: number }
+    LanguageDiarizationOutput:
+      type: object
+      properties:
+        total_segments: { type: integer }
+        segments: { type: array, items: { $ref: "#/components/schemas/LanguageDiarizationSegment" } }
+        target_language: { type: string }
+    LanguageDiarizationResponseConfig:
+      type: object
+      properties:
+        serviceId: { type: string }
+    LanguageDiarizationInferenceResponse:
+      type: object
+      properties:
+        taskType: { type: string, default: language-diarization }
+        output: { type: array, items: { $ref: "#/components/schemas/LanguageDiarizationOutput" } }
+        config: { $ref: "#/components/schemas/LanguageDiarizationResponseConfig" }
+security:
+  - BearerAuth: []
