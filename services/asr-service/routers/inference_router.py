@@ -135,13 +135,37 @@ async def resolve_service_id_if_needed(
                 },
             )
         user_id = getattr(http_request.state, "user_id", None)
-        tenant_id = getattr(http_request.state, "tenant_id", None)
+        
+        # Only use tenant_id if it's explicitly in the JWT token, not from fallback lookup
+        # Check JWT payload directly to see if tenant_id was in the token
+        jwt_payload = getattr(http_request.state, "jwt_payload", None)
+        tenant_id = None
+        if jwt_payload and jwt_payload.get("tenant_id"):
+            # tenant_id is explicitly in JWT token - use it
+            tenant_id = jwt_payload.get("tenant_id")
+            logger.info(
+                "ASR: Using tenant_id from JWT token",
+                extra={
+                    "tenant_id": tenant_id,
+                    "jwt_has_tenant_id": True,
+                },
+            )
+        else:
+            # No tenant_id in JWT token - don't use fallback tenant_id
+            logger.info(
+                "ASR: No tenant_id in JWT token, not using tenant_id for SMR call",
+                extra={
+                    "jwt_payload_keys": list(jwt_payload.keys()) if jwt_payload else None,
+                    "jwt_has_tenant_id": False,
+                },
+            )
 
         logger.info(
             "ASR serviceId not provided, calling SMR service (dependency)",
             extra={
                 "user_id": user_id,
                 "tenant_id": tenant_id,
+                "tenant_id_source": "jwt" if (jwt_payload and jwt_payload.get("tenant_id")) else "none",
             },
         )
 
