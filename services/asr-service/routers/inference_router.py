@@ -135,20 +135,13 @@ async def resolve_service_id_if_needed(
                 },
             )
         user_id = getattr(http_request.state, "user_id", None)
-
-        # Extract tenant_id ONLY from auth token (JWT payload).
-        # - If tenant_id is present in JWT -> pass that to SMR (non–free user).
-        # - If tenant_id is NOT present in JWT -> pass empty string "" to SMR (free user).
-        jwt_payload = getattr(http_request.state, "jwt_payload", None)
-        tenant_id_from_jwt = jwt_payload.get("tenant_id") if jwt_payload else None
-        tenant_id_for_smr = tenant_id_from_jwt or ""
+        tenant_id = getattr(http_request.state, "tenant_id", None)
 
         logger.info(
             "ASR serviceId not provided, calling SMR service (dependency)",
             extra={
                 "user_id": user_id,
-                "tenant_id_from_jwt": tenant_id_from_jwt,
-                "tenant_id_passed_to_smr": tenant_id_for_smr,
+                "tenant_id": tenant_id,
             },
         )
 
@@ -163,7 +156,7 @@ async def resolve_service_id_if_needed(
         smr_response_data = await call_smr_service(
             request_body=request_body,
             user_id=str(user_id) if user_id else None,
-            tenant_id=tenant_id_for_smr,
+            tenant_id=str(tenant_id) if tenant_id else None,
             http_request=http_request,
         )
 
