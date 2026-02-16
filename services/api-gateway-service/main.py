@@ -3741,7 +3741,10 @@ async def login_user(
     body: LoginRequestBody,
     request: Request
 ):
-    """Login user"""
+    """
+    Login user. Returns access_token, refresh_token, and user object.
+    For tenant admins/users, the user object includes tenant_id.
+    """
     import json
     # Prepare headers without Content-Length (httpx will set it)
     headers = {k: v for k, v in request.headers.items() 
@@ -3816,7 +3819,7 @@ async def get_current_user(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """Get current user info"""
+    """Get current user info including tenant_id for tenant admins/users"""
     return await proxy_to_auth_service(request, "/api/v1/auth/me")
 
 @app.put("/api/v1/auth/me", tags=["Authentication"])
