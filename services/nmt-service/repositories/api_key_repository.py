@@ -5,7 +5,7 @@ Async repository for API key database operations
 
 import logging
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
@@ -67,8 +67,15 @@ class ApiKeyRepository:
                 return False
             
             # Check if key has expired
-            if api_key.expires_at and api_key.expires_at < datetime.utcnow():
-                return False
+            if api_key.expires_at:
+                # Ensure both datetimes are timezone-aware for comparison
+                now = datetime.now(timezone.utc)
+                expires_at = api_key.expires_at
+                # If expires_at is naive, make it timezone-aware (assume UTC)
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                if expires_at < now:
+                    return False
             
             return True
             
@@ -82,7 +89,7 @@ class ApiKeyRepository:
             stmt = (
                 update(ApiKeyDB)
                 .where(ApiKeyDB.id == api_key_id)
-                .values(last_used_at=datetime.utcnow())
+                .values(last_used_at=datetime.now(timezone.utc))
                 .returning(ApiKeyDB)
             )
             

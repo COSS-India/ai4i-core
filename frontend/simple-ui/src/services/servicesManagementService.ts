@@ -52,7 +52,7 @@ export const listServices = async (): Promise<Service[]> => {
     // - Authorization: Bearer <token>
     // - X-API-Key: <api_key> (if available)
     // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
-    const response = await apiClient.get<Service[]>('/api/v1/model-management/services/');
+    const response = await apiClient.get<Service[]>('/api/v1/model-management/services');
     return response.data;
   } catch (error: any) {
     console.error('List services error:', error);

@@ -19,6 +19,9 @@ COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
 # ---- shared constants ----
 COPY services/constants /app/services/constants
 
+# ---- multi-tenant-feature (for tenant schema models) ----
+COPY services/multi-tenant-feature /app/services/multi-tenant-feature
+
 # ---- requirements ----
 COPY services/asr-service/requirements.txt .
 
@@ -67,6 +70,13 @@ COPY services/constants /app/services/constants
 
 # ---- application code ----
 COPY services/asr-service /app
+
+# ---- multi-tenant-feature models (for tenant schema models) ----
+# Copy after asr-service to avoid conflicts
+COPY services/multi-tenant-feature/models/service_schema_models.py /app/services/multi-tenant-feature/models/service_schema_models.py
+COPY services/multi-tenant-feature/models/__init__.py /app/services/multi-tenant-feature/models/__init__.py
+COPY services/multi-tenant-feature/db_connection.py /app/services/multi-tenant-feature/db_connection.py
+COPY services/multi-tenant-feature/logger.py /app/services/multi-tenant-feature/logger.py
 
 RUN rm -f /app/.env || true
 

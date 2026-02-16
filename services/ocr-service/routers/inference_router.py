@@ -16,9 +16,10 @@ from ai4icore_logging import get_correlation_id
 from models.ocr_request import OCRInferenceRequest
 from models.ocr_response import OCRInferenceResponse
 from services.ocr_service import OCRService
-from repositories.ocr_repository import OCRRepository, get_db_session
+from repositories.ocr_repository import OCRRepository
 from utils.triton_client import TritonClient, TritonInferenceError
 from middleware.auth_provider import AuthProvider
+from middleware.tenant_db_dependency import get_tenant_db_session
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ inference_router = APIRouter(
 
 async def get_ocr_service(
     request: Request,
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_tenant_db_session)
 ) -> OCRService:
     """
     Dependency to construct OCRService with configured Triton client and repository.
