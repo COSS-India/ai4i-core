@@ -363,6 +363,17 @@ async def call_smr_service(
     try:
         # Extract policy headers from the incoming request
         headers = dict(http_request.headers)
+        
+        # Log all X-* headers to debug
+        x_headers = {k: v for k, v in headers.items() if k.startswith("X-") or k.startswith("x-")}
+        logger.info(
+            "NMT: Extracting headers for SMR call",
+            extra={
+                "x_headers": x_headers,
+                "all_header_keys": list(headers.keys()),
+            }
+        )
+        
         latency_policy = headers.get("X-Latency-Policy") or headers.get("x-latency-policy")
         cost_policy = headers.get("X-Cost-Policy") or headers.get("x-cost-policy")
         accuracy_policy = headers.get("X-Accuracy-Policy") or headers.get("x-accuracy-policy")
@@ -392,12 +403,34 @@ async def call_smr_service(
         if context_aware_header:
             smr_headers["X-Context-Aware"] = context_aware_header
         
+        # Forward request profiler header to SMR
+        request_profiler_header = headers.get("X-Request-Profiler") or headers.get("x-request-profiler")
+        if request_profiler_header:
+            smr_headers["X-Request-Profiler"] = request_profiler_header
+            logger.info(
+                "NMT: Forwarding X-Request-Profiler header to SMR",
+                extra={
+                    "request_profiler_header": request_profiler_header,
+                    "smr_headers_keys": list(smr_headers.keys()),
+                }
+            )
+        else:
+            logger.info(
+                "NMT: No X-Request-Profiler header found to forward",
+                extra={
+                    "all_headers_keys": list(headers.keys()),
+                    "profiler_headers": {k: v for k, v in headers.items() if "profiler" in k.lower()},
+                }
+            )
+        
         logger.info(
             "Calling SMR service to get serviceId",
             extra={
                 "user_id": user_id,
                 "tenant_id": tenant_id,
                 "has_policy_headers": bool(latency_policy or cost_policy or accuracy_policy),
+                "has_request_profiler": bool(request_profiler_header),
+                "smr_headers": {k: v for k, v in smr_headers.items() if k.startswith("X-")},
             }
         )
         
