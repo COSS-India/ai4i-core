@@ -2938,20 +2938,28 @@ async def select_experiment_variant(
         await db.close()
 
 
-async def get_experiment_metrics(experiment_id: str) -> Optional[Dict[str, Any]]:
+async def get_experiment_metrics(
+    experiment_id: str,
+    aggregate: bool = False,
+) -> Optional[Dict[str, Any]]:
     """
     Get metrics for an experiment by ID.
 
-    Returns metrics per variant per metric_date (daily buckets). Returns None if
-    the experiment does not exist; returns {"experiment_id": ..., "metrics": []}
-    if the experiment exists but has no metrics yet.
+    When aggregate=False (default): returns metrics per variant per metric_date
+    (daily buckets). When aggregate=True: returns one row per variant with
+    totals combined across all dates (metric_date is null).
+
+    Returns None if the experiment does not exist; returns
+    {"experiment_id": ..., "metrics": []} if the experiment exists but has no
+    metrics yet.
 
     Args:
         experiment_id: Experiment UUID
+        aggregate: If True, combine all daily metrics into one row per variant.
 
     Returns:
         Dict with "experiment_id" (once) and "metrics" (list of variant-level
-        metric dicts without experiment_id). None if experiment not found.
+        metric dicts). None if experiment not found.
     """
     db: AsyncSession = AppDatabase()
     try:
@@ -2983,6 +2991,53 @@ async def get_experiment_metrics(experiment_id: str) -> Optional[Dict[str, Any]]
         )
         rows_result = await db.execute(q)
         rows = rows_result.all()
+
+        if aggregate:
+            # Group by (variant_id, variant_name): sum counts, weighted avg latency
+            by_variant: Dict[tuple, Dict[str, Any]] = {}
+            for r in rows:
+                key = (str(r.variant_id), r.variant_name or "")
+                if key not in by_variant:
+                    by_variant[key] = {
+                        "variant_id": str(r.variant_id),
+                        "variant_name": r.variant_name or "",
+                        "request_count": 0,
+                        "success_count": 0,
+                        "error_count": 0,
+                        "latency_weighted_sum": 0,
+                        "custom_metrics": {},
+                    }
+                req = r.request_count or 0
+                by_variant[key]["request_count"] += req
+                by_variant[key]["success_count"] += (r.success_count or 0)
+                by_variant[key]["error_count"] += (r.error_count or 0)
+                if r.avg_latency_ms is not None and req > 0:
+                    by_variant[key]["latency_weighted_sum"] += r.avg_latency_ms * req
+
+            metrics = []
+            for (vid, vname), data in by_variant.items():
+                req_count = data["request_count"]
+                success_rate = (
+                    (data["success_count"] / req_count) if req_count > 0 else 0.0
+                )
+                latency_sum = data["latency_weighted_sum"]
+                avg_latency_ms = (
+                    int(round(latency_sum / req_count)) if req_count > 0 else None
+                )
+                metrics.append({
+                    "variant_id": vid,
+                    "variant_name": vname,
+                    "request_count": req_count,
+                    "success_count": data["success_count"],
+                    "error_count": data["error_count"],
+                    "success_rate": round(success_rate, 4),
+                    "avg_latency_ms": avg_latency_ms,
+                    "custom_metrics": data["custom_metrics"],
+                    "metric_date": None,
+                })
+            # Sort by variant_name for stable order
+            metrics.sort(key=lambda m: m["variant_name"])
+            return {"experiment_id": experiment_id, "metrics": metrics}
 
         metrics = []
         for r in rows:
