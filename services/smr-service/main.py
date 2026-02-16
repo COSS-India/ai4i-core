@@ -54,6 +54,8 @@ class SMRSelectResponse(BaseModel):
     """Response schema for SMR selection."""
 
     serviceId: str
+    # Fallback service ID (second best service) for use when primary service fails
+    fallbackServiceId: Optional[str] = None
     # Tenant ID from the request (null for free users, actual tenant_id for tenant users)
     # Note: "free-user" is used internally for Policy Engine lookup but not exposed in response
     tenant_id: Optional[str] = None
@@ -480,10 +482,11 @@ def select_service_deterministically(
     latency_policy: Optional[str] = None,
     cost_policy: Optional[str] = None,
     accuracy_policy: Optional[str] = None,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Dict[str, Any]]:
     """
     Deterministically select the best service from candidates.
-    Returns (selected_service, scoring_details).
+    Returns (selected_service, fallback_service, scoring_details).
+    fallback_service is None if there's only one service or no suitable fallback.
     """
     if not services:
         raise HTTPException(
@@ -611,7 +614,12 @@ def select_service_deterministically(
             scoring_details["tie_breaker_level"]["first"] = None
             scoring_details["tie_breaker_level"]["second"] = None
         
-        return selected, scoring_details
+        # Get fallback service (second best) if available
+        fallback_service = None
+        if len(policy_scored) > 1:
+            fallback_service = policy_scored[1][2]
+        
+        return selected, fallback_service, scoring_details
 
     if scored:
         scored.sort(
@@ -654,7 +662,12 @@ def select_service_deterministically(
             scoring_details["tie_breaker_level"]["first"] = None
             scoring_details["tie_breaker_level"]["second"] = None
         
-        return selected, scoring_details
+        # Get fallback service (second best) if available
+        fallback_service = None
+        if len(scored) > 1:
+            fallback_service = scored[1][2]
+        
+        return selected, fallback_service, scoring_details
 
     if fallback:
         fallback.sort(
@@ -677,7 +690,12 @@ def select_service_deterministically(
             scoring_details["tie_breaker_level"]["first"] = None
             scoring_details["tie_breaker_level"]["second"] = None
         
-        return selected, scoring_details
+        # Get fallback service (second best) if available
+        fallback_service = None
+        if len(fallback) > 1:
+            fallback_service = fallback[1][1]
+        
+        return selected, fallback_service, scoring_details
 
     raise HTTPException(
         status_code=503,
@@ -931,7 +949,7 @@ async def select_service_by_profiler(
     services: List[Dict[str, Any]],
     profiler_domain: Optional[str],
     profiler_complexity: Optional[str],
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Dict[str, Any]]:
     """
     Select the best service based on profiler domain and complexity matching.
     
@@ -942,7 +960,8 @@ async def select_service_by_profiler(
         profiler_complexity: Complexity level from profiler
         
     Returns:
-        Tuple of (selected_service, scoring_details)
+        Tuple of (selected_service, fallback_service, scoring_details)
+        fallback_service is None if there's only one service or no suitable fallback.
     """
     if not services:
         raise HTTPException(
@@ -1186,11 +1205,17 @@ async def select_service_by_profiler(
                 }
             )
     
+    # Get fallback service (second best) if available
+    fallback_service = None
+    if len(scored_services) > 1:
+        fallback_service = scored_services[1][1]
+    
     logger.info(
         "SMR: Service selected by profiler",
         extra={
             "context": {
                 "selected_service_id": selected_service.get("serviceId"),
+                "fallback_service_id": fallback_service.get("serviceId") if fallback_service else None,
                 "match_score": top_score,
                 "profiler_domain": profiler_domain,
                 "profiler_complexity": profiler_complexity,
@@ -1199,7 +1224,7 @@ async def select_service_by_profiler(
         }
     )
     
-    return selected_service, scoring_details
+    return selected_service, fallback_service, scoring_details
 
 
 async def handle_context_aware_nmt(
@@ -1408,7 +1433,7 @@ async def inject_service_id_if_missing(
     accuracy_policy: Optional[str] = None,
     is_context_aware: bool = False,
     is_request_profiler: bool = False,
-) -> Tuple[str, Dict[str, Any], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+) -> Tuple[str, Optional[str], Dict[str, Any], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """
     Ensure that body_dict.config.serviceId is populated, using SMR selection if needed.
     
@@ -1420,7 +1445,7 @@ async def inject_service_id_if_missing(
     - If task_type is "nmt", calls request profiler service and selects best matching service
     - If task_type is not "nmt", returns error that profiler is only available for NMT
 
-    Returns (service_id, updated_body_dict, tenant_policy_result, selected_service_dict, scoring_details, context_aware_result).
+    Returns (service_id, fallback_service_id, updated_body_dict, tenant_policy_result, selected_service_dict, scoring_details, context_aware_result).
     """
     # Handle request profiler requests (only for NMT)
     # IMPORTANT: This check must happen FIRST, before any other routing logic
@@ -1511,7 +1536,7 @@ async def inject_service_id_if_missing(
             )
         
         # Select service based on profiler matching
-        selected_service, scoring_details = await select_service_by_profiler(
+        selected_service, fallback_service, scoring_details = await select_service_by_profiler(
             http_client=http_client,
             services=candidate_services,
             profiler_domain=profiler_domain,
@@ -1519,6 +1544,7 @@ async def inject_service_id_if_missing(
         )
         
         service_id = str(selected_service.get("serviceId"))
+        fallback_service_id = str(fallback_service.get("serviceId")) if fallback_service else None
         
         config = body_dict.get("config") or {}
         if not isinstance(config, dict):
@@ -1531,13 +1557,14 @@ async def inject_service_id_if_missing(
             extra={
                 "context": {
                     "selected_service_id": service_id,
+                    "fallback_service_id": fallback_service_id,
                     "profiler_domain": profiler_domain,
                     "profiler_complexity": profiler_complexity,
                 }
             }
         )
         
-        return service_id, body_dict, None, selected_service, scoring_details, None
+        return service_id, fallback_service_id, body_dict, None, selected_service, scoring_details, None
     
     # Handle context-aware requests
     if is_context_aware:
@@ -1566,7 +1593,7 @@ async def inject_service_id_if_missing(
         
         # Return special serviceId to indicate context-aware was used
         # The context_aware_result will be included in the response
-        return "llm_context_aware", body_dict, None, None, None, context_aware_result
+        return "llm_context_aware", None, body_dict, None, None, None, context_aware_result
     
     config = body_dict.get("config") or {}
     if not isinstance(config, dict):
@@ -1584,7 +1611,7 @@ async def inject_service_id_if_missing(
             "SMR: serviceId already present in request, skipping routing",
             extra={"context": {"service_id": str(existing_service_id), "task_type": task_type}},
         )
-        return str(existing_service_id), body_dict, None, None, None, None
+        return str(existing_service_id), None, body_dict, None, None, None, None
 
     headers_provided = (
         latency_policy is not None or cost_policy is not None or accuracy_policy is not None
@@ -1793,7 +1820,7 @@ async def inject_service_id_if_missing(
         },
     )
     
-    selected_service, scoring_details = select_service_deterministically(
+    selected_service, fallback_service, scoring_details = select_service_deterministically(
         candidate_services,
         preferred_language=None,
         latency_policy=actual_latency_policy,
@@ -1801,6 +1828,7 @@ async def inject_service_id_if_missing(
         accuracy_policy=actual_accuracy_policy,
     )
     service_id = str(selected_service.get("serviceId"))
+    fallback_service_id = str(fallback_service.get("serviceId")) if fallback_service else None
     
     # Log selection details
     logger.info(
@@ -1808,6 +1836,7 @@ async def inject_service_id_if_missing(
         extra={
             "context": {
                 "selected_service_id": service_id,
+                "fallback_service_id": fallback_service_id,
                 "tie_level": scoring_details.get("tie_level", 0),
                 "tie_breaker_level": scoring_details.get("tie_breaker_level", {}),
             }
@@ -1822,6 +1851,7 @@ async def inject_service_id_if_missing(
                 "user_id": user_id,
                 "tenant_id": tenant_id,
                 "selected_service_id": service_id,
+                "fallback_service_id": fallback_service_id,
             }
         },
     )
@@ -1829,7 +1859,7 @@ async def inject_service_id_if_missing(
     config["serviceId"] = service_id
     body_dict["config"] = config
 
-    return service_id, body_dict, policy_result, selected_service, scoring_details, None
+    return service_id, fallback_service_id, body_dict, policy_result, selected_service, scoring_details, None
 
 
 @app.post("/api/v1/smr/select-service", response_model=SMRSelectResponse)
@@ -1955,7 +1985,7 @@ async def select_service(request: Request, payload: SMRSelectRequest) -> SMRSele
                     }
                 }
             )
-            service_id, updated_body, tenant_policy_result, selected_service, scoring_details, context_aware_result = await inject_service_id_if_missing(
+            service_id, fallback_service_id, updated_body, tenant_policy_result, selected_service, scoring_details, context_aware_result = await inject_service_id_if_missing(
                 http_client=http_client,
                 task_type=payload.task_type,
                 body_dict=body_dict,
@@ -2083,6 +2113,7 @@ async def select_service(request: Request, payload: SMRSelectRequest) -> SMRSele
     
     return SMRSelectResponse(
         serviceId=service_id,
+        fallbackServiceId=fallback_service_id,
         tenant_id=actual_tenant_id,  # null for free users, actual tenant_id for tenant users
         is_free_user=is_free_user,
         tenant_policy=tenant_policy_dict,
