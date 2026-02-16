@@ -1032,17 +1032,72 @@ async def select_service_by_profiler(
             }
         )
     
-    # Sort by match score (descending), then by service_id (ascending) for tie-breaking
-    scored_services.sort(key=lambda x: (-x[0], x[1].get("serviceId", "")))
+    # Helper function to extract domain and complexity scores separately for tie-breaking
+    def get_domain_complexity_scores(service_tuple):
+        """Extract domain and complexity scores from service for tie-breaking."""
+        match_score, svc, _ = service_tuple
+        service_policy = svc.get("policy") or {}
+        
+        # Extract domain match score (base score without complexity bonus)
+        domain_score = 0.0
+        if profiler_domain:
+            service_domain = None
+            if isinstance(service_policy, dict):
+                service_domain = service_policy.get("domain")
+                if isinstance(service_domain, str):
+                    domains_to_check = [service_domain]
+                elif isinstance(service_domain, list):
+                    domains_to_check = service_domain
+                else:
+                    domains_to_check = None
+            else:
+                domains_to_check = None
+            
+            # Also check model_domains if available
+            model_domains = service_tuple[2] if len(service_tuple) > 2 else None
+            if not domains_to_check and model_domains:
+                domains_to_check = model_domains
+            
+            if domains_to_check:
+                profiler_domain_lower = profiler_domain.lower()
+                domains_lower = [d.lower() for d in domains_to_check if isinstance(d, str)]
+                if profiler_domain_lower in domains_lower:
+                    domain_score = 10000.0
+                else:
+                    for domain in domains_lower:
+                        if profiler_domain_lower in domain or domain in profiler_domain_lower:
+                            domain_score = 5000.0
+                            break
+        
+        # Complexity bonus is the difference between total score and domain score
+        complexity_score = match_score - domain_score
+        
+        return domain_score, complexity_score
+    
+    # Sort by match score (descending), then by complexity (descending), then by service_id (ascending) for tie-breaking
+    # This ensures proper tie-breaking: domain -> complexity -> lexicographic
+    scored_services.sort(key=lambda x: (
+        -x[0],  # Total match score (descending)
+        -get_domain_complexity_scores(x)[1],  # Complexity score (descending) - for tie-breaking when domain matches
+        x[1].get("serviceId", "")  # Lexicographic order (ascending) - final tie-breaker
+    ))
     
     selected_service = scored_services[0][1]
     top_score = scored_services[0][0]
     
-    # Check for ties
+    # Check for ties at total match score level
     tied_services = [x for x in scored_services if x[0] == top_score]
     
     # Log all scores for debugging
-    all_scores = [{"service_id": x[1].get("serviceId"), "score": x[0]} for x in scored_services]
+    all_scores = []
+    for x in scored_services:
+        domain_score, complexity_score = get_domain_complexity_scores(x)
+        all_scores.append({
+            "service_id": x[1].get("serviceId"),
+            "total_score": x[0],
+            "domain_score": domain_score,
+            "complexity_score": complexity_score,
+        })
     logger.info(
         "SMR: All profiler match scores",
         extra={
@@ -1065,8 +1120,71 @@ async def select_service_by_profiler(
     }
     
     if len(tied_services) > 1:
-        scoring_details["tie_level"] = 1
-        scoring_details["tie_breaker_level"]["first"] = "lexicographic_order"
+        # Check if tied services have same domain match
+        top_domain_score, top_complexity_score = get_domain_complexity_scores(tied_services[0])
+        domain_tied = [x for x in tied_services if get_domain_complexity_scores(x)[0] == top_domain_score]
+        
+        logger.info(
+            "SMR: Checking tie-breaking for profiler selection",
+            extra={
+                "context": {
+                    "tied_count": len(tied_services),
+                    "top_total_score": top_score,
+                    "top_domain_score": top_domain_score,
+                    "top_complexity_score": top_complexity_score,
+                    "domain_tied_count": len(domain_tied),
+                    "tied_service_ids": [x[1].get("serviceId") for x in tied_services],
+                }
+            }
+        )
+        
+        if len(domain_tied) > 1:
+            # Domain matches - check complexity as first tie-breaker
+            scoring_details["tie_level"] = 1
+            scoring_details["tie_breaker_level"]["first"] = "complexity_match"
+            
+            # Check if complexity also ties
+            complexity_tied = [x for x in domain_tied if get_domain_complexity_scores(x)[1] == top_complexity_score]
+            if len(complexity_tied) > 1:
+                # Complexity also ties - use lexicographic order as second tie-breaker
+                scoring_details["tie_level"] = 2
+                scoring_details["tie_breaker_level"]["second"] = "lexicographic_order"
+                logger.info(
+                    "SMR: Tie broken by complexity then lexicographic order",
+                    extra={
+                        "context": {
+                            "complexity_tied_count": len(complexity_tied),
+                            "tie_breaker_first": "complexity_match",
+                            "tie_breaker_second": "lexicographic_order",
+                        }
+                    }
+                )
+            else:
+                # Tie broken by complexity
+                scoring_details["tie_breaker_level"]["second"] = None
+                logger.info(
+                    "SMR: Tie broken by complexity match",
+                    extra={
+                        "context": {
+                            "tie_breaker_first": "complexity_match",
+                            "tie_breaker_second": None,
+                        }
+                    }
+                )
+        else:
+            # This shouldn't happen if sorting is correct, but handle it
+            scoring_details["tie_level"] = 1
+            scoring_details["tie_breaker_level"]["first"] = "lexicographic_order"
+            scoring_details["tie_breaker_level"]["second"] = None
+            logger.warning(
+                "SMR: Unexpected tie scenario - services tied but different domain scores",
+                extra={
+                    "context": {
+                        "tied_count": len(tied_services),
+                        "domain_tied_count": len(domain_tied),
+                    }
+                }
+            )
     
     logger.info(
         "SMR: Service selected by profiler",
