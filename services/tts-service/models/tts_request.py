@@ -52,12 +52,19 @@ class TextInput(BaseModel):
 
 class TTSInferenceConfig(BaseModel):
     """Configuration for TTS inference."""
-    serviceId: str = Field(..., description="Identifier for TTS service/model")
+    serviceId: Optional[str] = Field(None, description="Identifier for TTS service/model. If not provided, SMR service will be called to select a serviceId.")
     language: LanguageConfig = Field(..., description="Language configuration")
     gender: Gender = Field(..., description="Voice gender (male/female)")
     audioFormat: AudioFormat = Field(AudioFormat.WAV, description="Output audio format")
     samplingRate: Optional[int] = Field(22050, description="Target sample rate in Hz")
     encoding: str = Field("base64", description="Output encoding")
+    
+    @validator('serviceId')
+    def validate_service_id(cls, v):
+        # Only validate if provided (SMR will handle selection when missing)
+        if v is not None and not v.strip():
+            raise ValueError('Service ID cannot be empty if provided')
+        return v
     
     @validator('samplingRate')
     def validate_sampling_rate(cls, v):

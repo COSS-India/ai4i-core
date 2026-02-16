@@ -4,7 +4,7 @@ TTS Response Models
 Pydantic models for TTS inference responses.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from models.tts_request import LanguageConfig, AudioFormat
 
@@ -32,6 +32,7 @@ class TTSInferenceResponse(BaseModel):
     """Main TTS inference response model."""
     audio: List[AudioOutput] = Field(..., description="List of generated audio outputs (one per text input)")
     config: Optional[AudioConfig] = Field(None, description="Response configuration metadata")
+    smr_response: Optional[Dict[str, Any]] = Field(None, description="SMR service response data (if SMR was called)")
     
     def dict(self, **kwargs):
         """Override dict() to exclude None values."""
