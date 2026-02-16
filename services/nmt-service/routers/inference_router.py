@@ -168,6 +168,19 @@ async def resolve_service_id_if_needed(
                 },
             )
         
+        # Extract fallback service ID from SMR response
+        fallback_service_id = smr_response_data.get("fallbackServiceId")
+        if fallback_service_id:
+            logger.info(
+                "NMT: Fallback service ID available from SMR",
+                extra={
+                    "primary_service_id": service_id,
+                    "fallback_service_id": fallback_service_id,
+                }
+            )
+            # Store fallback service ID in request state for potential retry
+            http_request.state.fallback_service_id = fallback_service_id
+        
         # Check if this is a context-aware result - if so, skip endpoint resolution
         context_aware_result = smr_response_data.get("context_aware_result")
         if context_aware_result or service_id == "llm_context_aware":
@@ -565,6 +578,115 @@ async def call_smr_service(
         ) from e
 
 
+async def switch_to_fallback_service(
+    request: NMTInferenceRequest,
+    http_request: Request,
+    fallback_service_id: str,
+) -> None:
+    """
+    Switch to fallback service by resolving its endpoint and updating request state.
+    
+    Args:
+        request: NMT inference request
+        http_request: FastAPI request object
+        fallback_service_id: Fallback service ID from SMR
+    """
+    logger.info(
+        "NMT: Switching to fallback service",
+        extra={
+            "primary_service_id": request.config.serviceId,
+            "fallback_service_id": fallback_service_id,
+        }
+    )
+    
+    # Update request with fallback service ID
+    request.config.serviceId = fallback_service_id
+    http_request.state.service_id = fallback_service_id
+    
+    # Resolve Triton endpoint for fallback service
+    model_management_client = getattr(http_request.app.state, "model_management_client", None)
+    redis_client = getattr(http_request.app.state, "redis_client", None)
+    
+    if not model_management_client:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "MODEL_MANAGEMENT_UNAVAILABLE",
+                "message": "Model Management client not available for fallback service resolution",
+            },
+        )
+    
+    try:
+        auth_headers = extract_auth_headers(http_request)
+        service_info = await model_management_client.get_service(
+            service_id=fallback_service_id,
+            use_cache=True,
+            redis_client=redis_client,
+            auth_headers=auth_headers,
+        )
+        
+        if not service_info or not service_info.endpoint:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "FALLBACK_SERVICE_UNAVAILABLE",
+                    "message": f"Fallback service {fallback_service_id} not found or has no endpoint configured",
+                },
+            )
+        
+        triton_endpoint = service_info.endpoint
+        triton_api_key = service_info.api_key or ""
+        
+        # Extract model name
+        triton_model_name = "unknown"
+        if service_info.model_inference_endpoint:
+            inference_endpoint = service_info.model_inference_endpoint
+            if isinstance(inference_endpoint, dict):
+                triton_model_name = (
+                    inference_endpoint.get("model_name") or
+                    inference_endpoint.get("modelName") or
+                    inference_endpoint.get("model") or
+                    service_info.triton_model or
+                    service_info.model_name or
+                    "unknown"
+                )
+        elif service_info.model_name:
+            triton_model_name = service_info.model_name
+        elif service_info.triton_model:
+            triton_model_name = service_info.triton_model
+        
+        # Update request state with fallback service endpoint
+        http_request.state.triton_endpoint = triton_endpoint
+        http_request.state.triton_api_key = triton_api_key
+        http_request.state.triton_model_name = triton_model_name
+        http_request.state.using_fallback_service = True
+        
+        logger.info(
+            "NMT: Successfully switched to fallback service",
+            extra={
+                "fallback_service_id": fallback_service_id,
+                "triton_endpoint": triton_endpoint,
+                "triton_model_name": triton_model_name,
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "NMT: Failed to resolve fallback service endpoint",
+            extra={"fallback_service_id": fallback_service_id, "error": str(e)},
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "FALLBACK_SERVICE_RESOLUTION_FAILED",
+                "message": f"Failed to resolve endpoint for fallback service {fallback_service_id}: {str(e)}",
+            },
+        ) from e
+
+
 async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_tenant_db_session)) -> NMTService:
     """
     Dependency to get configured NMT service.
@@ -899,15 +1021,251 @@ async def run_inference(
                 }
             )
 
-            # Run inference
-            response = await nmt_service.run_inference(
-                request=request,
-                user_id=user_id,
-                api_key_id=api_key_id,
-                session_id=session_id,
-                auth_headers=extract_auth_headers(http_request),
-                http_request=http_request,
-            )
+            # Run inference with fallback support
+            fallback_service_id = getattr(http_request.state, "fallback_service_id", None)
+            using_fallback = False
+            
+            try:
+                # Try primary service first
+                response = await nmt_service.run_inference(
+                    request=request,
+                    user_id=user_id,
+                    api_key_id=api_key_id,
+                    session_id=session_id,
+                    auth_headers=extract_auth_headers(http_request),
+                    http_request=http_request,
+                )
+            except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError) as primary_error:
+                # Store original service ID before attempting fallback
+                original_service_id = request.config.serviceId
+                
+                # Primary service failed - try fallback if available and different from primary
+                if fallback_service_id and fallback_service_id != original_service_id:
+                    logger.warning(
+                        "NMT: Primary service failed, attempting fallback",
+                        extra={
+                            "primary_service_id": request.config.serviceId,
+                            "fallback_service_id": fallback_service_id,
+                            "error_type": type(primary_error).__name__,
+                            "error_message": str(primary_error),
+                        },
+                        exc_info=True
+                    )
+                    
+                    span.add_event("nmt.fallback.triggered", {
+                        "primary_service_id": request.config.serviceId,
+                        "fallback_service_id": fallback_service_id,
+                        "error_type": type(primary_error).__name__,
+                    })
+                    
+                    try:
+                        # Switch to fallback service
+                        await switch_to_fallback_service(
+                            request=request,
+                            http_request=http_request,
+                            fallback_service_id=fallback_service_id,
+                        )
+                        
+                        # Get new NMT service instance with fallback endpoint
+                        # Create service components for fallback - reuse same components as primary
+                        # but with updated endpoint from request state
+                        triton_endpoint = getattr(http_request.state, "triton_endpoint")
+                        triton_api_key = getattr(http_request.state, "triton_api_key", "")
+                        triton_model_name = getattr(http_request.state, "triton_model_name", "unknown")
+                        
+                        # Create a factory function for the fallback endpoint (same pattern as primary)
+                        def get_fallback_triton_client_for_endpoint(endpoint: str) -> TritonClient:
+                            """Create Triton client for fallback endpoint"""
+                            from utils.triton_client import TritonClient
+                            triton_url = endpoint
+                            if triton_url.startswith(('http://', 'https://')):
+                                triton_url = triton_url.split('://', 1)[1]
+                            return TritonClient(triton_url=triton_url, api_key=triton_api_key)
+                        
+                        # Get Model Management client and Redis client from app state (same as primary)
+                        model_management_client = getattr(http_request.app.state, "model_management_client", None)
+                        redis_client = getattr(http_request.app.state, "redis_client", None)
+                        
+                        # Verify Model Management client is available
+                        if not model_management_client:
+                            logger.error(
+                                "NMT: Model Management client not available in app.state for fallback service",
+                                extra={
+                                    "fallback_service_id": fallback_service_id,
+                                    "app_state_keys": list(http_request.app.state.__dict__.keys()) if hasattr(http_request.app.state, "__dict__") else None,
+                                }
+                            )
+                            raise HTTPException(
+                                status_code=500,
+                                detail={
+                                    "code": "MODEL_MANAGEMENT_UNAVAILABLE",
+                                    "message": "Model Management client not available for fallback service. This is required for service resolution.",
+                                },
+                            )
+                        
+                        logger.info(
+                            "NMT: Model Management client available for fallback service",
+                            extra={
+                                "fallback_service_id": fallback_service_id,
+                                "has_redis_client": bool(redis_client),
+                            }
+                        )
+                        
+                        # Get database session for fallback service
+                        from repositories.nmt_repository import NMTRepository
+                        from services.text_service import TextService
+                        from middleware.tenant_db_dependency import get_tenant_db_session
+                        
+                        fallback_db = await get_tenant_db_session(http_request)
+                        fallback_repository = NMTRepository(fallback_db)
+                        fallback_text_service = TextService()
+                        
+                        # Get cache TTL from Model Management client config
+                        cache_ttl_seconds = getattr(model_management_client, "cache_ttl_seconds", 300)
+                        
+                        # Create fallback NMT service with Model Management client (required for dynamic endpoint resolution)
+                        fallback_nmt_service = NMTService(
+                            repository=fallback_repository,
+                            text_service=fallback_text_service,
+                            get_triton_client_func=get_fallback_triton_client_for_endpoint,
+                            model_management_client=model_management_client,
+                            redis_client=redis_client,
+                            cache_ttl_seconds=cache_ttl_seconds
+                        )
+                        
+                        # Pre-populate the fallback service cache with the already-resolved endpoint
+                        # This avoids another Model Management call when get_triton_client is invoked
+                        # The cache will be used by get_triton_client, and the verification step will
+                        # also use the cached service registry entry, avoiding Model Management calls
+                        import time
+                        expires_at = time.time() + cache_ttl_seconds
+                        fallback_triton_client = get_fallback_triton_client_for_endpoint(triton_endpoint)
+                        
+                        # Pre-populate Triton client cache
+                        fallback_nmt_service._triton_clients[fallback_service_id] = (
+                            fallback_triton_client,
+                            triton_endpoint,
+                            expires_at
+                        )
+                        
+                        # Pre-populate service registry cache (used by _get_service_registry_entry)
+                        # This is critical - it prevents Model Management calls during endpoint verification
+                        fallback_nmt_service._service_registry_cache[fallback_service_id] = (
+                            triton_endpoint,
+                            triton_model_name,
+                            expires_at
+                        )
+                        
+                        # Also pre-populate service info cache (used by _get_service_info)
+                        # This provides an additional layer of protection
+                        from utils.model_management_client import ServiceInfo
+                        fallback_service_info = ServiceInfo(
+                            service_id=fallback_service_id,
+                            model_id="",  # Not needed for fallback
+                            endpoint=triton_endpoint,
+                            api_key=triton_api_key,
+                            triton_model=triton_model_name,
+                            model_name=triton_model_name,
+                        )
+                        fallback_nmt_service._service_info_cache[fallback_service_id] = (
+                            fallback_service_info,
+                            expires_at
+                        )
+                        
+                        logger.info(
+                            "NMT: Pre-populated fallback service cache",
+                            extra={
+                                "fallback_service_id": fallback_service_id,
+                                "triton_endpoint": triton_endpoint,
+                                "triton_model_name": triton_model_name,
+                            }
+                        )
+                        
+                        # Retry inference with fallback service
+                        logger.info(
+                            "NMT: Retrying inference with fallback service",
+                            extra={"fallback_service_id": fallback_service_id}
+                        )
+                        
+                        response = await fallback_nmt_service.run_inference(
+                            request=request,
+                            user_id=user_id,
+                            api_key_id=api_key_id,
+                            session_id=session_id,
+                            auth_headers=extract_auth_headers(http_request),
+                            http_request=http_request,
+                        )
+                        
+                        using_fallback = True
+                        span.add_event("nmt.fallback.success", {
+                            "fallback_service_id": fallback_service_id,
+                        })
+                        span.set_attribute("nmt.fallback_used", True)
+                        span.set_attribute("nmt.fallback_service_id", fallback_service_id)
+                        
+                        logger.info(
+                            "NMT: Fallback service succeeded",
+                            extra={"fallback_service_id": fallback_service_id}
+                        )
+                        
+                    except Exception as fallback_error:
+                        # Fallback also failed - create detailed error message
+                        # Use the original_service_id from the outer scope
+                        primary_service_id = original_service_id
+                        
+                        # Extract error details from both errors
+                        primary_error_msg = str(primary_error)
+                        fallback_error_msg = str(fallback_error)
+                        
+                        # Determine error types
+                        primary_error_type = type(primary_error).__name__
+                        fallback_error_type = type(fallback_error).__name__
+                        
+                        logger.error(
+                            "NMT: Both primary and fallback services failed",
+                            extra={
+                                "primary_service_id": primary_service_id,
+                                "fallback_service_id": fallback_service_id,
+                                "primary_error_type": primary_error_type,
+                                "primary_error": primary_error_msg,
+                                "fallback_error_type": fallback_error_type,
+                                "fallback_error": fallback_error_msg,
+                            },
+                            exc_info=True
+                        )
+                        
+                        span.add_event("nmt.fallback.failed", {
+                            "primary_service_id": primary_service_id,
+                            "fallback_service_id": fallback_service_id,
+                            "primary_error_type": primary_error_type,
+                            "fallback_error_type": fallback_error_type,
+                        })
+                        
+                        # Create a comprehensive error message with both service failures
+                        combined_error_message = (
+                            f"Primary service ({primary_service_id}) failed: {primary_error_msg}. "
+                            f"Fallback service ({fallback_service_id}) also failed: {fallback_error_msg}"
+                        )
+                        
+                        # Store error details in request state for error handler to access
+                        http_request.state.fallback_failure_details = {
+                            "primary_service_id": primary_service_id,
+                            "fallback_service_id": fallback_service_id,
+                            "primary_error": {
+                                "type": primary_error_type,
+                                "message": primary_error_msg,
+                            },
+                            "fallback_error": {
+                                "type": fallback_error_type,
+                                "message": fallback_error_msg,
+                            },
+                        }
+                        
+                        # Re-raise with combined error message
+                        raise TritonInferenceError(combined_error_message) from fallback_error
+                else:
+                    # No fallback available - re-raise original error
+                    raise
             
             # Calculate output metrics (character length and word count) for successful responses
             output_texts = [output.target for output in response.output]
@@ -949,20 +1307,41 @@ async def run_inference(
             # Include SMR response in the final response (null if SMR was not called)
             response_dict = response.dict()
             if smr_response_data:
+                # Update SMR response if fallback was used
+                if using_fallback:
+                    smr_response_data = smr_response_data.copy()
+                    smr_response_data["fallback_used"] = True
+                    original_service_id = smr_response_data.get("serviceId")
+                    smr_response_data["original_service_id"] = original_service_id
+                    smr_response_data["serviceId"] = fallback_service_id
+                    smr_response_data["fallback_message"] = (
+                        f"The service ID selected by SMR was '{original_service_id}' but it didn't work. "
+                        f"Fallback service ID '{fallback_service_id}' is used instead."
+                    )
+                    logger.info(
+                        "Including SMR response with fallback usage",
+                        extra={
+                            "original_service_id": original_service_id,
+                            "fallback_service_id": fallback_service_id,
+                            "fallback_message": smr_response_data["fallback_message"],
+                        }
+                    )
+                else:
+                    logger.info(
+                        "Including SMR response in NMT inference response",
+                        extra={"smr_service_id": smr_response_data.get("serviceId")}
+                    )
                 response_dict["smr_response"] = smr_response_data
-                logger.info(
-                    "Including SMR response in NMT inference response",
-                    extra={"smr_service_id": smr_response_data.get("serviceId")}
-                )
             else:
                 response_dict["smr_response"] = None
             # Create new response object with SMR data
             response = NMTInferenceResponse(**response_dict)
             
             logger.info(
-                "NMT inference completed successfully, output_characters=%d, output_words=%d",
+                "NMT inference completed successfully, output_characters=%d, output_words=%d, fallback_used=%s",
                 total_output_characters,
                 total_output_words,
+                using_fallback,
                 extra={
                     # Common input/output details structure (general fields for all services)
                     "input_details": {
@@ -977,12 +1356,15 @@ async def run_inference(
                     },
                     # Service metadata (for filtering)
                     "service_id": request.config.serviceId,
+                    "fallback_used": using_fallback,
+                    "fallback_service_id": fallback_service_id if using_fallback else None,
                     "source_language": request.config.language.sourceLanguage,
                     "target_language": request.config.language.targetLanguage,
                     "http_status_code": 200,
                     "smr_used": smr_response_data is not None,
                 }
             )
+            
             return response
 
         except (InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError) as exc:
@@ -1034,19 +1416,42 @@ async def run_inference(
             triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
             model_name = getattr(http_request.state, "triton_model_name", None)
             
+            # Check if both primary and fallback services failed
+            fallback_failure_details = getattr(http_request.state, "fallback_failure_details", None)
+            
             # Return appropriate error based on exception type
             # Get SMR response if available
             smr_response_data = getattr(http_request.state, "smr_response_data", None)
             
             if "Triton" in str(exc) or "triton" in str(exc).lower():
                 error_code = MODEL_UNAVAILABLE if model_name else SERVICE_UNAVAILABLE
-                error_message = MODEL_UNAVAILABLE_NMT_MESSAGE if model_name else SERVICE_UNAVAILABLE_NMT_MESSAGE
+                
+                # If both services failed, provide detailed error message
+                if fallback_failure_details:
+                    error_message = (
+                        f"Primary service ({fallback_failure_details['primary_service_id']}) failed: "
+                        f"{fallback_failure_details['primary_error']['message']}. "
+                        f"Fallback service ({fallback_failure_details['fallback_service_id']}) also failed: "
+                        f"{fallback_failure_details['fallback_error']['message']}"
+                    )
+                else:
+                    error_message = MODEL_UNAVAILABLE_NMT_MESSAGE if model_name else SERVICE_UNAVAILABLE_NMT_MESSAGE
+                
                 error_detail = ErrorDetail(code=error_code, message=error_message).dict()
+                
+                # Include detailed failure information if both services failed
+                if fallback_failure_details:
+                    error_detail["primary_service_id"] = fallback_failure_details["primary_service_id"]
+                    error_detail["fallback_service_id"] = fallback_failure_details["fallback_service_id"]
+                    error_detail["primary_error"] = fallback_failure_details["primary_error"]
+                    error_detail["fallback_error"] = fallback_failure_details["fallback_error"]
+                
                 # Include SMR response if SMR was called
                 if smr_response_data:
                     error_detail["smr_response"] = smr_response_data
                 else:
                     error_detail["smr_response"] = None
+                
                 raise HTTPException(
                     status_code=503,
                     detail=error_detail
