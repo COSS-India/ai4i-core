@@ -494,6 +494,8 @@ class ASRService:
                     logger.info(f"Completed processing audio input {audio_idx + 1}")
                     
                 except Exception as e:
+                    # Any failure for this audio input should be treated as a hard error so that
+                    # the router can trigger fallback to an alternative service (if available).
                     logger.error(
                         f"Failed to process audio input {audio_idx + 1}: {e}",
                         extra={
@@ -507,8 +509,10 @@ class ASRService:
                         },
                         exc_info=True
                     )
-                    # Add empty transcript for failed input
-                    response.output.append(TranscriptOutput(source="", nBestTokens=None))
+                    # Raise TritonInferenceError so that upstream fallback logic can be applied
+                    raise TritonInferenceError(
+                        f"Failed to process audio input {audio_idx + 1}: {e}"
+                    ) from e
             
             # Calculate output metrics (character length and word count) for successful responses
             output_texts = [output.source for output in response.output]
