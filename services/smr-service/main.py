@@ -32,6 +32,9 @@ POLICY_ENGINE_URL = os.getenv("POLICY_ENGINE_URL", "http://policy-engine:8095")
 MODEL_MANAGEMENT_SERVICE_URL = os.getenv(
     "MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091"
 )
+REQUEST_PROFILER_SERVICE_URL = os.getenv(
+    "REQUEST_PROFILER_SERVICE_URL", "http://request-profiler-service:8000"
+)
 
 
 class SMRSelectRequest(BaseModel):
@@ -64,6 +67,8 @@ class SMRSelectResponse(BaseModel):
     scoring_details: Optional[Dict[str, Any]] = None
     # Context-aware result (only populated when context-aware is enabled for NMT)
     context_aware_result: Optional[Dict[str, Any]] = None
+    # Request profiler results (only populated when X-Request-Profiler header is enabled)
+    request_profiler: Optional[Dict[str, Any]] = None
 
 
 app = FastAPI(
@@ -683,6 +688,402 @@ def select_service_deterministically(
     )
 
 
+async def call_request_profiler(
+    http_client: httpx.AsyncClient,
+    text: str,
+) -> Dict[str, Any]:
+    """
+    Call request profiler service to get domain and complexity information.
+    
+    Args:
+        http_client: HTTP client for making requests
+        text: Input text to profile
+        
+    Returns:
+        Dictionary containing domain and complexity information
+    """
+    try:
+        profiler_payload = {"text": text}
+        
+        logger.info(
+            "SMR: Calling request profiler service",
+            extra={
+                "context": {
+                    "text_length": len(text),
+                    "profiler_url": f"{REQUEST_PROFILER_SERVICE_URL}/api/v1/profile",
+                }
+            }
+        )
+        
+        response = await http_client.post(
+            f"{REQUEST_PROFILER_SERVICE_URL}/api/v1/profile",
+            json=profiler_payload,
+            headers={"Content-Type": "application/json"},
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        profiler_result = response.json()
+        
+        # Extract domain and complexity from profiler response
+        profile = profiler_result.get("profile", {})
+        domain_label = profile.get("domain", {}).get("label")
+        complexity_level = profile.get("scores", {}).get("complexity_level")
+        
+        logger.info(
+            "SMR: Request profiler returned results",
+            extra={
+                "context": {
+                    "domain": domain_label,
+                    "complexity_level": complexity_level,
+                }
+            }
+        )
+        
+        return {
+            "domain": domain_label,
+            "complexity_level": complexity_level,
+            "full_profile": profiler_result,
+        }
+        
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "SMR: Request profiler returned error",
+            extra={
+                "context": {
+                    "status_code": e.response.status_code,
+                    "response_text": e.response.text[:500] if e.response else None,
+                }
+            },
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=e.response.status_code if e.response else 500,
+            detail={
+                "code": "PROFILER_SERVICE_ERROR",
+                "message": f"Request profiler service error: {e.response.text[:200] if e.response else str(e)}",
+            },
+        )
+    except httpx.RequestError as e:
+        logger.error(
+            "SMR: Request profiler connection error",
+            extra={"context": {"error": str(e)}},
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "PROFILER_SERVICE_UNAVAILABLE",
+                "message": "Request profiler service is temporarily unavailable. Please try again later.",
+            },
+        )
+
+
+async def fetch_model_domain(
+    http_client: httpx.AsyncClient,
+    model_id: str,
+) -> Optional[List[str]]:
+    """
+    Fetch model domain information from model management service.
+    
+    Args:
+        http_client: HTTP client for making requests
+        model_id: Model ID to fetch domain for
+        
+    Returns:
+        List of domain strings, or None if not found
+    """
+    try:
+        response = await http_client.get(
+            f"{MODEL_MANAGEMENT_SERVICE_URL}/api/v1/model-management/models/{model_id}",
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        model_data = response.json()
+        
+        domain = model_data.get("domain")
+        if isinstance(domain, list):
+            return domain
+        elif isinstance(domain, str):
+            # Handle comma-separated string format
+            return [d.strip() for d in domain.split(",") if d.strip()]
+        return None
+        
+    except Exception as e:
+        logger.warning(
+            f"SMR: Failed to fetch model domain for {model_id}: {e}",
+            exc_info=True,
+        )
+        return None
+
+
+def compute_profiler_match_score(
+    service: Dict[str, Any],
+    profiler_domain: Optional[str],
+    profiler_complexity: Optional[str],
+    model_domains: Optional[List[str]],
+) -> float:
+    """
+    Compute a match score for a service based on profiler results.
+    Domain matching is PRIMARY - services with matching domain get high base score.
+    Complexity is used as TIEBREAKER only when domain matches are equal.
+    
+    Scoring strategy:
+    - Domain exact match: 10000 points
+    - Domain partial match: 5000 points
+    - Domain mismatch: 0 points
+    - Complexity exact match: +100 points (tiebreaker)
+    - Complexity partial match: +50 points (tiebreaker)
+    - Complexity mismatch: +0 points
+    
+    This ensures domain always takes precedence over complexity.
+    
+    Args:
+        service: Service dictionary from model management
+        profiler_domain: Domain label from profiler (e.g., "medical")
+        profiler_complexity: Complexity level from profiler (e.g., "LOW", "MEDIUM", "HIGH")
+        model_domains: List of domains supported by the model (from model metadata or service policy)
+        
+    Returns:
+        Match score (higher is better, typically 0-10100 range)
+    """
+    score = 0.0
+    
+    # Get domain from service policy first, then fall back to model_domains
+    service_policy = service.get("policy") or {}
+    service_domain = None
+    if isinstance(service_policy, dict):
+        service_domain = service_policy.get("domain")
+        if isinstance(service_domain, str):
+            # Convert string to list for consistent processing
+            domains_to_check = [service_domain]
+        elif isinstance(service_domain, list):
+            domains_to_check = service_domain
+        else:
+            domains_to_check = None
+    else:
+        domains_to_check = None
+    
+    # Fall back to model_domains if not in service policy
+    if not domains_to_check and model_domains:
+        domains_to_check = model_domains
+    
+    # Domain matching (PRIMARY - high base score)
+    domain_match_score = 0.0
+    if profiler_domain and domains_to_check:
+        # Check if profiler domain matches any service/model domain (case-insensitive)
+        profiler_domain_lower = profiler_domain.lower()
+        domains_lower = [d.lower() for d in domains_to_check if isinstance(d, str)]
+        if profiler_domain_lower in domains_lower:
+            # Exact domain match - highest priority
+            domain_match_score = 10000.0
+        else:
+            # Partial match (e.g., "medical" matches "medical-legal")
+            for domain in domains_lower:
+                if profiler_domain_lower in domain or domain in profiler_domain_lower:
+                    domain_match_score = 5000.0  # Partial match gets half points
+                    break
+            # If no match found, domain_match_score stays 0 (mismatch)
+    # If domains_to_check is None or profiler_domain is None, domain_match_score stays 0
+    
+    score = domain_match_score
+    
+    # Complexity matching (TIEBREAKER - only adds small bonus, never overrides domain)
+    # Only add complexity bonus if domain matched (to break ties among domain-matched services)
+    complexity_bonus = 0.0
+    if domain_match_score > 0 and profiler_complexity:
+        # Get complexity from service policy first
+        service_complexity = None
+        if isinstance(service_policy, dict):
+            service_complexity = service_policy.get("complexity")
+        
+        if service_complexity:
+            # Direct match from policy
+            if str(service_complexity).lower() == profiler_complexity.lower():
+                complexity_bonus = 100.0
+            else:
+                # Partial match - check if they're similar
+                complexity_map = {
+                    "low": ["low", "simple", "easy"],
+                    "medium": ["medium", "moderate"],
+                    "high": ["high", "complex", "difficult"]
+                }
+                profiler_comp_lower = profiler_complexity.lower()
+                service_comp_lower = str(service_complexity).lower()
+                if profiler_comp_lower in complexity_map.get(service_comp_lower, []):
+                    complexity_bonus = 50.0
+        else:
+            # Fall back to service description check
+            service_desc = str(service.get("serviceDescription", "")).lower()
+            if profiler_complexity.lower() in service_desc:
+                complexity_bonus = 100.0
+            # If no match, give partial credit for any complexity mention
+            elif any(level in service_desc for level in ["low", "medium", "high", "simple", "complex"]):
+                complexity_bonus = 50.0
+    
+    # Add complexity bonus to score (only if domain matched)
+    score += complexity_bonus
+    
+    return score
+
+
+async def select_service_by_profiler(
+    http_client: httpx.AsyncClient,
+    services: List[Dict[str, Any]],
+    profiler_domain: Optional[str],
+    profiler_complexity: Optional[str],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    Select the best service based on profiler domain and complexity matching.
+    
+    Args:
+        http_client: HTTP client for making requests
+        services: List of candidate services
+        profiler_domain: Domain label from profiler
+        profiler_complexity: Complexity level from profiler
+        
+    Returns:
+        Tuple of (selected_service, scoring_details)
+    """
+    if not services:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "NO_SERVICES_AVAILABLE",
+                "message": "No candidate services available for routing.",
+            },
+        )
+    
+    # Filter out unhealthy/unpublished services
+    healthy_services = []
+    for svc in services:
+        if svc.get("isPublished") is False:
+            continue
+        
+        health = svc.get("healthStatus") or {}
+        if isinstance(health, dict):
+            status = str(health.get("status", "")).lower()
+            if status and status not in ("healthy", "up"):
+                continue
+        
+        service_id = str(svc.get("serviceId", ""))
+        if not service_id:
+            continue
+        
+        healthy_services.append(svc)
+    
+    if not healthy_services:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "NO_HEALTHY_SERVICES",
+                "message": "No healthy services available for routing.",
+            },
+        )
+    
+    # Compute match scores for each service
+    # First try to get domain from service policy, then fall back to fetching from model
+    scored_services = []
+    for svc in healthy_services:
+        model_id = svc.get("modelId")
+        model_domains = None
+        
+        # Try to fetch model domain only if not in service policy
+        service_policy = svc.get("policy") or {}
+        if isinstance(service_policy, dict) and service_policy.get("domain"):
+            # Domain is in service policy, no need to fetch
+            logger.debug(
+                "SMR: Using domain from service policy",
+                extra={
+                    "context": {
+                        "service_id": svc.get("serviceId"),
+                        "domain": service_policy.get("domain"),
+                    }
+                }
+            )
+        elif model_id:
+            # Fetch model domain as fallback
+            model_domains = await fetch_model_domain(http_client, model_id)
+        
+        # Compute match score
+        match_score = compute_profiler_match_score(
+            service=svc,
+            profiler_domain=profiler_domain,
+            profiler_complexity=profiler_complexity,
+            model_domains=model_domains,
+        )
+        
+        scored_services.append((match_score, svc, model_domains))
+        
+        # Get service policy for logging
+        svc_policy = svc.get("policy") or {}
+        logger.info(
+            "SMR: Profiler match score computed",
+            extra={
+                "context": {
+                    "service_id": svc.get("serviceId"),
+                    "match_score": match_score,
+                    "profiler_domain": profiler_domain,
+                    "profiler_complexity": profiler_complexity,
+                    "service_domain": svc_policy.get("domain") if isinstance(svc_policy, dict) else None,
+                    "service_complexity": svc_policy.get("complexity") if isinstance(svc_policy, dict) else None,
+                    "model_domains": model_domains,
+                    "full_service_policy": svc_policy if isinstance(svc_policy, dict) else None,
+                }
+            }
+        )
+    
+    # Sort by match score (descending), then by service_id (ascending) for tie-breaking
+    scored_services.sort(key=lambda x: (-x[0], x[1].get("serviceId", "")))
+    
+    selected_service = scored_services[0][1]
+    top_score = scored_services[0][0]
+    
+    # Check for ties
+    tied_services = [x for x in scored_services if x[0] == top_score]
+    
+    # Log all scores for debugging
+    all_scores = [{"service_id": x[1].get("serviceId"), "score": x[0]} for x in scored_services]
+    logger.info(
+        "SMR: All profiler match scores",
+        extra={
+            "context": {
+                "profiler_domain": profiler_domain,
+                "profiler_complexity": profiler_complexity,
+                "all_scores": all_scores,
+            }
+        }
+    )
+    
+    scoring_details: Dict[str, Any] = {
+        "tie_level": 0,
+        "tie_breaker_level": {
+            "first": None,
+            "second": None,
+        },
+        "profiler_domain": profiler_domain,
+        "profiler_complexity": profiler_complexity,
+    }
+    
+    if len(tied_services) > 1:
+        scoring_details["tie_level"] = 1
+        scoring_details["tie_breaker_level"]["first"] = "lexicographic_order"
+    
+    logger.info(
+        "SMR: Service selected by profiler",
+        extra={
+            "context": {
+                "selected_service_id": selected_service.get("serviceId"),
+                "match_score": top_score,
+                "profiler_domain": profiler_domain,
+                "profiler_complexity": profiler_complexity,
+                "tied_count": len(tied_services),
+            }
+        }
+    )
+    
+    return selected_service, scoring_details
+
+
 async def handle_context_aware_nmt(
     http_client: httpx.AsyncClient,
     body_dict: Dict[str, Any],
@@ -888,6 +1289,7 @@ async def inject_service_id_if_missing(
     cost_policy: Optional[str] = None,
     accuracy_policy: Optional[str] = None,
     is_context_aware: bool = False,
+    is_request_profiler: bool = False,
 ) -> Tuple[str, Dict[str, Any], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """
     Ensure that body_dict.config.serviceId is populated, using SMR selection if needed.
@@ -895,9 +1297,130 @@ async def inject_service_id_if_missing(
     For context-aware requests:
     - If task_type is "nmt", calls LLM translate API directly and returns result
     - If task_type is not "nmt", returns error that context-aware is only available for NMT
+    
+    For request profiler requests:
+    - If task_type is "nmt", calls request profiler service and selects best matching service
+    - If task_type is not "nmt", returns error that profiler is only available for NMT
 
     Returns (service_id, updated_body_dict, tenant_policy_result, selected_service_dict, scoring_details, context_aware_result).
     """
+    # Handle request profiler requests (only for NMT)
+    # IMPORTANT: This check must happen FIRST, before any other routing logic
+    logger.info(
+        "SMR: inject_service_id_if_missing - checking profiler flag",
+        extra={
+            "context": {
+                "is_request_profiler": is_request_profiler,
+                "task_type": task_type,
+                "body_dict_keys": list(body_dict.keys()) if body_dict else [],
+                "has_config": "config" in (body_dict or {}),
+                "config_service_id": body_dict.get("config", {}).get("serviceId") if isinstance(body_dict.get("config"), dict) else None,
+            }
+        }
+    )
+    if is_request_profiler:
+        if task_type.lower() != "nmt":
+            raise HTTPException(
+                status_code=501,
+                detail={
+                    "code": "PROFILER_NOT_AVAILABLE",
+                    "message": f"Request profiler feature is not available for {task_type.upper()} service. This feature is currently only available for NMT (Neural Machine Translation) service.",
+                },
+            )
+        
+        # Extract text from NMT request
+        input_list = body_dict.get("input", [])
+        if not input_list:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_INPUT",
+                    "message": "Input text is required for profiler routing",
+                },
+            )
+        
+        # Combine all input texts
+        text_parts = []
+        for item in input_list:
+            if isinstance(item, dict):
+                source = item.get("source", "")
+                if source:
+                    text_parts.append(str(source))
+            elif isinstance(item, str):
+                text_parts.append(item)
+        
+        if not text_parts:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_INPUT",
+                    "message": "Source text cannot be empty for profiler routing",
+                },
+            )
+        
+        combined_text = " ".join(text_parts)
+        
+        logger.info(
+            "SMR: Request profiler routing enabled for NMT",
+            extra={
+                "context": {
+                    "task_type": task_type,
+                    "user_id": user_id,
+                    "tenant_id": tenant_id,
+                    "text_length": len(combined_text),
+                }
+            }
+        )
+        
+        # Call request profiler service
+        profiler_result = await call_request_profiler(http_client, combined_text)
+        profiler_domain = profiler_result.get("domain")
+        profiler_complexity = profiler_result.get("complexity_level")
+        
+        # Fetch candidate services
+        candidate_services = await fetch_candidate_services_for_task(
+            http_client=http_client,
+            task_type=task_type,
+        )
+        
+        if not candidate_services:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "NO_CANDIDATE_SERVICES",
+                    "message": "No candidate services found for the given task type.",
+                },
+            )
+        
+        # Select service based on profiler matching
+        selected_service, scoring_details = await select_service_by_profiler(
+            http_client=http_client,
+            services=candidate_services,
+            profiler_domain=profiler_domain,
+            profiler_complexity=profiler_complexity,
+        )
+        
+        service_id = str(selected_service.get("serviceId"))
+        
+        config = body_dict.get("config") or {}
+        if not isinstance(config, dict):
+            config = {}
+        config["serviceId"] = service_id
+        body_dict["config"] = config
+        
+        logger.info(
+            "SMR: Service selected by profiler routing",
+            extra={
+                "context": {
+                    "selected_service_id": service_id,
+                    "profiler_domain": profiler_domain,
+                    "profiler_complexity": profiler_complexity,
+                }
+            }
+        )
+        
+        return service_id, body_dict, None, selected_service, scoring_details, None
+    
     # Handle context-aware requests
     if is_context_aware:
         if task_type.lower() != "nmt":
@@ -905,7 +1428,7 @@ async def inject_service_id_if_missing(
                 status_code=501,
                 detail={
                     "code": "CONTEXT_AWARE_NOT_AVAILABLE",
-                    "message": f"Context-aware routing is currently only available for NMT (Neural Machine Translation) inference. This feature for {task_type.upper()} is under development and will be available in a future release.",
+                    "message": f"Context-aware feature is not available for {task_type.upper()} service. This feature is currently only available for NMT (Neural Machine Translation) service.",
                 },
             )
         
@@ -1204,6 +1727,15 @@ async def select_service(request: Request, payload: SMRSelectRequest) -> SMRSele
     """
     # Extract headers from the incoming request
     headers = dict(request.headers)
+    
+    # Log all headers for debugging
+    logger.info(
+        "SMR: Received request headers",
+        extra={
+            "all_header_keys": list(headers.keys()),
+            "x_headers": {k: v for k, v in headers.items() if k.startswith("X-") or k.startswith("x-")},
+        }
+    )
 
     # Build a mutable copy of the inference body for SMR core
     body_dict = dict(payload.request_body or {})
@@ -1218,16 +1750,93 @@ async def select_service(request: Request, payload: SMRSelectRequest) -> SMRSele
     cost_policy_header = headers.get("X-Cost-Policy") or headers.get("x-cost-policy")
     accuracy_policy_header = headers.get("X-Accuracy-Policy") or headers.get("x-accuracy-policy")
     
+    # Check if request profiler is enabled (from header)
+    # Check both case variations of the header name
+    request_profiler_header = (
+        headers.get("X-Request-Profiler") or 
+        headers.get("x-request-profiler") or
+        headers.get("X-Request-Profiler".lower())
+    )
+    is_request_profiler = False
+    if request_profiler_header:
+        header_value = str(request_profiler_header).strip().lower()
+        is_request_profiler = header_value in ("true", "1", "yes", "y")
+        logger.info(
+            "SMR: Request profiler header found",
+            extra={
+                "context": {
+                    "request_profiler_header": request_profiler_header,
+                    "header_value": header_value,
+                    "is_request_profiler": is_request_profiler,
+                }
+            }
+        )
+    else:
+        logger.info(
+            "SMR: No request profiler header found",
+            extra={
+                "context": {
+                    "all_headers_keys": list(headers.keys()),
+                    "profiler_headers": {k: v for k, v in headers.items() if "profiler" in k.lower()},
+                }
+            }
+        )
+    
     # Check if context-aware (from header or request body)
     is_context_aware = (
         headers.get("X-Context-Aware", "").lower() == "true" or
         headers.get("x-context-aware", "").lower() == "true" or
         body_dict.get("context_aware", False) is True
     )
+    
+    # Validate that only one feature header can be used at a time
+    feature_headers_count = sum([
+        is_request_profiler,
+        is_context_aware,
+        bool(latency_policy_header),
+        bool(cost_policy_header),
+        bool(accuracy_policy_header),
+    ])
+    
+    if feature_headers_count > 1:
+        used_features = []
+        if is_request_profiler:
+            used_features.append("X-Request-Profiler")
+        if is_context_aware:
+            used_features.append("X-Context-Aware")
+        if latency_policy_header:
+            used_features.append("X-Latency-Policy")
+        if cost_policy_header:
+            used_features.append("X-Cost-Policy")
+        if accuracy_policy_header:
+            used_features.append("X-Accuracy-Policy")
+        
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "MULTIPLE_FEATURES_NOT_ALLOWED",
+                "message": f"Only one feature header can be used at a time. You have provided: {', '.join(used_features)}. Please use only one feature header per request.",
+                "provided_features": used_features,
+            },
+        )
 
     # Reuse a short‑lived httpx client for the SMR core helpers
     async with httpx.AsyncClient(timeout=30.0) as http_client:
         try:
+            # Log before calling inject_service_id_if_missing to verify flags
+            logger.info(
+                "SMR: Calling inject_service_id_if_missing",
+                extra={
+                    "context": {
+                        "is_request_profiler": is_request_profiler,
+                        "is_context_aware": is_context_aware,
+                        "task_type": payload.task_type,
+                        "has_latency_policy": bool(latency_policy_header),
+                        "has_cost_policy": bool(cost_policy_header),
+                        "has_accuracy_policy": bool(accuracy_policy_header),
+                    }
+                }
+            )
             service_id, updated_body, tenant_policy_result, selected_service, scoring_details, context_aware_result = await inject_service_id_if_missing(
                 http_client=http_client,
                 task_type=payload.task_type,
@@ -1238,6 +1847,20 @@ async def select_service(request: Request, payload: SMRSelectRequest) -> SMRSele
                 cost_policy=cost_policy_header,
                 accuracy_policy=accuracy_policy_header,
                 is_context_aware=is_context_aware,
+                is_request_profiler=is_request_profiler,
+            )
+            # Log after calling to verify what was returned
+            logger.info(
+                "SMR: inject_service_id_if_missing returned",
+                extra={
+                    "context": {
+                        "service_id": service_id,
+                        "has_scoring_details": bool(scoring_details),
+                        "scoring_details_keys": list(scoring_details.keys()) if scoring_details else [],
+                        "has_profiler_domain": bool(scoring_details.get("profiler_domain") if scoring_details else False),
+                        "has_profiler_complexity": bool(scoring_details.get("profiler_complexity") if scoring_details else False),
+                    }
+                }
             )
         except HTTPException:
             # Bubble up FastAPI HTTPExceptions as‑is
@@ -1290,9 +1913,46 @@ async def select_service(request: Request, payload: SMRSelectRequest) -> SMRSele
                 "cost_policy": service_policy.get("cost_policy") or service_policy.get("cost"),
                 "accuracy_policy": service_policy.get("accuracy_policy") or service_policy.get("accuracy"),
             }
+            # Add domain and complexity from service policy if available
+            if service_policy.get("domain"):
+                service_policy_dict["domain"] = service_policy.get("domain")
+            if service_policy.get("complexity"):
+                service_policy_dict["complexity"] = service_policy.get("complexity")
             # Only include if at least one policy value is present
             if not any(service_policy_dict.values()):
                 service_policy_dict = None
+    
+    # Extract request_profiler results from scoring_details (if profiler was used)
+    request_profiler_dict = None
+    if is_request_profiler and scoring_details:
+        profiler_domain = scoring_details.get("profiler_domain")
+        profiler_complexity = scoring_details.get("profiler_complexity")
+        logger.info(
+            "SMR: Extracting profiler results from scoring_details",
+            extra={
+                "context": {
+                    "is_request_profiler": is_request_profiler,
+                    "has_scoring_details": bool(scoring_details),
+                    "scoring_details_keys": list(scoring_details.keys()) if scoring_details else [],
+                    "profiler_domain": profiler_domain,
+                    "profiler_complexity": profiler_complexity,
+                }
+            }
+        )
+        if profiler_domain or profiler_complexity:
+            request_profiler_dict = {
+                "domain": profiler_domain or "",
+                "complexity": profiler_complexity or "",
+            }
+        else:
+            logger.warning(
+                "SMR: Request profiler was enabled but scoring_details doesn't contain profiler_domain or profiler_complexity",
+                extra={
+                    "context": {
+                        "scoring_details": scoring_details,
+                    }
+                }
+            )
     
     # Determine tenant_id and is_free_user
     # ObservabilityMiddleware may set tenant_id="free-user" for free users (when JWT has no tenant_id)
@@ -1311,6 +1971,7 @@ async def select_service(request: Request, payload: SMRSelectRequest) -> SMRSele
         service_policy=service_policy_dict,
         scoring_details=scoring_details,
         context_aware_result=context_aware_result,
+        request_profiler=request_profiler_dict,
     )
 
 
