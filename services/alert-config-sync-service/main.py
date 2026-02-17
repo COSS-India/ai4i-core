@@ -27,12 +27,18 @@ def html_literal_representer(dumper, data):
 # Register the custom representer at module level
 yaml.add_representer(HTMLLiteral, html_literal_representer)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Configure structured logging (JSON) so Fluent Bit forwards logs to OpenSearch
+try:
+    from ai4icore_logging import get_logger, configure_logging
+    configure_logging(
+        service_name=os.getenv("SERVICE_NAME", "alert-config-sync-service"),
+        use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
+    )
+    logger = get_logger(__name__)
+except ImportError:
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    logger = logging.getLogger(__name__)
 
 # Configuration
 DB_HOST = os.getenv("POSTGRES_HOST", "postgres")
@@ -40,6 +46,9 @@ DB_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
 DB_USER = os.getenv("POSTGRES_USER", "dhruva_user")
 DB_PASSWORD = os.getenv("POSTGRES_PASSWORD", "dhruva_secure_password_2024")
 DB_NAME = "alerting_db"
+
+# Auth DB (same host/user/password, different database) - for resolving ADMIN emails for default receiver
+AUTH_DB_NAME = os.getenv("AUTH_DB_NAME", "auth_db")
 
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
 ALERTMANAGER_URL = os.getenv("ALERTMANAGER_URL", "http://alertmanager:9093")
@@ -52,9 +61,14 @@ ALERTMANAGER_CONFIG_PATH = os.getenv("ALERTMANAGER_CONFIG_PATH", "/etc/alertmana
 # Sync interval (seconds)
 SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", "60"))
 
+# Default receiver (ADMIN role) - fallback emails if auth DB unavailable (comma-separated)
+DEFAULT_RECEIVER_EMAILS = [e.strip() for e in (os.getenv("DEFAULT_RECEIVER_EMAILS") or "").split(",") if e and e.strip()]
+
 # Database connection pool
 db_pool: Optional[asyncpg.Pool] = None
 db_pool_lock = asyncio.Lock()
+auth_db_pool: Optional[asyncpg.Pool] = None
+auth_db_pool_lock = asyncio.Lock()
 
 # Lock to prevent concurrent sync operations
 sync_lock = asyncio.Lock()
@@ -87,6 +101,59 @@ async def close_db_pool():
         await db_pool.close()
         db_pool = None
         logger.info("Database connection pool closed")
+
+async def init_auth_db_pool():
+    """Initialize auth database connection pool for resolving ADMIN emails (default receiver)"""
+    global auth_db_pool
+    async with auth_db_pool_lock:
+        if auth_db_pool is None:
+            try:
+                auth_db_pool = await asyncpg.create_pool(
+                    host=DB_HOST,
+                    port=DB_PORT,
+                    user=DB_USER,
+                    password=DB_PASSWORD,
+                    database=AUTH_DB_NAME,
+                    min_size=1,
+                    max_size=3
+                )
+                logger.info("Auth database connection pool initialized")
+            except Exception as e:
+                logger.warning(f"Auth database pool not available: {e}, default receiver will use DEFAULT_RECEIVER_EMAILS env")
+
+async def close_auth_db_pool():
+    """Close auth database connection pool"""
+    global auth_db_pool
+    if auth_db_pool:
+        await auth_db_pool.close()
+        auth_db_pool = None
+        logger.info("Auth database connection pool closed")
+
+async def fetch_admin_emails() -> List[str]:
+    """Fetch email addresses of active users with ADMIN role from auth DB for default receiver."""
+    if auth_db_pool is None:
+        await init_auth_db_pool()
+    if auth_db_pool is None:
+        return list(DEFAULT_RECEIVER_EMAILS)
+    try:
+        async with auth_db_pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT u.email
+                FROM users u
+                INNER JOIN user_roles ur ON u.id = ur.user_id
+                INNER JOIN roles r ON ur.role_id = r.id
+                WHERE r.name = 'ADMIN' AND u.is_active = true
+                ORDER BY u.email
+                """,
+            )
+            emails = [row['email'] for row in rows if row.get('email')]
+            if emails:
+                logger.info(f"Resolved {len(emails)} ADMIN user(s) for default receiver")
+            return emails if emails else list(DEFAULT_RECEIVER_EMAILS)
+    except Exception as e:
+        logger.warning(f"Could not fetch ADMIN emails from auth DB: {e}, using DEFAULT_RECEIVER_EMAILS")
+        return list(DEFAULT_RECEIVER_EMAILS)
 
 async def fetch_alert_definitions() -> List[Dict[str, Any]]:
     """Fetch all enabled alert definitions from database"""
@@ -247,17 +314,40 @@ def load_global_config_from_file() -> Dict[str, Any]:
 
 def generate_alertmanager_yaml(
     receivers: List[Dict[str, Any]],
-    routing_rules: List[Dict[str, Any]]
+    routing_rules: List[Dict[str, Any]],
+    default_admin_emails: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Generate Alertmanager configuration from receivers and routing rules.
     Preserves global SMTP config from existing file, everything else comes from database.
+    Always includes a default receiver 'default-admin' (ADMIN role, not tied to any organization).
+    Only routes whose receiver still exists in the config are included (stale routes removed).
     """
     # Load global config from existing file (preserves SMTP settings)
     global_config = load_global_config_from_file()
     
-    # Build receivers from database
+    default_admin_emails = default_admin_emails or []
+    default_receiver_name = "default-admin"
+
+    # Build receivers: first add the default receiver (not tied to any organization, ADMIN role)
     receivers_config = []
+    default_email_configs = []
+    for email in default_admin_emails:
+        if email and str(email).strip():
+            default_email_configs.append({
+                'to': str(email).strip(),
+                'send_resolved': True,
+                'headers': {'Subject': DEFAULT_EMAIL_SUBJECT_TEMPLATE},
+                'html': DEFAULT_EMAIL_BODY_TEMPLATE
+            })
+    receivers_config.append({
+        'name': default_receiver_name,
+        'email_configs': default_email_configs,
+    })
+    if not default_email_configs:
+        logger.warning("Default receiver 'default-admin' has no email addresses; set DEFAULT_RECEIVER_EMAILS or ensure auth DB has ADMIN users")
+
+    # Build receivers from database (organization-specific)
     receivers_by_organization = {}
     
     for receiver in receivers:
@@ -271,36 +361,41 @@ def generate_alertmanager_yaml(
         # Build email configuration
         email_configs = []
         if receiver.get('email_to'):
-            # Extract first email from list (database stores as array)
+            # Handle multiple emails (from RBAC role resolution or direct input)
             email_to = receiver['email_to']
-            if isinstance(email_to, list):
-                # Take first email from list
-                email_to = email_to[0] if email_to else None
-            elif isinstance(email_to, str):
-                # Already a string, use as-is
-                pass
-            else:
-                # Convert to list and take first
-                email_list = list(email_to) if email_to else []
-                email_to = email_list[0] if email_list else None
             
-            if email_to:
-                # Alertmanager expects 'to' as a single string
-                # Format: to: 'email@example.com'
-                email_config = {
-                    'to': str(email_to).strip(),  # Single string, not a list
-                    'send_resolved': True
-                }
-                # Use default templates if not provided
-                email_subject_template = receiver.get('email_subject_template') or DEFAULT_EMAIL_SUBJECT_TEMPLATE
-                email_body_template = receiver.get('email_body_template') or DEFAULT_EMAIL_BODY_TEMPLATE
-                
-                email_config['headers'] = {
-                    'Subject': email_subject_template
-                }
-                # Store HTML template - will be formatted as YAML literal block in post-processing
-                email_config['html'] = email_body_template
-                email_configs.append(email_config)
+            # Normalize to list format
+            if isinstance(email_to, str):
+                # Single email as string, convert to list
+                email_list = [email_to]
+            elif isinstance(email_to, list):
+                # Already a list
+                email_list = email_to
+            else:
+                # Convert other types to list
+                email_list = list(email_to) if email_to else []
+            
+            # Use default templates if not provided
+            email_subject_template = receiver.get('email_subject_template') or DEFAULT_EMAIL_SUBJECT_TEMPLATE
+            email_body_template = receiver.get('email_body_template') or DEFAULT_EMAIL_BODY_TEMPLATE
+            
+            # Create one email_config per email address
+            # This ensures all users (from RBAC role) receive notifications
+            for email in email_list:
+                if email and str(email).strip():
+                    email_config = {
+                        'to': str(email).strip(),  # Single email per config
+                        'send_resolved': True
+                    }
+                    email_config['headers'] = {
+                        'Subject': email_subject_template
+                    }
+                    # Store HTML template - will be formatted as YAML literal block in post-processing
+                    email_config['html'] = email_body_template
+                    email_configs.append(email_config)
+            
+            if not email_configs:
+                logger.warning(f"No valid email addresses found for receiver '{receiver_name}' (organization: {organization})")
         
         receiver_config['email_configs'] = email_configs
         receivers_config.append(receiver_config)
@@ -439,6 +534,13 @@ def generate_alertmanager_yaml(
                 root_routes.append(route)
                 logger.debug(f"Auto-generated routing rule for {organization}/{severity}/{category}")
     
+    # Only include routes whose receiver exists in our config (remove stale routes for deleted receivers)
+    valid_receiver_names = {r['name'] for r in receivers_config}
+    before_count = len(root_routes)
+    root_routes = [r for r in root_routes if r.get('receiver') in valid_receiver_names]
+    if len(root_routes) < before_count:
+        logger.warning(f"Removed {before_count - len(root_routes)} route(s) that referenced deleted or non-existent receivers")
+
     # Build complete Alertmanager configuration
     # Only global config is preserved from file, everything else from database
     route_config = {
@@ -448,39 +550,13 @@ def generate_alertmanager_yaml(
         'repeat_interval': '12h'
     }
     
-    # Alertmanager requires a default receiver at root level
-    # Use the first available receiver as default, or create a fallback
-    default_receiver = None
-    if receivers:
-        # Use the first enabled receiver as default
-        first_receiver = receivers[0]
-        default_receiver = f"{first_receiver['organization']}-{first_receiver['receiver_name']}"
-        logger.info(f"Using '{default_receiver}' as default receiver")
-    else:
-        # Create a fallback default receiver if no receivers exist
-        logger.warning("No receivers found, creating fallback default receiver")
-        default_receiver = 'default-receiver'
-        # Add a default receiver to receivers_config
-        receivers_config.append({
-            'name': 'default-receiver',
-            'email_configs': [{
-                'to': 'bharathia6@gmail.com',  # Fallback email
-                'send_resolved': True,
-                'headers': {'Subject': '[ALERT] Default Receiver - {{ .GroupLabels.alertname }}'},
-                'html': '<html><body><h2>Alert: {{ .GroupLabels.alertname }}</h2><p>This is a fallback receiver.</p></body></html>'
-            }]
-        })
+    # Root default receiver is always default-admin (not tied to any organization, ADMIN role)
+    route_config['receiver'] = default_receiver_name
     
-    route_config['receiver'] = default_receiver
-    
-    # Routes must exist - no generic receiver at root level
-    # If no routing rules exist, we cannot create a valid config
+    # Routes: only include routes for receivers that exist in config
     if not root_routes:
-        logger.warning("No routing rules configured in database. All alerts will go to default receiver.")
-        # Create empty routes list - alerts will go to default receiver
-        route_config['routes'] = []
-    else:
-        route_config['routes'] = root_routes
+        logger.info("No organization routes; all alerts will go to default-admin receiver.")
+    route_config['routes'] = root_routes
     
     config = {
         'global': global_config,
@@ -745,10 +821,13 @@ async def sync_configuration(blocking: bool = True) -> None:
             else:
                 logger.warning("No enabled receivers found in database!")
             
+            # Resolve ADMIN emails for default receiver (not tied to any organization)
+            default_admin_emails = await fetch_admin_emails()
+
             # Generate YAML configurations - separate files for application and infrastructure
             application_alerts = generate_prometheus_alerts_yaml(alert_definitions, category='application')
             infrastructure_alerts = generate_prometheus_alerts_yaml(alert_definitions, category='infrastructure')
-            alertmanager_config = generate_alertmanager_yaml(receivers, routing_rules)
+            alertmanager_config = generate_alertmanager_yaml(receivers, routing_rules, default_admin_emails=default_admin_emails)
             
             # Write YAML files - separate files for application and infrastructure alerts
             await write_yaml_file(PROMETHEUS_APPLICATION_ALERTS_PATH, application_alerts)
@@ -880,7 +959,9 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.info("Shutting down...")
     finally:
-        # Close pool if still open
+        # Close pools if still open
         if db_pool:
             asyncio.run(close_db_pool())
+        if auth_db_pool:
+            asyncio.run(close_auth_db_pool())
 
