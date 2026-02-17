@@ -30,14 +30,24 @@ import {
   useToast,
   Textarea,
   SimpleGrid,
-  Grid
+  Grid,
+  Alert,
+  AlertIcon,
+  AlertDescription,
+  Code,
+  Spinner,
+  Center
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useState, useEffect } from "react";
+import { useRouter } from "next/router";
+import React, { useState, useEffect, useRef } from "react";
 import ContentLayout from "../components/common/ContentLayout";
-import { unpublishModel, getAllModels, createModel, getModelById, updateModel, publishModel } from "../services/modelManagementService";
+import { getAllModels, createModel, getModelById, updateModel } from "../services/modelManagementService";
+import { listServices as listServicesForModels } from "../services/servicesManagementService";
 import { useAuth } from "../hooks/useAuth";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
+import { extractErrorInfo } from "../utils/errorHandler";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 // TypeScript interfaces for model data
 interface OAuthId {
@@ -86,267 +96,10 @@ interface Model {
   inferenceEndPoint: InferenceEndPoint;
   source: string;
   task: Task;
-  isPublished?: boolean;
   version?: string;
+  versionStatus?: "active" | "deprecated" | "ACTIVE" | "DEPRECATED";
   refUrl?: string;
 }
-
-// Hardcoded model data
-const hardcodedModels: Model[] = [
-  {
-    modelId: "123456",
-    name: "string",
-    description: "string",
-    languages: [{}],
-    domain: ["string"],
-    submitter: {
-      name: "string",
-      aboutMe: "string",
-      team: [
-        {
-          name: "string",
-          aboutMe: "string",
-          oauthId: {
-            oauthId: "string",
-            provider: "string",
-          },
-        },
-      ],
-    },
-    license: "string",
-    inferenceEndPoint: {
-      schema: {
-        modelProcessingType: {
-          type: "string",
-        },
-        request: {},
-        response: {},
-      },
-    },
-    source: "string",
-    task: {
-      type: "asr",
-    },
-  },
-  {
-    modelId: "1234567",
-    name: "Check name update test",
-    description: "string",
-    languages: [{}],
-    domain: ["string"],
-    submitter: {
-      name: "string",
-      aboutMe: "string",
-      team: [
-        {
-          name: "string",
-          aboutMe: "string",
-          oauthId: {
-            oauthId: "string",
-            provider: "string",
-          },
-        },
-      ],
-    },
-    license: "string",
-    inferenceEndPoint: {
-      schema: {
-        modelProcessingType: {
-          type: "string",
-        },
-        request: {},
-        response: {},
-      },
-    },
-    source: "string",
-    task: {
-      type: "nmt",
-    },
-  },
-  {
-    modelId: "12345678",
-    name: "string",
-    description: "string",
-    languages: [{}],
-    domain: ["string"],
-    submitter: {
-      name: "string",
-      aboutMe: "string",
-      team: [
-        {
-          name: "string",
-          aboutMe: "string",
-          oauthId: {
-            oauthId: "string",
-            provider: "string",
-          },
-        },
-      ],
-    },
-    license: "string",
-    inferenceEndPoint: {
-      schema: {
-        modelProcessingType: {
-          type: "string",
-        },
-        request: {},
-        response: {},
-      },
-    },
-    source: "string",
-    task: {
-      type: "asr",
-    },
-  },
-  {
-    modelId: "A123456789",
-    name: "Check name update",
-    description: "string",
-    languages: [{}],
-    domain: ["string"],
-    submitter: {
-      name: "string",
-      aboutMe: "string",
-      team: [
-        {
-          name: "string",
-          aboutMe: "string",
-          oauthId: {
-            oauthId: "string",
-            provider: "string",
-          },
-        },
-      ],
-    },
-    license: "string",
-    inferenceEndPoint: {
-      schema: {
-        modelProcessingType: {
-          type: "string",
-        },
-        request: {},
-        response: {},
-      },
-    },
-    source: "string",
-    task: {
-      type: "nmt",
-    },
-  },
-  {
-    modelId: "async_test_1",
-    name: "test_update",
-    description: "string",
-    languages: [{}],
-    domain: ["string"],
-    submitter: {
-      name: "string",
-      aboutMe: "string",
-      team: [
-        {
-          name: "string",
-          aboutMe: "string",
-          oauthId: {
-            oauthId: "string",
-            provider: "string",
-          },
-        },
-      ],
-    },
-    license: "string",
-    inferenceEndPoint: {
-      schema: {
-        modelProcessingType: {
-          type: "string",
-        },
-        request: {},
-        response: {},
-      },
-    },
-    source: "string",
-    task: {
-      type: "asr",
-    },
-  },
-  {
-    modelId: "ai4bharat/indicasr",
-    name: "name_update",
-    description: "string",
-    languages: [
-      {
-        additionalProp1: {},
-      },
-    ],
-    domain: ["string"],
-    submitter: {
-      name: "string",
-      aboutMe: "string",
-      team: [
-        {
-          name: "string",
-          aboutMe: "string",
-          oauthId: {
-            oauthId: "string",
-            provider: "string",
-          },
-        },
-      ],
-    },
-    license: "string",
-    inferenceEndPoint: {
-      schema: {
-        modelProcessingType: {
-          type: "string",
-        },
-        request: {},
-        response: {},
-      },
-    },
-    source: "string",
-    task: {
-      type: "string",
-    },
-  },
-  {
-    modelId: "ai4bharat/indictrans-v2",
-    name: "new_update",
-    description: "string",
-    languages: [
-      {
-        additionalProp1: {},
-      },
-    ],
-    domain: ["string"],
-    submitter: {
-      name: "string",
-      aboutMe: "string",
-      team: [
-        {
-          name: "string",
-          aboutMe: "string",
-          oauthId: {
-            oauthId: "string",
-            provider: "string",
-          },
-        },
-      ],
-    },
-    license: "string",
-    inferenceEndPoint: {
-      schema: {
-        modelProcessingType: {
-          type: "string",
-        },
-        request: {},
-        response: {},
-      },
-    },
-    source: "string",
-    task: {
-      type: "string",
-    },
-  },
-];
 
 const ModelManagementPage: React.FC = () => {
   const [models, setModels] = useState<Model[]>([]);
@@ -367,12 +120,35 @@ const ModelManagementPage: React.FC = () => {
   const [updateFormData, setUpdateFormData] = useState<Partial<Model>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
-  const [unpublishingModelId, setUnpublishingModelId] = useState<string | null>(null);
-  const [publishingModelId, setPublishingModelId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
-  const toast = useToast();
-  const { accessToken } = useAuth();
+  const [uploadedModelData, setUploadedModelData] = useState<any>(null);
+  const [parsedModelData, setParsedModelData] = useState<any>(null);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [updatingModelId, setUpdatingModelId] = useState<string | null>(null);
+  const [modelIdsWithService, setModelIdsWithService] = useState<Set<string>>(new Set());
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const toast = useToastWithDeduplication();
+  const {  user } = useAuth();
+
   const { checkSessionExpiry } = useSessionExpiry();
+  const router = useRouter();
+  
+  // Check if user is GUEST or USER and redirect if so
+  useEffect(() => {
+    if (user?.roles?.includes('GUEST') || user?.roles?.includes('USER')) {
+      toast({
+        title: "Access Denied",
+        description: "You do not have access to Model Management.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      router.push('/');
+    }
+  }, [user, router, toast]);
 
   // Fetch models on component mount
   useEffect(() => {
@@ -384,29 +160,18 @@ const ModelManagementPage: React.FC = () => {
       } catch (error: any) {
         console.error("Failed to fetch models:", error);
         
-        // Check if it's an authentication error
-        if (error.response?.status === 401 || error.message?.includes('Authentication') || error.message?.includes('401')) {
-          const errorMessage = error instanceof Error ? error.message : "Authentication failed";
+        // Use centralized error handler
+        const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
+        
           toast({
-            title: "Authentication Error",
-            description: errorMessage.includes('Model management') ? errorMessage : `Model management error: ${errorMessage}. Please check your login status and try again.`,
+          title: showOnlyMessage ? undefined : errorTitle,
+          description: errorMessage,
             status: "error",
             duration: 5000,
             isClosable: true,
           });
-          // Don't set hardcoded models on auth error
+        // On error, set empty array
           setModels([]);
-        } else {
-          toast({
-            title: "Failed to Load Models",
-            description: error instanceof Error ? error.message : "Failed to fetch models",
-            status: "error",
-            duration: 5000,
-            isClosable: true,
-          });
-          // Fallback to hardcoded models on other errors
-          setModels(hardcodedModels);
-        }
       } finally {
         setIsLoading(false);
       }
@@ -414,6 +179,24 @@ const ModelManagementPage: React.FC = () => {
 
     fetchModels();
   }, [toast]);
+
+  // Fetch services to know which models have a service associated (no deprecate for those)
+  useEffect(() => {
+    const fetchServices = async () => {
+      try {
+        const svcs = await listServicesForModels();
+        const ids = new Set<string>();
+        (svcs || []).forEach((s: any) => {
+          const id = s.modelId ?? s.model_id;
+          if (id) ids.add(String(id));
+        });
+        setModelIdsWithService(ids);
+      } catch {
+        setModelIdsWithService(new Set());
+      }
+    };
+    fetchServices();
+  }, []);
 
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
@@ -444,61 +227,192 @@ const ModelManagementPage: React.FC = () => {
     }));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleClearUpload = () => {
+    setUploadedModelData(null);
+    setParsedModelData(null);
+    setValidationErrors([]);
+    setUploadError(null);
+    setIsUploading(false);
+    setIsValidating(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDownloadSample = () => {
+    const sampleModel = {
+      modelId: "example/example-model",
+      version: "1.0.0",
+      name: "example-model",
+      description: "A sample model for demonstration purposes",
+      refUrl: "https://github.com/example/example-model",
+      task: {
+        type: "asr"
+      },
+      languages: [
+        {
+          sourceLanguage: "hi",
+          sourceScriptCode: "Deva",
+          targetLanguage: "hi",
+          targetScriptCode: "Deva"
+        }
+      ],
+      license: "mit",
+      domain: [
+        "general"
+      ],
+      inferenceEndPoint: {
+        schema: {
+          modelProcessingType: {
+            type: "batch"
+          },
+          request: {
+            input: [
+              {
+                audio: "base64_encoded_audio_string"
+              }
+            ],
+            config: {
+              language: {
+                sourceLanguage: "hi"
+              }
+            }
+          },
+          response: {
+            output: [
+              {
+                transcript: "string"
+              }
+            ]
+          }
+        }
+      },
+      benchmarks: [
+        {
+          benchmarkId: "example-benchmark-001",
+          name: "Example Benchmark",
+          description: "Sample benchmark for evaluation",
+          domain: "general",
+          createdOn: "2025-01-15T10:00:00.000Z",
+          languages: {
+            sourceLanguage: "hi",
+            targetLanguage: "hi"
+          },
+          score: [
+            {
+              metricName: "WER",
+              score: "7.5"
+            }
+          ]
+        }
+      ],
+      submitter: {
+        name: "Example Organization",
+        aboutMe: "An example organization",
+        team: [
+          {
+            name: "John Doe",
+            aboutMe: "Lead Researcher",
+            oauthId: {
+              oauthId: "1234567890",
+              provider: "google"
+            }
+          }
+        ]
+      }
+    };
+
+    const blob = new Blob([JSON.stringify(sampleModel, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'sample-model.json';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const validateModelData = (data: any): string[] => {
+    const errors: string[] = [];
     
-    // Check session expiry before submitting
+    // Required fields
+    if (!data.modelId || typeof data.modelId !== 'string' || data.modelId.trim() === '') {
+      errors.push('modelId is required and must be a non-empty string');
+    }
+    
+    if (!data.name || typeof data.name !== 'string' || data.name.trim() === '') {
+      errors.push('name is required and must be a non-empty string');
+    }
+    
+    if (!data.description || typeof data.description !== 'string' || data.description.trim() === '') {
+      errors.push('description is required and must be a non-empty string');
+    }
+    
+    if (!data.task || typeof data.task !== 'object' || !data.task.type) {
+      errors.push('task is required and must be an object with a type field');
+    }
+    
+    if (!data.languages || !Array.isArray(data.languages) || data.languages.length === 0) {
+      errors.push('languages is required and must be a non-empty array');
+    }
+    
+    if (!data.license || typeof data.license !== 'string' || data.license.trim() === '') {
+      errors.push('license is required and must be a non-empty string');
+    }
+    
+    if (!data.domain || !Array.isArray(data.domain) || data.domain.length === 0) {
+      errors.push('domain is required and must be a non-empty array');
+    }
+    
+    if (!data.inferenceEndPoint || typeof data.inferenceEndPoint !== 'object') {
+      errors.push('inferenceEndPoint is required and must be an object');
+    }
+    
+    if (!data.submitter || typeof data.submitter !== 'object' || !data.submitter.name) {
+      errors.push('submitter is required and must be an object with a name field');
+    }
+    
+    // Validate model name format (alphanumeric, hyphens, forward slashes only)
+    if (data.name) {
+      const namePattern = /^[a-zA-Z0-9/-]+$/;
+      if (!namePattern.test(data.name)) {
+        errors.push('name must contain only alphanumeric characters, hyphens (-), and forward slashes (/). Example: "example-model" or "org/model-name"');
+      }
+    }
+    
+    return errors;
+  };
+
+  const handleCreateModel = async () => {
+    if (!parsedModelData) return;
+    
+    // Check session expiry before creating
     if (!checkSessionExpiry()) return;
     
-    setIsSubmitting(true);
-
+    setIsUploading(true);
+    setUploadError(null);
+    
     try {
-      // Prepare model data for API with all required fields
-      const currentTimestamp = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
+      // Prepare model data with timestamps if not present
+      const currentTimestamp = Math.floor(Date.now() / 1000);
       const modelData: any = {
-        modelId: formData.modelId,
-        version: "1.0", // Default version
-        submittedOn: currentTimestamp,
-        updatedOn: currentTimestamp,
-        name: formData.name,
-        description: formData.description,
-        refUrl: formData.source || "string", // Use source as refUrl if available
-        task: formData.task || { type: "" },
-        license: formData.license || "string",
-        source: formData.source || "string",
-        domain: formData.domain || ["string"],
-        languages: formData.languages || [{}],
-        benchmarks: [], // Empty benchmarks array (required field)
-        submitter: {
-          name: "string",
-          aboutMe: "string",
-          team: [
-            {
-              name: "string",
-              aboutMe: "string",
-              oauthId: {
-                oauthId: "string",
-                provider: "string",
-              },
-            },
-          ],
-        },
-        inferenceEndPoint: {
-          schema: {
-            modelProcessingType: {
-              type: "string",
-            },
-            request: {},
-            response: {},
-          },
-        },
+        ...parsedModelData,
+        submittedOn: parsedModelData.submittedOn || currentTimestamp,
+        updatedOn: parsedModelData.updatedOn || currentTimestamp,
+        version: parsedModelData.version || "1.0",
       };
 
+      // Create model via API
       const createdModel = await createModel(modelData);
+
+      // Display created model data
+      setUploadedModelData(createdModel);
+      setParsedModelData(null);
 
       toast({
         title: "Model Created",
-        description: "Model has been created successfully",
+        description: "Model has been created successfully from JSON file",
         status: "success",
         duration: 3000,
         isClosable: true,
@@ -508,27 +422,107 @@ const ModelManagementPage: React.FC = () => {
       const fetchedModels = await getAllModels();
       setModels(fetchedModels);
 
-      // Reset form
-      setFormData({
-        name: "",
-        description: "",
-        modelId: "",
-        license: "",
-        source: "",
-        task: { type: "" },
-        domain: [],
-        languages: [],
-      });
-    } catch (error) {
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    } catch (error: any) {
+      // Use centralized error handler for consistent error messages
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
+      
+      setUploadError(errorMessage);
+      
       toast({
-        title: "Creation Failed",
-        description: error instanceof Error ? error.message : "Failed to create model",
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMessage,
         status: "error",
         duration: 5000,
         isClosable: true,
       });
     } finally {
-      setIsSubmitting(false);
+      setIsUploading(false);
+    }
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Reset previous state
+    setUploadedModelData(null);
+    setParsedModelData(null);
+    setValidationErrors([]);
+    setUploadError(null);
+    setIsValidating(true);
+
+    try {
+      // Validate file type
+      if (!file.name.endsWith('.json')) {
+        throw new Error('Please upload a JSON file');
+      }
+
+      // Read file content
+      const fileContent = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          resolve(e.target?.result as string);
+        };
+        reader.onerror = () => {
+          reject(new Error('Failed to read file'));
+        };
+        reader.readAsText(file);
+      });
+
+      // Parse JSON
+      let parsedData: any;
+      try {
+        parsedData = JSON.parse(fileContent);
+      } catch (parseError) {
+        throw new Error('Invalid JSON format. Please check your file.');
+      }
+
+      // Validate that it's an object
+      if (typeof parsedData !== 'object' || parsedData === null || Array.isArray(parsedData)) {
+        throw new Error('JSON must be an object');
+      }
+
+      // Validate required fields
+      const errors = validateModelData(parsedData);
+      if (errors.length > 0) {
+        setValidationErrors(errors);
+        setUploadError(errors.join('; '));
+        setIsValidating(false);
+        return;
+      }
+
+      // Store parsed data for review and creation
+      setParsedModelData(parsedData);
+      setValidationErrors([]);
+      setUploadError(null);
+
+      toast({
+        title: "File Validated",
+        description: "JSON file has been validated successfully. Review the data below and click 'Create Model' to proceed.",
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+    } catch (error: any) {
+      // Use centralized error handler for consistent error messages
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
+      
+      setUploadError(errorMessage);
+      setValidationErrors([]);
+      
+      toast({
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMessage,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setIsValidating(false);
     }
   };
 
@@ -607,84 +601,114 @@ const ModelManagementPage: React.FC = () => {
     }
   };
 
-  const handlePublish = async (modelId: string) => {
-    // Check session expiry before publishing
+  const handleDeprecateModel = async (model: Model) => {
+    // Check session expiry before deprecating
     if (!checkSessionExpiry()) return;
     
-    setPublishingModelId(modelId);
-    
+    if (!model.modelId || !model.version) {
+      toast({
+        title: "Deprecate Failed",
+        description: "Model ID and version are required",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    setUpdatingModelId(model.modelId);
+
     try {
-      await publishModel(modelId);
+      await updateModel({
+        modelId: model.modelId,
+        version: model.version,
+        versionStatus: "DEPRECATED",
+      });
+
+      toast({
+        title: "Model Deprecated",
+        description: `Model ${model.name || model.modelId} has been deprecated successfully`,
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
       
       // Refresh models list and selected model
       const fetchedModels = await getAllModels();
       setModels(fetchedModels);
-      if (selectedModel && selectedModel.modelId === modelId) {
-        const updatedModel = await getModelById(modelId);
+      if (selectedModel && selectedModel.modelId === model.modelId) {
+        const updatedModel = await getModelById(model.modelId);
         setSelectedModel(updatedModel);
         setUpdateFormData(updatedModel);
       }
-
+    } catch (error: any) {
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
       toast({
-        title: "Model Published",
-        description: `Model ${modelId} has been published successfully`,
-        status: "success",
-        duration: 3000,
-        isClosable: true,
-      });
-    } catch (error) {
-      toast({
-        title: "Publish Failed",
-        description: error instanceof Error ? error.message : "Failed to publish model",
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMessage,
         status: "error",
         duration: 5000,
         isClosable: true,
       });
     } finally {
-      setPublishingModelId(null);
+      setUpdatingModelId(null);
     }
   };
 
-  const handleUnpublish = async (modelId: string) => {
-    // Check session expiry before unpublishing
+  const handleActivateModel = async (model: Model) => {
+    // Check session expiry before activating
     if (!checkSessionExpiry()) return;
     
-    setUnpublishingModelId(modelId);
-    
+    if (!model.modelId || !model.version) {
+      toast({
+        title: "Activate Failed",
+        description: "Model ID and version are required",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    setUpdatingModelId(model.modelId);
+
     try {
-      // Call the unpublish API
-      const response = await unpublishModel(modelId);
-      
-      // Refresh models list from API
-      const fetchedModels = await getAllModels();
-      setModels(fetchedModels);
-      
-      // Update selected model if it's the one being unpublished
-      if (selectedModel && selectedModel.modelId === modelId) {
-        const updatedModel = await getModelById(modelId);
-        setSelectedModel(updatedModel);
-        setUpdateFormData(updatedModel);
-      }
+      await updateModel({
+        modelId: model.modelId,
+        version: model.version,
+        versionStatus: "ACTIVE",
+      });
 
       toast({
-        title: "Model Unpublished",
-        description: response.message || `Model ${modelId} has been unpublished successfully`,
+        title: "Model Activated",
+        description: `Model ${model.name || model.modelId} has been activated successfully`,
         status: "success",
         duration: 3000,
         isClosable: true,
       });
-    } catch (error) {
+
+      // Refresh models list and selected model
+      const fetchedModels = await getAllModels();
+      setModels(fetchedModels);
+      if (selectedModel && selectedModel.modelId === model.modelId) {
+        const updatedModel = await getModelById(model.modelId);
+        setSelectedModel(updatedModel);
+        setUpdateFormData(updatedModel);
+      }
+    } catch (error: any) {
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
       toast({
-        title: "Unpublish Failed",
-        description: error instanceof Error ? error.message : "Failed to unpublish model",
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMessage,
         status: "error",
         duration: 5000,
         isClosable: true,
       });
     } finally {
-      setUnpublishingModelId(null);
+      setUpdatingModelId(null);
     }
   };
+
 
   return (
     <>
@@ -697,10 +721,10 @@ const ModelManagementPage: React.FC = () => {
            <VStack spacing={6} w="full">
                   {/* Page Header */}
                   <Box textAlign="center" mb={2}>
-                    <Heading size="lg" color="gray.800" mb={1}>
+                    <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
                      Model Management
                     </Heading>
-                    <Text color="gray.600" fontSize="sm">
+                    <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
                     Manage and configure AI models
                     </Text>
                   </Box>
@@ -708,9 +732,9 @@ const ModelManagementPage: React.FC = () => {
                   <Grid
                     gap={8}
                     w="full"
-                  
                     mx="auto"
-                  > <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px">
+                  >
+                    <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px">
             <Tabs 
               colorScheme="blue" 
               variant="enclosed" 
@@ -726,7 +750,7 @@ const ModelManagementPage: React.FC = () => {
               <TabList>
                 <Tab fontWeight="semibold">List Models</Tab>
                 <Tab fontWeight="semibold">Create Model</Tab>
-                {isViewingModel && (
+                {isViewingModel && selectedModel && (
                   <Tab fontWeight="semibold">View Model</Tab>
                 )}
               </TabList>
@@ -736,7 +760,7 @@ const ModelManagementPage: React.FC = () => {
                 <TabPanel px={0} pt={6}>
                   <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                     <CardHeader>
-                      <Heading size="md" color="gray.700">
+                      <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                         All Models
                       </Heading>
                     </CardHeader>
@@ -752,6 +776,8 @@ const ModelManagementPage: React.FC = () => {
                               <Tr>
                                 <Th>Model ID</Th>
                                 <Th>Name</Th>
+                                <Th>Model Version</Th>
+                                <Th>Version Status</Th>
                                 <Th>Description</Th>
                                 <Th>Task Type</Th>
                                 <Th>License</Th>
@@ -774,6 +800,19 @@ const ModelManagementPage: React.FC = () => {
                                 </Td>
                                 <Td>
                                   <Text fontSize="sm">{model.name}</Text>
+                                </Td>
+                                <Td>
+                                  <Text fontSize="sm" fontWeight="medium">
+                                    {model.version || "1.0"}
+                                  </Text>
+                                </Td>
+                                <Td>
+                                  <Badge
+                                    colorScheme={model.versionStatus?.toLowerCase() === "active" || !model.versionStatus ? "green" : "gray"}
+                                    fontSize="xs"
+                                  >
+                                    {model.versionStatus?.toLowerCase() === "active" || !model.versionStatus ? "ACTIVE" : "DEPRECATED"}
+                                  </Badge>
                                 </Td>
                                 <Td>
                                   <Text fontSize="sm" noOfLines={2} maxW="300px">
@@ -820,31 +859,31 @@ const ModelManagementPage: React.FC = () => {
                                     >
                                       View
                                     </Button>
-                                    {model.isPublished === true ? (
+                                    {(model.versionStatus?.toLowerCase() === "active" || !model.versionStatus) && !modelIdsWithService.has(model.modelId) ? (
                                       <Button
                                         size="sm"
-                                        colorScheme="red"
+                                        colorScheme="orange"
                                         variant="outline"
-                                        onClick={() => handleUnpublish(model.modelId)}
-                                        isLoading={unpublishingModelId === model.modelId}
-                                        loadingText="Unpublishing..."
-                                        isDisabled={unpublishingModelId !== null || publishingModelId !== null}
+                                        onClick={() => handleDeprecateModel(model)}
+                                        isLoading={updatingModelId === model.modelId}
+                                        loadingText="Deprecating..."
+                                        isDisabled={updatingModelId !== null}
                                       >
-                                        Unpublish
+                                        Deprecate
                                       </Button>
-                                    ) : (
+                                    ) : (model.versionStatus?.toLowerCase() !== "active" && model.versionStatus) ? (
                                       <Button
                                         size="sm"
                                         colorScheme="green"
                                         variant="outline"
-                                        onClick={() => handlePublish(model.modelId)}
-                                        isLoading={publishingModelId === model.modelId}
-                                        loadingText="Publishing..."
-                                        isDisabled={unpublishingModelId !== null || publishingModelId !== null}
+                                        onClick={() => handleActivateModel(model)}
+                                        isLoading={updatingModelId === model.modelId}
+                                        loadingText="Activating..."
+                                        isDisabled={updatingModelId !== null}
                                       >
-                                        Publish
+                                        Activate
                                       </Button>
-                                    )}
+                                    ) : null}
                                   </HStack>
                                 </Td>
                               </Tr>
@@ -866,115 +905,222 @@ const ModelManagementPage: React.FC = () => {
                 <TabPanel px={0} pt={6}>
                   <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                     <CardHeader>
-                      <Heading size="md" color="gray.700">
+                      <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                         Create New Model
                       </Heading>
                     </CardHeader>
                     <CardBody>
-                      <form onSubmit={handleSubmit}>
                         <VStack spacing={6} align="stretch">
-                          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                            <FormControl isRequired>
-                              <FormLabel fontWeight="semibold">Model ID</FormLabel>
-                              <Input
-                                value={formData.modelId || ""}
-                                onChange={(e) => handleInputChange("modelId", e.target.value)}
-                                placeholder="Enter model ID"
-                                bg="white"
-                              />
-                            </FormControl>
-
-                            <FormControl isRequired>
-                              <FormLabel fontWeight="semibold">Name</FormLabel>
-                              <Input
-                                value={formData.name || ""}
-                                onChange={(e) => handleInputChange("name", e.target.value)}
-                                placeholder="Enter model name"
-                                bg="white"
-                              />
-                            </FormControl>
-                          </SimpleGrid>
-
-                          <FormControl isRequired>
-                            <FormLabel fontWeight="semibold">Description</FormLabel>
-                            <Textarea
-                              value={formData.description || ""}
-                              onChange={(e) => handleInputChange("description", e.target.value)}
-                              placeholder="Enter model description"
-                              bg="white"
-                              rows={4}
-                            />
-                          </FormControl>
-
-                          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                            <FormControl isRequired>
-                              <FormLabel fontWeight="semibold">Task Type</FormLabel>
-                              <Select
-                                value={formData.task?.type || ""}
-                                onChange={(e) =>
-                                  handleInputChange("task", { type: e.target.value })
-                                }
-                                placeholder="Select task type"
-                                bg="white"
-                              >
-                                <option value="asr">ASR (Automatic Speech Recognition)</option>
-                                <option value="tts">TTS (Text-to-Speech)</option>
-                                <option value="nmt">NMT (Neural Machine Translation)</option>
-                                <option value="llm">LLM (Large Language Model)</option>
-                              </Select>
-                            </FormControl>
-
-                            <FormControl>
-                              <FormLabel fontWeight="semibold">License</FormLabel>
-                              <Input
-                                value={formData.license || ""}
-                                onChange={(e) => handleInputChange("license", e.target.value)}
-                                placeholder="Enter license"
-                                bg="white"
-                              />
-                            </FormControl>
-                          </SimpleGrid>
-
+                        {/* File Upload Section */}
+                        <Box>
                           <FormControl>
-                            <FormLabel fontWeight="semibold">Source</FormLabel>
-                            <Input
-                              value={formData.source || ""}
-                              onChange={(e) => handleInputChange("source", e.target.value)}
-                              placeholder="Enter source URL or repository"
-                              bg="white"
+                            <HStack justify="space-between" mb={2}>
+                              <FormLabel fontWeight="semibold" mb={0}>Upload JSON File</FormLabel>
+                              <Button
+                                size="sm"
+                                colorScheme="blue"
+                                variant="outline"
+                                onClick={handleDownloadSample}
+                              >
+                                📥 Download Sample JSON
+                              </Button>
+                            </HStack>
+                              <Input
+                              ref={fileInputRef}
+                              type="file"
+                              accept=".json"
+                              onChange={handleFileUpload}
+                              disabled={isUploading || isValidating}
+                                bg="white"
+                              p={2}
                             />
-                          </FormControl>
+                            <Text fontSize="sm" color="gray.500" mt={2}>
+                              Upload a JSON file containing the model data. The file will be validated before you can create the model.
+                            </Text>
+                            <Box mt={2} p={3} bg="blue.50" borderRadius="md" border="1px solid" borderColor="blue.200">
+                              <Text fontSize="xs" fontWeight="semibold" color="blue.700" mb={1}>
+                                Required Fields:
+                              </Text>
+                              <Text fontSize="xs" color="blue.600">
+                                modelId, name, description, task (with type), languages, license, domain, inferenceEndPoint, submitter. Optional: version (defaults to &quot;1.0&quot;), refUrl, benchmarks. Timestamps (submittedOn, updatedOn) will be auto-added if not present.
+                              </Text>
+                            </Box>
+                            </FormControl>
+                        </Box>
 
-                          <HStack justify="flex-end" spacing={4} pt={4}>
+                        {/* Validating State */}
+                        {isValidating && (
+                          <Center py={8}>
+                            <VStack spacing={4}>
+                              <Spinner size="lg" color="blue.500" />
+                              <Text color="gray.600">Validating JSON file...</Text>
+                            </VStack>
+                          </Center>
+                        )}
+
+                        {/* Loading State */}
+                        {isUploading && (
+                          <Center py={8}>
+                            <VStack spacing={4}>
+                              <Spinner size="lg" color="blue.500" />
+                              <Text color="gray.600">Creating model...</Text>
+                            </VStack>
+                          </Center>
+                        )}
+
+                        {/* Validation Errors Display */}
+                        {validationErrors.length > 0 && (
+                          <Alert status="error" borderRadius="md">
+                            <AlertIcon />
+                            <AlertDescription>
+                              <VStack align="stretch" spacing={3}>
+                                <Box>
+                                  <Text fontWeight="semibold" mb={2}>Validation Failed</Text>
+                                  <Text mb={2}>Please fix the following errors:</Text>
+                                  <Box as="ul" pl={4}>
+                                    {validationErrors.map((error, index) => (
+                                      <Text key={index} as="li" fontSize="sm" mb={1}>
+                                        {error}
+                                      </Text>
+                                    ))}
+                                  </Box>
+                                </Box>
+                                <Button
+                                  size="sm"
+                                  colorScheme="gray"
+                                  variant="outline"
+                                  onClick={handleClearUpload}
+                                  alignSelf="flex-start"
+                                >
+                                  Clear & Upload New File
+                                </Button>
+                              </VStack>
+                            </AlertDescription>
+                          </Alert>
+                        )}
+
+                        {/* General Error Display */}
+                        {uploadError && validationErrors.length === 0 && (
+                          <Alert status="error" borderRadius="md">
+                            <AlertIcon />
+                            <AlertDescription>
+                              <VStack align="stretch" spacing={3}>
+                                <Box>
+                                  <Text fontWeight="semibold" mb={2}>Error</Text>
+                                  <Text>{uploadError}</Text>
+                                </Box>
+                                <Button
+                                  size="sm"
+                                  colorScheme="gray"
+                                  variant="outline"
+                                  onClick={handleClearUpload}
+                                  alignSelf="flex-start"
+                                >
+                                  Clear & Upload New File
+                                </Button>
+                              </VStack>
+                            </AlertDescription>
+                          </Alert>
+                        )}
+
+                        {/* Parsed Data - Ready for Creation */}
+                        {parsedModelData && !isUploading && !isValidating && (
+                          <Box>
+                            <Alert status="success" borderRadius="md" mb={4}>
+                              <AlertIcon />
+                              <AlertDescription>
+                                JSON file validated successfully! Review the data below and click &quot;Create Model&quot; to proceed.
+                              </AlertDescription>
+                            </Alert>
+                            <Box>
+                              <Heading size="sm" color="gray.700" mb={4} userSelect="none" cursor="default">
+                                Parsed Model Data
+                              </Heading>
+                              <Box
+                                bg="gray.50"
+                                p={4}
+                                borderRadius="md"
+                                border="1px solid"
+                                borderColor="gray.200"
+                                maxH="600px"
+                                overflowY="auto"
+                              >
+                                <Code
+                                  display="block"
+                                  whiteSpace="pre-wrap"
+                                  fontSize="sm"
+                                  p={4}
+                                  bg="white"
+                                  borderRadius="md"
+                                >
+                                  {JSON.stringify(parsedModelData, null, 2)}
+                                </Code>
+                              </Box>
+                              <HStack spacing={3} mt={4}>
+                                <Button
+                                  colorScheme="green"
+                                  onClick={handleCreateModel}
+                                  isLoading={isUploading}
+                                  loadingText="Creating..."
+                                >
+                                  Create Model
+                                </Button>
+                                <Button
+                                  colorScheme="gray"
+                                  variant="outline"
+                                  onClick={handleClearUpload}
+                                >
+                                  Cancel
+                                </Button>
+                              </HStack>
+                            </Box>
+                          </Box>
+                        )}
+
+                        {/* Success - Model Created */}
+                        {uploadedModelData && !isUploading && (
+                          <Box>
+                            <Alert status="success" borderRadius="md" mb={4}>
+                              <AlertIcon />
+                              <AlertDescription>
+                                Model created successfully! Model data is displayed below.
+                              </AlertDescription>
+                            </Alert>
+                            <Box>
+                              <Heading size="sm" color="gray.700" mb={4} userSelect="none" cursor="default">
+                                Created Model Data
+                              </Heading>
+                              <Box
+                                bg="gray.50"
+                                p={4}
+                                borderRadius="md"
+                                border="1px solid"
+                                borderColor="gray.200"
+                                maxH="600px"
+                                overflowY="auto"
+                              >
+                                <Code
+                                  display="block"
+                                  whiteSpace="pre-wrap"
+                                  fontSize="sm"
+                                  p={4}
+                                  bg="white"
+                                  borderRadius="md"
+                                >
+                                  {JSON.stringify(uploadedModelData, null, 2)}
+                                </Code>
+                              </Box>
                             <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => {
-                                setFormData({
-                                  name: "",
-                                  description: "",
-                                  modelId: "",
-                                  license: "",
-                                  source: "",
-                                  task: { type: "" },
-                                  domain: [],
-                                  languages: [],
-                                });
-                              }}
-                            >
-                              Reset
+                                mt={4}
+                                colorScheme="blue"
+                              onClick={handleClearUpload}
+                              >
+                                Upload Another Model
                             </Button>
-                            <Button
-                              type="submit"
-                              colorScheme="blue"
-                              isLoading={isSubmitting}
-                              loadingText="Creating..."
-                            >
-                              Create Model
-                            </Button>
-                          </HStack>
+                            </Box>
+                          </Box>
+                        )}
                         </VStack>
-                      </form>
                     </CardBody>
                   </Card>
                 </TabPanel>
@@ -985,63 +1131,51 @@ const ModelManagementPage: React.FC = () => {
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
                         <HStack justify="space-between" align="center">
-                          <Heading size="md" color="gray.700">
+                          <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                             Model Details: {selectedModel.name}
                           </Heading>
                           <HStack spacing={2}>
-                            {selectedModel.isPublished !== true && (
-                              <Button
-                                size="sm"
-                                colorScheme="green"
-                                onClick={() => handlePublish(selectedModel.modelId)}
-                                isLoading={publishingModelId === selectedModel.modelId}
-                                loadingText="Publishing..."
-                                isDisabled={publishingModelId !== null || unpublishingModelId !== null}
-                              >
-                                Publish Model
-                              </Button>
-                            )}
-                            {selectedModel.isPublished === true && (
-                              <Button
-                                size="sm"
-                                colorScheme="red"
-                                variant="outline"
-                                onClick={() => handleUnpublish(selectedModel.modelId)}
-                                isLoading={unpublishingModelId === selectedModel.modelId}
-                                loadingText="Unpublishing..."
-                                isDisabled={publishingModelId !== null || unpublishingModelId !== null}
-                              >
-                                Unpublish Model
-                              </Button>
-                            )}
-                            {!isEditingModel ? (
+                            {(selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && (
                               <Button
                                 size="sm"
                                 colorScheme="blue"
-                                onClick={() => setIsEditingModel(true)}
-                              >
-                                Edit Model
-                              </Button>
-                            ) : (
-                              <Button
-                                size="sm"
-                                variant="outline"
                                 onClick={() => {
-                                  setIsEditingModel(false);
-                                  setUpdateFormData({
-                                    ...selectedModel,
-                                    task: selectedModel.task || { type: "" },
-                                  });
+                                  router.push(`/services-management?modelId=${selectedModel.modelId}&tab=create`);
                                 }}
                               >
-                                Cancel
+                                Create Service
                               </Button>
                             )}
+                            {(selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithService.has(selectedModel.modelId) ? (
+                              <Button
+                                size="sm"
+                                colorScheme="orange"
+                                variant="outline"
+                                onClick={() => handleDeprecateModel(selectedModel)}
+                                isLoading={updatingModelId === selectedModel.modelId}
+                                loadingText="Deprecating..."
+                                isDisabled={updatingModelId !== null}
+                              >
+                                Deprecate Model
+                              </Button>
+                            ) : (selectedModel.versionStatus?.toLowerCase() !== "active" && selectedModel.versionStatus) ? (
+                              <Button
+                                size="sm"
+                                colorScheme="green"
+                                variant="outline"
+                                onClick={() => handleActivateModel(selectedModel)}
+                                isLoading={updatingModelId === selectedModel.modelId}
+                                loadingText="Activating..."
+                                isDisabled={updatingModelId !== null}
+                              >
+                                Activate Model
+                              </Button>
+                            ) : null}
                           </HStack>
                         </HStack>
                       </CardHeader>
                       <CardBody>
-                        {!isEditingModel ? (
+                        {!isEditingModel && (
                           // View Mode - Display model details
                           <VStack spacing={6} align="stretch">
                             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
@@ -1084,11 +1218,11 @@ const ModelManagementPage: React.FC = () => {
                                   Status
                                 </Text>
                                 <Badge
-                                  colorScheme={selectedModel.isPublished === true ? "green" : "red"}
+                                  colorScheme={selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus ? "green" : "gray"}
                                   fontSize="sm"
                                   p={2}
                                 >
-                                  {selectedModel.isPublished === true ? "Published" : "Unpublished"}
+                                  {selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus ? "ACTIVE" : "DEPRECATED"}
                                 </Badge>
                               </Box>
                             </SimpleGrid>
@@ -1134,114 +1268,8 @@ const ModelManagementPage: React.FC = () => {
                               </Box>
                             )}
                           </VStack>
-                        ) : (
-                          // Edit Mode - Update form
-                          <form onSubmit={handleUpdateModel}>
-                            <VStack spacing={6} align="stretch">
-                              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                                <FormControl>
-                                  <FormLabel fontWeight="semibold">Model ID</FormLabel>
-                                  <Input
-                                    value={selectedModel.modelId}
-                                    isDisabled
-                                    bg="gray.50"
-                                    fontSize="sm"
-                                  />
-                                </FormControl>
-                                <FormControl isRequired>
-                                  <FormLabel fontWeight="semibold">Name</FormLabel>
-                                  <Input
-                                    value={updateFormData.name || ""}
-                                    onChange={(e) =>
-                                      setUpdateFormData((prev) => ({ ...prev, name: e.target.value }))
-                                    }
-                                    placeholder="Enter model name"
-                                    bg="white"
-                                  />
-                                </FormControl>
-                              </SimpleGrid>
-
-                              <FormControl isRequired>
-                                <FormLabel fontWeight="semibold">Description</FormLabel>
-                                <Textarea
-                                  value={updateFormData.description || ""}
-                                  onChange={(e) =>
-                                    setUpdateFormData((prev) => ({
-                                      ...prev,
-                                      description: e.target.value,
-                                    }))
-                                  }
-                                  placeholder="Enter model description"
-                                  bg="white"
-                                  rows={4}
-                                />
-                              </FormControl>
-
-                              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                                <FormControl isRequired>
-                                  <FormLabel fontWeight="semibold">Task Type</FormLabel>
-                                  <Select
-                                    value={updateFormData.task?.type || selectedModel?.task?.type || ""}
-                                    onChange={(e) =>
-                                      setUpdateFormData((prev) => ({
-                                        ...prev,
-                                        task: { type: e.target.value },
-                                      }))
-                                    }
-                                    placeholder="Select task type"
-                                    bg="white"
-                                  >
-                                    <option value="asr">ASR (Automatic Speech Recognition)</option>
-                                    <option value="tts">TTS (Text-to-Speech)</option>
-                                    <option value="nmt">NMT (Neural Machine Translation)</option>
-                                    <option value="llm">LLM (Large Language Model)</option>
-                                  </Select>
-                                </FormControl>
-
-                                <FormControl>
-                                  <FormLabel fontWeight="semibold">License</FormLabel>
-                                  <Input
-                                    value={updateFormData.license || ""}
-                                    onChange={(e) =>
-                                      setUpdateFormData((prev) => ({
-                                        ...prev,
-                                        license: e.target.value,
-                                      }))
-                                    }
-                                    placeholder="Enter license"
-                                    bg="white"
-                                  />
-                                </FormControl>
-                              </SimpleGrid>
-
-                              <FormControl>
-                                <FormLabel fontWeight="semibold">Source</FormLabel>
-                                <Input
-                                  value={updateFormData.source || ""}
-                                  onChange={(e) =>
-                                    setUpdateFormData((prev) => ({
-                                      ...prev,
-                                      source: e.target.value,
-                                    }))
-                                  }
-                                  placeholder="Enter source URL or repository"
-                                  bg="white"
-                                />
-                              </FormControl>
-
-                              <HStack justify="flex-end" spacing={4} pt={4}>
-                                <Button
-                                  type="submit"
-                                  colorScheme="blue"
-                                  isLoading={isUpdating}
-                                  loadingText="Updating..."
-                                >
-                                  Update Model
-                                </Button>
-                              </HStack>
-                            </VStack>
-                          </form>
                         )}
+                        {/* Editing disabled for models after creation - edit form removed */}
                       </CardBody>
                     </Card>
                   </TabPanel>

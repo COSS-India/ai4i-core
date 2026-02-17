@@ -14,7 +14,6 @@ import {
   Spinner,
   Text,
   Textarea,
-  useToast,
   VStack,
   Badge,
 } from "@chakra-ui/react";
@@ -24,9 +23,11 @@ import { useQuery } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
 import { performNERInference, listNERServices } from "../services/nerService";
 import { extractErrorInfo } from "../utils/errorHandler";
+import { NER_ERRORS, MIN_NER_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const NERPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [inputText, setInputText] = useState("");
   const [sourceLanguage, setSourceLanguage] = useState("en");
   const [fetching, setFetching] = useState(false);
@@ -55,11 +56,39 @@ const NERPage: React.FC = () => {
   }, [services, selectedServiceId]);
 
   const handleProcess = async () => {
-    if (!inputText.trim()) {
+    const trimmedText = inputText.trim();
+    
+    // Validate input text
+    if (!trimmedText) {
+      const err = NER_ERRORS.TEXT_REQUIRED;
       toast({
-        title: "Input Required",
-        description: "Please enter text to process.",
-        status: "warning",
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    if (trimmedText.length < MIN_NER_TEXT_LENGTH) {
+      const err = NER_ERRORS.TEXT_TOO_SHORT;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    if (trimmedText.length > MAX_TEXT_LENGTH) {
+      const err = NER_ERRORS.TEXT_TOO_LONG;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -83,7 +112,7 @@ const NERPage: React.FC = () => {
 
     try {
       const startTime = Date.now();
-      const response = await performNERInference(inputText, {
+      const response = await performNERInference(trimmedText, {
         serviceId: selectedServiceId,
         language: {
           sourceLanguage,
@@ -96,12 +125,12 @@ const NERPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Use centralized error handler
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
+      // Use centralized error handler (ner context so backend message shown as default when no specific mapping)
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'ner');
       
       setError(errorMessage);
       toast({
-        title: errorTitle,
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: "error",
         duration: 5000,
@@ -144,10 +173,10 @@ const NERPage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               Named Entity Recognition (NER)
             </Heading>
-            <Text color="gray.600" fontSize="lg">
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
               Identify key entities like names, locations, and organizations in text
             </Text>
           </Box>
@@ -185,7 +214,7 @@ const NERPage: React.FC = () => {
                   <Select
                     value={selectedServiceId}
                     onChange={(e) => setSelectedServiceId(e.target.value)}
-                    placeholder="Select a service..."
+                    placeholder="Select a NER service"
                     disabled={fetching}
                     size="md"
                     borderColor="gray.300"
@@ -210,16 +239,12 @@ const NERPage: React.FC = () => {
                           <Text fontSize="sm" color="gray.700" mb={1}>
                             <strong>Service ID:</strong> {selectedService.service_id}
                           </Text>
-                          {selectedService.serviceDescription && (
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Description:</strong> {selectedService.serviceDescription}
-                            </Text>
-                          )}
-                          {selectedService.supported_languages.length > 0 && (
-                            <Text fontSize="sm" color="gray.700">
-                              <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
-                            </Text>
-                          )}
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                          </Text>
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                          </Text>
                         </>
                       ) : null;
                     })()}

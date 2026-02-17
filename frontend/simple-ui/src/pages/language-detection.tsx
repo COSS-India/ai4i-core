@@ -14,7 +14,6 @@ import {
   Spinner,
   Text,
   Textarea,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
@@ -23,9 +22,11 @@ import React, { useState, useEffect } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import { performLanguageDetectionInference, listLanguageDetectionServices } from "../services/languageDetectionService";
 import { extractErrorInfo } from "../utils/errorHandler";
+import { LANGUAGE_DETECTION_ERRORS, MIN_LANGUAGE_DETECTION_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const LanguageDetectionPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const [inputTexts, setInputTexts] = useState("");
   const [fetching, setFetching] = useState(false);
@@ -51,11 +52,62 @@ const LanguageDetectionPage: React.FC = () => {
   }, [languageDetectionServices, serviceId]);
 
   const handleProcess = async () => {
-    if (!inputTexts.trim()) {
+    const trimmedText = inputTexts.trim();
+    
+    // Validate input text
+    if (!trimmedText) {
+      const err = LANGUAGE_DETECTION_ERRORS.TEXT_REQUIRED;
       toast({
-        title: "Input Required",
-        description: "Please enter text to detect language.",
-        status: "warning",
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    // Split by newlines or commas for multiple texts
+    const texts = trimmedText
+      .split(/[\n,]/)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+    
+    // Validate that we have at least one valid text after splitting
+    if (texts.length === 0) {
+      const err = LANGUAGE_DETECTION_ERRORS.TEXT_REQUIRED;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    // Validate minimum text length for each text
+    const tooShortTexts = texts.filter(t => t.length < MIN_LANGUAGE_DETECTION_TEXT_LENGTH);
+    if (tooShortTexts.length > 0) {
+      const err = LANGUAGE_DETECTION_ERRORS.TEXT_TOO_SHORT;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    // Validate maximum text length
+    const tooLongTexts = texts.filter(t => t.length > MAX_TEXT_LENGTH);
+    if (tooLongTexts.length > 0) {
+      const err = LANGUAGE_DETECTION_ERRORS.TEXT_TOO_LONG;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -78,12 +130,6 @@ const LanguageDetectionPage: React.FC = () => {
     setFetched(false);
 
     try {
-      // Split by newlines or commas for multiple texts
-      const texts = inputTexts
-        .split(/[\n,]/)
-        .map((t) => t.trim())
-        .filter((t) => t.length > 0);
-
       const startTime = Date.now();
       const response = await performLanguageDetectionInference(
         texts,
@@ -96,12 +142,12 @@ const LanguageDetectionPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Use centralized error handler
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
+      // Use centralized error handler (language-detection context so backend message shown as default when no specific mapping)
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'language-detection');
       
       setError(errorMessage);
       toast({
-        title: errorTitle,
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: "error",
         duration: 5000,
@@ -135,10 +181,10 @@ const LanguageDetectionPage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               Text Language Detection
             </Heading>
-            <Text color="gray.600" fontSize="lg">
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
               A lightweight language identification service for detecting the language of input text across multiple Indian languages.
             </Text>
           </Box>
@@ -192,16 +238,12 @@ const LanguageDetectionPage: React.FC = () => {
                           <Text fontSize="sm" color="gray.700" mb={1}>
                             <strong>Service ID:</strong> {selectedService.service_id}
                           </Text>
-                          {selectedService.serviceDescription && (
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Description:</strong> {selectedService.serviceDescription}
-                            </Text>
-                          )}
-                          {selectedService.supported_languages.length > 0 && (
-                            <Text fontSize="sm" color="gray.700">
-                              <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
-                            </Text>
-                          )}
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                          </Text>
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                          </Text>
                         </>
                       ) : null;
                     })()}

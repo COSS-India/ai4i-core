@@ -36,6 +36,10 @@ CREATE DATABASE config_db;
 -- (Error can be ignored if database already exists)
 CREATE DATABASE model_management_db;
 
+-- Create multi_tenant_db
+-- (Error can be ignored if database already exists)
+CREATE DATABASE multi_tenant_db;
+
 -- Create unleash database
 -- (Error can be ignored if database already exists)
 CREATE DATABASE unleash
@@ -45,17 +49,23 @@ CREATE DATABASE unleash
     TABLESPACE = pg_default
     CONNECTION LIMIT = -1;
 
+-- Create alerting_db
+-- (Error can be ignored if database already exists)
+CREATE DATABASE alerting_db;
+
 -- Grant all privileges on each database to the configured PostgreSQL user
 GRANT ALL PRIVILEGES ON DATABASE auth_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE config_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE model_management_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE unleash TO dhruva_user;
+GRANT ALL PRIVILEGES ON DATABASE alerting_db TO dhruva_user;
 
 -- Add comments documenting which service uses each database
 COMMENT ON DATABASE auth_db IS 'Authentication & Authorization Service database';
 COMMENT ON DATABASE config_db IS 'Configuration Management Service database';
 COMMENT ON DATABASE model_management_db IS 'Model Management Service database - stores AI models and services registry';
 COMMENT ON DATABASE unleash IS 'Unleash feature flag management database';
+COMMENT ON DATABASE alerting_db IS 'Alerting Service database - stores dynamic alert configurations and notification settings';
 
 -- Re-enable error stopping for schema creation (we want to catch real errors)
 \set ON_ERROR_STOP on
@@ -83,7 +93,9 @@ CREATE TABLE IF NOT EXISTS users (
     avatar_url VARCHAR(500),
     phone_number VARCHAR(20),
     timezone VARCHAR(50) DEFAULT 'UTC',
-    language VARCHAR(10) DEFAULT 'en'
+    language VARCHAR(10) DEFAULT 'en',
+    is_tenant BOOLEAN DEFAULT NULL,
+    selected_api_key_id INTEGER
 );
 
 -- Roles table
@@ -132,6 +144,11 @@ CREATE TABLE IF NOT EXISTS api_keys (
     last_used TIMESTAMP WITH TIME ZONE
 );
 
+-- Selected API key reference (per user)
+ALTER TABLE users
+    ADD CONSTRAINT users_selected_api_key_id_fkey
+    FOREIGN KEY (selected_api_key_id) REFERENCES api_keys(id) ON DELETE SET NULL;
+
 -- Create sequence for user_sessions if it doesn't exist
 CREATE SEQUENCE IF NOT EXISTS sessions_id_seq;
 
@@ -139,12 +156,12 @@ CREATE SEQUENCE IF NOT EXISTS sessions_id_seq;
 CREATE TABLE IF NOT EXISTS user_sessions (
     id INTEGER DEFAULT nextval('sessions_id_seq') NOT NULL,
     user_id INTEGER,
-    session_token VARCHAR(255) NOT NULL,
+    session_token TEXT NOT NULL,
     ip_address VARCHAR(45),
     user_agent TEXT,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    refresh_token VARCHAR(255),
+    refresh_token TEXT,
     device_info JSONB,
     is_active BOOLEAN DEFAULT true,
     last_accessed TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -761,6 +778,8 @@ CREATE TABLE IF NOT EXISTS models (
     inference_endpoint JSONB NOT NULL,
     benchmarks JSONB,
     submitter JSONB NOT NULL,
+    created_by VARCHAR(255) DEFAULT NULL,  -- User ID (string) who created this model
+    updated_by VARCHAR(255) DEFAULT NULL,  -- User ID (string) who last updated this model
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     -- Unique constraint on (name, version) for versioning support
@@ -783,14 +802,20 @@ CREATE TABLE IF NOT EXISTS services (
     api_key VARCHAR(255),
     health_status JSONB,
     benchmarks JSONB,
+    policy JSONB,
     is_published BOOLEAN NOT NULL DEFAULT FALSE,
     published_at BIGINT DEFAULT NULL,
     unpublished_at BIGINT DEFAULT NULL,
+    created_by VARCHAR(255) DEFAULT NULL,  -- User ID (string) who created this service
+    updated_by VARCHAR(255) DEFAULT NULL,  -- User ID (string) who last updated this service
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     -- Unique constraint on (model_id, model_version, name)
     CONSTRAINT uq_model_id_version_service_name UNIQUE (model_id, model_version, name)
 );
+
+-- Ensure policy column exists on services (for databases created before policy was added)
+ALTER TABLE services ADD COLUMN IF NOT EXISTS policy JSONB;
 
 -- Create indexes for models table
 CREATE INDEX IF NOT EXISTS idx_models_model_id ON models(model_id);
@@ -802,6 +827,7 @@ CREATE INDEX IF NOT EXISTS idx_models_task ON models USING GIN (task);
 CREATE INDEX IF NOT EXISTS idx_models_languages ON models USING GIN (languages);
 CREATE INDEX IF NOT EXISTS idx_models_domain ON models USING GIN (domain);
 CREATE INDEX IF NOT EXISTS idx_models_created_at ON models(created_at);
+CREATE INDEX IF NOT EXISTS idx_models_created_by ON models(created_by);
 
 -- Create indexes for services table
 CREATE INDEX IF NOT EXISTS idx_services_service_id ON services(service_id);
@@ -811,6 +837,8 @@ CREATE INDEX IF NOT EXISTS idx_services_model_id_version ON services(model_id, m
 CREATE INDEX IF NOT EXISTS idx_services_is_published ON services(is_published);
 CREATE INDEX IF NOT EXISTS idx_services_created_at ON services(created_at);
 CREATE INDEX IF NOT EXISTS idx_services_health_status ON services USING GIN (health_status);
+CREATE INDEX IF NOT EXISTS idx_services_policy ON services USING GIN (policy);
+CREATE INDEX IF NOT EXISTS idx_services_created_by ON services(created_by);
 
 -- Create trigger for version_status_updated_at
 CREATE OR REPLACE FUNCTION update_version_status_updated_at()
@@ -856,6 +884,623 @@ COMMENT ON COLUMN services.model_version IS 'Version of the model associated wit
 COMMENT ON COLUMN services.is_published IS 'Whether the service is published and publicly available';
 COMMENT ON COLUMN services.published_at IS 'Unix timestamp when the service was published';
 COMMENT ON COLUMN services.unpublished_at IS 'Unix timestamp when the service was unpublished';
+
+-- ----------------------------------------------------------------------------
+-- A/B Testing: experiment_status enum and tables
+-- ----------------------------------------------------------------------------
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'experiment_status') THEN
+        CREATE TYPE experiment_status AS ENUM ('DRAFT', 'RUNNING', 'PAUSED', 'COMPLETED', 'CANCELLED');
+    END IF;
+END $$;
+
+-- Experiments table (A/B testing)
+CREATE TABLE IF NOT EXISTS experiments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    status experiment_status NOT NULL DEFAULT 'DRAFT',
+    task_type JSONB DEFAULT NULL,
+    languages JSONB DEFAULT NULL,
+    start_date TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    end_date TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    created_by VARCHAR(255) DEFAULT NULL,
+    updated_by VARCHAR(255) DEFAULT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    completed_at TIMESTAMP WITH TIME ZONE DEFAULT NULL
+);
+
+-- Experiment variants table (model/service variants per experiment)
+CREATE TABLE IF NOT EXISTS experiment_variants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    experiment_id UUID NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+    variant_name VARCHAR(255) NOT NULL,
+    service_id VARCHAR(255) NOT NULL REFERENCES services(service_id) ON DELETE CASCADE,
+    traffic_percentage BIGINT NOT NULL,
+    description TEXT DEFAULT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_experiment_service UNIQUE (experiment_id, service_id)
+);
+
+-- Experiment metrics table (daily aggregation per variant)
+CREATE TABLE IF NOT EXISTS experiment_metrics (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    experiment_id UUID NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+    variant_id UUID NOT NULL REFERENCES experiment_variants(id) ON DELETE CASCADE,
+    request_count BIGINT NOT NULL DEFAULT 0,
+    success_count BIGINT NOT NULL DEFAULT 0,
+    error_count BIGINT NOT NULL DEFAULT 0,
+    avg_latency_ms BIGINT DEFAULT NULL,
+    custom_metrics JSONB DEFAULT NULL,
+    metric_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_experiment_variant_date UNIQUE (experiment_id, variant_id, metric_date)
+);
+
+-- Indexes for experiments
+CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status);
+CREATE INDEX IF NOT EXISTS idx_experiments_task_type ON experiments USING GIN (task_type);
+CREATE INDEX IF NOT EXISTS idx_experiments_languages ON experiments USING GIN (languages);
+CREATE INDEX IF NOT EXISTS idx_experiments_start_date ON experiments(start_date);
+CREATE INDEX IF NOT EXISTS idx_experiments_end_date ON experiments(end_date);
+CREATE INDEX IF NOT EXISTS idx_experiments_created_at ON experiments(created_at);
+
+-- Indexes for experiment_variants
+CREATE INDEX IF NOT EXISTS idx_experiment_variants_experiment_id ON experiment_variants(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_experiment_variants_service_id ON experiment_variants(service_id);
+
+-- Indexes for experiment_metrics
+CREATE INDEX IF NOT EXISTS idx_experiment_metrics_experiment_id ON experiment_metrics(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_experiment_metrics_variant_id ON experiment_metrics(variant_id);
+CREATE INDEX IF NOT EXISTS idx_experiment_metrics_metric_date ON experiment_metrics(metric_date);
+
+-- Triggers for updated_at on A/B tables
+DROP TRIGGER IF EXISTS update_experiments_updated_at ON experiments;
+CREATE TRIGGER update_experiments_updated_at BEFORE UPDATE ON experiments
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_experiment_variants_updated_at ON experiment_variants;
+CREATE TRIGGER update_experiment_variants_updated_at BEFORE UPDATE ON experiment_variants
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_experiment_metrics_updated_at ON experiment_metrics;
+CREATE TRIGGER update_experiment_metrics_updated_at BEFORE UPDATE ON experiment_metrics
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Comments for A/B testing tables
+COMMENT ON TABLE experiments IS 'A/B testing experiments with traffic split across model variants';
+COMMENT ON COLUMN experiments.status IS 'DRAFT, RUNNING, PAUSED, COMPLETED, or CANCELLED';
+COMMENT ON COLUMN experiments.task_type IS 'Optional JSONB list of task types to filter (e.g. asr, nmt, tts)';
+COMMENT ON COLUMN experiments.languages IS 'Optional JSONB list of language codes to filter; null/empty = all languages';
+COMMENT ON TABLE experiment_variants IS 'Model/service variants and traffic percentage per experiment';
+COMMENT ON TABLE experiment_metrics IS 'Daily aggregated metrics per experiment variant';
+
+-- Ensure experiment_status enum has all values (for DBs where enum was created by older app version)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'experiment_status') THEN
+        ALTER TYPE experiment_status ADD VALUE IF NOT EXISTS 'PAUSED';
+        ALTER TYPE experiment_status ADD VALUE IF NOT EXISTS 'COMPLETED';
+        ALTER TYPE experiment_status ADD VALUE IF NOT EXISTS 'CANCELLED';
+    END IF;
+END $$;
+
+-- ============================================================================
+-- STEP 5: Multi Tenant Feature Schema (multi_tenant_db)
+-- ============================================================================
+
+\c multi_tenant_db;
+
+-- ----------------------------------------------------------------------------
+-- Table: tenants
+-- Description: Master tenants table (stored in public schema)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tenants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id VARCHAR(255) UNIQUE NOT NULL,
+    organization_name VARCHAR(255) NOT NULL,
+    contact_email VARCHAR(320) NOT NULL,
+    domain VARCHAR(255) UNIQUE NOT NULL,
+    schema_name VARCHAR(255) UNIQUE NOT NULL,
+    user_id INTEGER NULL,
+    subscriptions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+    quotas JSONB NOT NULL DEFAULT '{}'::jsonb,
+    usage JSONB NOT NULL DEFAULT '{}'::jsonb,
+    temp_admin_username VARCHAR(128) NULL,
+    temp_admin_password_hash VARCHAR(512) NULL,
+    expiry_date TIMESTAMP NULL DEFAULT (NOW() + INTERVAL '365 days'),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+-- Indexes for tenants table
+CREATE INDEX IF NOT EXISTS idx_tenants_contact_email ON tenants(contact_email);
+CREATE INDEX IF NOT EXISTS idx_tenants_user_id ON tenants(user_id);
+
+-- ----------------------------------------------------------------------------
+-- Table: tenant_billing_records
+-- Description: Billing records for tenants
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tenant_billing_records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    billing_customer_id VARCHAR(255) NULL,
+    cost NUMERIC(20, 10) NOT NULL DEFAULT 0.00,
+    billing_status VARCHAR(50) NOT NULL DEFAULT 'UNPAID',
+    suspension_reason VARCHAR(512) NULL,
+    suspended_until TIMESTAMP NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_tenant_billing_records_tenant_id 
+        FOREIGN KEY (tenant_id) 
+        REFERENCES tenants(id) 
+        ON DELETE CASCADE
+);
+
+-- ----------------------------------------------------------------------------
+-- Table: tenant_audit_logs
+-- Description: Audit logs for tenant actions
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tenant_audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    actor VARCHAR(50) NOT NULL DEFAULT 'system',
+    details JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_tenant_audit_logs_tenant_id 
+        FOREIGN KEY (tenant_id) 
+        REFERENCES tenants(id) 
+        ON DELETE CASCADE
+);
+
+-- Indexes for tenant_audit_logs table
+CREATE INDEX IF NOT EXISTS idx_tenant_audit_logs_tenant_id ON tenant_audit_logs(tenant_id);
+
+-- ----------------------------------------------------------------------------
+-- Table: tenant_email_verifications
+-- Description: Email verification tokens for tenants
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tenant_email_verifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    token VARCHAR(512) UNIQUE NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    verified_at TIMESTAMP WITH TIME ZONE NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_tenant_email_verifications_tenant_id 
+        FOREIGN KEY (tenant_id) 
+        REFERENCES tenants(id) 
+        ON DELETE CASCADE
+);
+
+-- ----------------------------------------------------------------------------
+-- Table: service_config
+-- Description: Service configuration and pricing
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS service_config (
+    id BIGSERIAL PRIMARY KEY,
+    service_name VARCHAR(50) UNIQUE NOT NULL,
+    unit_type VARCHAR(50) NOT NULL,
+    price_per_unit NUMERIC(10, 6) NOT NULL,
+    currency VARCHAR(10) NOT NULL DEFAULT 'INR',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+-- ----------------------------------------------------------------------------
+-- Table: tenant_users
+-- Description: Users associated with tenants
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tenant_users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INTEGER NOT NULL,
+    tenant_uuid UUID NOT NULL,
+    tenant_id VARCHAR(255) NOT NULL,
+    username VARCHAR(255) NOT NULL,
+    email VARCHAR(320) NOT NULL,
+    subscriptions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    is_approved BOOLEAN NOT NULL DEFAULT FALSE,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_tenant_users_tenant_uuid 
+        FOREIGN KEY (tenant_uuid) 
+        REFERENCES tenants(id) 
+        ON DELETE CASCADE,
+    CONSTRAINT fk_tenant_users_tenant_id 
+        FOREIGN KEY (tenant_id) 
+        REFERENCES tenants(tenant_id) 
+        ON DELETE CASCADE
+);
+
+-- Indexes for tenant_users table
+CREATE INDEX IF NOT EXISTS idx_tenant_users_user_id ON tenant_users(user_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_users_tenant_id ON tenant_users(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_users_email ON tenant_users(email);
+
+-- ----------------------------------------------------------------------------
+-- Table: user_billing_records
+-- Description: Billing records for individual tenant users
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_billing_records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    tenant_id VARCHAR(255) NOT NULL,
+    service_name VARCHAR(50) NOT NULL,
+    service_id BIGINT NOT NULL,
+    cost NUMERIC(20, 10) NOT NULL DEFAULT 0.00,
+    billing_period DATE NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_user_billing_records_user_id 
+        FOREIGN KEY (user_id) 
+        REFERENCES tenant_users(id) 
+        ON DELETE CASCADE,
+    CONSTRAINT fk_user_billing_records_tenant_id 
+        FOREIGN KEY (tenant_id) 
+        REFERENCES tenants(tenant_id) 
+        ON DELETE CASCADE,
+    CONSTRAINT fk_user_billing_records_service_id 
+        FOREIGN KEY (service_id) 
+        REFERENCES service_config(id)
+);
+
+-- ============================================================================
+-- Create Triggers for updated_at Timestamps
+-- ============================================================================
+
+-- Function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Apply trigger to all tables with updated_at column
+CREATE TRIGGER update_tenants_updated_at
+    BEFORE UPDATE ON tenants
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_tenant_billing_records_updated_at
+    BEFORE UPDATE ON tenant_billing_records
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_tenant_audit_logs_updated_at
+    BEFORE UPDATE ON tenant_audit_logs
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_service_config_updated_at
+    BEFORE UPDATE ON service_config
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_tenant_users_updated_at
+    BEFORE UPDATE ON tenant_users
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_user_billing_records_updated_at
+    BEFORE UPDATE ON user_billing_records
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================================
+-- Add Comments for Documentation
+-- ============================================================================
+
+COMMENT ON TABLE tenants IS 'Master tenants table storing tenant information in public schema';
+COMMENT ON COLUMN tenants.tenant_id IS 'User-provided unique tenant identifier';
+COMMENT ON COLUMN tenants.schema_name IS 'Generated database schema name for tenant-specific tables';
+COMMENT ON COLUMN tenants.subscriptions IS 'Array of service names the tenant is subscribed to (e.g., ["tts", "asr", "nmt"])';
+COMMENT ON COLUMN tenants.quotas IS 'JSON object with quota limits (e.g., {"api_calls_per_day": 10000, "storage_gb": 10})';
+COMMENT ON COLUMN tenants.usage IS 'JSON object with current usage metrics (e.g., {"api_calls_today": 500, "storage_used_gb": 2.5})';
+
+COMMENT ON TABLE tenant_billing_records IS 'Billing records for tenant-level billing';
+COMMENT ON TABLE tenant_audit_logs IS 'Audit trail of all tenant-related actions';
+COMMENT ON TABLE tenant_email_verifications IS 'Email verification tokens for tenant registration';
+COMMENT ON TABLE service_config IS 'Service configuration and pricing information';
+COMMENT ON TABLE tenant_users IS 'Users associated with tenants (many-to-one relationship)';
+COMMENT ON TABLE user_billing_records IS 'Billing records for individual tenant users';
+
+-- ============================================================================
+-- Verification
+-- ============================================================================
+
+DO $$
+BEGIN
+    RAISE NOTICE 'Multi-tenant database schema initialization completed successfully';
+    RAISE NOTICE 'Created tables: tenants, tenant_billing_records, tenant_audit_logs, tenant_email_verifications, service_config, tenant_users, user_billing_records';
+    RAISE NOTICE 'All tables are in the public schema of multi_tenant_db database';
+END $$;
+
+-- ============================================================================
+-- STEP 6: Alerting Service Schema (alerting_db)
+-- ============================================================================
+
+\c alerting_db;
+
+-- Alert Definitions Table
+-- Stores complete PromQL expressions per customer with all metadata
+CREATE TABLE IF NOT EXISTS alert_definitions (
+    id SERIAL PRIMARY KEY,
+    organization VARCHAR(100) NOT NULL, -- Organization identifier (e.g., 'irctc', 'kisanmitra')
+    name VARCHAR(255) NOT NULL, -- Alert name (e.g., 'HighLatency')
+    description TEXT,
+    promql_expr TEXT NOT NULL, -- Complete PromQL expression with organization filter and threshold embedded
+    category VARCHAR(50) NOT NULL DEFAULT 'application', -- 'application' or 'infrastructure'
+    severity VARCHAR(20) NOT NULL, -- 'critical', 'warning', 'info'
+    urgency VARCHAR(20) DEFAULT 'medium', -- 'high', 'medium', 'low'
+    alert_type VARCHAR(50), -- 'latency', 'error_rate', 'cpu', etc.
+    scope VARCHAR(50), -- 'all_services', 'per_service', 'per_endpoint', 'cluster', etc.
+    evaluation_interval VARCHAR(20) DEFAULT '30s', -- Prometheus evaluation interval
+    for_duration VARCHAR(20) DEFAULT '5m', -- Duration before alert fires
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_by VARCHAR(100),
+    updated_by VARCHAR(100),
+    -- Ensure unique alert name per organization
+    CONSTRAINT unique_organization_alert_name UNIQUE (organization, name)
+);
+
+-- Annotations for alert definitions (summary, description, impact, action)
+CREATE TABLE IF NOT EXISTS alert_annotations (
+    id SERIAL PRIMARY KEY,
+    alert_definition_id INTEGER NOT NULL REFERENCES alert_definitions(id) ON DELETE CASCADE,
+    annotation_key VARCHAR(50) NOT NULL, -- 'summary', 'description', 'impact', 'action'
+    annotation_value TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_alert_annotation_key UNIQUE (alert_definition_id, annotation_key)
+);
+
+-- Notification Receivers Table
+-- Stores email configurations per customer
+CREATE TABLE IF NOT EXISTS notification_receivers (
+    id SERIAL PRIMARY KEY,
+    organization VARCHAR(100) NOT NULL,
+    receiver_name VARCHAR(255) NOT NULL, -- Unique receiver name per customer
+    -- Email configuration
+    email_to TEXT[] NOT NULL, -- Array of email addresses (required)
+    email_subject_template TEXT, -- Custom subject template
+    email_body_template TEXT, -- Custom HTML body template
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_by VARCHAR(100),
+    -- Ensure unique receiver name per organization
+    CONSTRAINT unique_organization_receiver_name UNIQUE (organization, receiver_name)
+);
+
+-- Routing Rules Table
+-- Defines which alerts go to which receivers based on severity/category
+CREATE TABLE IF NOT EXISTS routing_rules (
+    id SERIAL PRIMARY KEY,
+    organization VARCHAR(100) NOT NULL,
+    rule_name VARCHAR(255) NOT NULL,
+    receiver_id INTEGER NOT NULL REFERENCES notification_receivers(id) ON DELETE CASCADE,
+    -- Match conditions (all must match for rule to apply)
+    match_severity VARCHAR(20), -- 'critical', 'warning', 'info', or NULL (matches all)
+    match_category VARCHAR(50), -- 'application', 'infrastructure', or NULL (matches all)
+    match_alert_type VARCHAR(50), -- Specific alert type or NULL (matches all)
+    -- Routing behavior
+    group_by TEXT[], -- Array of label names to group by (e.g., ['alertname', 'category', 'severity'])
+    group_wait VARCHAR(20) DEFAULT '10s',
+    group_interval VARCHAR(20) DEFAULT '10s',
+    repeat_interval VARCHAR(20) DEFAULT '12h',
+    continue_routing BOOLEAN DEFAULT false, -- If true, continue to next matching rule
+    priority INTEGER DEFAULT 100, -- Lower number = higher priority (evaluated first)
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_by VARCHAR(100),
+    -- Ensure unique rule name per organization
+    CONSTRAINT unique_organization_rule_name UNIQUE (organization, rule_name)
+);
+
+-- Audit Log Table
+-- Records all changes to alert configurations for compliance and troubleshooting
+CREATE TABLE IF NOT EXISTS alert_config_audit_log (
+    id SERIAL PRIMARY KEY,
+    organization VARCHAR(100),
+    table_name VARCHAR(50) NOT NULL, -- 'alert_definitions', 'notification_receivers', 'routing_rules'
+    record_id INTEGER NOT NULL,
+    operation VARCHAR(20) NOT NULL, -- 'CREATE', 'UPDATE', 'DELETE'
+    changed_by VARCHAR(100) NOT NULL,
+    changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    -- Store before/after values as JSON for detailed audit trail
+    before_values JSONB,
+    after_values JSONB,
+    change_description TEXT
+);
+
+-- Create indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_alert_definitions_organization ON alert_definitions(organization);
+CREATE INDEX IF NOT EXISTS idx_alert_definitions_enabled ON alert_definitions(enabled);
+CREATE INDEX IF NOT EXISTS idx_alert_definitions_category ON alert_definitions(category);
+CREATE INDEX IF NOT EXISTS idx_alert_definitions_severity ON alert_definitions(severity);
+CREATE INDEX IF NOT EXISTS idx_alert_definitions_organization_enabled ON alert_definitions(organization, enabled);
+
+CREATE INDEX IF NOT EXISTS idx_alert_annotations_alert_def_id ON alert_annotations(alert_definition_id);
+
+CREATE INDEX IF NOT EXISTS idx_notification_receivers_organization ON notification_receivers(organization);
+CREATE INDEX IF NOT EXISTS idx_notification_receivers_enabled ON notification_receivers(enabled);
+
+CREATE INDEX IF NOT EXISTS idx_routing_rules_organization ON routing_rules(organization);
+CREATE INDEX IF NOT EXISTS idx_routing_rules_receiver_id ON routing_rules(receiver_id);
+CREATE INDEX IF NOT EXISTS idx_routing_rules_enabled ON routing_rules(enabled);
+CREATE INDEX IF NOT EXISTS idx_routing_rules_priority ON routing_rules(priority);
+CREATE INDEX IF NOT EXISTS idx_routing_rules_match_severity ON routing_rules(match_severity);
+CREATE INDEX IF NOT EXISTS idx_routing_rules_match_category ON routing_rules(match_category);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_organization ON alert_config_audit_log(organization);
+CREATE INDEX IF NOT EXISTS idx_audit_log_table_record ON alert_config_audit_log(table_name, record_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_changed_at ON alert_config_audit_log(changed_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_changed_by ON alert_config_audit_log(changed_by);
+
+-- Create trigger function for updated_at
+CREATE OR REPLACE FUNCTION update_alert_config_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create triggers for updated_at columns
+CREATE TRIGGER update_alert_definitions_updated_at 
+    BEFORE UPDATE ON alert_definitions
+    FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
+
+CREATE TRIGGER update_alert_annotations_updated_at 
+    BEFORE UPDATE ON alert_annotations
+    FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
+
+CREATE TRIGGER update_notification_receivers_updated_at 
+    BEFORE UPDATE ON notification_receivers
+    FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
+
+CREATE TRIGGER update_routing_rules_updated_at 
+    BEFORE UPDATE ON routing_rules
+    FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
+
+-- Create audit log trigger function
+CREATE OR REPLACE FUNCTION log_alert_config_changes()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_organization VARCHAR(100);
+    v_table_name VARCHAR(50);
+    v_record_id INTEGER;
+    v_operation VARCHAR(20);
+    v_changed_by VARCHAR(100);
+    v_before_values JSONB;
+    v_after_values JSONB;
+BEGIN
+    -- Determine table name and organization based on which table triggered
+    IF TG_TABLE_NAME = 'alert_definitions' THEN
+        v_table_name := 'alert_definitions';
+        v_record_id := COALESCE(NEW.id, OLD.id);
+        v_organization := COALESCE(NEW.organization, OLD.organization);
+        v_changed_by := COALESCE(NEW.updated_by, NEW.created_by, OLD.updated_by, OLD.created_by, 'system');
+        
+        IF TG_OP = 'INSERT' THEN
+            v_operation := 'CREATE';
+            v_after_values := to_jsonb(NEW);
+            v_before_values := NULL;
+        ELSIF TG_OP = 'UPDATE' THEN
+            v_operation := 'UPDATE';
+            v_before_values := to_jsonb(OLD);
+            v_after_values := to_jsonb(NEW);
+        ELSIF TG_OP = 'DELETE' THEN
+            v_operation := 'DELETE';
+            v_before_values := to_jsonb(OLD);
+            v_after_values := NULL;
+        END IF;
+        
+    ELSIF TG_TABLE_NAME = 'notification_receivers' THEN
+        v_table_name := 'notification_receivers';
+        v_record_id := COALESCE(NEW.id, OLD.id);
+        v_organization := COALESCE(NEW.organization, OLD.organization);
+        -- notification_receivers doesn't have updated_by column, only created_by
+        v_changed_by := COALESCE(NEW.created_by, OLD.created_by, 'system');
+        
+        IF TG_OP = 'INSERT' THEN
+            v_operation := 'CREATE';
+            v_after_values := to_jsonb(NEW);
+            v_before_values := NULL;
+        ELSIF TG_OP = 'UPDATE' THEN
+            v_operation := 'UPDATE';
+            v_before_values := to_jsonb(OLD);
+            v_after_values := to_jsonb(NEW);
+        ELSIF TG_OP = 'DELETE' THEN
+            v_operation := 'DELETE';
+            v_before_values := to_jsonb(OLD);
+            v_after_values := NULL;
+        END IF;
+        
+    ELSIF TG_TABLE_NAME = 'routing_rules' THEN
+        v_table_name := 'routing_rules';
+        v_record_id := COALESCE(NEW.id, OLD.id);
+        v_organization := COALESCE(NEW.organization, OLD.organization);
+        -- routing_rules doesn't have updated_by column, only created_by
+        v_changed_by := COALESCE(NEW.created_by, OLD.created_by, 'system');
+        
+        IF TG_OP = 'INSERT' THEN
+            v_operation := 'CREATE';
+            v_after_values := to_jsonb(NEW);
+            v_before_values := NULL;
+        ELSIF TG_OP = 'UPDATE' THEN
+            v_operation := 'UPDATE';
+            v_before_values := to_jsonb(OLD);
+            v_after_values := to_jsonb(NEW);
+        ELSIF TG_OP = 'DELETE' THEN
+            v_operation := 'DELETE';
+            v_before_values := to_jsonb(OLD);
+            v_after_values := NULL;
+        END IF;
+    END IF;
+    
+    -- Insert audit log entry
+    INSERT INTO alert_config_audit_log (
+        organization,
+        table_name,
+        record_id,
+        operation,
+        changed_by,
+        before_values,
+        after_values
+    ) VALUES (
+        v_organization,
+        v_table_name,
+        v_record_id,
+        v_operation,
+        v_changed_by,
+        v_before_values,
+        v_after_values
+    );
+    
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    ELSE
+        RETURN NEW;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create audit triggers
+CREATE TRIGGER audit_alert_definitions_changes
+    AFTER INSERT OR UPDATE OR DELETE ON alert_definitions
+    FOR EACH ROW EXECUTE FUNCTION log_alert_config_changes();
+
+CREATE TRIGGER audit_notification_receivers_changes
+    AFTER INSERT OR UPDATE OR DELETE ON notification_receivers
+    FOR EACH ROW EXECUTE FUNCTION log_alert_config_changes();
+
+CREATE TRIGGER audit_routing_rules_changes
+    AFTER INSERT OR UPDATE OR DELETE ON routing_rules
+    FOR EACH ROW EXECUTE FUNCTION log_alert_config_changes();
+
+-- Add comments for documentation
+COMMENT ON TABLE alert_definitions IS 'Stores organization-specific alert definitions with complete PromQL expressions';
+COMMENT ON TABLE alert_annotations IS 'Stores annotations (summary, description, impact, action) for alert definitions';
+COMMENT ON TABLE notification_receivers IS 'Stores notification channel configurations (email) per organization';
+COMMENT ON TABLE routing_rules IS 'Defines routing rules that match alerts to receivers based on severity/category';
+COMMENT ON TABLE alert_config_audit_log IS 'Audit trail of all changes to alert configurations for compliance';
 
 -- ============================================================================
 -- Seed Data: Sample Models and Services for Each Task Type
@@ -1290,6 +1935,7 @@ INSERT INTO permissions (name, resource, action) VALUES
 ('tts.read', 'tts', 'read'),
 ('nmt.inference', 'nmt', 'inference'),
 ('nmt.read', 'nmt', 'read'),
+('ner.inference', 'ner', 'inference'),
 -- Model Management permissions
 ('model.create', 'models', 'create'),
 ('model.read', 'models', 'read'),
@@ -1297,16 +1943,27 @@ INSERT INTO permissions (name, resource, action) VALUES
 ('model.delete', 'models', 'delete'),
 ('model.deprecate', 'models', 'deprecate'),
 ('model.activate', 'models', 'activate'),
+('model.publish', 'models', 'publish'),
+('model.unpublish', 'models', 'unpublish'),
 -- Service Management permissions
 ('service.create', 'services', 'create'),
 ('service.read', 'services', 'read'),
 ('service.update', 'services', 'update'),
 ('service.delete', 'services', 'delete'),
 ('service.publish', 'services', 'publish'),
-('service.unpublish', 'services', 'unpublish')
+('service.unpublish', 'services', 'unpublish'),
+-- API Key management permissions
+('apiKey.create', 'apiKey', 'create'),
+('apiKey.read', 'apiKey', 'read'),
+('apiKey.update', 'apiKey', 'update'),
+('apiKey.delete', 'apiKey', 'delete'),
+-- Observability permissions (logs, traces)
+('logs.read', 'logs', 'read'),
+('traces.read', 'traces', 'read')
 ON CONFLICT (name) DO NOTHING;
 
--- Assign permissions to ADMIN role
+-- Assign all permissions to ADMIN role (includes users, configs, metrics, alerts, dashboards,
+-- asr, tts, nmt, ner, model.*, service.*, apiKey.create, apiKey.read, apiKey.update, apiKey.delete, logs, traces)
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
@@ -1318,7 +1975,7 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'USER' 
-AND p.name IN ('users.read', 'users.update', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read', 'model.read', 'service.read')
+AND p.name IN ('users.read', 'users.update', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read', 'model.read', 'service.read', 'apiKey.update')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- Assign permissions to GUEST role + model/service read permissions
@@ -1326,7 +1983,7 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'GUEST' 
-AND p.name IN ('users.read', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.read', 'model.read', 'service.read')
+AND p.name IN ('users.read', 'configs.read', 'metrics.read', 'alerts.read', 'dashboards.read', 'model.read', 'service.read', 'apiKey.update')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- Assign permissions to MODERATOR role + all model/service permissions
@@ -1334,7 +1991,7 @@ INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
 WHERE r.name = 'MODERATOR' 
-AND p.name IN ('users.read', 'users.update', 'configs.read', 'configs.update', 'metrics.read', 'alerts.read', 'alerts.update', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read', 'model.create', 'model.read', 'model.update', 'model.delete', 'model.publish', 'model.unpublish', 'service.create', 'service.read', 'service.update', 'service.delete')
+AND p.name IN ('users.read', 'users.update', 'configs.read', 'configs.update', 'metrics.read', 'alerts.read', 'alerts.update', 'dashboards.create', 'dashboards.read', 'dashboards.update', 'asr.inference', 'asr.read', 'tts.inference', 'tts.read', 'nmt.inference', 'nmt.read', 'model.create', 'model.read', 'model.update', 'model.delete', 'model.publish', 'model.unpublish', 'service.create', 'service.read', 'service.update', 'service.delete', 'apiKey.update')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- ============================================================================
@@ -1345,7 +2002,7 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 -- 
 -- Credentials:
 --   Username: admin
---   Email:    admin@ai4i.org
+--   Email:    admin@ai4inclusion.org
 --   Password: Admin@123
 --   Role:     ADMIN (all permissions)
 --   Status:   ACTIVE
@@ -1354,7 +2011,7 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 -- Create the default admin user
 -- Password hash for "Admin@123" (bcrypt)
 INSERT INTO users (email, username, hashed_password, is_active, is_verified, full_name, is_superuser) VALUES
-('admin@ai4i.org', 'admin', '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW', true, true, 'System Administrator', true)
+('admin@ai4inclusion.org', 'admin', '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW', true, true, 'System Administrator', true)
 ON CONFLICT (email) DO UPDATE
 SET 
     username = EXCLUDED.username,
@@ -1365,11 +2022,11 @@ SET
     is_superuser = EXCLUDED.is_superuser;
 
 -- Assign ADMIN role to the default admin user
--- This ensures the admin user has all permissions through the ADMIN role
+-- This ensures the admin user has all permissions through the ADMIN role (including apiKey.*)
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'admin@ai4i.org' AND u.username = 'admin' AND r.name = 'ADMIN'
+WHERE u.email = 'admin@ai4inclusion.org' AND u.username = 'admin' AND r.name = 'ADMIN'
 ON CONFLICT (user_id, role_id) DO NOTHING;
 
 \c config_db;
@@ -1387,8 +2044,9 @@ ON CONFLICT (user_id, role_id) DO NOTHING;
 -- planned but not yet implemented:
 --   - Metrics Service (metrics_db)
 --   - Telemetry Service (telemetry_db)
---   - Alerting Service (alerting_db)
 --   - Dashboard Service (dashboard_db)
+--
+-- Note: Alerting Service (alerting_db) has been implemented in STEP 6 above.
 --
 -- These schemas are commented out to avoid creating unnecessary databases
 -- and tables during initial setup. When implementing these services:

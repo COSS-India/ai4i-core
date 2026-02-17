@@ -27,7 +27,6 @@ import {
   TabPanels,
   Tab,
   TabPanel,
-  useToast,
   Textarea,
   SimpleGrid,
   Grid,
@@ -40,6 +39,8 @@ import {
   useDisclosure,
 } from "@chakra-ui/react";
 import Head from "next/head";
+import { useRouter } from "next/router";
+import { useQueryClient } from "@tanstack/react-query";
 import React, { useState, useEffect, useRef } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import {
@@ -53,6 +54,8 @@ import {
 import { getAllModels, getModelById } from "../services/modelManagementService";
 import { useAuth } from "../hooks/useAuth";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
+import { extractErrorInfo } from "../utils/errorHandler";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const ServicesManagementPage: React.FC = () => {
   const [services, setServices] = useState<Service[]>([]);
@@ -63,28 +66,49 @@ const ServicesManagementPage: React.FC = () => {
   const [isViewingService, setIsViewingService] = useState(false);
   const [isEditingService, setIsEditingService] = useState(false);
   const [formData, setFormData] = useState<Partial<Service>>({
-    serviceId: "",
     name: "",
     serviceDescription: "",
-    hardwareDescription: "",
     publishedOn: Math.floor(Date.now() / 1000),
     modelId: "",
+    modelName: "", // Store selected model name for display
     endpoint: "",
-    api_key: "",
     task_type: "",
-    status: "active",
+    modelVersion: "1.0",
   });
   const [updateFormData, setUpdateFormData] = useState<Partial<Service>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [deletingServiceUuid, setDeletingServiceUuid] = useState<string | null>(null);
+  const [publishingServiceUuid, setPublishingServiceUuid] = useState<string | null>(null);
+  const [unpublishingServiceUuid, setUnpublishingServiceUuid] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
-  const toast = useToast();
-  const { accessToken } = useAuth();
+  const toast = useToastWithDeduplication();
+  const { user } = useAuth();
+
+  const router = useRouter();
+  const queryClient = useQueryClient();
+
   const { checkSessionExpiry } = useSessionExpiry();
+
+  
+  // Check if user is GUEST or USER and redirect if so
+  useEffect(() => {
+    if (user?.roles?.includes('GUEST') || user?.roles?.includes('USER')) {
+      toast({
+        title: "Access Denied",
+        description: "You do not have access to Services Management.",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      router.push('/');
+    }
+  }, [user, router, toast]);
   const { isOpen, onOpen, onClose } = useDisclosure();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
+  // Model fetched by ID when navigating from a deprecated model's "Create Service" (not in active list)
+  const [preselectedModelFromQuery, setPreselectedModelFromQuery] = useState<any | null>(null);
 
   // Fetch services on component mount
   useEffect(() => {
@@ -96,27 +120,17 @@ const ServicesManagementPage: React.FC = () => {
       } catch (error: any) {
         console.error("Failed to fetch services:", error);
         
-        // Check if it's an authentication error
-        if (error.response?.status === 401 || error.message?.includes('Authentication') || error.message?.includes('401')) {
-          const errorMessage = error instanceof Error ? error.message : "Authentication failed";
-          toast({
-            title: "Authentication Error",
-            description: errorMessage.includes('Services management') ? errorMessage : `Services management error: ${errorMessage}. Please check your login status and try again.`,
-            status: "error",
-            duration: 5000,
-            isClosable: true,
-          });
-          setServices([]);
-        } else {
-          toast({
-            title: "Failed to Load Services",
-            description: error instanceof Error ? error.message : "Failed to fetch services",
-            status: "error",
-            duration: 5000,
-            isClosable: true,
-          });
-          setServices([]);
-        }
+        // Use centralized error handler
+        const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
+        
+        toast({
+          title: showOnlyMessage ? undefined : errorTitle,
+          description: errorMessage,
+          status: "error",
+          duration: 5000,
+          isClosable: true,
+        });
+        setServices([]);
       } finally {
         setIsLoading(false);
       }
@@ -131,7 +145,11 @@ const ServicesManagementPage: React.FC = () => {
       setIsLoadingModels(true);
       try {
         const fetchedModels = await getAllModels();
-        setModels(fetchedModels);
+        // Filter to only show ACTIVE models
+        const activeModels = fetchedModels.filter(
+          (model) => model.versionStatus?.toLowerCase() === "active" || !model.versionStatus
+        );
+        setModels(activeModels);
       } catch (error: any) {
         console.error("Failed to fetch models:", error);
         // Don't show toast for models - it's not critical for the page to work
@@ -144,11 +162,69 @@ const ServicesManagementPage: React.FC = () => {
     fetchModels();
   }, []);
 
+  // Handle query parameters for pre-selecting model from model-management page
+  useEffect(() => {
+    const { modelId, tab } = router.query;
+    if (!modelId || typeof modelId !== "string") return;
+
+    const runPreselect = async () => {
+      // Switch to Create Service tab if specified
+      if (tab === "create") {
+        setActiveTab(1);
+      }
+
+      const inActiveList = models.some(
+        (m) => (m.modelId || m.model_id) === modelId
+      );
+      if (inActiveList && formData.modelId !== modelId) {
+        handleModelNameChange(modelId);
+        router.replace("/services-management", undefined, { shallow: true });
+        return;
+      }
+
+      // Model not in active list - only add to dropdown if not deprecated (deprecated models must not appear in Create Service)
+      if (!inActiveList) {
+        try {
+          const modelDetails = await getModelById(modelId);
+          const isDeprecated = modelDetails?.versionStatus?.toLowerCase() === "deprecated";
+          if (modelDetails && !isDeprecated) {
+            setPreselectedModelFromQuery(modelDetails);
+            if (formData.modelId !== modelId) {
+              handleModelNameChange(modelId);
+            }
+          }
+        } catch (e) {
+          console.error("Failed to load preselected model:", e);
+        }
+        router.replace("/services-management", undefined, { shallow: true });
+      }
+    };
+
+    if (models.length > 0) {
+      runPreselect();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.query, models]);
+
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
   const tableBg = useColorModeValue("white", "gray.800");
   const tableHeaderBg = useColorModeValue("gray.50", "gray.700");
   const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
+
+  // Dropdown options: active models only (no deprecated). Include preselected from query only if not deprecated and not already in list.
+  const preselectedNotDeprecated =
+    preselectedModelFromQuery &&
+    preselectedModelFromQuery.versionStatus?.toLowerCase() !== "deprecated";
+  const modelsForDropdown =
+    preselectedNotDeprecated &&
+    !models.some(
+      (m) =>
+        (m.modelId || m.model_id) ===
+        (preselectedModelFromQuery.modelId || preselectedModelFromQuery.model_id)
+    )
+      ? [preselectedModelFromQuery, ...models]
+      : models;
 
   const getTaskColor = (taskType?: string) => {
     if (!taskType) return "gray";
@@ -190,31 +266,28 @@ const ServicesManagementPage: React.FC = () => {
     }));
   };
 
-  // Handle model selection and derive task_type and modelVersion
-  const handleModelChange = async (modelId: string) => {
+  // Handle model name selection and derive modelId, task_type, and modelVersion
+  const handleModelNameChange = async (modelId: string) => {
     // Check session expiry before fetching model details
     if (!checkSessionExpiry()) return;
-    
-    setFormData((prev) => ({
-      ...prev,
-      modelId: modelId,
-    }));
-
     if (modelId) {
       try {
         setIsLoadingModels(true);
         const modelDetails = await getModelById(modelId);
         
         // Extract task_type from model
-        // The task_type might be in model.task.type or model.task_type
         const taskType = modelDetails?.task?.type || modelDetails?.task_type || modelDetails?.taskType || "";
         
         // Extract model version (required field after migration)
         const modelVersion = modelDetails?.version || modelDetails?.modelVersion || "1.0";
         
+        // Get model name for display
+        const modelName = modelDetails?.name || modelDetails?.modelId || modelDetails?.model_id || "";
+        
         setFormData((prev) => ({
           ...prev,
           modelId: modelId,
+          modelName: modelName,
           task_type: taskType,
           modelVersion: modelVersion,
         }));
@@ -231,9 +304,11 @@ const ServicesManagementPage: React.FC = () => {
         setIsLoadingModels(false);
       }
     } else {
-      // Clear task_type and modelVersion if no model selected
+      // Clear fields if no model selected
       setFormData((prev) => ({
         ...prev,
+        modelId: "",
+        modelName: "",
         task_type: "",
         modelVersion: "",
       }));
@@ -249,7 +324,34 @@ const ServicesManagementPage: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      const createdService = await createService(formData);
+      // Auto-generate serviceId from name and timestamp
+      const timestamp = Date.now();
+      const serviceId = `${formData.name?.toLowerCase().replace(/\s+/g, '-') || 'service'}-${timestamp}`;
+      
+      // Prepare service data with auto-generated serviceId
+      const serviceData: Partial<Service> = {
+        ...formData,
+        serviceId: serviceId,
+        publishedOn: Math.floor(Date.now() / 1000),
+        hardwareDescription: 'Default hardware', // Default value since field is removed
+        api_key: '', // Default empty since field is removed
+        status: 'active', // Default status
+      };
+
+      const createdService = await createService(serviceData);
+
+      // Invalidate all service-related queries to refresh service lists across all pages
+      queryClient.invalidateQueries({ queryKey: ["asr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["tts-services"] });
+      queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nerServices"] });
+      queryClient.invalidateQueries({ queryKey: ["llm-services"] });
+      queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
+      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
 
       toast({
         title: "Service Created",
@@ -261,17 +363,16 @@ const ServicesManagementPage: React.FC = () => {
 
       // Reset form
       setFormData({
-        serviceId: "",
         name: "",
         serviceDescription: "",
-        hardwareDescription: "",
         publishedOn: Math.floor(Date.now() / 1000),
         modelId: "",
+        modelName: "",
         endpoint: "",
-        api_key: "",
         task_type: "",
-        status: "active",
+        modelVersion: "1.0",
       });
+      setPreselectedModelFromQuery(null);
 
       // Refresh services list
       const fetchedServices = await listServices();
@@ -280,10 +381,10 @@ const ServicesManagementPage: React.FC = () => {
       // Switch to list tab
       setActiveTab(0);
     } catch (error: any) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to create service";
+      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
       toast({
-        title: "Create Failed",
-        description: errorMessage,
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMsg,
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -305,9 +406,10 @@ const ServicesManagementPage: React.FC = () => {
       setActiveTab(2);
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : "Failed to fetch service details";
+      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
       toast({
-        title: "View Failed",
-        description: errorMessage,
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMsg,
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -340,6 +442,19 @@ const ServicesManagementPage: React.FC = () => {
         uuid: selectedService.uuid,
       });
 
+      // Invalidate all service-related queries to refresh service lists across all pages
+      queryClient.invalidateQueries({ queryKey: ["asr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["tts-services"] });
+      queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nerServices"] });
+      queryClient.invalidateQueries({ queryKey: ["llm-services"] });
+      queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
+      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+
       toast({
         title: "Service Updated",
         description: "Service has been updated successfully",
@@ -356,15 +471,146 @@ const ServicesManagementPage: React.FC = () => {
       setServices(fetchedServices);
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : "Failed to update service";
+      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
       toast({
-        title: "Update Failed",
-        description: errorMessage,
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMsg,
         status: "error",
         duration: 5000,
         isClosable: true,
       });
     } finally {
       setIsUpdating(false);
+    }
+  };
+
+  const handlePublishService = async (service: Service) => {
+    if (!service.serviceId) {
+      toast({
+        title: "Publish Failed",
+        description: "Service ID is required",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    setPublishingServiceUuid(service.uuid || service.serviceId);
+
+    try {
+      // Update service to set isPublished = true using PATCH with only serviceId and isPublished
+      const updatedService = await updateService({
+        serviceId: service.serviceId,
+        isPublished: true,
+      });
+
+      toast({
+        title: "Service Published",
+        description: `Service ${service.name || service.serviceId} has been published successfully`,
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+
+      // Invalidate all service-related queries to refresh service lists across all pages
+      queryClient.invalidateQueries({ queryKey: ["asr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["tts-services"] });
+      queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nerServices"] });
+      queryClient.invalidateQueries({ queryKey: ["llm-services"] });
+      queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
+      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+
+      // Refresh services list
+      const fetchedServices = await listServices();
+      setServices(fetchedServices);
+
+      // Update selected service if it's the one being published
+      if (selectedService?.uuid === service.uuid) {
+        setSelectedService(updatedService);
+      }
+    } catch (error: any) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to publish service";
+      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
+      toast({
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMsg,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setPublishingServiceUuid(null);
+    }
+  };
+
+  const handleUnpublishService = async (service: Service) => {
+    if (!service.serviceId) {
+      toast({
+        title: "Unpublish Failed",
+        description: "Service ID is required",
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    setUnpublishingServiceUuid(service.uuid || service.serviceId);
+
+    try {
+      // Update service to set isPublished = false using PATCH with only serviceId and isPublished
+      const updatedService = await updateService({
+        serviceId: service.serviceId,
+        isPublished: false,
+      });
+
+      toast({
+        title: "Service Unpublished",
+        description: `Service ${service.name || service.serviceId} has been unpublished successfully`,
+        status: "success",
+        duration: 3000,
+        isClosable: true,
+      });
+
+      // Invalidate all service-related queries to refresh service lists across all pages
+      queryClient.invalidateQueries({ queryKey: ["asr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["tts-services"] });
+      queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nerServices"] });
+      queryClient.invalidateQueries({ queryKey: ["llm-services"] });
+      queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
+      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+
+      // Refresh services list
+      const fetchedServices = await listServices();
+      setServices(fetchedServices);
+
+      // Update selected service if it's the one being unpublished
+      if (selectedService?.uuid === service.uuid) {
+        setSelectedService(updatedService);
+      }
+    } catch (error: any) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to unpublish service";
+      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
+      toast({
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMsg,
+        status: "error",
+        duration: 5000,
+        isClosable: true,
+      });
+    } finally {
+      setUnpublishingServiceUuid(null);
     }
   };
 
@@ -402,6 +648,19 @@ const ServicesManagementPage: React.FC = () => {
         isClosable: true,
       });
 
+      // Invalidate all service-related queries to refresh service lists across all pages
+      queryClient.invalidateQueries({ queryKey: ["asr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["tts-services"] });
+      queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nmt-services"] });
+      queryClient.invalidateQueries({ queryKey: ["nerServices"] });
+      queryClient.invalidateQueries({ queryKey: ["llm-services"] });
+      queryClient.invalidateQueries({ queryKey: ["transliteration-services"] });
+      queryClient.invalidateQueries({ queryKey: ["speaker-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
+      queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
+      queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
+
       // Refresh services list
       const fetchedServices = await listServices();
       setServices(fetchedServices);
@@ -414,9 +673,10 @@ const ServicesManagementPage: React.FC = () => {
       }
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : "Failed to delete service";
+      const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
       toast({
-        title: "Delete Failed",
-        description: errorMessage,
+        title: showOnlyMessage ? undefined : errorTitle,
+        description: errorMsg,
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -439,10 +699,10 @@ const ServicesManagementPage: React.FC = () => {
         <VStack spacing={6} w="full">
           {/* Page Header */}
           <Box textAlign="center" mb={2}>
-            <Heading size="lg" color="gray.800" mb={1}>
+            <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
               Services Management
             </Heading>
-            <Text color="gray.600" fontSize="sm">
+            <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
               Manage and configure services
             </Text>
           </Box>
@@ -474,7 +734,7 @@ const ServicesManagementPage: React.FC = () => {
                   <TabPanel px={0} pt={6}>
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
-                        <Heading size="md" color="gray.700">
+                        <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                           All Services
                         </Heading>
                       </CardHeader>
@@ -522,14 +782,14 @@ const ServicesManagementPage: React.FC = () => {
                                     <Td>{service.modelId || service.model_id || "N/A"}</Td>
                                     <Td>
                                       <Badge
-                                        colorScheme={getStatusColor(service.healthStatus?.status || service.status)}
+                                        colorScheme={service.isPublished === true ? "green" : "gray"}
                                         fontSize="sm"
                                         p={1}
                                       >
-                                        {(service.healthStatus?.status || service.status)?.toUpperCase() || "N/A"}
+                                        {service.isPublished === true ? "PUBLISHED" : "UNPUBLISHED"}
                                       </Badge>
                                     </Td>
-                                    <Td>
+                                    <Td onClick={(e) => e.stopPropagation()}>
                                       <HStack spacing={2}>
                                         <Button
                                           size="sm"
@@ -539,6 +799,31 @@ const ServicesManagementPage: React.FC = () => {
                                         >
                                           View
                                         </Button>
+                                        {service.isPublished === true ? (
+                                          <Button
+                                            size="sm"
+                                            colorScheme="red"
+                                            variant="outline"
+                                            onClick={() => handleUnpublishService(service)}
+                                            isLoading={unpublishingServiceUuid === service.uuid}
+                                            loadingText="Unpublishing..."
+                                            isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
+                                          >
+                                            Unpublish
+                                          </Button>
+                                        ) : (
+                                          <Button
+                                            size="sm"
+                                            colorScheme="green"
+                                            variant="outline"
+                                            onClick={() => handlePublishService(service)}
+                                            isLoading={publishingServiceUuid === service.uuid}
+                                            loadingText="Publishing..."
+                                            isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
+                                          >
+                                            Publish
+                                          </Button>
+                                        )}
                                         <Button
                                           size="sm"
                                           colorScheme="red"
@@ -571,37 +856,28 @@ const ServicesManagementPage: React.FC = () => {
                   <TabPanel px={0} pt={6}>
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
-                        <Heading size="md" color="gray.700">
+                        <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                           Create New Service
                         </Heading>
                       </CardHeader>
                       <CardBody>
                         <form onSubmit={handleSubmit}>
                           <VStack spacing={6} align="stretch">
-                            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                              <FormControl isRequired>
-                                <FormLabel fontWeight="semibold">Service ID</FormLabel>
-                                <Input
-                                  value={formData.serviceId || ""}
-                                  onChange={(e) => handleInputChange("serviceId", e.target.value)}
-                                  placeholder="Enter service ID"
-                                  bg="white"
-                                />
-                              </FormControl>
-
-                              <FormControl isRequired>
-                                <FormLabel fontWeight="semibold">Name</FormLabel>
-                                <Input
-                                  value={formData.name || ""}
-                                  onChange={(e) => handleInputChange("name", e.target.value)}
-                                  placeholder="Enter service name"
-                                  bg="white"
-                                />
-                              </FormControl>
-                            </SimpleGrid>
+                            <FormControl isRequired>
+                              <FormLabel fontWeight="semibold">Name</FormLabel>
+                              <Input
+                                value={formData.name || ""}
+                                onChange={(e) => handleInputChange("name", e.target.value)}
+                                placeholder="Enter service name"
+                                bg="white"
+                              />
+                              <Text fontSize="xs" color="gray.500" mt={1}>
+                                Service ID will be auto-generated from the name
+                              </Text>
+                            </FormControl>
 
                             <FormControl isRequired>
-                              <FormLabel fontWeight="semibold">Service Description</FormLabel>
+                              <FormLabel fontWeight="semibold">Description</FormLabel>
                               <Textarea
                                 value={formData.serviceDescription || ""}
                                 onChange={(e) => handleInputChange("serviceDescription", e.target.value)}
@@ -611,66 +887,22 @@ const ServicesManagementPage: React.FC = () => {
                               />
                             </FormControl>
 
-                            <FormControl isRequired>
-                              <FormLabel fontWeight="semibold">Hardware Description</FormLabel>
-                              <Input
-                                value={formData.hardwareDescription || ""}
-                                onChange={(e) => handleInputChange("hardwareDescription", e.target.value)}
-                                placeholder="Enter hardware description"
-                                bg="white"
-                              />
-                            </FormControl>
-
-                            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                              <FormControl>
-                                <FormLabel fontWeight="semibold">Task Type</FormLabel>
-                                <Input
-                                  value={formData.task_type || ""}
-                                  isReadOnly
-                                  bg="gray.50"
-                                  placeholder="Will be derived from selected model"
-                                  fontSize="sm"
-                                />
-                                <Text fontSize="xs" color="gray.500" mt={1}>
-                                  Automatically set when you select a model
-                                </Text>
-                              </FormControl>
-
-                              <FormControl>
-                                <FormLabel fontWeight="semibold">Status</FormLabel>
-                                <Select
-                                  value={formData.status || "active"}
-                                  onChange={(e) => handleInputChange("status", e.target.value)}
-                                  bg="white"
-                                >
-                                  <option value="active">Active</option>
-                                  <option value="inactive">Inactive</option>
-                                  <option value="pending">Pending</option>
-                                </Select>
-                              </FormControl>
-                            </SimpleGrid>
-
                             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                               <FormControl isRequired>
-                                <FormLabel fontWeight="semibold">Model ID</FormLabel>
+                                <FormLabel fontWeight="semibold">Model Name</FormLabel>
                                 <Select
                                   value={formData.modelId || ""}
-                                  onChange={(e) => handleModelChange(e.target.value)}
+                                  onChange={(e) => handleModelNameChange(e.target.value)}
                                   placeholder={isLoadingModels ? "Loading models..." : "Select a model"}
                                   bg="white"
                                   isDisabled={isLoadingModels}
                                 >
-                                  {models.map((model) => (
+                                  {modelsForDropdown.map((model) => (
                                     <option key={model.modelId || model.model_id} value={model.modelId || model.model_id}>
                                       {model.name || model.modelId || model.model_id}
                                     </option>
                                   ))}
                                 </Select>
-                                {formData.modelId && formData.task_type && (
-                                  <Text fontSize="xs" color="blue.500" mt={1}>
-                                    Task Type: {formData.task_type.toUpperCase()} (derived from model)
-                                  </Text>
-                                )}
                               </FormControl>
 
                               <FormControl isRequired>
@@ -684,16 +916,36 @@ const ServicesManagementPage: React.FC = () => {
                               </FormControl>
                             </SimpleGrid>
 
-                            <FormControl isRequired>
-                              <FormLabel fontWeight="semibold">API Key</FormLabel>
-                              <Input
-                                value={formData.api_key || ""}
-                                onChange={(e) => handleInputChange("api_key", e.target.value)}
-                                placeholder="Enter API key for the service"
-                                bg="white"
-                                type="password"
-                              />
-                            </FormControl>
+                            {/* Auto-populated fields (read-only) */}
+                            {formData.modelId && (
+                              <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                                <FormControl>
+                                  <FormLabel fontWeight="semibold">Model ID</FormLabel>
+                                  <Input
+                                    value={formData.modelId || ""}
+                                    isReadOnly
+                                    bg="gray.50"
+                                    fontSize="sm"
+                                  />
+                                  <Text fontSize="xs" color="gray.500" mt={1}>
+                                    Automatically populated from selected model
+                                  </Text>
+                                </FormControl>
+
+                                <FormControl>
+                                  <FormLabel fontWeight="semibold">Task Type</FormLabel>
+                                  <Input
+                                    value={formData.task_type || ""}
+                                    isReadOnly
+                                    bg="gray.50"
+                                    fontSize="sm"
+                                  />
+                                  <Text fontSize="xs" color="gray.500" mt={1}>
+                                    Automatically derived from selected model
+                                  </Text>
+                                </FormControl>
+                              </SimpleGrid>
+                            )}
 
                             <HStack justify="flex-end" spacing={4} pt={4}>
                               <Button
@@ -701,17 +953,16 @@ const ServicesManagementPage: React.FC = () => {
                                 variant="outline"
                                 onClick={() => {
                                   setFormData({
-                                    serviceId: "",
                                     name: "",
                                     serviceDescription: "",
-                                    hardwareDescription: "",
                                     publishedOn: Math.floor(Date.now() / 1000),
                                     modelId: "",
+                                    modelName: "",
                                     endpoint: "",
-                                    api_key: "",
                                     task_type: "",
-                                    status: "active",
+                                    modelVersion: "1.0",
                                   });
+                                  setPreselectedModelFromQuery(null);
                                 }}
                               >
                                 Reset
@@ -732,53 +983,32 @@ const ServicesManagementPage: React.FC = () => {
                   </TabPanel>
 
                   {/* View Service Tab */}
-                  {isViewingService && selectedService && (
+                  {isViewingService && selectedService ? (
                     <TabPanel px={0} pt={6}>
                       <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                         <CardHeader>
                           <HStack justify="space-between" align="center">
-                            <Heading size="md" color="gray.700">
+                            <Heading size="md" color="gray.700" userSelect="none" cursor="default">
                               Service Details: {selectedService.name || selectedService.serviceId || selectedService.service_id}
                             </Heading>
                             <HStack spacing={2}>
-                              {!isEditingService ? (
-                                <>
-                                  <Button
-                                    size="sm"
-                                    colorScheme="blue"
-                                    onClick={() => setIsEditingService(true)}
-                                  >
-                                    Edit Service
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    colorScheme="red"
-                                    variant="outline"
-                                    onClick={() => handleDeleteClick(selectedService)}
-                                    isLoading={deletingServiceUuid === selectedService.uuid}
-                                    loadingText="Deleting..."
-                                    isDisabled={deletingServiceUuid !== null}
-                                  >
-                                    Delete Service
-                                  </Button>
-                                </>
-                              ) : (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => {
-                                    setIsEditingService(false);
-                                    setUpdateFormData(selectedService);
-                                  }}
-                                >
-                                  Cancel
-                                </Button>
-                              )}
+                              {/* Editing disabled for now */}
+                              <Button
+                                size="sm"
+                                colorScheme="red"
+                                variant="outline"
+                                onClick={() => handleDeleteClick(selectedService)}
+                                isLoading={deletingServiceUuid === selectedService.uuid}
+                                loadingText="Deleting..."
+                                isDisabled={deletingServiceUuid !== null}
+                              >
+                                Delete Service
+                              </Button>
                             </HStack>
                           </HStack>
                         </CardHeader>
                         <CardBody>
-                          {!isEditingService ? (
+                          {!isEditingService && (
                             // View Mode - Display service details
                             <VStack spacing={6} align="stretch">
                               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
@@ -818,15 +1048,27 @@ const ServicesManagementPage: React.FC = () => {
                                 </Box>
                                 <Box>
                                   <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                                    Status
+                                    Status (Publish/Unpublish)
                                   </Text>
                                   <Badge
                                     colorScheme={getStatusColor(selectedService.healthStatus?.status || selectedService.status)}
                                     fontSize="sm"
                                     p={2}
                                   >
-                                    {(selectedService.healthStatus?.status || selectedService.status)?.toUpperCase() || "N/A"}
+                                    {(() => {
+                                      const status = selectedService.healthStatus?.status || selectedService.status;
+                                      // Map status to Publish/Unpublish
+                                      if (status === 'active' || status === 'published') {
+                                        return 'PUBLISHED';
+                                      } else if (status === 'inactive' || status === 'unpublished') {
+                                        return 'UNPUBLISHED';
+                                      }
+                                      return status?.toUpperCase() || "N/A";
+                                    })()}
                                   </Badge>
+                                  <Text fontSize="xs" color="gray.500" mt={1}>
+                                    System-controlled (shown only after creation)
+                                  </Text>
                                 </Box>
                               </SimpleGrid>
 
@@ -899,196 +1141,12 @@ const ServicesManagementPage: React.FC = () => {
                                 </Box>
                               )}
                             </VStack>
-                          ) : (
-                            // Edit Mode - Update form
-                            <form onSubmit={handleUpdateService}>
-                              <VStack spacing={6} align="stretch">
-                                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                                  <FormControl>
-                                    <FormLabel fontWeight="semibold">Service ID</FormLabel>
-                                    <Input
-                                      value={updateFormData.serviceId || updateFormData.service_id || ""}
-                                      isDisabled
-                                      bg="gray.50"
-                                      fontSize="sm"
-                                    />
-                                  </FormControl>
-                                  <FormControl isRequired>
-                                    <FormLabel fontWeight="semibold">Name</FormLabel>
-                                    <Input
-                                      value={updateFormData.name || ""}
-                                      onChange={(e) =>
-                                        setUpdateFormData((prev) => ({ ...prev, name: e.target.value }))
-                                      }
-                                      placeholder="Enter service name"
-                                      bg="white"
-                                    />
-                                  </FormControl>
-                                </SimpleGrid>
-
-                                <FormControl isRequired>
-                                  <FormLabel fontWeight="semibold">Service Description</FormLabel>
-                                  <Textarea
-                                    value={updateFormData.serviceDescription || updateFormData.description || ""}
-                                    onChange={(e) =>
-                                      setUpdateFormData((prev) => ({
-                                        ...prev,
-                                        serviceDescription: e.target.value,
-                                        description: e.target.value, // Keep for backward compatibility
-                                      }))
-                                    }
-                                    placeholder="Enter service description"
-                                    bg="white"
-                                    rows={4}
-                                  />
-                                </FormControl>
-
-                                <FormControl isRequired>
-                                  <FormLabel fontWeight="semibold">Hardware Description</FormLabel>
-                                  <Input
-                                    value={updateFormData.hardwareDescription || ""}
-                                    onChange={(e) =>
-                                      setUpdateFormData((prev) => ({
-                                        ...prev,
-                                        hardwareDescription: e.target.value,
-                                      }))
-                                    }
-                                    placeholder="Enter hardware description"
-                                    bg="white"
-                                  />
-                                </FormControl>
-
-                                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                                  <FormControl>
-                                    <FormLabel fontWeight="semibold">Task Type</FormLabel>
-                                    <Input
-                                      value={updateFormData.task_type || ""}
-                                      isReadOnly
-                                      bg="gray.50"
-                                      placeholder="Will be derived from selected model"
-                                      fontSize="sm"
-                                    />
-                                    <Text fontSize="xs" color="gray.500" mt={1}>
-                                      Automatically set when you select a model
-                                    </Text>
-                                  </FormControl>
-
-                                  <FormControl>
-                                    <FormLabel fontWeight="semibold">Status</FormLabel>
-                                    <Select
-                                      value={updateFormData.status || "active"}
-                                      onChange={(e) =>
-                                        setUpdateFormData((prev) => ({
-                                          ...prev,
-                                          status: e.target.value,
-                                        }))
-                                      }
-                                      bg="white"
-                                    >
-                                      <option value="active">Active</option>
-                                      <option value="inactive">Inactive</option>
-                                      <option value="pending">Pending</option>
-                                    </Select>
-                                  </FormControl>
-                                </SimpleGrid>
-
-                                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                                  <FormControl isRequired>
-                                    <FormLabel fontWeight="semibold">Model ID</FormLabel>
-                                    <Select
-                                      value={updateFormData.modelId || updateFormData.model_id || ""}
-                                      onChange={async (e) => {
-                                        const modelId = e.target.value;
-                                        setUpdateFormData((prev) => ({
-                                          ...prev,
-                                          modelId: modelId,
-                                          model_id: modelId, // Keep for backward compatibility
-                                        }));
-
-                                        // Fetch model details and derive task_type and modelVersion
-                                        if (modelId) {
-                                          try {
-                                            const modelDetails = await getModelById(modelId);
-                                            const taskType = modelDetails?.task?.type || modelDetails?.task_type || modelDetails?.taskType || "";
-                                            const modelVersion = modelDetails?.version || modelDetails?.modelVersion || "1.0";
-                                            setUpdateFormData((prev) => ({
-                                              ...prev,
-                                              task_type: taskType,
-                                              modelVersion: modelVersion,
-                                            }));
-                                          } catch (error: any) {
-                                            console.error("Failed to fetch model details:", error);
-                                          }
-                                        }
-                                      }}
-                                      placeholder={isLoadingModels ? "Loading models..." : "Select a model"}
-                                      bg="white"
-                                      isDisabled={isLoadingModels}
-                                    >
-                                      {models.map((model) => (
-                                        <option key={model.modelId || model.model_id} value={model.modelId || model.model_id}>
-                                          {model.name || model.modelId || model.model_id}
-                                        </option>
-                                      ))}
-                                    </Select>
-                                    {updateFormData.modelId && updateFormData.task_type && (
-                                      <Text fontSize="xs" color="blue.500" mt={1}>
-                                        Task Type: {updateFormData.task_type.toUpperCase()} (derived from model)
-                                      </Text>
-                                    )}
-                                  </FormControl>
-
-                                  <FormControl isRequired>
-                                    <FormLabel fontWeight="semibold">Endpoint</FormLabel>
-                                    <Input
-                                      value={updateFormData.endpoint || updateFormData.endpoint_url || ""}
-                                      onChange={(e) =>
-                                        setUpdateFormData((prev) => ({
-                                          ...prev,
-                                          endpoint: e.target.value,
-                                          endpoint_url: e.target.value, // Keep for backward compatibility
-                                        }))
-                                      }
-                                      placeholder="Enter endpoint URL"
-                                      bg="white"
-                                    />
-                                  </FormControl>
-                                </SimpleGrid>
-
-                                <FormControl isRequired>
-                                  <FormLabel fontWeight="semibold">API Key</FormLabel>
-                                  <Input
-                                    value={updateFormData.api_key || updateFormData.apiKey || ""}
-                                    onChange={(e) =>
-                                      setUpdateFormData((prev) => ({
-                                        ...prev,
-                                        api_key: e.target.value,
-                                        apiKey: e.target.value, // Keep for backward compatibility
-                                      }))
-                                    }
-                                    placeholder="Enter API key"
-                                    bg="white"
-                                    type="password"
-                                  />
-                                </FormControl>
-
-                                <HStack justify="flex-end" spacing={4} pt={4}>
-                                  <Button
-                                    type="submit"
-                                    colorScheme="blue"
-                                    isLoading={isUpdating}
-                                    loadingText="Updating..."
-                                  >
-                                    Update Service
-                                  </Button>
-                                </HStack>
-                              </VStack>
-                            </form>
                           )}
+                          {/* Editing disabled for services after creation - edit form removed */}
                         </CardBody>
                       </Card>
                     </TabPanel>
-                  )}
+                  ) : null}
                 </TabPanels>
               </Tabs>
             </Card>

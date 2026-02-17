@@ -43,14 +43,19 @@ class TextInput(BaseModel):
 
 class NMTInferenceConfig(BaseModel):
     """NMT inference configuration"""
-    serviceId: str = Field(..., description="Identifier for NMT service/model")
+    serviceId: Optional[str] = Field(None, description="Identifier for NMT service/model. If not provided, SMR service will be called to select a serviceId.")
     language: LanguagePair = Field(..., description="Language pair configuration")
+    context: Optional[str] = Field(None, description="Context string for context-aware translation (required when X-Context-Aware header is set to true)")
+    
+    class Config:
+        extra = "allow"  # Allow extra fields to be passed through
     
     @validator('serviceId')
     def validate_service_id(cls, v):
-        if not v or not v.strip():
-            raise ValueError('Service ID cannot be empty')
-        return v.strip()
+        # Allow None or empty string - will be handled by SMR if not provided
+        if v is not None and v.strip():
+            return v.strip()
+        return None  # Return None for empty/whitespace strings
 
 
 class NMTInferenceRequest(BaseModel):
@@ -68,5 +73,8 @@ class NMTInferenceRequest(BaseModel):
         return v
     
     def dict(self, **kwargs):
-        """Override dict to exclude None values"""
+        """Override dict to exclude None values, but allow context to be passed through"""
+        # If exclude_none is explicitly False, respect it (for context-aware requests)
+        if "exclude_none" in kwargs and kwargs["exclude_none"] is False:
+            return super().dict(**kwargs)
         return super().dict(exclude_none=True, **kwargs)

@@ -46,3 +46,6 @@ python-jose[cryptography]>=3.3.0
 
 # WebSocket
 python-socketio>=5.10.0
+
+# OpenTelemetry dependencies (required by ai4icore_telemetry)
+packaging>=21.0

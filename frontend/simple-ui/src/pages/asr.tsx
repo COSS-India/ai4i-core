@@ -10,7 +10,6 @@ import {
   Progress,
   Select,
   Text,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
@@ -23,9 +22,10 @@ import LoadingSpinner from "../components/common/LoadingSpinner";
 import { ASR_SUPPORTED_LANGUAGES } from "../config/constants";
 import { useASR } from "../hooks/useASR";
 import { listASRServices, ASRServiceDetails } from "../services/asrService";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const ASRPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const {
     language,
     sampleRate,
@@ -97,10 +97,10 @@ const ASRPage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               Automatic Speech Recognition
             </Heading>
-            <Text color="gray.600" fontSize="lg">
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
               Convert speech to text with support for 12+ Indic languages
             </Text>
           </Box>
@@ -143,14 +143,38 @@ const ASRPage: React.FC = () => {
                     value={serviceId}
                     onChange={(e) => setServiceId(e.target.value)}
                     isDisabled={fetching || servicesLoading}
-                    placeholder={servicesLoading ? "Loading services..." : "Select an ASR service"}
+                    placeholder={servicesLoading ? "Loading services..." : "Select a ASR service"}
                   >
-                    {asrServices?.map((service) => (
-                      <option key={service.service_id} value={service.service_id}>
-                        {service.service_id}
-                      </option>
-                    ))}
+                    {asrServices?.map((service) => {
+                      const version = service.modelVersion || service.model_version;
+                      const displayText = version ? `${service.service_id} (${version})` : service.service_id;
+                      return (
+                        <option key={service.service_id} value={service.service_id}>
+                          {displayText}
+                        </option>
+                      );
+                    })}
                   </Select>
+                  {serviceId && asrServices && (
+                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                      {(() => {
+                        const selectedService = asrServices.find((s) => s.service_id === serviceId);
+                        return selectedService ? (
+                          <>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Service ID:</strong> {selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Description:</strong> {selectedService.description || "No description available"}
+                            </Text>
+                          </>
+                        ) : null;
+                      })()}
+                    </Box>
+                  )}
                 </FormControl>
 
                 {/* Language Selection */}

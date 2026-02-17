@@ -39,6 +39,84 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     def __init__(self, app):
         super().__init__(app)
+        
+        # Read filtering configuration from environment variables
+        import logging
+        exclude_health_env = os.getenv("EXCLUDE_HEALTH_LOGS", "false")
+        exclude_metrics_env = os.getenv("EXCLUDE_METRICS_LOGS", "false")
+        allowed_log_levels_env = os.getenv("ALLOWED_LOG_LEVELS", "DEBUG,INFO,WARNING,ERROR")
+        
+        self.exclude_health_logs = exclude_health_env.lower() == "true"
+        self.exclude_metrics_logs = exclude_metrics_env.lower() == "true"
+        
+        # Parse allowed log levels (comma-separated: "INFO,ERROR" or "DEBUG,INFO,WARNING,ERROR")
+        allowed_levels_str = [level.strip().upper() for level in allowed_log_levels_env.split(",")]
+        self.allowed_log_levels = set()
+        for level_str in allowed_levels_str:
+            level_value = getattr(logging, level_str, None)
+            if level_value is not None:
+                self.allowed_log_levels.add(level_value)
+        
+        # If no valid levels found, default to all levels
+        if not self.allowed_log_levels:
+            self.allowed_log_levels = {logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR}
+        
+        # Log configuration at startup (only once per service instance)
+        logger.info(
+            f"RequestLoggingMiddleware initialized: EXCLUDE_HEALTH_LOGS={self.exclude_health_logs}, "
+            f"EXCLUDE_METRICS_LOGS={self.exclude_metrics_logs}, ALLOWED_LOG_LEVELS={allowed_levels_str}",
+            extra={"context": {
+                "exclude_health_logs": self.exclude_health_logs,
+                "exclude_metrics_logs": self.exclude_metrics_logs,
+                "allowed_log_levels": allowed_levels_str,
+            }}
+        )
+        
+        # Health endpoint patterns
+        self.health_patterns = [
+            "/health",
+            "/api/v1/health",
+            "/api/v1/pipeline/health",
+        ]
+        
+        # Metrics endpoint patterns
+        self.metrics_patterns = [
+            "/metrics",
+            "/enterprise/metrics",
+            "/api/v1/metrics",
+        ]
+    
+    def _should_skip_logging(self, path: str, status_code: int) -> bool:
+        """Check if logging should be skipped based on path and configuration."""
+        path_lower = path.lower().rstrip('/')
+        
+        # Check health endpoints - match any path containing /health
+        if self.exclude_health_logs:
+            if '/health' in path_lower or path_lower.endswith('/health'):
+                return True
+        
+        # Check metrics endpoints - match any path containing /metrics
+        if self.exclude_metrics_logs:
+            if '/metrics' in path_lower or path_lower.endswith('/metrics'):
+                return True
+        
+        return False
+    
+    def _should_log_by_level(self, status_code: int) -> bool:
+        """Check if log should be written based on allowed log levels and status code."""
+        import logging
+        # Map status codes to log levels
+        if 200 <= status_code < 300:
+            log_level = logging.INFO
+        elif 400 <= status_code < 500:
+            log_level = logging.WARNING
+        elif 500 <= status_code < 600:
+            log_level = logging.ERROR
+        else:
+            log_level = logging.INFO
+        
+        # Check if log level is in the allowed list
+        return log_level in self.allowed_log_levels
 
     async def dispatch(self, request: Request, call_next):
         """Log request and response information with structured logging."""
@@ -69,7 +147,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     # Format trace_id as hex string (Jaeger format)
                     trace_id = format(span_context.trace_id, '032x')
                     # Create full Jaeger URL
-                    jaeger_trace_url = f"{JAEGER_UI_URL}/trace/{trace_id}"
+                    # Store only trace_id - OpenSearch will use URL template to construct full URL
+                    jaeger_trace_url = trace_id
             except Exception:
                 # If trace extraction fails, continue without it
                 pass
@@ -92,6 +171,16 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # Determine log level based on status code
         status_code = response.status_code
+        
+        # Check if logging should be skipped (health/metrics filtering)
+        if self._should_skip_logging(path, status_code):
+            response.headers["X-Process-Time"] = f"{processing_time:.3f}"
+            return response
+        
+        # Check if log level meets minimum threshold
+        if not self._should_log_by_level(status_code):
+            response.headers["X-Process-Time"] = f"{processing_time:.3f}"
+            return response
         
         # Build context for structured logging
         log_context = {

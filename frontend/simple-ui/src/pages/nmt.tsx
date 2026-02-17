@@ -13,7 +13,6 @@ import {
   HStack,
   Progress,
   Text,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
@@ -27,21 +26,20 @@ import TextTranslator from "../components/nmt/TextTranslator";
 import TranslationResults from "../components/nmt/TranslationResults";
 import { useAuth } from "../hooks/useAuth";
 import { useNMT } from "../hooks/useNMT";
+import { INDICTRANS_ANONYMOUS_SERVICE_ID } from "../data/indictransAnonymousService";
 import {
   getSupportedLanguagePairsForService,
   listNMTServices,
 } from "../services/nmtService";
 import { getRemainingTryItRequests, shouldWarnAboutRateLimit } from "../services/tryItService";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const NMTPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [showRateLimitWarning, setShowRateLimitWarning] = useState(false);
   const [remainingRequests, setRemainingRequests] = useState(5);
-  
-  // Hardcoded service ID for anonymous users (try-it mode)
-  const ANONYMOUS_SERVICE_ID = "ai4bharat/indictrans--gpu-t4";
   
   const {
     languagePair,
@@ -62,10 +60,10 @@ const NMTPage: React.FC = () => {
     swapLanguages,
   } = useNMT();
   
-  // Set hardcoded service ID for anonymous users
+  // Set hardcoded service ID for anonymous users (try-it mode)
   useEffect(() => {
     if (!authLoading && !isAuthenticated && !selectedServiceId) {
-      setSelectedServiceId(ANONYMOUS_SERVICE_ID);
+      setSelectedServiceId(INDICTRANS_ANONYMOUS_SERVICE_ID);
     }
   }, [isAuthenticated, authLoading, selectedServiceId, setSelectedServiceId]);
   
@@ -133,10 +131,10 @@ const NMTPage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               Neural Machine Translation
             </Heading>
-            <Text color="gray.600" fontSize="lg">
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
               Translate text between languages with high accuracy
             </Text>
           </Box>
@@ -149,7 +147,6 @@ const NMTPage: React.FC = () => {
               borderRadius="md"
               maxW="1200px"
               w="full"
-              mx="auto"
             >
               <AlertIcon />
               <Box flex="1">
@@ -186,43 +183,19 @@ const NMTPage: React.FC = () => {
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
-                {/* Service and Language Selector - Hidden for anonymous users */}
-                {isAuthenticated && (
-                  <Box>
-                    <ModelLanguageSelector
-                      languagePair={languagePair}
-                      onLanguagePairChange={setLanguagePair}
-                      availableLanguagePairs={languagePairs || []}
-                      loading={pairsLoading || servicesLoading}
-                      selectedServiceId={selectedServiceId}
-                      onServiceChange={setSelectedServiceId}
-                    />
-                  </Box>
-                )}
-                
-                {/* Language Pair Selector Only - For anonymous users */}
-                {!isAuthenticated && !authLoading && (
-                  <Box
-                    p={4}
-                    bg="gray.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="gray.200"
-                  >
-                    <Text fontSize="sm" color="gray.700" mb={2} fontWeight="medium">
-                      Select Language Pair
-                    </Text>
-                    <ModelLanguageSelector
-                      languagePair={languagePair}
-                      onLanguagePairChange={setLanguagePair}
-                      availableLanguagePairs={languagePairs || []}
-                      loading={pairsLoading || servicesLoading}
-                      selectedServiceId={selectedServiceId}
-                      onServiceChange={setSelectedServiceId}
-                      hideServiceSelector={true}
-                    />
-                  </Box>
-                )}
+                {/* Service and Language Selector - same layout for all; service dropdown disabled for anonymous */}
+                <Box>
+                  <ModelLanguageSelector
+                    languagePair={languagePair}
+                    onLanguagePairChange={setLanguagePair}
+                    availableLanguagePairs={languagePairs || []}
+                    loading={pairsLoading || servicesLoading}
+                    selectedServiceId={selectedServiceId}
+                    onServiceChange={setSelectedServiceId}
+                    hideServiceSelector={false}
+                    serviceDropdownDisabled={!authLoading && !isAuthenticated}
+                  />
+                </Box>
 
                 {/* Text Translator */}
                 <Box>

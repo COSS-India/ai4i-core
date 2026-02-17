@@ -115,7 +115,7 @@ export const performTTSInference = async (
     };
   } catch (error) {
     console.error('TTS inference error:', error);
-    throw new Error('Failed to perform TTS inference');
+    throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
 
@@ -143,7 +143,7 @@ export const listVoices = async (filters?: VoiceFilterOptions): Promise<VoiceLis
 
     const response = await apiClient.get<VoiceListResponse>(
       apiEndpoints.tts.voices,
-      { params }
+      { params, timeout: 15000 }
     );
 
     return response.data;

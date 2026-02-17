@@ -188,7 +188,7 @@ class ModelManagementClient:
         # Fetch from API
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/services/details/list_services"
+            url = f"{self.base_url}/api/v1/model-management/services"
             logger.info(f"About to call _get_headers with auth_headers: {auth_headers is not None}, keys: {list(auth_headers.keys()) if auth_headers else 'None'}")
             headers = self._get_headers(auth_headers)
             logger.info(f"After _get_headers, headers dict has keys: {list(headers.keys())}")
@@ -316,7 +316,7 @@ class ModelManagementClient:
         # Fetch from API
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/services/details/view_service"
+            url = f"{self.base_url}/api/v1/model-management/services/{service_id}"
             headers = self._get_headers(auth_headers)
             payload = {"serviceId": service_id}
             
@@ -391,6 +391,61 @@ class ModelManagementClient:
             raise
     
     
+    async def select_experiment_variant(
+        self,
+        task_type: str,
+        language: Optional[str] = None,
+        request_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        service_id: Optional[str] = None,
+        auth_headers: Optional[Dict[str, str]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Select an experiment variant for A/B testing. Returns variant dict or None."""
+        try:
+            client = await self._get_client()
+            url = f"{self.base_url}/experiments/select-variant"
+            headers = self._get_headers(auth_headers)
+            payload = {
+                "task_type": task_type,
+                "language": language,
+                "request_id": request_id,
+                "user_id": user_id,
+                "service_id": service_id
+            }
+            response = await client.post(url, headers=headers, json=payload)
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            return data if data.get("is_experiment") else None
+        except Exception as e:
+            logger.debug("select_experiment_variant failed: %s", e)
+            return None
+
+    async def track_experiment_metric(
+        self,
+        experiment_id: str,
+        variant_id: str,
+        success: bool,
+        latency_ms: int,
+        custom_metrics: Optional[Dict[str, Any]] = None,
+        auth_headers: Optional[Dict[str, str]] = None
+    ) -> None:
+        """Track one request's metrics for an experiment variant (best-effort)."""
+        try:
+            client = await self._get_client()
+            url = f"{self.base_url}/experiments/track-metric"
+            headers = self._get_headers(auth_headers)
+            payload = {
+                "experiment_id": experiment_id,
+                "variant_id": variant_id,
+                "success": success,
+                "latency_ms": latency_ms,
+                "custom_metrics": custom_metrics or {},
+            }
+            await client.post(url, headers=headers, json=payload)
+        except Exception as e:
+            logger.warning("track_experiment_metric failed: %s", e)
+
     def clear_cache(self, redis_client = None):
         """Clear all caches"""
         self._cache.clear()

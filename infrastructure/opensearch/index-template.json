@@ -40,6 +40,12 @@
         "trace_id": {
           "type": "keyword"
         },
+        "organization": {
+          "type": "keyword"
+        },
+        "tenant_id": {
+          "type": "keyword"
+        },
         "service_version": {
           "type": "keyword"
         },
@@ -189,6 +195,145 @@
         },
         "\"\"user_agent": {
           "type": "text"
+        },
+        "input_details": {
+          "type": "object",
+          "properties": {
+            "character_length": {
+              "type": "integer"
+            },
+            "word_count": {
+              "type": "integer"
+            },
+            "audio_length_seconds": {
+              "type": "float"
+            },
+            "audio_length_ms": {
+              "type": "float"
+            },
+            "image_count": {
+              "type": "integer"
+            },
+            "input_count": {
+              "type": "integer"
+            },
+            "token_count": {
+              "type": "integer"
+            }
+          }
+        },
+        "input_details.character_length": {
+          "type": "integer"
+        },
+        "input_details.word_count": {
+          "type": "integer"
+        },
+        "input_details.audio_length_seconds": {
+          "type": "float"
+        },
+        "input_details.audio_length_ms": {
+          "type": "float"
+        },
+        "input_details.image_count": {
+          "type": "integer"
+        },
+        "input_details.input_count": {
+          "type": "integer"
+        },
+        "input_details.token_count": {
+          "type": "integer"
+        },
+        "output_details": {
+          "type": "object",
+          "properties": {
+            "character_length": {
+              "type": "integer"
+            },
+            "word_count": {
+              "type": "integer"
+            },
+            "audio_length_seconds": {
+              "type": "float"
+            },
+            "audio_length_ms": {
+              "type": "float"
+            },
+            "output_count": {
+              "type": "integer"
+            },
+            "token_count": {
+              "type": "integer"
+            }
+          }
+        },
+        "output_details.character_length": {
+          "type": "integer"
+        },
+        "output_details.word_count": {
+          "type": "integer"
+        },
+        "output_details.audio_length_seconds": {
+          "type": "float"
+        },
+        "output_details.audio_length_ms": {
+          "type": "float"
+        },
+        "output_details.output_count": {
+          "type": "integer"
+        },
+        "output_details.token_count": {
+          "type": "integer"
+        },
+        "inputCharacterLength": {
+          "type": "integer"
+        },
+        "inputWordCount": {
+          "type": "integer"
+        },
+        "inputAudioLengthSeconds": {
+          "type": "float"
+        },
+        "inputAudioLengthMs": {
+          "type": "float"
+        },
+        "inputCount": {
+          "type": "integer"
+        },
+        "inputTokenCount": {
+          "type": "integer"
+        },
+        "outputCharacterLength": {
+          "type": "integer"
+        },
+        "outputWordCount": {
+          "type": "integer"
+        },
+        "outputAudioLengthSeconds": {
+          "type": "float"
+        },
+        "outputAudioLengthMs": {
+          "type": "float"
+        },
+        "outputCount": {
+          "type": "integer"
+        },
+        "outputTokenCount": {
+          "type": "integer"
+        },
+        "service_id": {
+          "type": "keyword"
+        },
+        "source_language": {
+          "type": "keyword"
+        },
+        "target_language": {
+          "type": "keyword"
+        },
+        "request_id": {
+          "type": "keyword"
+        },
+        "processing_time_seconds": {
+          "type": "float"
         }
       }
     }

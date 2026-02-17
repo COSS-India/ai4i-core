@@ -14,7 +14,6 @@ import {
   Spinner,
   Text,
   Textarea,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
@@ -22,9 +21,12 @@ import Head from "next/head";
 import React, { useState, useEffect } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import { performTransliterationInference, listTransliterationServices } from "../services/transliterationService";
+import { TRANSLITERATION_ERRORS, MIN_TRANSLITERATION_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
+import { extractErrorInfo } from "../utils/errorHandler";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const TransliterationPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const [inputText, setInputText] = useState("");
   const [sourceLanguage, setSourceLanguage] = useState("en");
@@ -52,11 +54,39 @@ const TransliterationPage: React.FC = () => {
   }, [transliterationServices, serviceId]);
 
   const handleProcess = async () => {
-    if (!inputText.trim()) {
+    const trimmedText = inputText.trim();
+    
+    // Validate input text
+    if (!trimmedText) {
+      const err = TRANSLITERATION_ERRORS.TEXT_REQUIRED;
       toast({
-        title: "Input Required",
-        description: "Please enter text to transliterate.",
-        status: "warning",
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    if (trimmedText.length < MIN_TRANSLITERATION_TEXT_LENGTH) {
+      const err = TRANSLITERATION_ERRORS.TEXT_TOO_SHORT;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    if (trimmedText.length > MAX_TEXT_LENGTH) {
+      const err = TRANSLITERATION_ERRORS.TEXT_TOO_LONG;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -80,7 +110,7 @@ const TransliterationPage: React.FC = () => {
 
     try {
       const startTime = Date.now();
-      const response = await performTransliterationInference(inputText, {
+      const response = await performTransliterationInference(trimmedText, {
         serviceId: serviceId,
         language: {
           sourceLanguage,
@@ -96,24 +126,12 @@ const TransliterationPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Prioritize API error message from response
-      let errorMessage = "Failed to perform transliteration";
-      
-      if (err?.response?.data?.detail?.message) {
-        errorMessage = err.response.data.detail.message;
-      } else if (err?.response?.data?.message) {
-        errorMessage = err.response.data.message;
-      } else if (err?.response?.data?.detail) {
-        if (typeof err.response.data.detail === 'string') {
-          errorMessage = err.response.data.detail;
-        }
-      } else if (err?.message) {
-        errorMessage = err.message;
-      }
+      // Use centralized error handler (transliteration context so backend message shown as default when no specific mapping)
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'transliteration');
       
       setError(errorMessage);
       toast({
-        title: "Error",
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: "error",
         duration: 5000,
@@ -145,21 +163,21 @@ const TransliterationPage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               Transliteration Service
             </Heading>
-            <Text color="gray.600" fontSize="lg">
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
               Convert text from one script to another while keeping pronunciation intact
             </Text>
           </Box>
 
-          <Grid
-            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
-            gap={8}
-            w="full"
+        <Grid
+          templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
+          gap={8}
+          w="full"
             maxW="1200px"
-            mx="auto"
-          >
+          mx="auto"
+        >
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
@@ -202,16 +220,12 @@ const TransliterationPage: React.FC = () => {
                             <Text fontSize="sm" color="gray.700" mb={1}>
                               <strong>Service ID:</strong> {selectedService.service_id}
                             </Text>
-                            {selectedService.serviceDescription && (
-                              <Text fontSize="sm" color="gray.700" mb={1}>
-                                <strong>Description:</strong> {selectedService.serviceDescription}
-                              </Text>
-                            )}
-                            {selectedService.supported_languages.length > 0 && (
-                              <Text fontSize="sm" color="gray.700">
-                                <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
-                              </Text>
-                            )}
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                            </Text>
                           </>
                         ) : null;
                       })()}
@@ -327,59 +341,59 @@ const TransliterationPage: React.FC = () => {
                   </Box>
                 )}
 
-                {/* Metrics Box */}
-                {fetched && (
-                  <Box
-                    p={4}
-                    bg="orange.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="orange.200"
-                  >
-                    <HStack spacing={6}>
-                      <VStack align="start" spacing={0}>
-                        <Text fontSize="xs" color="gray.600">
-                          Response Time
-                        </Text>
-                        <Text fontSize="lg" fontWeight="bold" color="gray.800">
-                          {responseTime.toFixed(2)} seconds
-                        </Text>
-                      </VStack>
-                    </HStack>
-                  </Box>
-                )}
+              {/* Metrics Box */}
+              {fetched && (
+                <Box
+                  p={4}
+                  bg="orange.50"
+                  borderRadius="md"
+                  border="1px"
+                  borderColor="orange.200"
+                >
+                  <HStack spacing={6}>
+                    <VStack align="start" spacing={0}>
+                      <Text fontSize="xs" color="gray.600">
+                        Response Time
+                      </Text>
+                      <Text fontSize="lg" fontWeight="bold" color="gray.800">
+                        {responseTime.toFixed(2)} seconds
+                      </Text>
+                    </VStack>
+                  </HStack>
+                </Box>
+              )}
 
                 {/* Transliteration Results */}
-                {fetched && result && result.output && result.output.length > 0 && (
+              {fetched && result && result.output && result.output.length > 0 && (
                   <>
-                    <Box
-                      p={4}
-                      bg="blue.50"
-                      borderRadius="md"
-                      border="1px"
-                      borderColor="blue.200"
-                    >
-                      <Text fontSize="sm" fontWeight="semibold" mb={2} color="gray.700">
-                        Transliterated Text:
+                <Box
+                  p={4}
+                  bg="blue.50"
+                  borderRadius="md"
+                  border="1px"
+                  borderColor="blue.200"
+                >
+                  <Text fontSize="sm" fontWeight="semibold" mb={2} color="gray.700">
+                    Transliterated Text:
+                  </Text>
+                  {result.output.map((item: any, index: number) => (
+                    <Box key={index}>
+                      {item.source && (
+                        <Text fontSize="xs" color="gray.600" mb={1}>
+                          Source: {item.source}
+                        </Text>
+                      )}
+                      <Text fontSize="md" fontWeight="semibold" color="blue.700">
+                        {item.target}
                       </Text>
-                      {result.output.map((item: any, index: number) => (
-                        <Box key={index}>
-                          {item.source && (
-                            <Text fontSize="xs" color="gray.600" mb={1}>
-                              Source: {item.source}
-                            </Text>
-                          )}
-                          <Text fontSize="md" fontWeight="semibold" color="blue.700">
-                            {item.target}
-                          </Text>
-                        </Box>
-                      ))}
                     </Box>
+                  ))}
+                </Box>
 
                     {/* Clear Results Button */}
                     <Box textAlign="center">
                       <button
-                        onClick={clearResults}
+                  onClick={clearResults}
                         style={{
                           padding: "8px 16px",
                           backgroundColor: "#f7fafc",
@@ -389,15 +403,15 @@ const TransliterationPage: React.FC = () => {
                           fontSize: "14px",
                           color: "#4a5568",
                         }}
-                      >
-                        Clear Results
+                >
+                  Clear Results
                       </button>
                     </Box>
                   </>
-                )}
-              </VStack>
-            </GridItem>
-          </Grid>
+              )}
+            </VStack>
+          </GridItem>
+        </Grid>
         </VStack>
       </ContentLayout>
     </>

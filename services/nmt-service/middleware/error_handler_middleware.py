@@ -1,6 +1,8 @@
 """
 Global error handler middleware for consistent error responses.
 """
+import os
+import time
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -52,6 +54,39 @@ import traceback
 
 logger = get_logger(__name__)
 tracer = trace.get_tracer("nmt-service")
+
+
+def sanitize_validation_errors(errors: list) -> list:
+    """
+    Recursively sanitize validation errors by converting exception objects to strings.
+    This is needed because FastAPI's RequestValidationError can contain ValueError objects
+    in the 'ctx' field that are not JSON serializable.
+    """
+    sanitized = []
+    for error in errors:
+        if isinstance(error, dict):
+            sanitized_error = {}
+            for key, value in error.items():
+                if key == 'ctx' and isinstance(value, dict):
+                    # Convert any exception objects in ctx to strings
+                    sanitized_ctx = {}
+                    for ctx_key, ctx_value in value.items():
+                        if isinstance(ctx_value, Exception):
+                            sanitized_ctx[ctx_key] = str(ctx_value)
+                        else:
+                            sanitized_ctx[ctx_key] = ctx_value
+                    sanitized_error[key] = sanitized_ctx
+                elif isinstance(value, Exception):
+                    sanitized_error[key] = str(value)
+                elif isinstance(value, (list, dict)):
+                    # Recursively sanitize nested structures
+                    sanitized_error[key] = sanitize_validation_errors([value])[0] if isinstance(value, dict) else sanitize_validation_errors(value)
+                else:
+                    sanitized_error[key] = value
+            sanitized.append(sanitized_error)
+        else:
+            sanitized.append(str(error) if isinstance(error, Exception) else error)
+    return sanitized
 
 
 def add_error_handlers(app: FastAPI) -> None:
@@ -275,9 +310,11 @@ def add_error_handlers(app: FastAPI) -> None:
             code="VALIDATION_ERROR",
             timestamp=time.time(),
         )
+        # Sanitize errors to convert any ValueError objects to strings
+        sanitized_errors = sanitize_validation_errors(exc.errors())
         return JSONResponse(
             status_code=422,
-            content={"detail": exc.errors()},
+            content={"detail": sanitized_errors},
         )
     
     @app.exception_handler(ServiceError)
@@ -338,6 +375,12 @@ def add_error_handlers(app: FastAPI) -> None:
                 content={"detail": exc.detail}
             )
         
+        # Safely convert detail to string if it's not already a string or dict
+        # This handles cases where an exception object might be passed as detail
+        detail_message = exc.detail
+        if not isinstance(detail_message, (str, dict)):
+            detail_message = str(detail_message) if detail_message else ""
+        
         # Map specific status codes to error constants
         if exc.status_code == 503:
             error_detail = ErrorDetail(
@@ -346,7 +389,7 @@ def add_error_handlers(app: FastAPI) -> None:
             )
         elif exc.status_code == 400:
             error_detail = ErrorDetail(
-                message=INVALID_REQUEST_NMT_MESSAGE,
+                message=detail_message if detail_message else INVALID_REQUEST_NMT_MESSAGE,
                 code=INVALID_REQUEST
             )
         elif exc.status_code == 401:
@@ -357,12 +400,12 @@ def add_error_handlers(app: FastAPI) -> None:
         elif exc.status_code == 500:
             # For 500 errors, use the actual error message
             error_detail = ErrorDetail(
-                message=str(exc.detail) if exc.detail else INTERNAL_SERVER_ERROR_MESSAGE,
+                message=detail_message if detail_message else INTERNAL_SERVER_ERROR_MESSAGE,
                 code=INTERNAL_SERVER_ERROR
             )
         else:
             error_detail = ErrorDetail(
-                message=str(exc.detail),
+                message=detail_message if detail_message else "An error occurred",
                 code="HTTP_ERROR"
             )
         
@@ -393,8 +436,20 @@ def add_error_handlers(app: FastAPI) -> None:
         elif isinstance(actual_exc, HTTPException):
             return await http_exception_handler(request, actual_exc)
         
-        logger.error(f"Unexpected error: {exc}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        # Check if health/metrics logs should be excluded
+        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+        exclude_metrics_logs = os.getenv("EXCLUDE_METRICS_LOGS", "false").lower() == "true"
+        
+        path = request.url.path.lower().rstrip('/')
+        should_skip = False
+        if exclude_health_logs and ('/health' in path or path.endswith('/health')):
+            should_skip = True
+        if exclude_metrics_logs and ('/metrics' in path or path.endswith('/metrics')):
+            should_skip = True
+        
+        if not should_skip:
+            logger.error(f"Unexpected error: {exc}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
         
         error_detail = ErrorDetail(
             message=str(exc) if str(exc) else INTERNAL_SERVER_ERROR_MESSAGE,

@@ -20,6 +20,7 @@ from models.asr_response import ASRInferenceResponse, TranscriptOutput, NBestTok
 from repositories.asr_repository import ASRRepository
 from services.audio_service import AudioService
 from utils.triton_client import TritonClient
+from utils.audio_utils import get_audio_duration
 from middleware.exceptions import (
     TritonInferenceError,
     ModelNotFoundError,
@@ -49,6 +50,15 @@ if TRACING_AVAILABLE and trace:
         tracer = None
 
 
+def count_words(text: str) -> int:
+    """Count words in text"""
+    try:
+        words = [word for word in text.split() if word.strip()]
+        return len(words)
+    except Exception:
+        return 0
+
+
 class ASRService:
     """Main ASR service for speech-to-text conversion."""
     
@@ -64,14 +74,24 @@ class ASRService:
         request: ASRInferenceRequest,
         user_id: Optional[int] = None,
         api_key_id: Optional[int] = None,
-        session_id: Optional[int] = None
+        session_id: Optional[int] = None,
+        http_request_state: Optional[Any] = None
     ) -> ASRInferenceResponse:
         """Run ASR inference on audio inputs."""
         start_time = time.time()
         
         try:
             # Extract configuration
+            # Get service_id from request, with fallback to request.state (set by dependency)
             service_id = request.config.serviceId
+            if not service_id and http_request_state:
+                service_id = getattr(http_request_state, "service_id", None)
+            
+            if not service_id:
+                raise TritonInferenceError(
+                    "serviceId is required. It should be provided in the request or resolved via SMR."
+                )
+            
             language = request.config.language.sourceLanguage
             pre_processors = request.config.preProcessors or []
             post_processors = request.config.postProcessors or []
@@ -97,9 +117,18 @@ class ASRService:
             
             standard_rate = 16000  # Target sample rate
             
+            # Get model_id for database record - use service_id (which should be set by SMR or provided)
+            # The model_id field in database stores the serviceId
+            model_id_for_db = service_id
+            if not model_id_for_db:
+                raise TritonInferenceError(
+                    "Cannot create database record: serviceId is missing. "
+                    "Please ensure serviceId is provided in the request or resolved via SMR."
+                )
+            
             # Create database request record
             db_request = await self.repository.create_request(
-                model_id=service_id,
+                model_id=model_id_for_db,
                 language=language,
                 user_id=user_id,
                 api_key_id=api_key_id,
@@ -217,38 +246,172 @@ class ASRService:
                                 
                                 with extract_span_context as extract_span:
                                     transcripts = triton_response.as_numpy("TRANSCRIPTS")
+                                    
+                                    # Debug logging for Triton response
+                                    logger.debug(
+                                        f"Triton response for batch {i // batch_size + 1}",
+                                        extra={
+                                            "batch_index": i // batch_size + 1,
+                                            "audio_index": audio_idx + 1,
+                                            "transcripts_is_none": transcripts is None,
+                                            "transcripts_type": type(transcripts).__name__ if transcripts is not None else None,
+                                            "transcripts_shape": str(transcripts.shape) if hasattr(transcripts, 'shape') else None,
+                                            "transcripts_dtype": str(transcripts.dtype) if hasattr(transcripts, 'dtype') else None,
+                                            "transcripts_length": len(transcripts) if hasattr(transcripts, '__len__') else None,
+                                            "model_name": model_name,
+                                            "service_id": service_id
+                                        }
+                                    )
+                                    
+                                    # Validate transcripts response
+                                    if transcripts is None:
+                                        logger.error(
+                                            f"Triton returned None for TRANSCRIPTS output (batch {i // batch_size + 1}, audio {audio_idx + 1})",
+                                            extra={
+                                                "batch_index": i // batch_size + 1,
+                                                "audio_index": audio_idx + 1,
+                                                "batch_size": len(batch),
+                                                "model_name": model_name,
+                                                "service_id": service_id
+                                            }
+                                        )
+                                        if extract_span:
+                                            extract_span.set_attribute("asr.transcripts_count", 0)
+                                            extract_span.set_attribute("error", True)
+                                            extract_span.set_attribute("error.message", "Triton returned None for TRANSCRIPTS")
+                                        raise TritonInferenceError("Triton returned None for TRANSCRIPTS output")
+                                    
+                                    transcripts_count = len(transcripts) if hasattr(transcripts, '__len__') else 0
                                     if extract_span:
-                                        extract_span.set_attribute("asr.transcripts_count", len(transcripts))
+                                        extract_span.set_attribute("asr.transcripts_count", transcripts_count)
+                                    
+                                    if transcripts_count == 0:
+                                        logger.warning(
+                                            f"Triton returned empty TRANSCRIPTS array (batch {i // batch_size + 1}, audio {audio_idx + 1})",
+                                            extra={
+                                                "batch_index": i // batch_size + 1,
+                                                "audio_index": audio_idx + 1,
+                                                "batch_size": len(batch),
+                                                "model_name": model_name,
+                                                "service_id": service_id,
+                                                "transcripts_shape": str(transcripts.shape) if hasattr(transcripts, 'shape') else "unknown"
+                                            }
+                                        )
+                                        if extract_span:
+                                            extract_span.set_attribute("error", True)
+                                            extract_span.set_attribute("error.message", "Triton returned empty TRANSCRIPTS array")
                                     
                                     # Decode and accumulate
-                                    for j, transcript_bytes in enumerate(transcripts):
-                                        transcript_text = transcript_bytes.decode('utf-8')
-                                        
-                                        if best_token_count > 0:
-                                            # Parse JSON for n-best tokens
-                                            try:
-                                                transcript_data = json.loads(transcript_text)
-                                                transcript_text = transcript_data.get("source", transcript_text)
-                                                
-                                                if "nBestTokens" in transcript_data:
-                                                    n_best_tokens.extend(transcript_data["nBestTokens"])
-                                            except json.JSONDecodeError:
-                                                pass  # Use raw transcript text
-                                        
-                                        # Add timestamp if available
-                                        if i + j < len(speech_timestamps):
-                                            timestamp = speech_timestamps[i + j]
-                                            transcript_lines.append({
-                                                "text": transcript_text,
-                                                "start": timestamp.get("start_secs", 0),
-                                                "end": timestamp.get("end_secs", 0)
-                                            })
+                                    # Handle both 1D and 2D arrays from Triton
+                                    if isinstance(transcripts, np.ndarray) and transcripts.ndim == 2:
+                                        # 2D array: shape [batch_size, 1] or [batch_size, max_length]
+                                        # Flatten to 1D for processing
+                                        if transcripts.shape[1] == 1:
+                                            # Shape [batch_size, 1] - extract first element of each row
+                                            transcripts_flat = [transcripts[i, 0] for i in range(transcripts.shape[0])]
                                         else:
-                                            transcript_lines.append({
-                                                "text": transcript_text,
-                                                "start": 0,
-                                                "end": 0
-                                            })
+                                            # Shape [batch_size, max_length] - take first row element
+                                            transcripts_flat = [transcripts[i, 0] if transcripts.shape[1] > 0 else b'' for i in range(transcripts.shape[0])]
+                                    elif isinstance(transcripts, np.ndarray) and transcripts.ndim == 1:
+                                        # 1D array: already flat
+                                        transcripts_flat = transcripts
+                                    else:
+                                        # List or other iterable
+                                        transcripts_flat = transcripts
+                                    
+                                    for j, transcript_bytes in enumerate(transcripts_flat):
+                                        try:
+                                            # Handle different transcript formats
+                                            if isinstance(transcript_bytes, bytes):
+                                                transcript_text = transcript_bytes.decode('utf-8')
+                                            elif isinstance(transcript_bytes, np.ndarray):
+                                                # If it's a numpy array, try to decode
+                                                if transcript_bytes.dtype == object:
+                                                    transcript_text = str(transcript_bytes.item())
+                                                elif transcript_bytes.size > 0:
+                                                    # Try to decode as bytes
+                                                    if transcript_bytes.dtype == np.uint8:
+                                                        transcript_text = transcript_bytes.tobytes().decode('utf-8')
+                                                    else:
+                                                        transcript_text = str(transcript_bytes.item())
+                                                else:
+                                                    transcript_text = ""
+                                            elif isinstance(transcript_bytes, (str, np.str_)):
+                                                transcript_text = str(transcript_bytes)
+                                            else:
+                                                transcript_text = str(transcript_bytes)
+                                            
+                                            # Skip empty transcripts
+                                            if not transcript_text or not transcript_text.strip():
+                                                logger.warning(
+                                                    f"Empty transcript text at batch {i // batch_size + 1}, position {j}",
+                                                    extra={
+                                                        "batch_index": i // batch_size + 1,
+                                                        "position": j,
+                                                        "audio_index": audio_idx + 1
+                                                    }
+                                                )
+                                                continue
+                                            
+                                            if best_token_count > 0:
+                                                # Parse JSON for n-best tokens
+                                                try:
+                                                    transcript_data = json.loads(transcript_text)
+                                                    transcript_text = transcript_data.get("source", transcript_text)
+                                                    
+                                                    if "nBestTokens" in transcript_data:
+                                                        n_best_tokens.extend(transcript_data["nBestTokens"])
+                                                except json.JSONDecodeError:
+                                                    pass  # Use raw transcript text
+                                            
+                                            # Add timestamp if available
+                                            if i + j < len(speech_timestamps):
+                                                timestamp = speech_timestamps[i + j]
+                                                transcript_lines.append({
+                                                    "text": transcript_text,
+                                                    "start": timestamp.get("start_secs", 0),
+                                                    "end": timestamp.get("end_secs", 0)
+                                                })
+                                            else:
+                                                transcript_lines.append({
+                                                    "text": transcript_text,
+                                                    "start": 0,
+                                                    "end": 0
+                                                })
+                                        except Exception as decode_error:
+                                            logger.error(
+                                                f"Failed to decode transcript at batch {i // batch_size + 1}, position {j}: {decode_error}",
+                                                extra={
+                                                    "batch_index": i // batch_size + 1,
+                                                    "position": j,
+                                                    "audio_index": audio_idx + 1,
+                                                    "transcript_type": type(transcript_bytes).__name__,
+                                                    "error": str(decode_error)
+                                                },
+                                                exc_info=True
+                                            )
+                                            # Continue processing other transcripts
+                                            continue
+                        
+                        # Validate that we have transcripts before postprocessing
+                        if not transcript_lines:
+                            logger.error(
+                                f"No transcripts extracted from Triton for audio input {audio_idx + 1}",
+                                extra={
+                                    "audio_index": audio_idx + 1,
+                                    "total_audio_count": len(request.audio),
+                                    "batch_count": (len(audio_chunks) + batch_size - 1) // batch_size,
+                                    "model_name": model_name,
+                                    "service_id": service_id,
+                                    "language": language,
+                                    "chunks_count": len(audio_chunks)
+                                }
+                            )
+                            # Raise error to be caught by outer exception handler
+                            raise TritonInferenceError(
+                                f"No transcripts extracted from Triton for audio input {audio_idx + 1}. "
+                                f"Triton may have returned empty results. Please check the model and audio input."
+                            )
                         
                         # Run postprocessors
                         if tracer:
@@ -264,11 +427,39 @@ class ASRService:
                                 postprocess_span.set_attribute("asr.postprocessors_count", len(post_processors))
                                 postprocess_span.set_attribute("asr.input_lines_count", len(transcript_lines))
                                 postprocess_span.set_attribute("asr.output_lines_count", len(processed_transcript_lines))
+                        
+                        # Validate postprocessed transcripts
+                        if not processed_transcript_lines:
+                            logger.error(
+                                f"Postprocessing resulted in empty transcripts for audio input {audio_idx + 1}",
+                                extra={
+                                    "audio_index": audio_idx + 1,
+                                    "input_lines_count": len(transcript_lines),
+                                    "postprocessors": post_processors
+                                }
+                            )
+                            raise TritonInferenceError(
+                                f"Postprocessing resulted in empty transcripts for audio input {audio_idx + 1}"
+                            )
                     
                     # Format response
                     transcript = self._create_asr_response_format(
                         processed_transcript_lines, transcription_format
                     )
+                    
+                    # Validate formatted transcript
+                    if not transcript or not transcript.strip():
+                        logger.error(
+                            f"Formatted transcript is empty for audio input {audio_idx + 1}",
+                            extra={
+                                "audio_index": audio_idx + 1,
+                                "transcription_format": transcription_format,
+                                "processed_lines_count": len(processed_transcript_lines)
+                            }
+                        )
+                        raise TritonInferenceError(
+                            f"Formatted transcript is empty for audio input {audio_idx + 1}"
+                        )
                     
                     # Create n-best tokens if available
                     n_best_tokens_list = None
@@ -303,9 +494,47 @@ class ASRService:
                     logger.info(f"Completed processing audio input {audio_idx + 1}")
                     
                 except Exception as e:
-                    logger.error(f"Failed to process audio input {audio_idx + 1}: {e}")
-                    # Add empty transcript for failed input
-                    response.output.append(TranscriptOutput(source="", nBestTokens=None))
+                    # Any failure for this audio input should be treated as a hard error so that
+                    # the router can trigger fallback to an alternative service (if available).
+                    logger.error(
+                        f"Failed to process audio input {audio_idx + 1}: {e}",
+                        extra={
+                            "audio_index": audio_idx + 1,
+                            "total_audio_count": len(request.audio),
+                            "error_type": type(e).__name__,
+                            "error_message": str(e),
+                            "service_id": service_id if 'service_id' in locals() else None,
+                            "model_name": model_name if 'model_name' in locals() else None,
+                            "language": language if 'language' in locals() else None,
+                        },
+                        exc_info=True
+                    )
+                    # Raise TritonInferenceError so that upstream fallback logic can be applied
+                    raise TritonInferenceError(
+                        f"Failed to process audio input {audio_idx + 1}: {e}"
+                    ) from e
+            
+            # Calculate output metrics (character length and word count) for successful responses
+            output_texts = [output.source for output in response.output]
+            total_output_characters = sum(len(text) for text in output_texts)
+            total_output_words = sum(count_words(text) for text in output_texts)
+            
+            # Calculate total input audio duration (approximate from processed audio)
+            # Note: We don't have exact duration for all inputs, so we'll use a placeholder
+            # The router will calculate it from the original audio bytes
+            total_input_audio_duration = 0.0  # Will be calculated in router from original audio
+            
+            # Add output metrics to trace span if available
+            if tracer:
+                try:
+                    current_span = trace.get_current_span()
+                    if current_span and current_span.is_recording():
+                        current_span.set_attribute("asr.output_count", len(response.output))
+                        current_span.set_attribute("asr.output.character_length", total_output_characters)
+                        current_span.set_attribute("asr.output.word_count", total_output_words)
+                        current_span.set_attribute("asr.processing_time_seconds", time.time() - start_time)
+                except Exception:
+                    pass  # Don't fail if tracing fails
             
             # Update request status
             processing_time = time.time() - start_time
@@ -313,7 +542,22 @@ class ASRService:
                 db_request.id, "completed", processing_time
             )
             
-            logger.info(f"Completed ASR inference in {processing_time:.2f}s")
+            logger.info(
+                f"Completed ASR inference in {processing_time:.2f}s, output_characters={total_output_characters}, output_words={total_output_words}",
+                extra={
+                    # Common input/output details structure (general fields for all services)
+                    "output_details": {
+                        "character_length": total_output_characters,
+                        "word_count": total_output_words,
+                        "output_count": len(response.output)
+                    },
+                    # Service metadata (for filtering)
+                    "request_id": str(db_request.id),
+                    "processing_time_seconds": processing_time,
+                    "service_id": service_id,
+                    "language": language,
+                }
+            )
             return response
             
         except Exception as e:

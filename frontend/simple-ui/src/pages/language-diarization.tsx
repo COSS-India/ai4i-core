@@ -13,7 +13,6 @@ import {
   Select,
   Spinner,
   Text,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
@@ -23,9 +22,10 @@ import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
 import { performLanguageDiarizationInference, listLanguageDiarizationServices } from "../services/languageDiarizationService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const LanguageDiarizationPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const [audioData, setAudioData] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
@@ -178,10 +178,10 @@ const LanguageDiarizationPage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               Language Diarization
             </Heading>
-            <Text color="gray.600" fontSize="lg">
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
               Identify when language changes occur within spoken audio. Segment audio based on the language being spoken.
             </Text>
           </Box>
@@ -235,16 +235,12 @@ const LanguageDiarizationPage: React.FC = () => {
                           <Text fontSize="sm" color="gray.700" mb={1}>
                             <strong>Service ID:</strong> {selectedService.service_id}
                           </Text>
-                          {selectedService.serviceDescription && (
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Description:</strong> {selectedService.serviceDescription}
-                            </Text>
-                          )}
-                          {selectedService.supported_languages.length > 0 && (
-                            <Text fontSize="sm" color="gray.700">
-                              <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
-                            </Text>
-                          )}
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                          </Text>
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                          </Text>
                         </>
                       ) : null;
                     })()}

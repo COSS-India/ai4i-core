@@ -36,6 +36,8 @@ from repositories.asr_repository import ASRRepository
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
+from middleware.tenant_schema_router import TenantSchemaRouter
+from middleware.tenant_middleware import TenantMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
@@ -129,6 +131,17 @@ async def lifespan(app: FastAPI):
         # Store Triton config in app state (for use by routers after Model Management resolution)
         app.state.triton_api_key = TRITON_API_KEY
         app.state.triton_timeout = TRITON_TIMEOUT
+
+
+        # Initialize tenant schema router for multi-tenant routing
+        multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL")
+        if not multi_tenant_db_url:
+            logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
+            multi_tenant_db_url = database_url
+        logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")
+        tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
+        app.state.tenant_schema_router = tenant_schema_router
+        logger.info("Tenant schema router initialized with multi-tenant database")
         
         # Initialize streaming service (optional - requires Model Management serviceId)
         global streaming_service
@@ -363,6 +376,8 @@ except Exception as e:
 # so that Observability runs first and caches the body, then Model Management can use cached body
 
 # Add middleware after FastAPI app creation
+# Tenant middleware (MUST be early to mark tenant-aware routes)
+app.add_middleware(TenantMiddleware)
 # Correlation middleware (MUST be before RequestLoggingMiddleware)
 app.add_middleware(CorrelationMiddleware)
 # Structured request logging middleware (logs to OpenSearch)
@@ -444,6 +459,9 @@ async def health_check() -> Dict[str, Any]:
         "timestamp": None
     }
     
+    # Check if health logs should be excluded
+    exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+    
     try:
         import time
         health_status["timestamp"] = time.time()
@@ -456,7 +474,8 @@ async def health_check() -> Dict[str, Any]:
             health_status["redis"] = "unavailable"
             
     except Exception as e:
-        logger.error(f"Redis health check failed: {e}")
+        if not exclude_health_logs:
+            logger.error(f"Redis health check failed: {e}")
         health_status["redis"] = "unhealthy"
     
     try:
@@ -469,16 +488,19 @@ async def health_check() -> Dict[str, Any]:
             health_status["postgres"] = "unavailable"
             
     except Exception as e:
-        logger.error(f"PostgreSQL health check failed: {e}")
+        if not exclude_health_logs:
+            logger.error(f"PostgreSQL health check failed: {e}")
         health_status["postgres"] = "unhealthy"
     
     try:
         # Triton endpoint must be resolved via Model Management - no hardcoded fallback
         # Skip Triton check in health endpoint (requires Model Management serviceId)
-        logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
+        if not exclude_health_logs:
+            logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
         health_status["triton"] = "unknown"
     except Exception as e:
-        logger.warning(f"Triton health check skipped: {e}")
+        if not exclude_health_logs:
+            logger.warning(f"Triton health check skipped: {e}")
         health_status["triton"] = "unknown"
     
     # Determine overall status (Triton check skipped, only Redis and DB matter)

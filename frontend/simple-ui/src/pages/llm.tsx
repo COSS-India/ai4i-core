@@ -12,7 +12,6 @@ import {
   Select,
   Spinner,
   Text,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
@@ -26,9 +25,10 @@ import TextInput from "../components/llm/TextInput";
 import { LLM_SUPPORTED_LANGUAGES } from "../config/constants";
 import { useLLM } from "../hooks/useLLM";
 import { listLLMModels, listLLMServices } from "../services/llmService";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const LLMPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const {
     selectedModelId,
@@ -113,10 +113,10 @@ const LLMPage: React.FC = () => {
         <VStack spacing={6} w="full">
           {/* Page Header */}
           <Box textAlign="center" mb={2}>
-            <Heading size="lg" color="gray.800" mb={1}>
+            <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
               Large Language Model
             </Heading>
-            <Text color="gray.600" fontSize="sm">
+            <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
               Translate and generate text
             </Text>
           </Box>
@@ -145,7 +145,7 @@ const LLMPage: React.FC = () => {
                     <Select
                       value={serviceId}
                       onChange={(e) => setServiceId(e.target.value)}
-                      placeholder="Select an LLM service"
+                      placeholder="Select a LLM service"
                       disabled={fetching}
                       size="md"
                       borderColor="gray.300"
@@ -170,16 +170,12 @@ const LLMPage: React.FC = () => {
                             <Text fontSize="sm" color="gray.700" mb={1}>
                               <strong>Service ID:</strong> {selectedService.service_id}
                             </Text>
-                            {selectedService.serviceDescription && (
-                              <Text fontSize="sm" color="gray.700" mb={1}>
-                                <strong>Description:</strong> {selectedService.serviceDescription}
-                              </Text>
-                            )}
-                            {selectedService.supported_languages.length > 0 && (
-                              <Text fontSize="sm" color="gray.700">
-                                <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
-                              </Text>
-                            )}
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                            </Text>
                           </>
                         ) : null;
                       })()}

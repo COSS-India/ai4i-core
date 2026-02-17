@@ -1,6 +1,7 @@
 """
 Global error handler middleware for consistent error responses.
 """
+import os
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from middleware.exceptions import (
@@ -12,6 +13,17 @@ from middleware.exceptions import (
 import logging
 import time
 import traceback
+import json
+
+# OpenTelemetry imports
+try:
+    from opentelemetry import trace
+    from opentelemetry.trace import Status, StatusCode
+    tracer = trace.get_tracer("language-diarization-service")
+    TRACING_AVAILABLE = True
+except ImportError:
+    tracer = None
+    TRACING_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +86,7 @@ def add_error_handlers(app: FastAPI) -> None:
     
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
-        """Handle unexpected exceptions."""
+        """Handle unexpected exceptions with detailed logging and tracing."""
         # Extract exception from ExceptionGroup if present (Python 3.11+)
         actual_exc = exc
         try:
@@ -93,8 +105,71 @@ def add_error_handlers(app: FastAPI) -> None:
         elif isinstance(actual_exc, HTTPException):
             return await http_exception_handler(request, actual_exc)
         
-        logger.error(f"Unexpected error: {exc}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        # Get full traceback for logging
+        tb_str = traceback.format_exc()
+        
+        # Extract request details for better debugging
+        request_details = {
+            "method": request.method,
+            "url": str(request.url),
+            "path": request.url.path,
+            "client_host": request.client.host if request.client else "unknown",
+            "headers": dict(request.headers),
+        }
+        
+        # Try to extract request body (be careful with large bodies)
+        try:
+            if request.method in ["POST", "PUT", "PATCH"]:
+                # This might fail if body was already consumed
+                body = await request.body()
+                if len(body) < 10000:  # Only log if < 10KB
+                    try:
+                        request_details["body"] = json.loads(body)
+                    except Exception:
+                        request_details["body"] = body.decode('utf-8', errors='ignore')[:1000]
+        except Exception:
+            pass
+        
+        # Check if health/metrics logs should be excluded
+        exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+        exclude_metrics_logs = os.getenv("EXCLUDE_METRICS_LOGS", "false").lower() == "true"
+        
+        path = request.url.path.lower().rstrip('/')
+        should_skip = False
+        if exclude_health_logs and ('/health' in path or path.endswith('/health')):
+            should_skip = True
+        if exclude_metrics_logs and ('/metrics' in path or path.endswith('/metrics')):
+            should_skip = True
+        
+        # Enhanced error logging with request context (skip if health/metrics)
+        if not should_skip:
+            logger.error(
+                "Unexpected error in %s %s: %s\nRequest details: %s\nTraceback:\n%s",
+                request.method,
+                request.url.path,
+                str(exc),
+                json.dumps(request_details, indent=2, default=str),
+                tb_str
+            )
+        
+        # Add error details to tracing span if available
+        if tracer:
+            span = trace.get_current_span()
+            if span and span.is_recording():
+                span.set_attribute("error", True)
+                span.set_attribute("error.type", type(actual_exc).__name__)
+                span.set_attribute("error.message", str(actual_exc))
+                span.set_attribute("http.status_code", 500)
+                span.set_attribute("error.stack_trace", tb_str)
+                span.add_event("exception.occurred", {
+                    "exception.type": type(actual_exc).__name__,
+                    "exception.message": str(actual_exc),
+                    "exception.stacktrace": tb_str[:1000],  # Truncate for span
+                    "request.method": request.method,
+                    "request.path": request.url.path
+                })
+                span.set_status(Status(StatusCode.ERROR, str(actual_exc)))
+                span.record_exception(actual_exc)
         
         error_detail = ErrorDetail(
             message="Internal server error",
