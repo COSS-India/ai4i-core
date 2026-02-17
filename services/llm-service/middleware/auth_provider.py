@@ -141,7 +141,7 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
         raise AuthenticationError("Failed to verify token")
 
 
-async def validate_api_key_permissions(api_key: str, service: str, action: str) -> bool:
+async def validate_api_key_permissions(api_key: str, service: str, action: str, user_id: Optional[int] = None) -> Dict[str, Any]:
     """
     Validate API key has required permissions by calling auth-service.
     
@@ -149,9 +149,10 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
         api_key: The API key to validate
         service: Service name (asr, nmt, tts, llm, etc.)
         action: Action type (read, inference)
+        user_id: Optional user ID from JWT for ownership check in BOTH mode
     
     Returns:
-        True if permission is granted, False otherwise
+        Dict with validation result including 'valid', 'message', 'user_id', 'permissions'
     
     Raises:
         AuthorizationError: If permission check fails
@@ -159,24 +160,25 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
     try:
         validate_url = f"{AUTH_SERVICE_URL}/api/v1/auth/validate-api-key"
         
+        payload = {
+            "api_key": api_key,
+            "service": service,
+            "action": action
+        }
+        if user_id is not None:
+            payload["user_id"] = user_id
+        
         # Call auth-service to validate permissions
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.post(
                 validate_url,
-                json={
-                    "api_key": api_key,
-                    "service": service,
-                    "action": action
-                }
+                json=payload
             )
             
             if response.status_code == 200:
                 result = response.json()
-                if result.get("valid"):
-                    return True
-                else:
-                    error_msg = result.get("message", "Permission denied")
-                    raise AuthorizationError(error_msg)
+                # Return full result so callers can check valid and get user_id
+                return result
             else:
                 logger.error(f"Auth service returned status {response.status_code}: {response.text}")
                 raise AuthorizationError("Failed to validate API key permissions")
@@ -278,26 +280,64 @@ async def AuthProvider(
     
     # Handle BOTH Bearer token AND API key (already validated by API Gateway)
     if auth_source == "BOTH":
-        # Validate Bearer token to get user info
-        bearer_result = await authenticate_bearer_token(request, authorization)
-        
-        # Extract API key
-        api_key = x_api_key or get_api_key_from_header(authorization)
-        if not api_key:
-            raise AuthenticationError("Missing API key")
-        
-        # Validate API key permissions via auth-service (skip database lookup)
-        service, action = determine_service_and_action(request)
-        await validate_api_key_permissions(api_key, service, action)
-        
-        # Populate request state with auth context from Bearer token
-        request.state.user_id = bearer_result.get("user_id")
-        request.state.api_key_id = None  # Not needed when using BOTH
-        request.state.api_key_name = None
-        request.state.user_email = bearer_result.get("user", {}).get("email")
-        request.state.is_authenticated = True
-        
-        return bearer_result
+        try:
+            # 1) Validate Bearer token to get user info
+            bearer_result = await authenticate_bearer_token(request, authorization)
+            jwt_user_id = bearer_result.get("user_id")
+            
+            # Store JWT payload for tenant context resolution
+            from jose import jwt
+            JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
+            JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+            token = authorization.split(" ", 1)[1] if authorization else ""
+            try:
+                jwt_payload = jwt.decode(
+                    token,
+                    JWT_SECRET_KEY,
+                    algorithms=[JWT_ALGORITHM],
+                    options={"verify_signature": True, "verify_exp": True}
+                )
+                request.state.jwt_payload = jwt_payload
+            except Exception:
+                pass  # If JWT decode fails, continue without payload
+            
+            # 2) Extract API key
+            api_key = x_api_key or get_api_key_from_header(authorization)
+            if not api_key:
+                raise AuthenticationError("Missing API key")
+            
+            # 3) Validate API key + permissions via auth-service (single source of truth),
+            # passing jwt_user_id so auth-service can enforce ownership.
+            service, action = determine_service_and_action(request)
+            try:
+                auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
+            except (AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
+                # Auth-service returned an error - convert to ownership error for consistency
+                logger.error(f"API key validation failed in BOTH mode: {e}")
+                raise AuthenticationError("API key does not belong to the authenticated user")
+            
+            # Explicitly check if auth-service returned valid=false (shouldn't happen if exception was raised)
+            if not auth_result.get("valid", False):
+                error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
+                logger.error(f"Auth-service returned valid=false: {error_msg}")
+                raise AuthenticationError("API key does not belong to the authenticated user")
+            
+            # 4) Populate request state – keep JWT as primary identity
+            request.state.user_id = jwt_user_id
+            request.state.api_key_id = None
+            request.state.api_key_name = None
+            request.state.user_email = bearer_result.get("user", {}).get("email")
+            request.state.is_authenticated = True
+            
+            return bearer_result
+        except AuthenticationError:
+            # Re-raise AuthenticationError as-is
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error in BOTH authentication mode: {e}", exc_info=True)
+            # Even on unexpected errors we normalize the external message so callers
+            # don't see fluctuating error strings for the same request.
+            raise AuthenticationError("API key does not belong to the authenticated user")
     
     # Handle API key authentication (requires permission check)
     try:
@@ -316,11 +356,24 @@ async def AuthProvider(
         # Determine service and action from request
         service, action = determine_service_and_action(request)
         
-        # Validate API key has required permissions
-        await validate_api_key_permissions(api_key, service, action)
+        # Validate API key has required permissions via auth-service
+        try:
+            auth_result = await validate_api_key_permissions(api_key, service, action)
+        except (AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
+            logger.error(f"API key permission validation failed: {e}")
+            raise AuthenticationError("API key does not belong to the authenticated user")
+        
+        # Explicitly check if auth-service returned valid=false
+        if not auth_result.get("valid", False):
+            error_msg = auth_result.get("message", "Permission denied")
+            logger.error(f"Auth-service returned valid=false: {error_msg}")
+            raise AuthenticationError("API key does not belong to the authenticated user")
+        
+        # For API_KEY-only mode, we may not have a JWT; use auth-service user_id if present
+        user_id = auth_result.get("user_id") or user_db.id
         
         # Populate request state with auth context
-        request.state.user_id = user_db.id
+        request.state.user_id = user_id
         request.state.api_key_id = api_key_db.id
         request.state.api_key_name = api_key_db.name
         request.state.user_email = user_db.email
@@ -328,17 +381,18 @@ async def AuthProvider(
         
         # Return auth context
         return {
-            "user_id": user_db.id,
+            "user_id": user_id,
             "api_key_id": api_key_db.id,
             "user": user_db,
             "api_key": api_key_db
         }
         
-    except (AuthenticationError, InvalidAPIKeyError, ExpiredAPIKeyError, AuthorizationError):
+    except AuthenticationError:
+        # Re-raise AuthenticationError as-is
         raise
     except Exception as e:
-        logger.error(f"Authentication error: {e}")
-        raise AuthenticationError("Authentication failed")
+        logger.error(f"Authentication error: {e}", exc_info=True)
+        raise AuthenticationError("API key does not belong to the authenticated user")
 
 
 async def OptionalAuthProvider(

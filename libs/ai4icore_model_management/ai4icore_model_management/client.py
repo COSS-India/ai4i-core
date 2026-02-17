@@ -4,11 +4,12 @@ Client for interacting with the model management service API
 with caching support for efficient and scalable operations
 """
 
+import json
 import logging
 import os
-from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
-import json
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel
@@ -179,7 +180,7 @@ class ModelManagementClient:
         # Fetch from API
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/services/details/list_services"
+            url = f"{self.base_url}/api/v1/model-management/services"
             headers = self._get_headers(auth_headers)
             
             # Add task_type as query parameter if provided
@@ -289,12 +290,13 @@ class ModelManagementClient:
         # Fetch from API
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/services/details/view_service"
+            # Encode service_id so IDs containing '/' (e.g. "ai4bharat/surya-ocr-v1--gpu--t4") are one path segment
+            encoded_service_id = quote(service_id, safe="")
+            url = f"{self.base_url}/api/v1/model-management/services/{encoded_service_id}"
             headers = self._get_headers(auth_headers)
-            payload = {"serviceId": service_id}
             
             logger.debug(f"Fetching service {service_id} from {url}")
-            response = await client.post(url, headers=headers, json=payload)
+            response = await client.post(url, headers=headers)
             
             if response.status_code == 404:
                 return None

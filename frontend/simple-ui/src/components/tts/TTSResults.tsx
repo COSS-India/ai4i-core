@@ -10,12 +10,12 @@ import {
   StatHelpText,
   Button,
   HStack,
-  useToast,
   Box,
   Text,
 } from '@chakra-ui/react';
 import { FaPlay, FaPause, FaDownload } from 'react-icons/fa';
 import { TTSResultsProps } from '../../types/tts';
+import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
 
 const TTSResults: React.FC<TTSResultsProps> = ({
   audioSrc,
@@ -26,7 +26,7 @@ const TTSResults: React.FC<TTSResultsProps> = ({
   onPause,
   onDownload,
 }) => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   const handleDownload = () => {
     if (!audioSrc) return;

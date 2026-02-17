@@ -35,6 +35,7 @@ The A/B testing feature allows platform administrators to evaluate alternative m
    - `service_id` - Foreign key to services
    - `traffic_percentage` - Traffic percentage (0-100)
    - `description` - Optional description
+   - Timestamps: `created_at`, `updated_at`
 
 3. **experiment_metrics** - Metrics tracking per variant
    - `id` (UUID) - Primary key
@@ -44,6 +45,17 @@ The A/B testing feature allows platform administrators to evaluate alternative m
    - `avg_latency_ms` - Average request latency (ms)
    - `custom_metrics` (JSONB) - Additional flexible metrics
    - `metric_date` - Date for daily aggregation
+   - Timestamps: `created_at`, `updated_at`
+
+## Database Table Creation
+
+The A/B testing tables (`experiments`, `experiment_variants`, `experiment_metrics`) and the `experiment_status` enum are defined in two places:
+
+1. **Postgres init script** (`infrastructure/postgres/init-all-databases.sql`) – In the model_management_db section, the script creates the `experiment_status` enum, the three A/B tables, indexes, `updated_at` triggers, and comments. If you run the init script (e.g. for a fresh database), these objects are created there.
+
+2. **Model management service startup** – On startup, the service runs `create_tables()` (`db_connection.create_tables`), which calls SQLAlchemy’s `AppDBBase.metadata.create_all`. Any table that does not already exist (including the three A/B tables) is created.
+
+**You do not need a separate migration.** Either run the init script for a full DB setup, or start the model management service; in both cases the A/B tables will exist. If the init script ran first, the service’s `create_all` is a no-op for existing tables.
 
 ## API Endpoints
 

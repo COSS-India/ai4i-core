@@ -16,9 +16,10 @@ from ai4icore_logging import get_correlation_id
 from models.ocr_request import OCRInferenceRequest
 from models.ocr_response import OCRInferenceResponse
 from services.ocr_service import OCRService
-from repositories.ocr_repository import OCRRepository, get_db_session
+from repositories.ocr_repository import OCRRepository
 from utils.triton_client import TritonClient, TritonInferenceError
 from middleware.auth_provider import AuthProvider
+from middleware.tenant_db_dependency import get_tenant_db_session
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ inference_router = APIRouter(
 
 async def get_ocr_service(
     request: Request,
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_tenant_db_session)
 ) -> OCRService:
     """
     Dependency to construct OCRService with configured Triton client and repository.
@@ -76,13 +77,12 @@ async def get_ocr_service(
     
     if not model_name or model_name == "unknown":
         service_id = getattr(request.state, "service_id", None)
-        service_id = getattr(request.state, "service_id", None)
         model_mgmt_error = getattr(request.state, "model_management_error", None)
-        
+
         if service_id:
             error_detail = (
-                f"Model Management failed to resolve Triton endpoint for serviceId: {service_id}. "
-                f"Please ensure the service is registered in Model Management database."
+                f"Model Management failed to resolve Triton model name for serviceId: {service_id}. "
+                "Please ensure the model is registered in Model Management with inference endpoint schema (model_name)."
             )
             if model_mgmt_error:
                 error_detail += f" Error: {model_mgmt_error}"
@@ -97,20 +97,7 @@ async def get_ocr_service(
                 "OCR service requires Model Management database resolution."
             ),
         )
-    
-    # Get resolved model name from middleware (MUST be resolved by Model Management)
-    model_name = getattr(request.state, "triton_model_name", None)
-    
-    if not model_name or model_name == "unknown":
-        service_id = getattr(request.state, "service_id", None)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=(
-                f"Model Management failed to resolve Triton model name for serviceId: {service_id}. "
-                f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
-            ),
-        )
-    
+
     logger.info(
         f"Using endpoint={triton_endpoint} model_name={model_name} from Model Management "
         f"for serviceId={getattr(request.state, 'service_id', 'unknown')}"

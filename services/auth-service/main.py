@@ -845,7 +845,7 @@ async def login(
         
         logger.info(f"✅ User logged in successfully: email={user.email}, user_id={user.id}, ip={client_ip}")
         
-        # 🔍 Step 8: Build response
+        # 🔍 Step 8: Build response (include tenant_id for tenant admins/users)
         user_dict = {
             "id": user.id,
             "email": user.email,
@@ -862,6 +862,7 @@ async def login(
             "last_login": user.last_login,
             "avatar_url": user.avatar_url,
             "roles": user_roles,
+            "tenant_id": tenant_info["tenant_id"] if tenant_info else None,
         }
         
         return LoginResponse(
@@ -1104,6 +1105,17 @@ async def validate_api_key(
             permissions=[]
         )
     
+    # Optional ownership enforcement: when caller provides user_id (BOTH mode),
+    # ensure the API key actually belongs to that user.
+    requested_user_id = validation_data.user_id
+    if requested_user_id is not None and api_key_obj and api_key_obj.user_id is not None:
+        if api_key_obj.user_id != requested_user_id:
+            return APIKeyValidationResponse(
+                valid=False,
+                message="API key does not belong to the authenticated user",
+                permissions=[]
+            )
+    
     # Return success with permissions
     return APIKeyValidationResponse(
         valid=True,
@@ -1115,51 +1127,12 @@ async def validate_api_key(
 @app.get("/api/v1/auth/me", response_model=UserResponse)
 async def get_current_user_info(
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    multi_tenant_db: Optional[AsyncSession] = Depends(get_multi_tenant_db)
 ):
-    """Get current user information"""
+    """Get current user information including tenant_id for tenant admins/users"""
     user_roles = await AuthUtils.get_user_roles(db, current_user.id)
-    # Create response dict with roles
-    user_dict = {
-        "id": current_user.id,
-        "email": current_user.email,
-        "username": current_user.username,
-        "full_name": current_user.full_name,
-        "phone_number": current_user.phone_number,
-        "timezone": current_user.timezone,
-        "language": current_user.language,
-        "is_active": current_user.is_active,
-        "is_verified": current_user.is_verified,
-        "is_superuser": current_user.is_superuser,
-        "is_tenant": getattr(current_user, "is_tenant", None),
-        "created_at": current_user.created_at,
-        "updated_at": current_user.updated_at,
-        "last_login": current_user.last_login,
-        "avatar_url": current_user.avatar_url,
-        "roles": user_roles
-    }
-    return user_dict
-
-@app.put("/api/v1/auth/me", response_model=UserResponse)
-async def update_current_user(
-    user_update: UserUpdate,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Update current user information and return updated details including roles."""
-    update_data = user_update.dict(exclude_unset=True)
-    
-    for field, value in update_data.items():
-        setattr(current_user, field, value)
-    
-    current_user.updated_at = datetime.utcnow()
-    await db.commit()
-    await db.refresh(current_user)
-    
-    logger.info(f"User updated: {current_user.email}")
-
-    # Include roles in the response, similar to GET /api/v1/auth/me
-    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    tenant_info = await get_tenant_info(current_user.id, multi_tenant_db, current_user.is_tenant)
     user_dict = {
         "id": current_user.id,
         "email": current_user.email,
@@ -1177,6 +1150,49 @@ async def update_current_user(
         "last_login": current_user.last_login,
         "avatar_url": current_user.avatar_url,
         "roles": user_roles,
+        "tenant_id": tenant_info["tenant_id"] if tenant_info else None,
+    }
+    return user_dict
+
+@app.put("/api/v1/auth/me", response_model=UserResponse)
+async def update_current_user(
+    user_update: UserUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+    multi_tenant_db: Optional[AsyncSession] = Depends(get_multi_tenant_db)
+):
+    """Update current user information and return updated details including roles and tenant_id."""
+    update_data = user_update.dict(exclude_unset=True)
+    
+    for field, value in update_data.items():
+        setattr(current_user, field, value)
+    
+    current_user.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(current_user)
+    
+    logger.info(f"User updated: {current_user.email}")
+
+    user_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    tenant_info = await get_tenant_info(current_user.id, multi_tenant_db, current_user.is_tenant)
+    user_dict = {
+        "id": current_user.id,
+        "email": current_user.email,
+        "username": current_user.username,
+        "full_name": current_user.full_name,
+        "phone_number": current_user.phone_number,
+        "timezone": current_user.timezone,
+        "language": current_user.language,
+        "is_active": current_user.is_active,
+        "is_verified": current_user.is_verified,
+        "is_superuser": current_user.is_superuser,
+        "is_tenant": getattr(current_user, "is_tenant", None),
+        "created_at": current_user.created_at,
+        "updated_at": current_user.updated_at,
+        "last_login": current_user.last_login,
+        "avatar_url": current_user.avatar_url,
+        "roles": user_roles,
+        "tenant_id": tenant_info["tenant_id"] if tenant_info else None,
     }
 
     return user_dict

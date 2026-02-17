@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status, Query, Request
+from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
@@ -10,6 +11,7 @@ from models.user_status import TenantUserStatusUpdateRequest, TenantUserStatusUp
 from models.tenant_update import TenantUpdateRequest, TenantUpdateResponse
 from models.tenant_view import TenantViewResponse, ListTenantsResponse
 from models.user_view import TenantUserViewResponse, ListUsersResponse
+from models.tenant_email import TenantSendEmailVerificationRequest, TenantSendEmailVerificationResponse
 from models.user_update import TenantUserUpdateRequest , TenantUserUpdateResponse
 from models.user_delete import TenantUserDeleteRequest , TenantUserDeleteResponse
 
@@ -20,6 +22,7 @@ from services.tenant_service import (
     update_tenant_user_status,
     update_tenant,
     delete_tenant_user,
+    send_initial_verification_email,
     update_tenant_user,
     view_tenant_details,
     view_tenant_user_details,
@@ -43,6 +46,9 @@ async def register_tenant_request(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
+    """
+    Register a new tenant.
+    """
     try:
         response = await create_new_tenant(payload, db, background_tasks)
 
@@ -65,15 +71,17 @@ async def register_tenant_request(
 
 
 
-@router.post("/register/users",response_model=UserRegisterResponse,status_code=status.HTTP_201_CREATED,)
+@router.post("/register/users", response_model=UserRegisterResponse, status_code=status.HTTP_201_CREATED)
 async def register_user_request(
+    request: Request,
     payload: UserRegisterRequest,
     background_tasks: BackgroundTasks,
     tenant_db: AsyncSession = Depends(get_tenant_db_session),
     auth_db: AsyncSession = Depends(get_auth_db_session),
 ):
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        return await register_user(payload, tenant_db, auth_db, background_tasks)
+        return await register_user(payload, tenant_db, auth_db, background_tasks, auth_header=auth_header)
 
     except HTTPException:
         raise
@@ -129,15 +137,17 @@ async def change_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
 
 @router.patch("/update/user", response_model=TenantUserUpdateResponse, status_code=status.HTTP_200_OK)
 async def update_tenant_user_info(
+    request: Request,
     payload: TenantUserUpdateRequest,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
-    Update tenant user information (username, email, is_approved).
+    Update tenant user information (username, email, is_approved, roles).
     Supports partial updates - only provided fields will be updated.
     """
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        return await update_tenant_user(payload, db)
+        return await update_tenant_user(payload, db, auth_header=auth_header)
     except HTTPException:
         raise
     except IntegrityError as ie:
@@ -189,16 +199,17 @@ async def delete_tenant_user_endpoint(
 
 @router.patch("/update/tenant", response_model=TenantUpdateResponse, status_code=status.HTTP_200_OK)
 async def update_tenant_info(
+    request: Request,
     payload: TenantUpdateRequest,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
     Update tenant information including organization_name, contact_email, domain,
-    requested_quotas, and usage_quota. Supports partial updates - only provided
-    fields will be updated.
+    requested_quotas, usage_quota, and tenant admin role. Supports partial updates.
     """
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        return await update_tenant(payload, db)
+        return await update_tenant(payload, db, auth_header=auth_header)
     except HTTPException:
         raise
     except IntegrityError as ie:
@@ -214,14 +225,17 @@ async def update_tenant_info(
 
 @router.get("/view/tenant", status_code=status.HTTP_200_OK)
 async def view_tenant(
+    request: Request,
     tenant_id: str,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
     View tenant details by tenant_id (human-readable tenant identifier).
+    Includes tenant admin role from auth when Authorization header is provided.
     """
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        result = await view_tenant_details(tenant_id, db)
+        result = await view_tenant_details(tenant_id, db, auth_header=auth_header)
 
         if not result:
             raise HTTPException(status_code=404, detail="Tenant not found")
@@ -237,15 +251,16 @@ async def view_tenant(
 
 @router.get("/view/user", status_code=status.HTTP_200_OK)
 async def view_tenant_user(
+    request: Request,
     user_id: int,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
-    View tenant user details by tenant_id and auth user_id.
-
+    View tenant user details by auth user_id. Includes roles from auth service when authorized.
     """
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        result = await view_tenant_user_details(user_id, db)
+        result = await view_tenant_user_details(user_id, db, auth_header=auth_header)
 
         if not result:
             raise HTTPException(status_code=404, detail="Tenant user not found")
@@ -260,14 +275,17 @@ async def view_tenant_user(
 
 @router.get("/list/tenants", response_model=ListTenantsResponse, status_code=status.HTTP_200_OK)
 async def list_tenants(
+    request: Request,
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
     List all tenants with their details.
     Returns a list of all tenants registered in the system.
+    Includes tenant admin role from auth when Authorization header is provided.
     """
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        return await list_all_tenants(db)
+        return await list_all_tenants(db, auth_header=auth_header)
     except HTTPException:
         raise
     except Exception as exc:
@@ -277,16 +295,49 @@ async def list_tenants(
 
 @router.get("/list/users", response_model=ListUsersResponse, status_code=status.HTTP_200_OK)
 async def list_users(
+    request: Request,
+    tenant_id: Optional[str] = Query(None, description="Filter users by tenant_id"),
     db: AsyncSession = Depends(get_tenant_db_session),
 ):
     """
-    List all tenant users across all tenants.
-    Returns a list of all users registered under any tenant.
+    List tenant users. Includes roles from auth service when authorized.
+    If tenant_id is provided, only users for that tenant are returned.
     """
+    auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
     try:
-        return await list_all_users(db)
+        return await list_all_users(db, tenant_id=tenant_id, auth_header=auth_header)
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception(f"Error listing users: {exc}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/email/send/verification", response_model=TenantSendEmailVerificationResponse, status_code=status.HTTP_201_CREATED)
+async def send_verification_email_admin(
+    payload: TenantSendEmailVerificationRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_tenant_db_session),
+):
+    """
+    Send the initial email verification link for a tenant.
+
+    This is separate from the public /email/resend API to avoid confusion between
+    first-time send and resend flows.
+    """
+    try:
+        response = await send_initial_verification_email(
+            tenant_id=payload.tenant_id,
+            db=db,
+            background_tasks=background_tasks,
+        )
+        logger.info(f"Verification email sent successfully for Tenant ID: {payload.tenant_id}")
+        return response
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        logger.error(f"Value error during initial email verification send | tenant_id={payload.tenant_id}: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as exc:
+        logger.exception(f"Error sending initial verification email | tenant_id={payload.tenant_id}: {exc}")
         raise HTTPException(status_code=500, detail="Internal server error")

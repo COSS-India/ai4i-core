@@ -180,6 +180,7 @@ class UserResponse(UserBase):
     last_login: Optional[datetime]
     avatar_url: Optional[str]
     roles: List[str] = []
+    tenant_id: Optional[str] = Field(None, description="Tenant identifier when user is a tenant admin or tenant user")
     
     class Config:
         from_attributes = True
@@ -290,6 +291,11 @@ class APIKeyValidationRequest(BaseModel):
     api_key: str
     service: str = Field(..., description="Service name: asr, tts, nmt, pipeline, model-management")
     action: str = Field(..., description="Action type: read, inference")
+    user_id: Optional[int] = Field(
+        default=None,
+        description="Authenticated user id (for BOTH mode ownership enforcement). "
+                    "When provided, the API key must belong to this user."
+    )
 
 class APIKeyValidationResponse(BaseModel):
     valid: bool

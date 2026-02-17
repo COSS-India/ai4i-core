@@ -29,6 +29,9 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthenticationError)
     async def authentication_error_handler(request: Request, exc: AuthenticationError):
         """Handle authentication errors."""
+        # Check both message attribute and detail for the ownership error message
+        error_msg = getattr(exc, "message", None) or str(exc.detail) if hasattr(exc, "detail") and exc.detail else ""
+        
         if tracer:
             with tracer.start_as_current_span("request.reject") as reject_span:
                 reject_span.set_attribute("auth.operation", "reject_authentication")
@@ -36,21 +39,29 @@ def add_error_handlers(app: FastAPI) -> None:
                 # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
                 reject_span.set_attribute("error.type", "AuthenticationError")
                 reject_span.set_attribute("error.reason", "authentication_failed")
-                reject_span.set_attribute("error.message", exc.message)
+                reject_span.set_attribute("error.message", error_msg or exc.message)
                 reject_span.set_attribute("error.code", "AUTHENTICATION_ERROR")
                 reject_span.set_attribute("http.status_code", 401)
-                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+                reject_span.set_status(Status(StatusCode.ERROR, error_msg or exc.message))
                 # Don't record exception here - OpenTelemetry already recorded it
                 # automatically in parent spans when exception was raised
         
-        error_detail = ErrorDetail(
-            message=exc.message,
-            code="AUTHENTICATION_ERROR",
-            timestamp=time.time()
-        )
+        # For the ownership case, return explicit error + message fields with AUTHORIZATION_ERROR
+        if "API key does not belong to the authenticated user" in error_msg:
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "AUTHORIZATION_ERROR",
+                        "message": "API key does not belong to the authenticated user",
+                    }
+                },
+            )
+
+        # For other authentication errors, return structured format
         return JSONResponse(
             status_code=401,
-            content={"detail": error_detail.dict()}
+            content={"detail": {"error": "AUTHENTICATION_ERROR", "message": error_msg or exc.message or "Authentication failed"}}
         )
     
     
@@ -272,6 +283,26 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle generic HTTP exceptions."""
+        # Handle AuthenticationError here if it wasn't caught by the specific handler
+        if isinstance(exc, AuthenticationError):
+            # Check for ownership error message
+            error_msg = getattr(exc, "message", None) or str(exc.detail) if hasattr(exc, "detail") and exc.detail else ""
+            if "API key does not belong to the authenticated user" in error_msg:
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "detail": {
+                            "error": "AUTHORIZATION_ERROR",
+                            "message": "API key does not belong to the authenticated user",
+                        }
+                    },
+                )
+            # For other AuthenticationErrors, use default auth failure response
+            return JSONResponse(
+                status_code=401,
+                content={"detail": {"error": "AUTHENTICATION_ERROR", "message": error_msg or "Authentication failed"}}
+            )
+        
         error_detail = ErrorDetail(
             message=str(exc.detail),
             code="HTTP_ERROR",
