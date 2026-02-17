@@ -917,6 +917,7 @@ async def call_smr_service(
         latency_policy = headers.get("X-Latency-Policy") or headers.get("x-latency-policy")
         cost_policy = headers.get("X-Cost-Policy") or headers.get("x-cost-policy")
         accuracy_policy = headers.get("X-Accuracy-Policy") or headers.get("x-accuracy-policy")
+        request_profiler_header = headers.get("X-Request-Profiler") or headers.get("x-request-profiler")
 
         smr_payload = {
             "task_type": "tts",
@@ -936,6 +937,8 @@ async def call_smr_service(
             smr_headers["X-Cost-Policy"] = cost_policy
         if accuracy_policy:
             smr_headers["X-Accuracy-Policy"] = accuracy_policy
+        if request_profiler_header:
+            smr_headers["X-Request-Profiler"] = request_profiler_header
 
         logger.info(
             "Calling SMR service to get TTS serviceId",
@@ -943,6 +946,8 @@ async def call_smr_service(
                 "user_id": user_id,
                 "tenant_id": tenant_id,
                 "has_policy_headers": bool(latency_policy or cost_policy or accuracy_policy),
+                "has_request_profiler": bool(request_profiler_header),
+                "request_profiler_header": request_profiler_header,
             },
         )
 
