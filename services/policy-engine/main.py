@@ -13,6 +13,7 @@ from app.models import (
     AccuracyPolicy,
 )
 from app.repository import get_tenant_policy
+from app.database import init_database
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("policy-engine")
@@ -37,6 +38,21 @@ app.mount("/metrics", make_asgi_app())
 
 # Define current version constant
 CURRENT_POLICY_VERSION = "v2.0"
+
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    Initialize database tables on service startup.
+    Creates the table if it doesn't exist, skips if it already exists.
+    """
+    logger.info("Starting policy-engine service...")
+    try:
+        await init_database()
+        logger.info("Policy-engine service started successfully")
+    except Exception as e:
+        logger.error(f"Failed to start policy-engine service: {e}")
+        raise
 
 
 @app.get("/health")
