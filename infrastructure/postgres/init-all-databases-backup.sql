@@ -144,19 +144,10 @@ CREATE TABLE IF NOT EXISTS api_keys (
     last_used TIMESTAMP WITH TIME ZONE
 );
 
--- Selected API key reference (per user) - idempotent: add FK only if missing
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'users_selected_api_key_id_fkey'
-    ) THEN
-        ALTER TABLE users
-            ADD CONSTRAINT users_selected_api_key_id_fkey
-            FOREIGN KEY (selected_api_key_id) REFERENCES api_keys(id) ON DELETE SET NULL;
-    END IF;
-END $$;
+-- Selected API key reference (per user)
+ALTER TABLE users
+    ADD CONSTRAINT users_selected_api_key_id_fkey
+    FOREIGN KEY (selected_api_key_id) REFERENCES api_keys(id) ON DELETE SET NULL;
 
 -- Create sequence for user_sessions if it doesn't exist
 CREATE SEQUENCE IF NOT EXISTS sessions_id_seq;
@@ -281,7 +272,7 @@ CREATE TABLE IF NOT EXISTS llm_results (
 );
 
 -- NMT (Neural Machine Translation) Tables
-    CREATE TABLE IF NOT EXISTS nmt_requests (
+CREATE TABLE IF NOT EXISTS nmt_requests (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
@@ -1090,7 +1081,7 @@ CREATE TABLE IF NOT EXISTS tenant_email_verifications (
         ON DELETE CASCADE
 );
 
--- ---------------------------------------------------------------------------- 
+-- ----------------------------------------------------------------------------
 -- Table: service_config
 -- Description: Service configuration and pricing
 -- ----------------------------------------------------------------------------
@@ -1177,39 +1168,32 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Apply trigger to all tables with updated_at column (idempotent)
--- Drop existing triggers if they exist, then recreate
-DROP TRIGGER IF EXISTS update_tenants_updated_at ON tenants;
+-- Apply trigger to all tables with updated_at column
 CREATE TRIGGER update_tenants_updated_at
     BEFORE UPDATE ON tenants
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-DROP TRIGGER IF EXISTS update_tenant_billing_records_updated_at ON tenant_billing_records;
 CREATE TRIGGER update_tenant_billing_records_updated_at
     BEFORE UPDATE ON tenant_billing_records
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-DROP TRIGGER IF EXISTS update_tenant_audit_logs_updated_at ON tenant_audit_logs;
 CREATE TRIGGER update_tenant_audit_logs_updated_at
     BEFORE UPDATE ON tenant_audit_logs
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-DROP TRIGGER IF EXISTS update_service_config_updated_at ON service_config;
 CREATE TRIGGER update_service_config_updated_at
     BEFORE UPDATE ON service_config
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-DROP TRIGGER IF EXISTS update_tenant_users_updated_at ON tenant_users;
 CREATE TRIGGER update_tenant_users_updated_at
     BEFORE UPDATE ON tenant_users
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-DROP TRIGGER IF EXISTS update_user_billing_records_updated_at ON user_billing_records;
 CREATE TRIGGER update_user_billing_records_updated_at
     BEFORE UPDATE ON user_billing_records
     FOR EACH ROW
@@ -1234,7 +1218,7 @@ COMMENT ON TABLE tenant_users IS 'Users associated with tenants (many-to-one rel
 COMMENT ON TABLE user_billing_records IS 'Billing records for individual tenant users';
 
 -- ============================================================================
--- Verification 
+-- Verification
 -- ============================================================================
 
 DO $$
@@ -1293,7 +1277,6 @@ CREATE TABLE IF NOT EXISTS notification_receivers (
     receiver_name VARCHAR(255) NOT NULL, -- Unique receiver name per customer
     -- Email configuration
     email_to TEXT[] NOT NULL, -- Array of email addresses (required)
-    rbac_role VARCHAR(50), -- RBAC role name (ADMIN, MODERATOR, USER, GUEST) - if set, email_to will be resolved from users with this role
     email_subject_template TEXT, -- Custom subject template
     email_body_template TEXT, -- Custom HTML body template
     enabled BOOLEAN DEFAULT true,
@@ -1379,23 +1362,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Create triggers for updated_at columns (idempotent: drop if exists, then create)
-DROP TRIGGER IF EXISTS update_alert_definitions_updated_at ON alert_definitions;
+-- Create triggers for updated_at columns
 CREATE TRIGGER update_alert_definitions_updated_at 
     BEFORE UPDATE ON alert_definitions
     FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
 
-DROP TRIGGER IF EXISTS update_alert_annotations_updated_at ON alert_annotations;
 CREATE TRIGGER update_alert_annotations_updated_at 
     BEFORE UPDATE ON alert_annotations
     FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
 
-DROP TRIGGER IF EXISTS update_notification_receivers_updated_at ON notification_receivers;
 CREATE TRIGGER update_notification_receivers_updated_at 
     BEFORE UPDATE ON notification_receivers
     FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
 
-DROP TRIGGER IF EXISTS update_routing_rules_updated_at ON routing_rules;
 CREATE TRIGGER update_routing_rules_updated_at 
     BEFORE UPDATE ON routing_rules
     FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
@@ -1503,18 +1482,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Create audit triggers (idempotent: drop if exists, then create)
-DROP TRIGGER IF EXISTS audit_alert_definitions_changes ON alert_definitions;
+-- Create audit triggers
 CREATE TRIGGER audit_alert_definitions_changes
     AFTER INSERT OR UPDATE OR DELETE ON alert_definitions
     FOR EACH ROW EXECUTE FUNCTION log_alert_config_changes();
 
-DROP TRIGGER IF EXISTS audit_notification_receivers_changes ON notification_receivers;
 CREATE TRIGGER audit_notification_receivers_changes
     AFTER INSERT OR UPDATE OR DELETE ON notification_receivers
     FOR EACH ROW EXECUTE FUNCTION log_alert_config_changes();
 
-DROP TRIGGER IF EXISTS audit_routing_rules_changes ON routing_rules;
 CREATE TRIGGER audit_routing_rules_changes
     AFTER INSERT OR UPDATE OR DELETE ON routing_rules
     FOR EACH ROW EXECUTE FUNCTION log_alert_config_changes();
@@ -2056,7 +2032,7 @@ INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
 WHERE u.email = 'admin@ai4inclusion.org' AND u.username = 'admin' AND r.name = 'ADMIN'
-ON CONFLICT (user_id, role_id) DO NOTHING;          
+ON CONFLICT (user_id, role_id) DO NOTHING;
 
 \c config_db;
 -- ============================================================================
