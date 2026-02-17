@@ -12,3 +12,6 @@ pydantic-settings>=2.0.0
 # Database connection for alert management
 asyncpg>=0.28.0
 
+# Required by ai4icore_telemetry / opentelemetry-instrumentation-fastapi
+packaging>=21.0
+

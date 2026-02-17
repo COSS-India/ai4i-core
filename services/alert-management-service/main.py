@@ -5,6 +5,8 @@ Provides CRUD operations for alert definitions, notification receivers, and rout
 import os
 
 from ai4icore_logging import get_logger, configure_logging
+from ai4icore_telemetry import setup_tracing
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 # Configure structured logging (same approach as nmt-service, ocr-service)
 configure_logging(
@@ -71,6 +73,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Distributed tracing (Jaeger) - same pattern as nmt-service, ocr-service
+# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
+tracer = setup_tracing("alert-management-service")
+if tracer:
+    logger.info("✅ Distributed tracing initialized for alert-management-service")
+    FastAPIInstrumentor.instrument_app(app)
+    logger.info("✅ FastAPI instrumentation enabled for tracing")
+else:
+    logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
 
 # Register routers
 app.include_router(alert_definitions_router)

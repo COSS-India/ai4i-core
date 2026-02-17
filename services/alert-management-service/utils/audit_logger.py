@@ -23,7 +23,15 @@ except ImportError:
 
 
 def get_username_from_request(request: Optional[Request] = None) -> str:
-    """Extract username from request headers or state (forwarded by API gateway from JWT)."""
+    """
+    Extract username for audit logs.
+    Source (in order): request.state.username, X-Username header, then "system".
+    The actual username comes from the API gateway: it validates the JWT with the auth service,
+    gets username from the /api/v1/auth/validate response, and forwards it in the X-Username
+    header. If requests reach this service directly (not via the gateway), X-Username is never
+    set and audit logs show "system". Ensure alert API calls go through the gateway so the
+    JWT-derived username is present.
+    """
     if request:
         # Try to get from request state (if set by any middleware)
         username = getattr(request.state, "username", None)
