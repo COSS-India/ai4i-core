@@ -1442,8 +1442,8 @@ async def inject_service_id_if_missing(
     - If task_type is not "nmt", returns error that context-aware is only available for NMT
     
     For request profiler requests:
-    - If task_type is "nmt", calls request profiler service and selects best matching service
-    - If task_type is not "nmt", returns error that profiler is only available for NMT
+    - If task_type is "nmt" or "tts", calls request profiler service and selects best matching service
+    - If task_type is not "nmt" or "tts", returns error that profiler is only available for NMT and TTS
 
     Returns (service_id, fallback_service_id, updated_body_dict, tenant_policy_result, selected_service_dict, scoring_details, context_aware_result).
     """
@@ -1462,16 +1462,18 @@ async def inject_service_id_if_missing(
         }
     )
     if is_request_profiler:
-        if task_type.lower() != "nmt":
+        # Allow request profiler for both NMT and TTS
+        if task_type.lower() not in ("nmt", "tts"):
             raise HTTPException(
                 status_code=501,
                 detail={
                     "code": "PROFILER_NOT_AVAILABLE",
-                    "message": f"Request profiler feature is not available for {task_type.upper()} service. This feature is currently only available for NMT (Neural Machine Translation) service.",
+                    "message": f"Request profiler feature is not available for {task_type.upper()} service. This feature is currently only available for NMT (Neural Machine Translation) and TTS (Text-to-Speech) services.",
                 },
             )
         
-        # Extract text from NMT request
+        # Extract text from request (works for both NMT and TTS)
+        # Both use input array with "source" field
         input_list = body_dict.get("input", [])
         if not input_list:
             raise HTTPException(
@@ -1504,7 +1506,7 @@ async def inject_service_id_if_missing(
         combined_text = " ".join(text_parts)
         
         logger.info(
-            "SMR: Request profiler routing enabled for NMT",
+            f"SMR: Request profiler routing enabled for {task_type.upper()}",
             extra={
                 "context": {
                     "task_type": task_type,
