@@ -52,12 +52,30 @@ class TextInput(BaseModel):
 
 class TTSInferenceConfig(BaseModel):
     """Configuration for TTS inference."""
-    serviceId: str = Field(..., description="Identifier for TTS service/model")
+    # serviceId is optional to allow SMR to select a service when not provided
+    serviceId: Optional[str] = Field(
+        None,
+        description=(
+            "Identifier for TTS service/model. "
+            "If not provided, SMR service will be called to select a serviceId."
+        ),
+    )
     language: LanguageConfig = Field(..., description="Language configuration")
     gender: Gender = Field(..., description="Voice gender (male/female)")
     audioFormat: AudioFormat = Field(AudioFormat.WAV, description="Output audio format")
     samplingRate: Optional[int] = Field(22050, description="Target sample rate in Hz")
     encoding: str = Field("base64", description="Output encoding")
+    
+    @validator("serviceId")
+    def normalize_service_id(cls, v: Optional[str]) -> Optional[str]:
+        """
+        Normalize serviceId:
+        - Allow None or empty string so SMR can resolve when missing
+        - Strip whitespace when provided
+        """
+        if v is not None and v.strip():
+            return v.strip()
+        return None
     
     @validator('samplingRate')
     def validate_sampling_rate(cls, v):
@@ -79,5 +97,12 @@ class TTSInferenceRequest(BaseModel):
         return v
     
     def dict(self, **kwargs):
-        """Override dict() to exclude None values."""
+        """
+        Override dict() to exclude None values by default.
+
+        If exclude_none is explicitly set to False by the caller (e.g., for SMR),
+        respect that and return all fields including None.
+        """
+        if "exclude_none" in kwargs and kwargs["exclude_none"] is False:
+            return super().dict(**kwargs)
         return super().dict(exclude_none=True, **kwargs)

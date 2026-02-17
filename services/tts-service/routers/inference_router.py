@@ -3,9 +3,11 @@ FastAPI router for TTS inference endpoints.
 """
 
 import logging
+import os
 import time
 import traceback
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,7 +39,14 @@ from utils.validation_utils import (
     LanguageMismatchError,
     VoiceNotAvailableError
 )
-from middleware.exceptions import AuthenticationError, AuthorizationError, ErrorDetail
+from middleware.exceptions import (
+    AuthenticationError,
+    AuthorizationError,
+    ErrorDetail,
+    TritonInferenceError,
+    ModelNotFoundError,
+    ServiceUnavailableError,
+)
 from services.constants.error_messages import (
     NO_TEXT_INPUT,
     NO_TEXT_INPUT_MESSAGE,
@@ -78,14 +87,10 @@ from ai4icore_logging import get_correlation_id
 
 logger = logging.getLogger(__name__)
 
+# SMR Service Configuration
+SMR_ENABLED = os.getenv("SMR_ENABLED", "true").lower() == "true"
+SMR_SERVICE_URL = os.getenv("SMR_SERVICE_URL", "http://smr-service:8097")
 
-def count_words(text: str) -> int:
-    """Count words in text"""
-    try:
-        words = [word for word in text.split() if word.strip()]
-        return len(words)
-    except Exception:
-        return 0
 # Use service name to get the same tracer instance as main.py
 tracer = trace.get_tracer("tts-service")
 
@@ -98,98 +103,1102 @@ inference_router = APIRouter(
 )
 
 
-async def get_tts_service(request: Request, db: AsyncSession = Depends(get_tenant_db_session)) -> TTSService:
-    """Dependency to get configured TTS service. Uses request.state from Model Management middleware when set (e.g. A/B variant)."""
+def count_words(text: str) -> int:
+    """Count words in text"""
     try:
-        # Create repository
-        repository = TTSRepository(db)
+        words = [word for word in text.split() if word.strip()]
+        return len(words)
+    except Exception:
+        return 0
+
+
+async def resolve_service_id_if_needed(
+    request: TTSInferenceRequest,
+    http_request: Request,
+) -> Optional[Dict[str, Any]]:
+    """
+    Dependency to resolve serviceId via SMR if not provided in request.
+    This runs before get_tts_service to ensure serviceId is available.
+
+    Returns SMR response data if SMR was called, None otherwise.
+    """
+    logger.info(
+        "TTS resolve_service_id_if_needed dependency called",
+        extra={
+            "has_service_id": bool(request.config.serviceId),
+            "service_id": request.config.serviceId,
+        },
+    )
+
+    # Logic: First check if serviceId is in request body
+    # If yes, use it (skip SMR) but still need to resolve endpoint
+    # If no, call SMR to get serviceId (if SMR is enabled)
+    
+    # If serviceId is provided, set it in request.state and resolve endpoint manually
+    # (middleware may have already done this, but we ensure it's done)
+    if request.config.serviceId:
+        service_id = request.config.serviceId
+        http_request.state.service_id = service_id
         
-        # Create services
-        audio_service = AudioService()
-        text_service = TextService()
+        # Check if endpoint is already resolved by middleware
+        triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+        triton_model_name = getattr(http_request.state, "triton_model_name", None)
         
-        # Triton endpoint: prefer middleware-resolved (A/B variant or service resolution)
-        import os
-        triton_endpoint = getattr(request.state, "triton_endpoint", None)
-        triton_api_key = getattr(request.state, "triton_api_key", None)
-        if not triton_endpoint:
-            triton_url = os.getenv("TRITON_ENDPOINT", "http://localhost:8000")
-            if triton_url.startswith(('http://', 'https://')):
-                triton_url = triton_url.split('://', 1)[1]
-            triton_endpoint = triton_url
-            if triton_api_key is None:
-                triton_api_key = os.getenv("TRITON_API_KEY")
-        triton_client = TritonClient(triton_endpoint, triton_api_key)
+        # If not resolved, manually resolve it
+        if not triton_endpoint or not triton_model_name:
+            logger.info(
+                "TTS: serviceId provided directly, manually resolving endpoint",
+                extra={
+                    "service_id": service_id,
+                    "endpoint_already_resolved": bool(triton_endpoint),
+                    "model_name_already_resolved": bool(triton_model_name),
+                }
+            )
+            
+            model_management_client = getattr(http_request.app.state, "model_management_client", None)
+            redis_client = getattr(http_request.app.state, "redis_client", None)
+            
+            if not model_management_client:
+                logger.error(
+                    "Model Management client not available in app.state - cannot resolve endpoint",
+                    extra={"service_id": service_id},
+                )
+                http_request.state.model_management_error = "Model Management client not available in application state"
+            else:
+                try:
+                    # Extract auth headers from request (case-insensitive)
+                    auth_headers: Dict[str, str] = {}
+                    authorization = http_request.headers.get("Authorization") or http_request.headers.get("authorization")
+                    if authorization:
+                        auth_headers["Authorization"] = authorization
+                    x_api_key = http_request.headers.get("X-API-Key") or http_request.headers.get("x-api-key")
+                    if x_api_key:
+                        auth_headers["X-API-Key"] = x_api_key
+                    x_auth_source = http_request.headers.get("X-Auth-Source") or http_request.headers.get("x-auth-source")
+                    if x_auth_source:
+                        auth_headers["X-Auth-Source"] = x_auth_source
+                    
+                    # Check if we should bypass cache
+                    bypass_cache = os.getenv("BYPASS_CACHE", "false").lower() == "true"
+                    
+                    service_info = await model_management_client.get_service(
+                        service_id=service_id,
+                        use_cache=not bypass_cache,
+                        redis_client=redis_client,
+                        auth_headers=auth_headers,
+                    )
+                    
+                    if bypass_cache:
+                        logger.info(
+                            f"TTS: Bypassed cache for service {service_id} - fetched fresh data from Model Management",
+                            extra={"service_id": service_id}
+                        )
+                    
+                    # Log the raw service_info to debug what we're getting
+                    # Log the full model_inference_endpoint structure for debugging
+                    inference_endpoint_json = None
+                    if service_info and service_info.model_inference_endpoint:
+                        try:
+                            import json
+                            if isinstance(service_info.model_inference_endpoint, dict):
+                                inference_endpoint_json = json.dumps(service_info.model_inference_endpoint, indent=2)
+                            else:
+                                inference_endpoint_json = str(service_info.model_inference_endpoint)
+                        except Exception:
+                            inference_endpoint_json = str(service_info.model_inference_endpoint)
+                    
+                    logger.info(
+                        f"TTS: Raw service_info from Model Management for service {service_id}",
+                        extra={
+                            "service_id": service_id,
+                            "has_service_info": service_info is not None,
+                            "service_info_endpoint": service_info.endpoint if service_info else None,
+                            "service_info_triton_model": service_info.triton_model if service_info else None,
+                            "service_info_model_name": service_info.model_name if service_info else None,
+                            "model_inference_endpoint_full": inference_endpoint_json,
+                            "service_info_model_name": service_info.model_name if service_info else None,
+                            "has_model_inference_endpoint": bool(service_info.model_inference_endpoint) if service_info else False,
+                            "model_inference_endpoint_type": type(service_info.model_inference_endpoint).__name__ if (service_info and service_info.model_inference_endpoint) else None,
+                            "model_inference_endpoint_raw": str(service_info.model_inference_endpoint)[:1000] if (service_info and service_info.model_inference_endpoint) else None,
+                        }
+                    )
+                    
+                    if not service_info:
+                        logger.error(
+                            "TTS service not found in Model Management",
+                            extra={"service_id": service_id},
+                        )
+                        http_request.state.model_management_error = (
+                            f"Service {service_id} not found in Model Management database"
+                        )
+                    elif not service_info.endpoint:
+                        logger.error(
+                            "TTS service found but has no endpoint configured",
+                            extra={
+                                "service_id": service_id,
+                                "service_name": service_info.name,
+                                "model_id": service_info.model_id,
+                            },
+                        )
+                        http_request.state.model_management_error = (
+                            f"Service {service_id} found but has no endpoint configured"
+                        )
+                    else:
+                        triton_endpoint = service_info.endpoint
+                        triton_api_key = service_info.api_key or ""
+                        
+                        # Extract model name from inference endpoint / model info
+                        triton_model_name = None
+                        
+                        if service_info.model_inference_endpoint:
+                            inference_endpoint = service_info.model_inference_endpoint
+                            if isinstance(inference_endpoint, dict):
+                                # Check inside schema FIRST (most specific location for Triton model name)
+                                schema = inference_endpoint.get("schema", {})
+                                if isinstance(schema, dict):
+                                    triton_model_name = (
+                                        schema.get("model_name")
+                                        or schema.get("modelName")
+                                        or schema.get("name")
+                                    )
+                                
+                                # If not in schema, check top-level inference_endpoint
+                                if not triton_model_name:
+                                    triton_model_name = (
+                                        inference_endpoint.get("model_name")
+                                        or inference_endpoint.get("modelName")
+                                        or inference_endpoint.get("model")
+                                    )
+                        
+                        if not triton_model_name:
+                            triton_model_name = service_info.triton_model
+                        if not triton_model_name:
+                            triton_model_name = service_info.model_name
+                        if not triton_model_name and service_id:
+                            parts = service_id.split("/")
+                            if len(parts) > 1:
+                                model_part = parts[-1]
+                                if "--" in model_part:
+                                    triton_model_name = model_part.split("--")[0]
+                                else:
+                                    triton_model_name = model_part
+                        if not triton_model_name:
+                            triton_model_name = "unknown"
+                            logger.warning(
+                                f"Could not determine Triton model name for service {service_id}. "
+                                f"Using 'unknown' - this may cause Triton inference to fail.",
+                                extra={
+                                    "service_id": service_id,
+                                    "service_info_triton_model": service_info.triton_model,
+                                    "service_info_model_name": service_info.model_name,
+                                    "has_model_inference_endpoint": bool(service_info.model_inference_endpoint),
+                                }
+                            )
+                        
+                        # Log where the model name came from
+                        inference_endpoint_debug = None
+                        if service_info.model_inference_endpoint:
+                            if isinstance(service_info.model_inference_endpoint, dict):
+                                schema = service_info.model_inference_endpoint.get("schema", {})
+                                inference_endpoint_debug = {
+                                    "has_schema": isinstance(schema, dict),
+                                    "schema_model_name": schema.get("model_name") if isinstance(schema, dict) else None,
+                                    "schema_modelName": schema.get("modelName") if isinstance(schema, dict) else None,
+                                    "schema_name": schema.get("name") if isinstance(schema, dict) else None,
+                                    "top_level_model_name": service_info.model_inference_endpoint.get("model_name"),
+                                    "top_level_modelName": service_info.model_inference_endpoint.get("modelName"),
+                                    "top_level_model": service_info.model_inference_endpoint.get("model"),
+                                    "full_structure": str(service_info.model_inference_endpoint)[:500],
+                                }
+                            else:
+                                inference_endpoint_debug = {
+                                    "type": type(service_info.model_inference_endpoint).__name__,
+                                    "value": str(service_info.model_inference_endpoint)[:500],
+                                }
+                        
+                        logger.info(
+                            f"TTS: Resolved Triton model name '{triton_model_name}' for service {service_id} (direct serviceId)",
+                            extra={
+                                "service_id": service_id,
+                                "triton_model_name": triton_model_name,
+                                "inference_endpoint_debug": inference_endpoint_debug,
+                                "cache_bypassed": bypass_cache,
+                            }
+                        )
+                        
+                        http_request.state.triton_endpoint = triton_endpoint
+                        http_request.state.triton_model_name = triton_model_name
+                        model_id_for_db = service_info.model_id or service_id
+                        http_request.state.model_id = model_id_for_db
+                        if not getattr(http_request.app.state, "triton_api_key", None):
+                            http_request.app.state.triton_api_key = triton_api_key
+                        
+                        logger.info(
+                            "TTS: Manually resolved Triton endpoint for directly-provided serviceId",
+                            extra={
+                                "service_id": service_id,
+                                "model_id": model_id_for_db,
+                                "triton_endpoint": triton_endpoint,
+                                "triton_model_name": triton_model_name,
+                                "has_api_key": bool(triton_api_key),
+                            },
+                        )
+                except Exception as e:
+                    logger.error(
+                        "TTS: Error resolving Triton endpoint for directly-provided serviceId",
+                        extra={"service_id": service_id, "error": str(e)},
+                        exc_info=True,
+                    )
+                    http_request.state.model_management_error = str(e)
         
-        # Create TTS service
-        tts_service = TTSService(repository, audio_service, text_service, triton_client)
+        # SMR was not called since serviceId was provided
+        logger.info(
+            "TTS: serviceId provided directly, skipping SMR",
+            extra={
+                "service_id": service_id,
+                "endpoint_resolved": bool(getattr(http_request.state, "triton_endpoint", None)),
+                "model_name_resolved": bool(getattr(http_request.state, "triton_model_name", None)),
+            },
+        )
+        return None  # SMR was not called
+    
+    # serviceId not provided - call SMR
+    if not request.config.serviceId:
+        # Check if SMR is enabled
+        if not SMR_ENABLED:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "SMR_DISABLED",
+                    "message": "SMR is disabled and serviceId is required in request body",
+                },
+            )
+        user_id = getattr(http_request.state, "user_id", None)
         
-        return tts_service
-        
-    except Exception as e:
-        # Extract context for logging (if available from request)
-        # get_correlation_id is already imported at top of file
-        correlation_id = None
-        user_id = None
-        api_key_id = None
+        # Only use tenant_id if it's explicitly in the JWT token, not from fallback lookup
+        # Check JWT payload directly to see if tenant_id was in the token
+        jwt_payload = getattr(http_request.state, "jwt_payload", None)
+        tenant_id = None
+        if jwt_payload and jwt_payload.get("tenant_id"):
+            # tenant_id is explicitly in JWT token - use it
+            tenant_id = jwt_payload.get("tenant_id")
+            logger.info(
+                "TTS: Using tenant_id from JWT token",
+                extra={
+                    "tenant_id": tenant_id,
+                    "jwt_has_tenant_id": True,
+                },
+            )
+        else:
+            # No tenant_id in JWT token - don't use fallback tenant_id
+            logger.info(
+                "TTS: No tenant_id in JWT token, not using tenant_id for SMR call",
+                extra={
+                    "jwt_payload_keys": list(jwt_payload.keys()) if jwt_payload else None,
+                    "jwt_has_tenant_id": False,
+                },
+            )
+
+        logger.info(
+            "TTS serviceId not provided, calling SMR service (dependency)",
+            extra={
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "tenant_id_source": "jwt" if (jwt_payload and jwt_payload.get("tenant_id")) else "none",
+            },
+        )
+
+        # Prepare request body for SMR (preserve all fields)
         try:
-            # Try to get request from context if available
-            from starlette.requests import Request
-            request = getattr(db, 'request', None) if hasattr(db, 'request') else None
-            if request:
-                correlation_id = get_correlation_id(request) or getattr(request.state, "correlation_id", None)
-                user_id = getattr(request.state, "user_id", None)
-                api_key_id = getattr(request.state, "api_key_id", None)
-        except Exception:
+            # Pydantic v2
+            request_body = request.model_dump(exclude_none=False)
+        except AttributeError:
+            # Pydantic v1
+            request_body = request.dict(exclude_none=False)
+
+        smr_response_data = await call_smr_service(
+            request_body=request_body,
+            user_id=str(user_id) if user_id else None,
+            tenant_id=str(tenant_id) if tenant_id else None,
+            http_request=http_request,
+        )
+
+        # Update request with serviceId from SMR
+        service_id = smr_response_data.get("serviceId")
+        if not service_id:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "SMR_NO_SERVICE_ID",
+                    "message": "SMR service did not return a serviceId",
+                },
+            )
+
+        # Extract fallback service ID from SMR response
+        fallback_service_id = smr_response_data.get("fallbackServiceId")
+        if fallback_service_id:
+            http_request.state.fallback_service_id = fallback_service_id
+            logger.info(
+                "TTS: Extracted fallback service ID from SMR response",
+                extra={
+                    "primary_service_id": service_id,
+                    "fallback_service_id": fallback_service_id,
+                }
+            )
+
+        request.config.serviceId = service_id
+        # Also set in request.state for Model Management middleware
+        http_request.state.service_id = service_id
+
+        # Manually resolve Triton endpoint using Model Management client
+        # (since middleware already ran and didn't see serviceId)
+        model_management_client = getattr(http_request.app.state, "model_management_client", None)
+        redis_client = getattr(http_request.app.state, "redis_client", None)
+
+        if not model_management_client:
+            logger.error(
+                "Model Management client not available in app.state - cannot resolve endpoint",
+                extra={"service_id": service_id},
+            )
+            http_request.state.model_management_error = "Model Management client not available in application state"
+        else:
+            try:
+                # Extract auth headers from request (case-insensitive)
+                # Use proper header extraction to handle case-insensitive headers
+                auth_headers: Dict[str, str] = {}
+                
+                # Check Authorization header (case-insensitive)
+                authorization = http_request.headers.get("Authorization") or http_request.headers.get("authorization")
+                if authorization:
+                    auth_headers["Authorization"] = authorization
+                
+                # Check X-API-Key header (case-insensitive)
+                x_api_key = http_request.headers.get("X-API-Key") or http_request.headers.get("x-api-key")
+                if x_api_key:
+                    auth_headers["X-API-Key"] = x_api_key
+                
+                # Check X-Auth-Source header (important for JWT vs API key authentication)
+                x_auth_source = http_request.headers.get("X-Auth-Source") or http_request.headers.get("x-auth-source")
+                if x_auth_source:
+                    auth_headers["X-Auth-Source"] = x_auth_source
+
+                logger.debug(
+                    "TTS: Extracted auth headers for model-management call",
+                    extra={
+                        "has_authorization": "Authorization" in auth_headers,
+                        "has_api_key": "X-API-Key" in auth_headers,
+                        "has_auth_source": "X-Auth-Source" in auth_headers,
+                        "service_id": service_id,
+                    },
+                )
+
+                # Check if we should bypass cache (for debugging or after DB updates)
+                # You can set BYPASS_CACHE=true in environment to force fresh fetch
+                bypass_cache = os.getenv("BYPASS_CACHE", "false").lower() == "true"
+                
+                service_info = await model_management_client.get_service(
+                    service_id=service_id,
+                    use_cache=not bypass_cache,  # Bypass cache if flag is set
+                    redis_client=redis_client,
+                    auth_headers=auth_headers,
+                )
+                
+                if bypass_cache:
+                    logger.info(
+                        f"TTS: Bypassed cache for service {service_id} - fetched fresh data from Model Management",
+                        extra={"service_id": service_id}
+                    )
+                
+                # Log the raw service_info to debug what we're getting
+                logger.info(
+                    f"TTS: Raw service_info from Model Management for service {service_id}",
+                    extra={
+                        "service_id": service_id,
+                        "has_service_info": service_info is not None,
+                        "service_info_endpoint": service_info.endpoint if service_info else None,
+                        "service_info_triton_model": service_info.triton_model if service_info else None,
+                        "service_info_model_name": service_info.model_name if service_info else None,
+                        "has_model_inference_endpoint": bool(service_info.model_inference_endpoint) if service_info else False,
+                        "model_inference_endpoint_type": type(service_info.model_inference_endpoint).__name__ if (service_info and service_info.model_inference_endpoint) else None,
+                        "model_inference_endpoint_raw": str(service_info.model_inference_endpoint)[:1000] if (service_info and service_info.model_inference_endpoint) else None,
+                    }
+                )
+
+                if not service_info:
+                    logger.error(
+                        "TTS service not found in Model Management",
+                        extra={"service_id": service_id},
+                    )
+                    http_request.state.model_management_error = (
+                        f"Service {service_id} not found in Model Management database"
+                    )
+                elif not service_info.endpoint:
+                    logger.error(
+                        "TTS service found but has no endpoint configured",
+                        extra={
+                            "service_id": service_id,
+                            "service_name": service_info.name,
+                            "model_id": service_info.model_id,
+                        },
+                    )
+                    http_request.state.model_management_error = (
+                        f"Service {service_id} found but has no endpoint configured"
+                    )
+                else:
+                    triton_endpoint = service_info.endpoint
+                    triton_api_key = service_info.api_key or ""
+
+                    # Extract model name from inference endpoint / model info
+                    # Use the same logic as Model Management middleware for consistency
+                    triton_model_name = None
+                    
+                    # Try to infer model name from model inference endpoint metadata (highest priority)
+                    if service_info.model_inference_endpoint:
+                        inference_endpoint = service_info.model_inference_endpoint
+                        if isinstance(inference_endpoint, dict):
+                            # Check inside schema FIRST (most specific location for Triton model name)
+                            schema = inference_endpoint.get("schema", {})
+                            if isinstance(schema, dict):
+                                triton_model_name = (
+                                    schema.get("model_name")
+                                    or schema.get("modelName")
+                                    or schema.get("name")
+                                )
+                            
+                            # If not in schema, check top-level inference_endpoint
+                            if not triton_model_name:
+                                triton_model_name = (
+                                    inference_endpoint.get("model_name")
+                                    or inference_endpoint.get("modelName")
+                                    or inference_endpoint.get("model")
+                                )
+                    
+                    # Fall back to triton_model from task.type (least specific)
+                    if not triton_model_name:
+                        triton_model_name = service_info.triton_model
+                    
+                    # Fall back to model_name
+                    if not triton_model_name:
+                        triton_model_name = service_info.model_name
+                    
+                    # If still no model name, try to extract from service_id
+                    if not triton_model_name and service_id:
+                        parts = service_id.split("/")
+                        if len(parts) > 1:
+                            model_part = parts[-1]
+                            if "--" in model_part:
+                                triton_model_name = model_part.split("--")[0]
+                            else:
+                                triton_model_name = model_part
+                    
+                    # Final fallback
+                    if not triton_model_name:
+                        triton_model_name = "unknown"
+                        logger.warning(
+                            f"Could not determine Triton model name for service {service_id}. "
+                            f"Using 'unknown' - this may cause Triton inference to fail.",
+                            extra={
+                                "service_id": service_id,
+                                "service_info_triton_model": service_info.triton_model,
+                                "service_info_model_name": service_info.model_name,
+                                "has_model_inference_endpoint": bool(service_info.model_inference_endpoint),
+                            }
+                        )
+                    
+                    # Log where the model name came from for debugging
+                    # Extract detailed info about model_inference_endpoint structure
+                    inference_endpoint_debug = None
+                    if service_info.model_inference_endpoint:
+                        if isinstance(service_info.model_inference_endpoint, dict):
+                            schema = service_info.model_inference_endpoint.get("schema", {})
+                            inference_endpoint_debug = {
+                                "has_schema": isinstance(schema, dict),
+                                "schema_model_name": schema.get("model_name") if isinstance(schema, dict) else None,
+                                "schema_modelName": schema.get("modelName") if isinstance(schema, dict) else None,
+                                "schema_name": schema.get("name") if isinstance(schema, dict) else None,
+                                "top_level_model_name": service_info.model_inference_endpoint.get("model_name"),
+                                "top_level_modelName": service_info.model_inference_endpoint.get("modelName"),
+                                "top_level_model": service_info.model_inference_endpoint.get("model"),
+                                "full_structure": str(service_info.model_inference_endpoint)[:500],
+                            }
+                        else:
+                            inference_endpoint_debug = {
+                                "type": type(service_info.model_inference_endpoint).__name__,
+                                "value": str(service_info.model_inference_endpoint)[:500],
+                            }
+                    
+                    logger.info(
+                        f"TTS: Resolved Triton model name '{triton_model_name}' for service {service_id}",
+                        extra={
+                            "service_id": service_id,
+                            "triton_model_name": triton_model_name,
+                            "source": (
+                                "schema" if (service_info.model_inference_endpoint and 
+                                           isinstance(service_info.model_inference_endpoint, dict) and
+                                           isinstance(service_info.model_inference_endpoint.get("schema"), dict) and
+                                           (service_info.model_inference_endpoint.get("schema", {}).get("model_name") or
+                                            service_info.model_inference_endpoint.get("schema", {}).get("modelName") or
+                                            service_info.model_inference_endpoint.get("schema", {}).get("name"))) else
+                                "inference_endpoint" if (service_info.model_inference_endpoint and 
+                                                         isinstance(service_info.model_inference_endpoint, dict) and
+                                                         (service_info.model_inference_endpoint.get("model_name") or
+                                                          service_info.model_inference_endpoint.get("modelName") or
+                                                          service_info.model_inference_endpoint.get("model"))) else
+                                "triton_model" if service_info.triton_model else
+                                "model_name" if service_info.model_name else
+                                "service_id" if (service_id and triton_model_name and triton_model_name != "tts") else
+                                "fallback"
+                            ),
+                            "service_info_triton_model": service_info.triton_model,
+                            "service_info_model_name": service_info.model_name,
+                            "inference_endpoint_debug": inference_endpoint_debug,
+                            "cache_bypassed": bypass_cache,
+                        }
+                    )
+
+                    http_request.state.triton_endpoint = triton_endpoint
+                    http_request.state.triton_model_name = triton_model_name
+                    # Store model_id from service_info for database record
+                    # Use model_id from service_info if available, otherwise fallback to service_id
+                    model_id_for_db = service_info.model_id or service_id
+                    http_request.state.model_id = model_id_for_db
+                    # Preserve API key in app.state like existing flow
+                    if not getattr(http_request.app.state, "triton_api_key", None):
+                        http_request.app.state.triton_api_key = triton_api_key
+
+                    logger.info(
+                        "TTS: Manually resolved Triton endpoint for SMR-selected serviceId",
+                        extra={
+                            "service_id": service_id,
+                            "model_id": model_id_for_db,
+                            "triton_endpoint": triton_endpoint,
+                            "triton_model_name": triton_model_name,
+                            "has_api_key": bool(triton_api_key),
+                            "model_inference_endpoint": str(service_info.model_inference_endpoint) if service_info.model_inference_endpoint else None,
+                            "service_info_triton_model": service_info.triton_model,
+                            "service_info_model_name": service_info.model_name,
+                        },
+                    )
+            except Exception as e:
+                logger.error(
+                    "TTS: Error resolving Triton endpoint for SMR-selected serviceId",
+                    extra={"service_id": service_id, "error": str(e)},
+                    exc_info=True,
+                )
+                http_request.state.model_management_error = str(e)
+                if "401" in str(e) or "403" in str(e) or "404" in str(e):
+                    raise HTTPException(
+                        status_code=500,
+                        detail={
+                            "code": "MODEL_MANAGEMENT_ERROR",
+                            "message": f"Failed to resolve endpoint for serviceId {service_id}: {str(e)}",
+                        },
+                    ) from e
+
+        # Store SMR response in request state for later use
+        http_request.state.smr_response_data = smr_response_data
+        
+        logger.info(
+            "TTS: Stored SMR response data in request state",
+            extra={
+                "has_smr_response": smr_response_data is not None,
+                "smr_service_id": smr_response_data.get("serviceId") if smr_response_data else None,
+                "smr_tenant_id": smr_response_data.get("tenant_id") if smr_response_data else None,
+                "smr_is_free_user": smr_response_data.get("is_free_user") if smr_response_data else None,
+                "smr_response_keys": list(smr_response_data.keys()) if smr_response_data and isinstance(smr_response_data, dict) else None,
+            },
+        )
+
+        # Verify that endpoint was set (if Model Management client was available)
+        if model_management_client:
+            triton_endpoint_check = getattr(http_request.state, "triton_endpoint", None)
+            if not triton_endpoint_check:
+                model_mgmt_error = getattr(http_request.state, "model_management_error", None)
+                error_msg = f"Failed to resolve Triton endpoint for serviceId: {service_id}"
+                if model_mgmt_error:
+                    error_msg += f". {model_mgmt_error}"
+                else:
+                    error_msg += (
+                        ". Please ensure the service is registered in Model Management "
+                        "database with a valid endpoint."
+                    )
+
+                logger.error(
+                    "TTS: Failed to resolve Triton endpoint after SMR call",
+                    extra={
+                        "service_id": service_id,
+                        "model_management_error": model_mgmt_error,
+                    },
+                )
+                error_detail = {
+                    "code": "ENDPOINT_RESOLUTION_FAILED",
+                    "message": error_msg,
+                    "smr_response": smr_response_data,
+                }
+                raise HTTPException(
+                    status_code=500,
+                    detail=error_detail,
+                )
+
+        logger.info(
+            "TTS SMR service returned serviceId, updated request (dependency)",
+            extra={
+                "service_id": request.config.serviceId,
+                "user_id": getattr(http_request.state, "user_id", None),
+                "tenant_id": getattr(http_request.state, "tenant_id", None),
+                "endpoint_resolved": bool(getattr(http_request.state, "triton_endpoint", None)),
+            },
+        )
+
+        return smr_response_data
+
+    return None
+
+
+async def switch_to_fallback_service(
+    request: TTSInferenceRequest,
+    http_request: Request,
+    fallback_service_id: str,
+) -> None:
+    """
+    Switch to fallback service by resolving its endpoint and updating request state.
+    
+    Args:
+        request: TTS inference request
+        http_request: FastAPI request object
+        fallback_service_id: Fallback service ID from SMR
+    """
+    logger.info(
+        "TTS: Switching to fallback service",
+        extra={
+            "primary_service_id": request.config.serviceId,
+            "fallback_service_id": fallback_service_id,
+        }
+    )
+    
+    # Update request with fallback service ID
+    request.config.serviceId = fallback_service_id
+    http_request.state.service_id = fallback_service_id
+    
+    # Resolve Triton endpoint for fallback service
+    model_management_client = getattr(http_request.app.state, "model_management_client", None)
+    redis_client = getattr(http_request.app.state, "redis_client", None)
+    
+    if not model_management_client:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "MODEL_MANAGEMENT_UNAVAILABLE",
+                "message": "Model Management client not available for fallback service resolution",
+            },
+        )
+    
+    try:
+        # Extract auth headers from request (case-insensitive)
+        auth_headers: Dict[str, str] = {}
+        authorization = http_request.headers.get("Authorization") or http_request.headers.get("authorization")
+        if authorization:
+            auth_headers["Authorization"] = authorization
+        x_api_key = http_request.headers.get("X-API-Key") or http_request.headers.get("x-api-key")
+        if x_api_key:
+            auth_headers["X-API-Key"] = x_api_key
+        x_auth_source = http_request.headers.get("X-Auth-Source") or http_request.headers.get("x-auth-source")
+        if x_auth_source:
+            auth_headers["X-Auth-Source"] = x_auth_source
+        
+        # Check if we should bypass cache (for debugging or after DB updates)
+        bypass_cache = os.getenv("BYPASS_CACHE", "false").lower() == "true"
+        
+        service_info = await model_management_client.get_service(
+            service_id=fallback_service_id,
+            use_cache=not bypass_cache,  # Bypass cache if flag is set
+            redis_client=redis_client,
+            auth_headers=auth_headers,
+        )
+        
+        if not service_info or not service_info.endpoint:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "FALLBACK_SERVICE_UNAVAILABLE",
+                    "message": f"Fallback service {fallback_service_id} not found or has no endpoint configured",
+                },
+            )
+        
+        triton_endpoint = service_info.endpoint
+        triton_api_key = service_info.api_key or ""
+        
+        # Extract model name (same logic as primary service resolution)
+        triton_model_name = None
+        if service_info.model_inference_endpoint:
+            inference_endpoint = service_info.model_inference_endpoint
+            if isinstance(inference_endpoint, dict):
+                # Check inside schema FIRST (most specific location for Triton model name)
+                schema = inference_endpoint.get("schema", {})
+                if isinstance(schema, dict):
+                    triton_model_name = (
+                        schema.get("model_name")
+                        or schema.get("modelName")
+                        or schema.get("name")
+                    )
+                
+                # If not in schema, check top-level inference_endpoint
+                if not triton_model_name:
+                    triton_model_name = (
+                        inference_endpoint.get("model_name")
+                        or inference_endpoint.get("modelName")
+                        or inference_endpoint.get("model")
+                    )
+        if not triton_model_name:
+            triton_model_name = service_info.triton_model
+        if not triton_model_name:
+            triton_model_name = service_info.model_name
+        if not triton_model_name and fallback_service_id:
+            parts = fallback_service_id.split("/")
+            if len(parts) > 1:
+                model_part = parts[-1]
+                if "--" in model_part:
+                    triton_model_name = model_part.split("--")[0]
+                else:
+                    triton_model_name = model_part
+        if not triton_model_name:
+            triton_model_name = "unknown"
+        
+        # Update request state with fallback service endpoint
+        http_request.state.triton_endpoint = triton_endpoint
+        http_request.state.triton_api_key = triton_api_key
+        http_request.state.triton_model_name = triton_model_name
+        http_request.state.using_fallback_service = True
+        
+        # Store model_id for database record
+        model_id_for_db = service_info.model_id or fallback_service_id
+        http_request.state.model_id = model_id_for_db
+        
+        logger.info(
+            "TTS: Successfully switched to fallback service",
+            extra={
+                "fallback_service_id": fallback_service_id,
+                "triton_endpoint": triton_endpoint,
+                "triton_model_name": triton_model_name,
+                "model_id": model_id_for_db,
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "TTS: Failed to resolve fallback service endpoint",
+            extra={"fallback_service_id": fallback_service_id, "error": str(e)},
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "FALLBACK_SERVICE_RESOLUTION_FAILED",
+                "message": f"Failed to resolve endpoint for fallback service {fallback_service_id}: {str(e)}",
+            },
+        ) from e
+
+
+async def call_smr_service(
+    request_body: Dict[str, Any],
+    user_id: Optional[str],
+    tenant_id: Optional[str],
+    http_request: Request,
+) -> Dict[str, Any]:
+    """
+    Call SMR service to get serviceId for the TTS request.
+
+    Mirrors ASR SMR integration but with task_type='tts'.
+    """
+    try:
+        headers = dict(http_request.headers)
+        latency_policy = headers.get("X-Latency-Policy") or headers.get("x-latency-policy")
+        cost_policy = headers.get("X-Cost-Policy") or headers.get("x-cost-policy")
+        accuracy_policy = headers.get("X-Accuracy-Policy") or headers.get("x-accuracy-policy")
+
+        smr_payload = {
+            "task_type": "tts",
+            "request_body": request_body,
+            "user_id": str(user_id) if user_id else None,
+            "tenant_id": str(tenant_id) if tenant_id else None,
+        }
+
+        smr_headers: Dict[str, str] = {}
+        if "Authorization" in headers:
+            smr_headers["Authorization"] = headers["Authorization"]
+        if "X-API-Key" in headers:
+            smr_headers["X-API-Key"] = headers["X-API-Key"]
+        if latency_policy:
+            smr_headers["X-Latency-Policy"] = latency_policy
+        if cost_policy:
+            smr_headers["X-Cost-Policy"] = cost_policy
+        if accuracy_policy:
+            smr_headers["X-Accuracy-Policy"] = accuracy_policy
+
+        logger.info(
+            "Calling SMR service to get TTS serviceId",
+            extra={
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "has_policy_headers": bool(latency_policy or cost_policy or accuracy_policy),
+            },
+        )
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{SMR_SERVICE_URL}/api/v1/smr/select-service",
+                json=smr_payload,
+                headers=smr_headers,
+            )
+            response.raise_for_status()
+            smr_response = response.json()
+            
+            # Log full SMR response for debugging
+            logger.info(
+                "SMR service returned response (full)",
+                extra={
+                    "status_code": response.status_code,
+                    "smr_response_keys": list(smr_response.keys()) if isinstance(smr_response, dict) else None,
+                    "smr_response_type": type(smr_response).__name__,
+                    "smr_response_preview": str(smr_response)[:500] if smr_response else None,
+                },
+            )
+
+        logger.info(
+            "SMR service returned TTS serviceId",
+            extra={
+                "service_id": smr_response.get("serviceId"),
+                "tenant_id": smr_response.get("tenant_id"),
+                "is_free_user": smr_response.get("is_free_user"),
+                "tenant_policy": smr_response.get("tenant_policy"),
+                "service_policy": smr_response.get("service_policy"),
+                "scoring_details": smr_response.get("scoring_details"),
+                "headers_used": bool(latency_policy or cost_policy or accuracy_policy),
+                "smr_response_is_dict": isinstance(smr_response, dict),
+                "smr_response_not_none": smr_response is not None,
+            },
+        )
+
+        return smr_response
+
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "SMR service returned error status for TTS",
+            extra={"status_code": e.response.status_code, "response": e.response.text},
+            exc_info=True,
+        )
+        # Try to extract structured error
+        error_detail = None
+        try:
+            error_response = e.response.json()
+            error_detail = error_response.get("detail", {})
+        except (ValueError, KeyError):
             pass
+
+        if error_detail and isinstance(error_detail, Dict) and error_detail.get("code") == "INVALID_POLICY_COMBINATION":
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail=error_detail,
+            ) from e
+
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail={
+                "code": "SMR_SERVICE_ERROR",
+                "message": f"SMR service returned error: {e.response.text}",
+            },
+        ) from e
+    except httpx.RequestError as e:
+        logger.error("SMR service request failed for TTS", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "SMR_SERVICE_UNAVAILABLE",
+                "message": "SMR service is temporarily unavailable. Please try again.",
+            },
+        ) from e
+    except Exception as e:
+        logger.error("Unexpected error calling SMR service for TTS", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "SMR_SERVICE_INTERNAL_ERROR",
+                "message": f"Failed to call SMR service: {str(e)}",
+            },
+        ) from e
+
+
+async def get_tts_service(
+    request: Request,
+    db: AsyncSession = Depends(get_tenant_db_session)
+) -> TTSService:
+    """
+    Dependency to get configured TTS service.
+    
+    REQUIRES Model Management database resolution - no environment variable fallback.
+    Request must include config.serviceId for Model Management to resolve endpoint and model.
+    """
+    repository = TTSRepository(db)
+    audio_service = AudioService()
+    text_service = TextService()
+    
+    triton_endpoint = getattr(request.state, "triton_endpoint", None)
+    triton_api_key = getattr(request.app.state, "triton_api_key", "")
+    triton_timeout = getattr(request.app.state, "triton_timeout", 300.0)
+    
+    if not triton_endpoint:
+        service_id = getattr(request.state, "service_id", None)
+        model_mgmt_error = getattr(request.state, "model_management_error", None)
+        
+        # Extract context for logging
+        correlation_id = get_correlation_id(request) or getattr(request.state, "correlation_id", None)
+        user_id = getattr(request.state, "user_id", None)
+        api_key_id = getattr(request.state, "api_key_id", None)
         
         # Trace the error if we're in a span context
         try:
-            from opentelemetry import trace
-            from opentelemetry.trace import Status, StatusCode
-            if trace:
-                current_span = trace.get_current_span()
-                if current_span and current_span.is_recording():
-                    current_span.set_attribute("error", True)
-                    current_span.set_attribute("error.type", type(e).__name__)
-                    current_span.set_attribute("error.message", str(e))
-                    current_span.set_attribute("http.status_code", 500)
-                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
-                    current_span.record_exception(e)
-                    if correlation_id:
-                        current_span.set_attribute("correlation.id", correlation_id)
+            current_span = trace.get_current_span()
+            if current_span and current_span.is_recording():
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.type", "ModelUnavailableError")
+                current_span.set_attribute("error.message", f"Model Management did not resolve serviceId: {service_id}")
+                current_span.set_attribute("http.status_code", 500)
+                current_span.set_status(Status(StatusCode.ERROR, f"Model Management did not resolve serviceId: {service_id}"))
+                if service_id:
+                    current_span.set_attribute("tts.service_id", service_id)
+                if correlation_id:
+                    current_span.set_attribute("correlation.id", correlation_id)
         except Exception:
             pass  # Don't fail if tracing fails
         
+        if service_id:
+            # Model Management failed to resolve endpoint for a specific serviceId
+            logger.error(
+                f"Model Management did not resolve serviceId: {service_id} and no default endpoint is allowed. Error: {model_mgmt_error}",
+                extra={
+                    "context": {
+                        "error_type": "ModelUnavailableError",
+                        "error_message": f"Model Management did not resolve serviceId: {service_id}",
+                        "status_code": 500,
+                        "service_id": service_id,
+                        "model_management_error": model_mgmt_error,
+                        "user_id": user_id,
+                        "api_key_id": api_key_id,
+                        "correlation_id": correlation_id,
+                        "path": request.url.path,
+                        "method": request.method,
+                    }
+                },
+                exc_info=True
+            )
+            error_detail = ErrorDetail(
+                message=MODEL_UNAVAILABLE_TTS_MESSAGE,
+                code=MODEL_UNAVAILABLE,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=error_detail.dict(),
+            )
+        else:
+            # Request is missing required serviceId
+            error_detail = ErrorDetail(
+                message=INVALID_REQUEST_TTS_MESSAGE,
+                code=INVALID_REQUEST,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=error_detail.dict(),
+            )
+    
+    model_name = getattr(request.state, "triton_model_name", None)
+    
+    if not model_name or model_name == "unknown":
+        service_id = getattr(request.state, "service_id", None)
+        model_mgmt_error = getattr(request.state, "model_management_error", None)
+        
+        # Extract context for logging
+        correlation_id = get_correlation_id(request) or getattr(request.state, "correlation_id", None)
+        user_id = getattr(request.state, "user_id", None)
+        api_key_id = getattr(request.state, "api_key_id", None)
+        triton_endpoint = getattr(request.state, "triton_endpoint", None)
+        
+        # Trace the error if we're in a span context
+        try:
+            current_span = trace.get_current_span()
+            if current_span and current_span.is_recording():
+                current_span.set_attribute("error", True)
+                current_span.set_attribute("error.type", "ModelUnavailableError")
+                current_span.set_attribute("error.message", f"Model Management failed to resolve Triton model name for serviceId: {service_id}")
+                current_span.set_attribute("http.status_code", 500)
+                current_span.set_status(Status(StatusCode.ERROR, f"Model Management failed to resolve Triton model name for serviceId: {service_id}"))
+                if service_id:
+                    current_span.set_attribute("tts.service_id", service_id)
+                if triton_endpoint:
+                    current_span.set_attribute("triton.endpoint", triton_endpoint)
+                if correlation_id:
+                    current_span.set_attribute("correlation.id", correlation_id)
+        except Exception:
+            pass  # Don't fail if tracing fails
+        
+        error_detail = ErrorDetail(
+            message=MODEL_UNAVAILABLE_TTS_MESSAGE,
+            code=MODEL_UNAVAILABLE
+        )
         logger.error(
-            f"Failed to create TTS service: {e}",
+            f"Model Management failed to resolve Triton model name for serviceId: {service_id}. Error: {model_mgmt_error}",
             extra={
                 "context": {
-                    "error_type": type(e).__name__,
-                    "error_message": str(e),
+                    "error_type": "ModelUnavailableError",
+                    "error_message": f"Model Management failed to resolve Triton model name for serviceId: {service_id}",
                     "status_code": 500,
+                    "service_id": service_id,
+                    "triton_endpoint": triton_endpoint,
+                    "model_management_error": model_mgmt_error,
                     "user_id": user_id,
                     "api_key_id": api_key_id,
                     "correlation_id": correlation_id,
+                    "path": request.url.path,
+                    "method": request.method,
                 }
             },
             exc_info=True
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to initialize TTS service"
+            status_code=500,
+            detail=error_detail.dict(),
         )
+    
+    logger.info(
+        "Using Triton endpoint=%s model_name=%s for serviceId=%s from Model Management",
+        triton_endpoint,
+        model_name,
+        getattr(request.state, "service_id", "unknown"),
+    )
+    
+    # Strip http:// or https:// scheme from URL if present (TritonClient expects host:port)
+    triton_url = triton_endpoint
+    if triton_url.startswith(('http://', 'https://')):
+        triton_url = triton_url.split('://', 1)[1]
+    
+    triton_client = TritonClient(triton_url, triton_api_key)
+    
+    # Pass resolved model_name to TTS service
+    return TTSService(repository, audio_service, text_service, triton_client, resolved_model_name=model_name)
 
 
 @inference_router.post(
     "/inference",
     response_model=TTSInferenceResponse,
+    response_model_exclude_none=False,  # Include None values so smr_response is always present
     summary="Perform batch TTS inference",
     description="Convert text to speech for one or more text inputs"
 )
 async def run_inference(
     request: TTSInferenceRequest,
     http_request: Request,
+    smr_response: Optional[Dict[str, Any]] = Depends(resolve_service_id_if_needed),
     tts_service: TTSService = Depends(get_tts_service)
 ) -> TTSInferenceResponse:
     """
@@ -280,13 +1289,174 @@ async def run_inference(
                 }
             )
 
-            # Run inference
-            response = await tts_service.run_inference(
-                request=request,
-                user_id=user_id,
-                api_key_id=api_key_id,
-                session_id=session_id
-            )
+            # Get fallback service ID from request state
+            fallback_service_id = getattr(http_request.state, "fallback_service_id", None)
+            using_fallback = False
+            original_service_id = request.config.serviceId
+            
+            # Run inference with auth context - with fallback support
+            try:
+                response = await tts_service.run_inference(
+                    request=request,
+                    user_id=user_id,
+                    api_key_id=api_key_id,
+                    session_id=session_id,
+                    http_request_state=http_request.state
+                )
+            except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError) as primary_error:
+                # Primary service failed - try fallback if available and different from primary
+                if fallback_service_id and fallback_service_id != original_service_id:
+                    logger.warning(
+                        "TTS: Primary service failed, attempting fallback",
+                        extra={
+                            "primary_service_id": original_service_id,
+                            "fallback_service_id": fallback_service_id,
+                            "error_type": type(primary_error).__name__,
+                            "error_message": str(primary_error),
+                        },
+                        exc_info=True
+                    )
+                    
+                    # Add span event for fallback trigger if tracing is available
+                    try:
+                        current_span = trace.get_current_span()
+                        if current_span and current_span.is_recording():
+                            current_span.add_event("tts.fallback.triggered", {
+                                "primary_service_id": original_service_id,
+                                "fallback_service_id": fallback_service_id,
+                                "error_type": type(primary_error).__name__,
+                            })
+                    except Exception:
+                        pass
+                    
+                    try:
+                        # Switch to fallback service
+                        await switch_to_fallback_service(
+                            request=request,
+                            http_request=http_request,
+                            fallback_service_id=fallback_service_id,
+                        )
+                        
+                        # Create new TTS service with fallback endpoint
+                        from repositories.tts_repository import TTSRepository
+                        from services.audio_service import AudioService
+                        from services.text_service import TextService
+                        from utils.triton_client import TritonClient
+                        from middleware.tenant_db_dependency import get_tenant_db_session
+                        
+                        triton_endpoint = getattr(http_request.state, "triton_endpoint")
+                        triton_api_key = getattr(http_request.state, "triton_api_key", "")
+                        triton_model_name = getattr(http_request.state, "triton_model_name", "tts")
+                        
+                        # Strip http:// or https:// scheme from URL if present
+                        triton_url = triton_endpoint
+                        if triton_url.startswith(('http://', 'https://')):
+                            triton_url = triton_url.split('://', 1)[1]
+                        
+                        fallback_triton_client = TritonClient(triton_url, triton_api_key)
+                        
+                        # Get database session for fallback service
+                        fallback_db = await get_tenant_db_session(http_request)
+                        fallback_repository = TTSRepository(fallback_db)
+                        fallback_audio_service = AudioService()
+                        fallback_text_service = TextService()
+                        fallback_tts_service = TTSService(
+                            fallback_repository,
+                            fallback_audio_service,
+                            fallback_text_service,
+                            fallback_triton_client,
+                            resolved_model_name=triton_model_name
+                        )
+                        
+                        # Retry inference with fallback service
+                        logger.info(
+                            "TTS: Retrying inference with fallback service",
+                            extra={"fallback_service_id": fallback_service_id}
+                        )
+                        
+                        response = await fallback_tts_service.run_inference(
+                            request=request,
+                            user_id=user_id,
+                            api_key_id=api_key_id,
+                            session_id=session_id,
+                            http_request_state=http_request.state
+                        )
+                        
+                        using_fallback = True
+                        
+                        # Add span event for fallback success if tracing is available
+                        try:
+                            current_span = trace.get_current_span()
+                            if current_span and current_span.is_recording():
+                                current_span.add_event("tts.fallback.success", {
+                                    "fallback_service_id": fallback_service_id,
+                                })
+                                current_span.set_attribute("tts.fallback_used", True)
+                                current_span.set_attribute("tts.fallback_service_id", fallback_service_id)
+                        except Exception:
+                            pass
+                        
+                        logger.info(
+                            "TTS: Fallback service succeeded",
+                            extra={"fallback_service_id": fallback_service_id}
+                        )
+                        
+                    except Exception as fallback_error:
+                        # Fallback also failed - create detailed error message
+                        primary_error_msg = str(primary_error)
+                        fallback_error_msg = str(fallback_error)
+                        primary_error_type = type(primary_error).__name__
+                        fallback_error_type = type(fallback_error).__name__
+                        
+                        logger.error(
+                            "TTS: Both primary and fallback services failed",
+                            extra={
+                                "primary_service_id": original_service_id,
+                                "fallback_service_id": fallback_service_id,
+                                "primary_error_type": primary_error_type,
+                                "primary_error": primary_error_msg,
+                                "fallback_error_type": fallback_error_type,
+                                "fallback_error": fallback_error_msg,
+                            },
+                            exc_info=True
+                        )
+                        
+                        # Add span event for fallback failure if tracing is available
+                        try:
+                            current_span = trace.get_current_span()
+                            if current_span and current_span.is_recording():
+                                current_span.add_event("tts.fallback.failed", {
+                                    "primary_service_id": original_service_id,
+                                    "fallback_service_id": fallback_service_id,
+                                    "primary_error_type": primary_error_type,
+                                    "fallback_error_type": fallback_error_type,
+                                })
+                        except Exception:
+                            pass
+                        
+                        # Store error details in request state for error handler to access
+                        http_request.state.fallback_failure_details = {
+                            "primary_service_id": original_service_id,
+                            "fallback_service_id": fallback_service_id,
+                            "primary_error": {
+                                "type": primary_error_type,
+                                "message": primary_error_msg,
+                            },
+                            "fallback_error": {
+                                "type": fallback_error_type,
+                                "message": fallback_error_msg,
+                            },
+                        }
+                        
+                        # Re-raise with combined error message
+                        combined_error_message = (
+                            f"Primary service ({original_service_id}) failed: {primary_error_msg}. "
+                            f"Fallback service ({fallback_service_id}) also failed: {fallback_error_msg}"
+                        )
+                        raise TritonInferenceError(combined_error_message) from fallback_error
+                else:
+                    # No fallback available - re-raise original error
+                    raise
             
             # Add response metadata
             span.set_attribute("tts.output_count", len(response.audio))
@@ -358,6 +1528,72 @@ async def run_inference(
                     "http_status_code": 200,
                 }
             )
+            
+            # Include SMR response in the final response (null if SMR was not called)
+            smr_response_data = getattr(http_request.state, "smr_response_data", None)
+            
+            # Update SMR response with fallback information if fallback was used
+            if smr_response_data:
+                if using_fallback:
+                    # Create a copy to avoid modifying the original
+                    smr_response_data = smr_response_data.copy()
+                    smr_response_data["fallback_used"] = True
+                    original_service_id_from_smr = smr_response_data.get("serviceId")
+                    smr_response_data["original_service_id"] = original_service_id_from_smr
+                    smr_response_data["serviceId"] = fallback_service_id
+                    smr_response_data["fallback_service_id"] = fallback_service_id
+                    smr_response_data["fallback_message"] = (
+                        f"The service ID selected by SMR was '{original_service_id_from_smr}' but it didn't work. "
+                        f"Fallback service ID '{fallback_service_id}' is used instead."
+                    )
+                    logger.info(
+                        "TTS: Including SMR response with fallback usage",
+                        extra={
+                            "original_service_id": original_service_id_from_smr,
+                            "fallback_service_id": fallback_service_id,
+                            "fallback_message": smr_response_data["fallback_message"],
+                        }
+                    )
+                else:
+                    # Ensure fallback_used is False if not used
+                    smr_response_data = smr_response_data.copy()
+                    smr_response_data["fallback_used"] = False
+            
+            # Log SMR response retrieval for debugging
+            logger.info(
+                "TTS: Retrieving SMR response for final response",
+                extra={
+                    "has_smr_response_in_state": smr_response_data is not None,
+                    "smr_service_id": smr_response_data.get("serviceId") if smr_response_data else None,
+                    "smr_tenant_id": smr_response_data.get("tenant_id") if smr_response_data else None,
+                    "smr_is_free_user": smr_response_data.get("is_free_user") if smr_response_data else None,
+                    "smr_response_type": type(smr_response_data).__name__ if smr_response_data else None,
+                    "using_fallback": using_fallback,
+                    "fallback_service_id": fallback_service_id if using_fallback else None,
+                },
+            )
+            
+            # Use model_dump() for Pydantic v2, fallback to dict() for v1
+            # Use exclude_none=False to ensure smr_response is included even if None
+            try:
+                # Pydantic v2
+                response_dict = response.model_dump(exclude_none=False)
+            except AttributeError:
+                # Pydantic v1
+                response_dict = response.dict(exclude_none=False)
+            
+            response_dict["smr_response"] = smr_response_data
+            # Recreate response with smr_response included
+            response = TTSInferenceResponse(**response_dict)
+            
+            logger.info(
+                "TTS: Final response prepared with SMR data",
+                extra={
+                    "has_smr_response": response.smr_response is not None,
+                    "smr_service_id": response.smr_response.get("serviceId") if response.smr_response else None,
+                },
+            )
+            
             return response
 
         except ValueError as exc:
@@ -427,13 +1663,8 @@ async def run_inference(
                 exc_info=True
             )
             
-            # Import service-specific exceptions
-            from middleware.exceptions import (
-                TritonInferenceError,
-                ModelNotFoundError,
-                ServiceUnavailableError,
-                AudioProcessingError
-            )
+            # Import AudioProcessingError if not already imported
+            from middleware.exceptions import AudioProcessingError
             
             # Check if it's already a service-specific error
             if isinstance(exc, (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, AudioProcessingError)):
@@ -539,8 +1770,9 @@ async def list_models() -> Dict[str, Any]:
 async def validate_request(request: TTSInferenceRequest) -> None:
     """Validate TTS inference request."""
     try:
-        # Validate service ID
-        validate_service_id(request.config.serviceId)
+        # Validate service ID only if provided (SMR will handle selection when missing)
+        if request.config.serviceId:
+            validate_service_id(request.config.serviceId)
         
         # Validate language code
         validate_language_code(request.config.language.sourceLanguage)
