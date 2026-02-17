@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useToast } from "@chakra-ui/react";
+import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import authService from "../../../services/authService";
 import type { APIKeyResponse } from "../../../types/auth";
 
@@ -16,7 +16,7 @@ export function useApiKeyTab({
   setSelectedApiKeyId,
   checkSessionExpiry,
 }: UseApiKeyTabOptions) {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [showApiKey, setShowApiKey] = useState(false);
 
   const handleCopyApiKey = () => {

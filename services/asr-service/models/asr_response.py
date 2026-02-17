@@ -39,6 +39,11 @@ class ASRInferenceResponse(BaseModel):
     """Main ASR inference response model."""
     output: List[TranscriptOutput] = Field(..., description="List of transcription results (one per audio input)")
     config: Optional[Dict[str, Any]] = Field(None, description="Response configuration metadata")
+    # SMR response if SMR was used to resolve serviceId or policies
+    smr_response: Optional[Dict[str, Any]] = Field(
+        None,
+        description="SMR response metadata when Smart Model Routing is used",
+    )
     
     class Config:
         json_schema_extra = {
@@ -54,5 +59,12 @@ class ASRInferenceResponse(BaseModel):
         }
     
     def dict(self, **kwargs):
-        """Override dict() to exclude None values."""
+        """
+        Override dict() to exclude None values by default.
+        But allow exclude_none=False to be passed explicitly to include None values (e.g., for smr_response).
+        """
+        # If exclude_none is explicitly set, respect it
+        if "exclude_none" in kwargs:
+            return super().dict(**kwargs)
+        # Default behavior: exclude None values
         return super().dict(exclude_none=True, **kwargs)

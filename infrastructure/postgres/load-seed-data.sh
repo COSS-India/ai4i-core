@@ -86,7 +86,7 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'admin@ai4i.org' AND u.username = 'admin' AND r.name = 'ADMIN'
+WHERE u.email = 'admin@ai4inclusion.org' AND u.username = 'admin' AND r.name = 'ADMIN'
 ON CONFLICT (user_id, role_id) DO NOTHING;
 
 -- Assign USER role to existing users who don't have any role

@@ -802,6 +802,7 @@ CREATE TABLE IF NOT EXISTS services (
     api_key VARCHAR(255),
     health_status JSONB,
     benchmarks JSONB,
+    policy JSONB,
     is_published BOOLEAN NOT NULL DEFAULT FALSE,
     published_at BIGINT DEFAULT NULL,
     unpublished_at BIGINT DEFAULT NULL,
@@ -812,6 +813,9 @@ CREATE TABLE IF NOT EXISTS services (
     -- Unique constraint on (model_id, model_version, name)
     CONSTRAINT uq_model_id_version_service_name UNIQUE (model_id, model_version, name)
 );
+
+-- Ensure policy column exists on services (for databases created before policy was added)
+ALTER TABLE services ADD COLUMN IF NOT EXISTS policy JSONB;
 
 -- Create indexes for models table
 CREATE INDEX IF NOT EXISTS idx_models_model_id ON models(model_id);
@@ -833,6 +837,7 @@ CREATE INDEX IF NOT EXISTS idx_services_model_id_version ON services(model_id, m
 CREATE INDEX IF NOT EXISTS idx_services_is_published ON services(is_published);
 CREATE INDEX IF NOT EXISTS idx_services_created_at ON services(created_at);
 CREATE INDEX IF NOT EXISTS idx_services_health_status ON services USING GIN (health_status);
+CREATE INDEX IF NOT EXISTS idx_services_policy ON services USING GIN (policy);
 CREATE INDEX IF NOT EXISTS idx_services_created_by ON services(created_by);
 
 -- Create trigger for version_status_updated_at
@@ -880,8 +885,102 @@ COMMENT ON COLUMN services.is_published IS 'Whether the service is published and
 COMMENT ON COLUMN services.published_at IS 'Unix timestamp when the service was published';
 COMMENT ON COLUMN services.unpublished_at IS 'Unix timestamp when the service was unpublished';
 
--- Ensure experiment_status enum includes PAUSED, COMPLETED, CANCELLED (experiments table is created by model-management-service;
--- if the enum was created with older values like STOPPED, add the values the app expects so stop/cancel work)
+-- ----------------------------------------------------------------------------
+-- A/B Testing: experiment_status enum and tables
+-- ----------------------------------------------------------------------------
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'experiment_status') THEN
+        CREATE TYPE experiment_status AS ENUM ('DRAFT', 'RUNNING', 'PAUSED', 'COMPLETED', 'CANCELLED');
+    END IF;
+END $$;
+
+-- Experiments table (A/B testing)
+CREATE TABLE IF NOT EXISTS experiments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    status experiment_status NOT NULL DEFAULT 'DRAFT',
+    task_type JSONB DEFAULT NULL,
+    languages JSONB DEFAULT NULL,
+    start_date TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    end_date TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    created_by VARCHAR(255) DEFAULT NULL,
+    updated_by VARCHAR(255) DEFAULT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+    completed_at TIMESTAMP WITH TIME ZONE DEFAULT NULL
+);
+
+-- Experiment variants table (model/service variants per experiment)
+CREATE TABLE IF NOT EXISTS experiment_variants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    experiment_id UUID NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+    variant_name VARCHAR(255) NOT NULL,
+    service_id VARCHAR(255) NOT NULL REFERENCES services(service_id) ON DELETE CASCADE,
+    traffic_percentage BIGINT NOT NULL,
+    description TEXT DEFAULT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_experiment_service UNIQUE (experiment_id, service_id)
+);
+
+-- Experiment metrics table (daily aggregation per variant)
+CREATE TABLE IF NOT EXISTS experiment_metrics (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    experiment_id UUID NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+    variant_id UUID NOT NULL REFERENCES experiment_variants(id) ON DELETE CASCADE,
+    request_count BIGINT NOT NULL DEFAULT 0,
+    success_count BIGINT NOT NULL DEFAULT 0,
+    error_count BIGINT NOT NULL DEFAULT 0,
+    avg_latency_ms BIGINT DEFAULT NULL,
+    custom_metrics JSONB DEFAULT NULL,
+    metric_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_experiment_variant_date UNIQUE (experiment_id, variant_id, metric_date)
+);
+
+-- Indexes for experiments
+CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status);
+CREATE INDEX IF NOT EXISTS idx_experiments_task_type ON experiments USING GIN (task_type);
+CREATE INDEX IF NOT EXISTS idx_experiments_languages ON experiments USING GIN (languages);
+CREATE INDEX IF NOT EXISTS idx_experiments_start_date ON experiments(start_date);
+CREATE INDEX IF NOT EXISTS idx_experiments_end_date ON experiments(end_date);
+CREATE INDEX IF NOT EXISTS idx_experiments_created_at ON experiments(created_at);
+
+-- Indexes for experiment_variants
+CREATE INDEX IF NOT EXISTS idx_experiment_variants_experiment_id ON experiment_variants(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_experiment_variants_service_id ON experiment_variants(service_id);
+
+-- Indexes for experiment_metrics
+CREATE INDEX IF NOT EXISTS idx_experiment_metrics_experiment_id ON experiment_metrics(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_experiment_metrics_variant_id ON experiment_metrics(variant_id);
+CREATE INDEX IF NOT EXISTS idx_experiment_metrics_metric_date ON experiment_metrics(metric_date);
+
+-- Triggers for updated_at on A/B tables
+DROP TRIGGER IF EXISTS update_experiments_updated_at ON experiments;
+CREATE TRIGGER update_experiments_updated_at BEFORE UPDATE ON experiments
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_experiment_variants_updated_at ON experiment_variants;
+CREATE TRIGGER update_experiment_variants_updated_at BEFORE UPDATE ON experiment_variants
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_experiment_metrics_updated_at ON experiment_metrics;
+CREATE TRIGGER update_experiment_metrics_updated_at BEFORE UPDATE ON experiment_metrics
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Comments for A/B testing tables
+COMMENT ON TABLE experiments IS 'A/B testing experiments with traffic split across model variants';
+COMMENT ON COLUMN experiments.status IS 'DRAFT, RUNNING, PAUSED, COMPLETED, or CANCELLED';
+COMMENT ON COLUMN experiments.task_type IS 'Optional JSONB list of task types to filter (e.g. asr, nmt, tts)';
+COMMENT ON COLUMN experiments.languages IS 'Optional JSONB list of language codes to filter; null/empty = all languages';
+COMMENT ON TABLE experiment_variants IS 'Model/service variants and traffic percentage per experiment';
+COMMENT ON TABLE experiment_metrics IS 'Daily aggregated metrics per experiment variant';
+
+-- Ensure experiment_status enum has all values (for DBs where enum was created by older app version)
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'experiment_status') THEN
@@ -1844,6 +1943,8 @@ INSERT INTO permissions (name, resource, action) VALUES
 ('model.delete', 'models', 'delete'),
 ('model.deprecate', 'models', 'deprecate'),
 ('model.activate', 'models', 'activate'),
+('model.publish', 'models', 'publish'),
+('model.unpublish', 'models', 'unpublish'),
 -- Service Management permissions
 ('service.create', 'services', 'create'),
 ('service.read', 'services', 'read'),
@@ -1855,10 +1956,14 @@ INSERT INTO permissions (name, resource, action) VALUES
 ('apiKey.create', 'apiKey', 'create'),
 ('apiKey.read', 'apiKey', 'read'),
 ('apiKey.update', 'apiKey', 'update'),
-('apiKey.delete', 'apiKey', 'delete')
+('apiKey.delete', 'apiKey', 'delete'),
+-- Observability permissions (logs, traces)
+('logs.read', 'logs', 'read'),
+('traces.read', 'traces', 'read')
 ON CONFLICT (name) DO NOTHING;
 
--- Assign permissions to ADMIN role
+-- Assign all permissions to ADMIN role (includes users, configs, metrics, alerts, dashboards,
+-- asr, tts, nmt, ner, model.*, service.*, apiKey.create, apiKey.read, apiKey.update, apiKey.delete, logs, traces)
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
@@ -1897,7 +2002,7 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 -- 
 -- Credentials:
 --   Username: admin
---   Email:    admin@ai4i.org
+--   Email:    admin@ai4inclusion.org
 --   Password: Admin@123
 --   Role:     ADMIN (all permissions)
 --   Status:   ACTIVE
@@ -1906,7 +2011,7 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 -- Create the default admin user
 -- Password hash for "Admin@123" (bcrypt)
 INSERT INTO users (email, username, hashed_password, is_active, is_verified, full_name, is_superuser) VALUES
-('admin@ai4i.org', 'admin', '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW', true, true, 'System Administrator', true)
+('admin@ai4inclusion.org', 'admin', '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW', true, true, 'System Administrator', true)
 ON CONFLICT (email) DO UPDATE
 SET 
     username = EXCLUDED.username,
@@ -1917,11 +2022,11 @@ SET
     is_superuser = EXCLUDED.is_superuser;
 
 -- Assign ADMIN role to the default admin user
--- This ensures the admin user has all permissions through the ADMIN role
+-- This ensures the admin user has all permissions through the ADMIN role (including apiKey.*)
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'admin@ai4i.org' AND u.username = 'admin' AND r.name = 'ADMIN'
+WHERE u.email = 'admin@ai4inclusion.org' AND u.username = 'admin' AND r.name = 'ADMIN'
 ON CONFLICT (user_id, role_id) DO NOTHING;
 
 \c config_db;

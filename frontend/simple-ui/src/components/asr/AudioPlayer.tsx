@@ -11,11 +11,11 @@ import {
   SliderTrack,
   SliderFilledTrack,
   SliderThumb,
-  useToast,
 } from '@chakra-ui/react';
 import { FaPlay, FaPause, FaDownload } from 'react-icons/fa';
 import { AudioPlayerProps } from '../../types/asr';
 import { formatDuration } from '../../utils/helpers';
+import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
 
 const AudioPlayer: React.FC<AudioPlayerProps> = ({
   audioSrc,
@@ -30,7 +30,7 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   // Audio event handlers
   useEffect(() => {

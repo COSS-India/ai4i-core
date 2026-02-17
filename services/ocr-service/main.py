@@ -36,6 +36,8 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
+from middleware.tenant_middleware import TenantMiddleware
+from middleware.tenant_schema_router import TenantSchemaRouter
 from models import database_models
 
 # Configure structured logging
@@ -191,9 +193,21 @@ async def lifespan(app: FastAPI):
         logger.error("Failed to connect to PostgreSQL: %s", e)
         raise
 
+    # Set app state after successful database connection
     app.state.redis_client = redis_client
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
+    
+    # Initialize tenant schema router for multi-tenant routing
+    multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL")
+    if not multi_tenant_db_url:
+        logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
+        multi_tenant_db_url = DATABASE_URL
+    logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")
+    tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
+    app.state.tenant_schema_router = tenant_schema_router
+    logger.info("Tenant schema router initialized with multi-tenant database")
+    
     # Triton endpoint/model resolved via Model Management middleware - no hardcoded fallback
     app.state.triton_api_key = TRITON_API_KEY
 
@@ -289,6 +303,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Tenant middleware (MUST be before other middleware to mark tenant-aware endpoints)
+# This marks /api/v1/ocr requests for tenant context extraction
+app.add_middleware(TenantMiddleware)
 
 # Correlation middleware (MUST be before RequestLoggingMiddleware)
 # This extracts X-Correlation-ID from headers and sets it in logging context
@@ -409,13 +427,17 @@ async def health(request: Request):
     redis_ok = False
     db_ok = False
 
+    # Check if health logs should be excluded
+    exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+
     try:
         rc = getattr(request.app.state, "redis_client", None)
         if rc is not None:
             await rc.ping()
             redis_ok = True
     except Exception as e:
-        logger.warning("/health: Redis check failed: %s", e)
+        if not exclude_health_logs:
+            logger.warning("/health: Redis check failed: %s", e)
 
     try:
         session_factory = getattr(request.app.state, "db_session_factory", None)
@@ -424,7 +446,8 @@ async def health(request: Request):
                 await session.execute(text("SELECT 1"))
             db_ok = True
     except Exception as e:
-        logger.warning("/health: PostgreSQL check failed: %s", e)
+        if not exclude_health_logs:
+            logger.warning("/health: PostgreSQL check failed: %s", e)
 
     status_str = "ok" if (redis_ok and db_ok) else "degraded"
     status_code = 200 if status_str == "ok" else 503

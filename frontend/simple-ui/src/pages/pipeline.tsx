@@ -20,7 +20,6 @@ import {
   StatNumber,
   Text,
   Textarea,
-  useToast,
   VStack,
   HStack,
   Flex,
@@ -41,9 +40,10 @@ import { usePipeline } from "../hooks/usePipeline";
 import { listASRServices, ASRServiceDetails } from "../services/asrService";
 import { listNMTServices } from "../services/nmtService";
 import { listTTSServices, TTSServiceDetailsResponse } from "../services/ttsService";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const PipelinePage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const router = useRouter();
   const [sourceLanguage, setSourceLanguage] = useState("hi");
   const [targetLanguage, setTargetLanguage] = useState("mr");
