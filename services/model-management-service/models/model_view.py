@@ -8,6 +8,11 @@ class ModelViewRequest(BaseModel):
     version: Optional[str] = None
 
 
+class ModelViewRequestWithVersion(BaseModel):
+    """Request body for POST /models/{model_id} - optional version for specific version lookup."""
+    version: Optional[str] = None
+
+
 class ModelViewResponse(BaseModel):
     modelId: str
     uuid: str

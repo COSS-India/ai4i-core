@@ -10,12 +10,12 @@ import {
   StatHelpText,
   Button,
   HStack,
-  useToast,
   Box,
   Text,
 } from '@chakra-ui/react';
 import { FaCopy, FaExchangeAlt } from 'react-icons/fa';
 import { TranslationResultsProps } from '../../types/nmt';
+import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
 
 const TranslationResults: React.FC<TranslationResultsProps> = ({
   sourceText,
@@ -28,7 +28,7 @@ const TranslationResults: React.FC<TranslationResultsProps> = ({
   onCopyTranslation,
   onSwapTexts,
 }) => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   const handleCopySource = () => {
     if (navigator.clipboard) {

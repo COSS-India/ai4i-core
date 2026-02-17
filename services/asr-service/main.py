@@ -376,6 +376,8 @@ except Exception as e:
 # so that Observability runs first and caches the body, then Model Management can use cached body
 
 # Add middleware after FastAPI app creation
+# Tenant middleware (MUST be early to mark tenant-aware routes)
+app.add_middleware(TenantMiddleware)
 # Correlation middleware (MUST be before RequestLoggingMiddleware)
 app.add_middleware(CorrelationMiddleware)
 # Structured request logging middleware (logs to OpenSearch)
@@ -457,6 +459,9 @@ async def health_check() -> Dict[str, Any]:
         "timestamp": None
     }
     
+    # Check if health logs should be excluded
+    exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+    
     try:
         import time
         health_status["timestamp"] = time.time()
@@ -469,7 +474,8 @@ async def health_check() -> Dict[str, Any]:
             health_status["redis"] = "unavailable"
             
     except Exception as e:
-        logger.error(f"Redis health check failed: {e}")
+        if not exclude_health_logs:
+            logger.error(f"Redis health check failed: {e}")
         health_status["redis"] = "unhealthy"
     
     try:
@@ -482,16 +488,19 @@ async def health_check() -> Dict[str, Any]:
             health_status["postgres"] = "unavailable"
             
     except Exception as e:
-        logger.error(f"PostgreSQL health check failed: {e}")
+        if not exclude_health_logs:
+            logger.error(f"PostgreSQL health check failed: {e}")
         health_status["postgres"] = "unhealthy"
     
     try:
         # Triton endpoint must be resolved via Model Management - no hardcoded fallback
         # Skip Triton check in health endpoint (requires Model Management serviceId)
-        logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
+        if not exclude_health_logs:
+            logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
         health_status["triton"] = "unknown"
     except Exception as e:
-        logger.warning(f"Triton health check skipped: {e}")
+        if not exclude_health_logs:
+            logger.warning(f"Triton health check skipped: {e}")
         health_status["triton"] = "unknown"
     
     # Determine overall status (Triton check skipped, only Redis and DB matter)

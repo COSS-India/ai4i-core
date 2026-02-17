@@ -17,8 +17,11 @@ class TenantViewResponse(BaseModel):
     usage_quota: Optional[Dict[str, Any]] = None
     created_at: str
     updated_at: str
+    role: str = Field(
+        "",
+        description="Role for tenant admin (key-value: {'role': 'ADMIN'}). One of: ADMIN, USER, GUEST, MODERATOR.",
+    )
 
-    
     model_config = {
         "populate_by_name": True
     }

@@ -194,7 +194,11 @@ async def _execute_pipeline_request(
     if api_key_header:
         api_key = api_key_header
     
-    logger.info(f"🔐 Authentication extracted: JWT={'present' if jwt_token else 'absent'}, API_KEY={'present' if api_key else 'absent'}")
+    # Extract user_id from request state (set by AuthProvider middleware)
+    # This is needed for tenant routing in downstream services (ASR, NMT, TTS)
+    user_id = getattr(http_request.state, "user_id", None)
+    
+    logger.info(f"🔐 Authentication extracted: JWT={'present' if jwt_token else 'absent'}, API_KEY={'present' if api_key else 'absent'}, USER_ID={user_id}")
     
     # Get pipeline service
     pipeline_service = get_pipeline_service()
@@ -203,7 +207,8 @@ async def _execute_pipeline_request(
     response = await pipeline_service.run_pipeline_inference(
         request=request,
         jwt_token=jwt_token,
-        api_key=api_key
+        api_key=api_key,
+        user_id=user_id
     )
     
     logger.info("✅ Pipeline inference completed successfully")

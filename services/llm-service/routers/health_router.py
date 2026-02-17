@@ -5,6 +5,7 @@ FastAPI router for health check endpoints
 
 import asyncio
 import logging
+import os
 import time
 from typing import Dict, Any
 
@@ -14,6 +15,13 @@ from sqlalchemy import text
 from utils.triton_client import TritonClient
 
 logger = logging.getLogger(__name__)
+
+# Check if health logs should be excluded
+EXCLUDE_HEALTH_LOGS = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+
+def _should_log_health() -> bool:
+    """Check if health-related logs should be written."""
+    return not EXCLUDE_HEALTH_LOGS
 
 # Create router
 health_router = APIRouter(prefix="/api/v1/llm", tags=["Health"])
@@ -33,7 +41,8 @@ async def health_check(request: Request) -> Dict[str, Any]:
         try:
             await request.app.state.redis_client.ping()
         except Exception as e:
-            logger.error(f"Redis health check failed: {e}")
+            if _should_log_health():
+                logger.error(f"Redis health check failed: {e}")
             redis_status = "unhealthy"
         
         # Check PostgreSQL
@@ -42,7 +51,8 @@ async def health_check(request: Request) -> Dict[str, Any]:
             async with request.app.state.db_engine.begin() as conn:
                 await conn.execute(text("SELECT 1"))
         except Exception as e:
-            logger.error(f"PostgreSQL health check failed: {e}")
+            if _should_log_health():
+                logger.error(f"PostgreSQL health check failed: {e}")
             postgres_status = "unhealthy"
         
         # Check Triton server
@@ -56,7 +66,8 @@ async def health_check(request: Request) -> Dict[str, Any]:
             if not triton_client.is_server_ready():
                 triton_status = "unhealthy"
         except Exception as e:
-            logger.error(f"Triton health check failed: {e}")
+            if _should_log_health():
+                logger.error(f"Triton health check failed: {e}")
             triton_status = "unhealthy"
         
         # Determine overall status
@@ -82,7 +93,8 @@ async def health_check(request: Request) -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
+        if _should_log_health():
+            logger.error(f"Health check failed: {e}")
         raise HTTPException(
             status_code=503,
             detail={
@@ -131,7 +143,8 @@ async def readiness_check(request: Request) -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Readiness check failed: {e}")
+        if _should_log_health():
+            logger.error(f"Readiness check failed: {e}")
         raise HTTPException(
             status_code=503,
             detail={

@@ -4,12 +4,20 @@ Health check and monitoring endpoints
 """
 
 import logging
+import os
 from typing import Dict, Any
 
 from fastapi import APIRouter, Request
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
+
+# Check if health logs should be excluded
+EXCLUDE_HEALTH_LOGS = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+
+def _should_log_health() -> bool:
+    """Check if health-related logs should be written."""
+    return not EXCLUDE_HEALTH_LOGS
 
 # Create router
 health_router = APIRouter(
@@ -43,7 +51,8 @@ async def health_check(request: Request) -> Dict[str, Any]:
             await rc.ping()
             redis_ok = True
     except Exception as e:
-        logger.warning(f"/health: Redis check failed: {e}")
+        if _should_log_health():
+            logger.warning(f"/health: Redis check failed: {e}")
     
     # Check DB
     try:
@@ -53,7 +62,8 @@ async def health_check(request: Request) -> Dict[str, Any]:
                 await session.execute(text("SELECT 1"))
             db_ok = True
     except Exception as e:
-        logger.warning(f"/health: PostgreSQL check failed: {e}")
+        if _should_log_health():
+            logger.warning(f"/health: PostgreSQL check failed: {e}")
     
     # Check Triton (optional - don't fail health if Triton is down)
     try:
@@ -62,7 +72,8 @@ async def health_check(request: Request) -> Dict[str, Any]:
         triton_client = TritonClient(triton_url=triton_url, api_key=None)
         triton_ok = triton_client.is_server_ready()
     except Exception as e:
-        logger.warning(f"/health: Triton check failed: {e}")
+        if _should_log_health():
+            logger.warning(f"/health: Triton check failed: {e}")
     
     status_str = "ok" if (redis_ok and db_ok) else "degraded"
     status_code = 200 if status_str == "ok" else 503

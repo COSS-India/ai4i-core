@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useToast } from "@chakra-ui/react";
+import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import authService from "../../../services/authService";
 import type { User } from "../../../types/auth";
 
@@ -21,7 +21,7 @@ export function useCreateApiKeyTab({
   setApiKeys,
   setSelectedApiKeyId,
 }: UseCreateApiKeyTabOptions) {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [permissions, setPermissions] = useState<string[]>([]);
   const [selectedUserForPermissions, setSelectedUserForPermissions] =
     useState<SelectedUserForPermissions | null>(null);

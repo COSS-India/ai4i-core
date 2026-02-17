@@ -510,6 +510,8 @@ services:
     container_name: ai4v-asr-service
     ports:
       - "8087:8087"
+    env_file:
+      - ./services/asr-service/.env
     environment:
       - ENV_FILE=.env
       - AUTH_ENABLED=false
@@ -576,6 +578,8 @@ services:
       - "8091:8089"
     environment:
       - ENV_FILE=.env
+      - SMR_ENABLED=${SMR_ENABLED:-false}
+      - SMR_SERVICE_URL=http://smr-service:8097
     env_file:
       - ./services/nmt-service/.env
     depends_on:
@@ -604,6 +608,8 @@ services:
     container_name: ai4v-ocr-service
     ports:
       - "8099:8099"
+    env_file:
+      - ./services/ocr-service/.env
     environment:
       - ENV_FILE=.env
     depends_on:
@@ -1258,6 +1264,86 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+# Policy Engine
+  policy-engine:
+    build:
+      context: ./services/policy-engine
+      dockerfile: Dockerfile
+    container_name: ai4v-policy-engine
+    ports:
+      - "8102:8095"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    networks:
+      - microservices-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
+      interval: 30s
+      timeout: 5s
+
+  smr-service:
+    build:
+      context: .
+      dockerfile: ./services/smr-service/Dockerfile
+    container_name: ai4v-smr-service
+    ports:
+      - "8103:8097"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/smr-service/.env
+    depends_on:
+      policy-engine:
+        condition: service_started
+      model-management-service:
+        condition: service_started
+    networks:
+      microservices-network:
+        aliases:
+          - smr-service
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8097/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  request-profiler-service:
+    build:
+      context: ./services/request-profiler
+      dockerfile: Dockerfile
+    container_name: ai4v-request-profiler-service
+    ports:
+      - "8888:8000"
+    volumes:
+      - ./services/request-profiler/models:/app/models:ro
+    environment:
+      - LOG_LEVEL=info
+      - MODEL_DIR=/app/models
+      - ENVIRONMENT=production
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "1.0"
+    networks:
+      microservices-network:
+        aliases:
+          - request-profiler-service
+          - profiler-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
 
 
 volumes:
@@ -1300,4 +1386,3 @@ networks:
     ipam:
       config:
         - subnet: 172.31.0.0/16
-

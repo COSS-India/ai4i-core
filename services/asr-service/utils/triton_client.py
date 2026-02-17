@@ -301,8 +301,25 @@ class TritonClient:
         """Internal implementation of Triton request (without tracing)."""
         client = self._get_client()
         
+        # Log endpoint and model for debugging
+        logger.info(
+            f"Sending Triton inference request",
+            extra={
+                "triton_url": self.triton_url,
+                "model_name": model_name,
+                "has_client": client is not None,
+            }
+        )
+        
         # Check server health
         if not client.is_server_ready():
+            logger.error(
+                f"Triton server is not ready",
+                extra={
+                    "triton_url": self.triton_url,
+                    "model_name": model_name,
+                }
+            )
             raise TritonInferenceError("Triton server is not ready")
         
         # Prepare headers

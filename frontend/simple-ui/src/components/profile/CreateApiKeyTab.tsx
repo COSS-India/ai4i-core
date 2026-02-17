@@ -21,9 +21,9 @@ import {
   CheckboxGroup,
   SimpleGrid,
   Badge,
-  useToast,
 } from "@chakra-ui/react";
 import { useCreateApiKeyTab } from "./hooks/useCreateApiKeyTab";
+import { useToastWithDeduplication } from "../../hooks/useToastWithDeduplication";
 
 export interface CreateApiKeyTabProps {
   users: import("../../types/auth").User[];
@@ -38,7 +38,7 @@ export default function CreateApiKeyTab({
   setApiKeys,
   setSelectedApiKeyId,
 }: CreateApiKeyTabProps) {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
   const inputReadOnlyBg = useColorModeValue("gray.50", "gray.700");

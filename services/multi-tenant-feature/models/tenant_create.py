@@ -1,8 +1,9 @@
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from datetime import datetime
 from uuid import UUID
 from .enum_tenant import SubscriptionType
+from .user_create import _validate_role
 
 
 class QuotaStructure(BaseModel):
@@ -29,5 +30,4 @@ class TenantRegisterResponse(BaseModel):
     quotas: Dict[str, Any]
     usage_quota: Optional[Dict[str, Any]] = None
     status: str
-    token: str
     message: Optional[str] = None

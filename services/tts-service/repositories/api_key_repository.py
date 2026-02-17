@@ -76,15 +76,17 @@ class ApiKeyRepository:
             raise DatabaseError(f"Failed to update last used: {e}")
     
     async def is_key_valid(self, api_key: ApiKeyDB) -> bool:
-        """Check if API key is active and not expired."""
+        """
+        Check if API key is active.
+
+        NOTE:
+        - Expiry and permission checks are enforced centrally by auth-service's
+          /api/v1/auth/validate-api-key endpoint.
+        - To avoid mismatches between this service's local auth schema and the
+          central auth database, we only enforce the `is_active` flag here.
+        """
         try:
-            if not api_key.is_active:
-                return False
-            
-            if api_key.expires_at is None:
-                return True
-            
-            return api_key.expires_at > datetime.utcnow()
+            return bool(api_key.is_active)
         except Exception as e:
             logger.error(f"Error validating API key: {e}")
             return False
