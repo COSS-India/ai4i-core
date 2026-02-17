@@ -33,15 +33,19 @@ Edit `.env` if needed (defaults should work for development).
 
 Copy the environment template for each service and the frontend:
 
+
+**Core Services**
 ```bash
-# Core Services
 cp services/api-gateway-service/env.template services/api-gateway-service/.env
 cp services/auth-service/env.template services/auth-service/.env
 cp services/config-service/env.template services/config-service/.env
 cp services/model-management-service/env.template services/model-management-service/.env
 cp services/multi-tenant-feature/env.template services/multi-tenant-feature/.env
+```
 
-# AI/ML Services
+
+**AI/ML Services**
+```bash
 cp services/asr-service/env.template services/asr-service/.env
 cp services/tts-service/env.template services/tts-service/.env
 cp services/nmt-service/env.template services/nmt-service/.env
@@ -54,14 +58,18 @@ cp services/language-diarization-service/env.template services/language-diarizat
 cp services/audio-lang-detection-service/env.template services/audio-lang-detection-service/.env
 cp services/speaker-diarization-service/env.template services/speaker-diarization-service/.env
 cp services/pipeline-service/env.template services/pipeline-service/.env
+```
 
-# Observability Services
+ **Observability Services**
+```bash
 cp services/alerting-service/env.template services/alerting-service/.env
 cp services/dashboard-service/env.template services/dashboard-service/.env
 cp services/metrics-service/env.template services/metrics-service/.env
 cp services/telemetry-service/env.template services/telemetry-service/.env
+```
 
-# Frontend
+**Frontend**
+```bash
 cp frontend/simple-ui/env.template frontend/simple-ui/.env
 ```
 
