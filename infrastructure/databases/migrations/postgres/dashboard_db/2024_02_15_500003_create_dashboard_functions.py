@@ -17,33 +17,39 @@ class CreateDashboardFunctions(BaseMigration):
         """)
         print("    ✓ Created update_updated_at_column function")
 
-        # Create triggers for updated_at columns
+        # Drop triggers if they exist (idempotent for re-runs), then create triggers for updated_at columns
         adapter.execute("""
-            CREATE TRIGGER update_dashboards_updated_at 
+            DROP TRIGGER IF EXISTS update_dashboards_updated_at ON dashboards;
+            DROP TRIGGER IF EXISTS update_dashboard_widgets_updated_at ON dashboard_widgets;
+            DROP TRIGGER IF EXISTS update_saved_queries_updated_at ON saved_queries;
+            DROP TRIGGER IF EXISTS update_reports_updated_at ON reports;
+            DROP TRIGGER IF EXISTS update_user_preferences_updated_at ON user_preferences;
+
+            CREATE TRIGGER update_dashboards_updated_at
                 BEFORE UPDATE ON dashboards
                 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-            CREATE TRIGGER update_dashboard_widgets_updated_at 
+            CREATE TRIGGER update_dashboard_widgets_updated_at
                 BEFORE UPDATE ON dashboard_widgets
                 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-            CREATE TRIGGER update_saved_queries_updated_at 
+            CREATE TRIGGER update_saved_queries_updated_at
                 BEFORE UPDATE ON saved_queries
                 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-            CREATE TRIGGER update_reports_updated_at 
+            CREATE TRIGGER update_reports_updated_at
                 BEFORE UPDATE ON reports
                 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-            CREATE TRIGGER update_user_preferences_updated_at 
+            CREATE TRIGGER update_user_preferences_updated_at
                 BEFORE UPDATE ON user_preferences
                 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
         """)
         print("    ✓ Created updated_at triggers")
 
-        # Create function to get dashboard with widgets
+        # Create function to get dashboard with widgets (param p_id avoids conflict with output column dashboard_id)
         adapter.execute("""
-            CREATE OR REPLACE FUNCTION get_dashboard_with_widgets(dashboard_id integer)
+            CREATE OR REPLACE FUNCTION get_dashboard_with_widgets(p_id integer)
             RETURNS TABLE (
                 dashboard_id integer,
                 dashboard_name varchar(255),
@@ -58,20 +64,20 @@ class CreateDashboardFunctions(BaseMigration):
             ) AS $$
             BEGIN
                 RETURN QUERY
-                SELECT 
-                    d.id as dashboard_id,
-                    d.name as dashboard_name,
-                    d.description as dashboard_description,
-                    d.layout as dashboard_layout,
+                SELECT
+                    d.id,
+                    d.name,
+                    d.description,
+                    d.layout,
                     d.is_public,
                     d.owner_id,
-                    w.id as widget_id,
+                    w.id,
                     w.widget_type,
-                    w.configuration as widget_configuration,
-                    w.position as widget_position
+                    w.configuration,
+                    w.position
                 FROM dashboards d
                 LEFT JOIN dashboard_widgets w ON d.id = w.dashboard_id
-                WHERE d.id = dashboard_id
+                WHERE d.id = p_id
                 ORDER BY w.id;
             END;
             $$ LANGUAGE plpgsql;
