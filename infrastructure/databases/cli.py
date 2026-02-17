@@ -52,8 +52,9 @@ Examples:
   # Run all pending migrations for all databases
   python cli.py migrate
 
-  # Run migrations for specific database
+  # Run migrations for specific database (avoids InfluxDB/ES/Kafka errors if not running)
   python cli.py migrate --database postgres
+  python cli.py migrate --database postgres --postgres-db auth_db
   python cli.py migrate --database redis
 
   # Run specific number of migrations
@@ -72,6 +73,11 @@ Examples:
   # Fresh migration (drop all and re-run)
   python cli.py migrate:fresh --database postgres
   python cli.py migrate:fresh --seed --database postgres
+  python cli.py migrate:fresh:all --force
+  python cli.py migrate:fresh:all --seed --force
+
+  # Report DBs, tables, row counts
+  python cli.py report
 
   # Create new migration
   python cli.py make:migration create_users_table --database postgres
@@ -90,6 +96,8 @@ Examples:
         parser.add_argument('--steps', '-s', type=int, help='Number of steps')
         parser.add_argument('--class', '-c', dest='seeder_class', help='Seeder class name')
         parser.add_argument('--seed', action='store_true', help='Run seeders after migration')
+        parser.add_argument('--force', '-y', action='store_true', dest='force',
+                          help='Skip confirmation prompts (e.g. for migrate:fresh)')
         
         args = parser.parse_args()
         
@@ -100,9 +108,11 @@ Examples:
             'rollback': self.rollback,
             'migrate:status': self.status,
             'migrate:fresh': self.fresh,
+            'migrate:fresh:all': self.fresh_all,
             'make:migration': self.make_migration,
             'seed': self.seed,
             'seed:all': self.seed_all,
+            'report': self.report,
         }
         
         if args.command not in command_map:
@@ -179,22 +189,60 @@ Examples:
             print("❌ Please specify --database for fresh migration")
             sys.exit(1)
         
-        # Confirmation
-        print("\n⚠️  WARNING: This will DROP ALL DATA in the database!")
-        response = input(f"Are you sure you want to continue with {args.database}? (yes/no): ")
-        
-        if response.lower() != 'yes':
-            print("❌ Operation cancelled")
-            sys.exit(0)
+        # Confirmation unless --force / -y
+        if not getattr(args, 'force', False):
+            print("\n⚠️  WARNING: This will DROP ALL DATA in the database!")
+            response = input(f"Are you sure you want to continue with {args.database}? (yes/no): ")
+            if response.lower() != 'yes':
+                print("❌ Operation cancelled")
+                sys.exit(0)
         
         print("\n" + "=" * 80)
         print(f"🔨 Fresh Migration for {args.database.upper()}")
+        if args.database == 'postgres':
+            print(f"   Database: {args.postgres_db}")
         print("=" * 80)
         
         manager = self._get_manager(args.database, args.postgres_db if args.database == 'postgres' else None)
         manager.fresh(seed=args.seed)
         
         print("=" * 80 + "\n")
+
+    def fresh_all(self, args):
+        """Fresh migration for ALL Postgres DBs (clean + re-migrate), then optionally seed."""
+        if not getattr(args, 'force', False):
+            print("\n⚠️  WARNING: This will DROP ALL DATA in ALL Postgres databases!")
+            response = input("Are you sure you want to continue? (yes/no): ")
+            if response.lower() != 'yes':
+                print("❌ Operation cancelled")
+                sys.exit(0)
+        
+        print("\n" + "=" * 80)
+        print("🔨 Fresh Migration for ALL Postgres Databases")
+        print("=" * 80)
+        
+        failed = []
+        for db in self.POSTGRES_DBS:
+            try:
+                print(f"\n  🗄️  Fresh: {db}...")
+                manager = self._get_manager('postgres', db)
+                manager.fresh(seed=False)
+            except Exception as e:
+                print(f"  ❌ Failed: {db} - {str(e)}")
+                failed.append((db, str(e)))
+        
+        print("\n" + "=" * 80)
+        if failed:
+            print(f"⚠️  Fresh completed with {len(failed)} failure(s). Ensure PostgreSQL is running (e.g. localhost:5432, or 5434 if using docker-compose-simple.yml).")
+            if len(failed) == len(self.POSTGRES_DBS):
+                print("   No DB could be reached — is the Postgres server started?")
+        else:
+            print("✅ Fresh (clean + migrate) completed for all Postgres DBs!")
+        print("=" * 80 + "\n")
+        
+        if getattr(args, 'seed', False) and not failed:
+            print("🌱 Running seed:all...\n")
+            self.seed_all(args)
     
     def make_migration(self, args):
         """Create new migration file"""
@@ -279,8 +327,8 @@ Examples:
         
         # Databases that have seeders
         postgres_dbs_with_seeders = [
-            'auth_db', 'config_db', 'alerting_db', 
-            'dashboard_db', 'multi_tenant_db', 'dhruva_platform'
+            'auth_db', 'config_db', 'alerting_db',
+            'dashboard_db', 'model_management_db', 'multi_tenant_db', 'dhruva_platform'
         ]
         
         # Seed PostgreSQL databases
@@ -307,6 +355,52 @@ Examples:
         print("✅ Seeding completed!")
         print("="*80 + "\n")
     
+    def report(self, args):
+        """Report: how many Postgres DBs, tables per DB, and row counts."""
+        print("\n" + "=" * 80)
+        print("📊 Postgres Databases Report (tables + row counts)")
+        print("=" * 80)
+        
+        total_dbs = 0
+        total_tables = 0
+        total_rows = 0
+        
+        for db in self.POSTGRES_DBS:
+            try:
+                manager = self._get_manager('postgres', db)
+                with manager.adapter:
+                    # List tables in public schema
+                    tables_result = manager.adapter.fetch_all(
+                        "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+                    )
+                    tables = [r[0] for r in tables_result]
+                    total_dbs += 1
+                    db_rows = 0
+                    
+                    if not tables:
+                        print(f"\n  📁 {db}: 0 tables, 0 rows")
+                        continue
+                    
+                    print(f"\n  📁 {db}: {len(tables)} table(s)")
+                    for t in tables:
+                        try:
+                            r = manager.adapter.fetch_one(f'SELECT count(*) FROM "{t}"')
+                            cnt = r[0] if r else 0
+                            db_rows += cnt
+                            total_tables += 1
+                            total_rows += cnt
+                            print(f"      • {t}: {cnt} row(s)")
+                        except Exception as e:
+                            print(f"      • {t}: error ({e})")
+                    print(f"      ─────────────────────")
+                    print(f"      Subtotal: {len(tables)} tables, {db_rows} rows")
+            except Exception as e:
+                print(f"\n  ⚠️  {db}: skip ({e})")
+        
+        print("\n" + "=" * 80)
+        print(f"  Total: {total_dbs} database(s), {total_tables} table(s), {total_rows} row(s)")
+        print("=" * 80 + "\n")
+
     def _get_manager(self, database_type: str, postgres_db: str = None) -> MigrationManager:
         """
         Get migration manager for database type

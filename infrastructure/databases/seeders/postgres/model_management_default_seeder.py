@@ -24,9 +24,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('ASR-Conformer-Hindi', '1.0.0'),
+                generate_model_id('asr_am_ensemble', '1.0.0'),
                 '1.0.0',
-                'ASR-Conformer-Hindi',
+                'asr_am_ensemble',
                 'Automatic Speech Recognition model for Hindi language using Conformer architecture. UPDATE ENDPOINT before use.',
                 '{{"type": "asr"}}'::jsonb,
                 '["hi", "en"]'::jsonb,
@@ -42,9 +42,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('ASR-Conformer-Hindi', '1.0.0', 'asr-hindi-prod'),
+                generate_service_id('asr_am_ensemble', '1.0.0', 'asr-hindi-prod'),
                 'asr-hindi-prod',
-                generate_model_id('ASR-Conformer-Hindi', '1.0.0'),
+                generate_model_id('asr_am_ensemble', '1.0.0'),
                 '1.0.0',
                 'http://localhost:8001/asr/v1/recognize',
                 'Production ASR service for Hindi. UPDATE ENDPOINT to your actual service URL.',
@@ -61,9 +61,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('TTS-FastPitch-Hindi', '1.0.0'),
+                generate_model_id('tts', '1.0.0'),
                 '1.0.0',
-                'TTS-FastPitch-Hindi',
+                'tts',
                 'Text-to-Speech model for Hindi language using FastPitch architecture. UPDATE ENDPOINT before use.',
                 '{{"type": "tts"}}'::jsonb,
                 '["hi"]'::jsonb,
@@ -79,9 +79,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('TTS-FastPitch-Hindi', '1.0.0', 'tts-hindi-prod'),
+                generate_service_id('tts', '1.0.0', 'tts-hindi-prod'),
                 'tts-hindi-prod',
-                generate_model_id('TTS-FastPitch-Hindi', '1.0.0'),
+                generate_model_id('tts', '1.0.0'),
                 '1.0.0',
                 'http://localhost:8002/tts/v1/synthesize',
                 'Production TTS service for Hindi. UPDATE ENDPOINT to your actual service URL.',
@@ -98,9 +98,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('NMT-IndicTrans2-En-Hi', '1.0.0'),
+                generate_model_id('nmt', '1.0.0'),
                 '1.0.0',
-                'NMT-IndicTrans2-En-Hi',
+                'nmt',
                 'Neural Machine Translation model for English to Hindi using IndicTrans2. UPDATE ENDPOINT before use.',
                 '{{"type": "nmt"}}'::jsonb,
                 '["en", "hi"]'::jsonb,
@@ -116,9 +116,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('NMT-IndicTrans2-En-Hi', '1.0.0', 'nmt-en-hi-prod'),
+                generate_service_id('nmt', '1.0.0', 'nmt-en-hi-prod'),
                 'nmt-en-hi-prod',
-                generate_model_id('NMT-IndicTrans2-En-Hi', '1.0.0'),
+                generate_model_id('nmt', '1.0.0'),
                 '1.0.0',
                 'http://localhost:8003/nmt/v1/translate',
                 'Production NMT service for English-Hindi translation. UPDATE ENDPOINT to your actual service URL.',
@@ -135,9 +135,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('LLM-Indic-Chat', '1.0.0'),
+                generate_model_id('llm', '1.0.0'),
                 '1.0.0',
-                'LLM-Indic-Chat',
+                'llm',
                 'Large Language Model for Indic languages chat/completion. UPDATE ENDPOINT before use.',
                 '{{"type": "llm"}}'::jsonb,
                 '["hi", "en", "ta", "te", "bn", "mr", "gu", "kn", "ml", "pa", "or"]'::jsonb,
@@ -153,9 +153,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('LLM-Indic-Chat', '1.0.0', 'llm-indic-prod'),
+                generate_service_id('llm', '1.0.0', 'llm-indic-prod'),
                 'llm-indic-prod',
-                generate_model_id('LLM-Indic-Chat', '1.0.0'),
+                generate_model_id('llm', '1.0.0'),
                 '1.0.0',
                 'http://localhost:8004/llm/v1/completions',
                 'Production LLM service for Indic languages. UPDATE ENDPOINT to your actual service URL.',
@@ -172,9 +172,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('Transliteration-IndicXlit', '1.0.0'),
+                generate_model_id('transliteration', '1.0.0'),
                 '1.0.0',
-                'Transliteration-IndicXlit',
+                'transliteration',
                 'Transliteration model for Indic scripts using IndicXlit. UPDATE ENDPOINT before use.',
                 '{{"type": "transliteration"}}'::jsonb,
                 '["hi", "ta", "te", "bn", "mr", "gu", "kn", "ml", "pa", "or"]'::jsonb,
@@ -190,9 +190,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('Transliteration-IndicXlit', '1.0.0', 'xlit-indic-prod'),
+                generate_service_id('transliteration', '1.0.0', 'xlit-indic-prod'),
                 'xlit-indic-prod',
-                generate_model_id('Transliteration-IndicXlit', '1.0.0'),
+                generate_model_id('transliteration', '1.0.0'),
                 '1.0.0',
                 'http://localhost:8005/transliteration/v1/transliterate',
                 'Production Transliteration service. UPDATE ENDPOINT to your actual service URL.',
@@ -209,9 +209,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('LangDetect-IndicLID', '1.0.0'),
+                generate_model_id('indiclid', '1.0.0'),
                 '1.0.0',
-                'LangDetect-IndicLID',
+                'indiclid',
                 'Text language detection model for Indic languages. UPDATE ENDPOINT before use.',
                 '{{"type": "language-detection"}}'::jsonb,
                 '["hi", "en", "ta", "te", "bn", "mr", "gu", "kn", "ml", "pa", "or"]'::jsonb,
@@ -227,9 +227,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('LangDetect-IndicLID', '1.0.0', 'langdetect-prod'),
+                generate_service_id('indiclid', '1.0.0', 'langdetect-prod'),
                 'langdetect-prod',
-                generate_model_id('LangDetect-IndicLID', '1.0.0'),
+                generate_model_id('indiclid', '1.0.0'),
                 '1.0.0',
                 'http://localhost:8006/langdetect/v1/detect',
                 'Production Language Detection service. UPDATE ENDPOINT to your actual service URL.',
@@ -246,9 +246,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('SpeakerDiarization-Pyannote', '1.0.0'),
+                generate_model_id('speaker_diarization', '1.0.0'),
                 '1.0.0',
-                'SpeakerDiarization-Pyannote',
+                'speaker_diarization',
                 'Speaker diarization model using Pyannote. UPDATE ENDPOINT before use.',
                 '{{"type": "speaker-diarization"}}'::jsonb,
                 '["*"]'::jsonb,
@@ -264,9 +264,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('SpeakerDiarization-Pyannote', '1.0.0', 'speaker-diarize-prod'),
+                generate_service_id('speaker_diarization', '1.0.0', 'speaker-diarize-prod'),
                 'speaker-diarize-prod',
-                generate_model_id('SpeakerDiarization-Pyannote', '1.0.0'),
+                generate_model_id('speaker_diarization', '1.0.0'),
                 '1.0.0',
                 'http://localhost:8007/speaker-diarization/v1/diarize',
                 'Production Speaker Diarization service. UPDATE ENDPOINT to your actual service URL.',
@@ -320,9 +320,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('LangDiarization-MultiLang', '1.0.0'),
+                generate_model_id('lang_diarization', '1.0.0'),
                 '1.0.0',
-                'LangDiarization-MultiLang',
+                'lang_diarization',
                 'Language diarization model for multi-language audio. UPDATE ENDPOINT before use.',
                 '{{"type": "language-diarization"}}'::jsonb,
                 '["hi", "en", "ta", "te"]'::jsonb,
@@ -338,9 +338,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('LangDiarization-MultiLang', '1.0.0', 'lang-diarize-prod'),
+                generate_service_id('lang_diarization', '1.0.0', 'lang-diarize-prod'),
                 'lang-diarize-prod',
-                generate_model_id('LangDiarization-MultiLang', '1.0.0'),
+                generate_model_id('lang_diarization', '1.0.0'),
                 '1.0.0',
                 'http://localhost:8009/lang-diarization/v1/diarize',
                 'Production Language Diarization service. UPDATE ENDPOINT to your actual service URL.',
@@ -357,9 +357,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('OCR-IndicOCR', '1.0.0'),
+                generate_model_id('surya_ocr', '1.0.0'),
                 '1.0.0',
-                'OCR-IndicOCR',
+                'surya_ocr',
                 'Optical Character Recognition model for Indic scripts. UPDATE ENDPOINT before use.',
                 '{{"type": "ocr"}}'::jsonb,
                 '["hi", "ta", "te", "bn", "mr", "gu", "kn", "ml"]'::jsonb,
@@ -375,9 +375,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('OCR-IndicOCR', '1.0.0', 'ocr-indic-prod'),
+                generate_service_id('surya_ocr', '1.0.0', 'ocr-indic-prod'),
                 'ocr-indic-prod',
-                generate_model_id('OCR-IndicOCR', '1.0.0'),
+                generate_model_id('surya_ocr', '1.0.0'),
                 '1.0.0',
                 'http://localhost:8010/ocr/v1/recognize',
                 'Production OCR service for Indic scripts. UPDATE ENDPOINT to your actual service URL.',
@@ -394,9 +394,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
             VALUES (
-                generate_model_id('NER-IndicNER', '1.0.0'),
+                generate_model_id('ner', '1.0.0'),
                 '1.0.0',
-                'NER-IndicNER',
+                'ner',
                 'Named Entity Recognition model for Indic languages. UPDATE ENDPOINT before use.',
                 '{{"type": "ner"}}'::jsonb,
                 '["hi", "en", "ta", "te", "bn", "mr"]'::jsonb,
@@ -412,9 +412,9 @@ class ModelManagementDefaultSeeder(BaseSeeder):
         adapter.execute(f"""
             INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
             VALUES (
-                generate_service_id('NER-IndicNER', '1.0.0', 'ner-indic-prod'),
+                generate_service_id('ner', '1.0.0', 'ner-indic-prod'),
                 'ner-indic-prod',
-                generate_model_id('NER-IndicNER', '1.0.0'),
+                generate_model_id('ner', '1.0.0'),
                 '1.0.0',
                 'http://localhost:8011/ner/v1/extract',
                 'Production NER service for Indic languages. UPDATE ENDPOINT to your actual service URL.',

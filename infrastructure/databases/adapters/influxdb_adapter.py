@@ -12,7 +12,7 @@ from infrastructure.databases.core.base_adapter import BaseAdapter
 class InfluxDBAdapter(BaseAdapter):
     """InfluxDB database adapter (v2.x)"""
     
-    MIGRATIONS_BUCKET = "_migrations"
+    MIGRATIONS_BUCKET = "dhruva_migrations"
     MIGRATIONS_MEASUREMENT = "executed_migrations"
     
     def __init__(self, config: Dict[str, Any]):
@@ -185,12 +185,15 @@ class InfluxDBAdapter(BaseAdapter):
     
     def create_bucket(self, bucket_name: str, retention_days: int = 30) -> None:
         """
-        Create a new bucket
+        Create a new bucket (idempotent -- skips if it already exists)
         
         Args:
             bucket_name: Name of the bucket
             retention_days: Retention period in days
         """
+        existing = self.buckets_api.find_bucket_by_name(bucket_name)
+        if existing:
+            return
         retention_rules = BucketRetentionRules(
             type="expire", 
             every_seconds=retention_days * 86400

@@ -12,7 +12,7 @@ from infrastructure.databases.core.base_adapter import BaseAdapter
 class ElasticsearchAdapter(BaseAdapter):
     """Elasticsearch database adapter"""
     
-    MIGRATIONS_INDEX = "_migrations"
+    MIGRATIONS_INDEX = "dhruva_migrations"
     
     def __init__(self, config: Dict[str, Any]):
         """
@@ -190,13 +190,15 @@ class ElasticsearchAdapter(BaseAdapter):
     def create_index(self, index_name: str, mappings: Dict[str, Any], 
                      settings: Optional[Dict[str, Any]] = None) -> None:
         """
-        Create an index
+        Create an index (idempotent -- skips if it already exists)
         
         Args:
             index_name: Name of the index
             mappings: Index mappings
             settings: Optional index settings
         """
+        if self.client.indices.exists(index=index_name):
+            return
         body = {"mappings": mappings}
         if settings:
             body["settings"] = settings
