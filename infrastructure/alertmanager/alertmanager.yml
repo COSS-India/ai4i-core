@@ -15,7 +15,35 @@ route:
   group_interval: 10s
   repeat_interval: 12h
   receiver: default-admin
-  routes: []
+  routes:
+  - match:
+      organization: bashadaan
+      severity: warning
+      category: application
+    receiver: bashadaan-warning-application
+    group_wait: 10s
+    group_interval: 10s
+    repeat_interval: 12h
+    continue: false
+    group_by:
+    - alertname
+    - category
+    - severity
+    - organization
+  - match:
+      organization: kisanmitra
+      severity: warning
+      category: application
+    receiver: kisanmitra-warning-application
+    group_wait: 10s
+    group_interval: 10s
+    repeat_interval: 12h
+    continue: false
+    group_by:
+    - alertname
+    - category
+    - severity
+    - organization
 receivers:
 - name: default-admin
   email_configs:
@@ -32,6 +60,34 @@ receivers:
       <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
       <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
   - to: bharathia0704@gmail.com
+    send_resolved: true
+    headers:
+      Subject: '[{{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.organization }}'
+    html: |
+      <h2 style="color: {{ if eq .GroupLabels.severity "critical" }}#d32f2f{{ else if eq .GroupLabels.severity "warning" }}#f57c00{{ else }}#1976d2{{ end }};">
+        {{ if eq .GroupLabels.severity "critical" }}🚨 CRITICAL{{ else if eq .GroupLabels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
+      </h2>
+      <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
+      <p><strong>Organization:</strong> {{ .GroupLabels.organization }}</p>
+      <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
+      <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
+- name: bashadaan-warning-application
+  email_configs:
+  - to: bharathicoldplay@gmail.com
+    send_resolved: true
+    headers:
+      Subject: '[{{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.organization }}'
+    html: |
+      <h2 style="color: {{ if eq .GroupLabels.severity "critical" }}#d32f2f{{ else if eq .GroupLabels.severity "warning" }}#f57c00{{ else }}#1976d2{{ end }};">
+        {{ if eq .GroupLabels.severity "critical" }}🚨 CRITICAL{{ else if eq .GroupLabels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
+      </h2>
+      <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
+      <p><strong>Organization:</strong> {{ .GroupLabels.organization }}</p>
+      <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
+      <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
+- name: kisanmitra-warning-application
+  email_configs:
+  - to: bharathicoldplay@gmail.com
     send_resolved: true
     headers:
       Subject: '[{{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.organization }}'

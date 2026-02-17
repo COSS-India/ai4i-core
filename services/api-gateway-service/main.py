@@ -2268,12 +2268,9 @@ async def build_alert_headers(request: Request, credentials: Optional[HTTPAuthor
     if organization:
         headers["X-Organization"] = organization
     
-    # Add username from request state
+    # Add username from request state (set by auth middleware from JWT)
     username = getattr(request.state, "username", None)
-    if username:
-        headers["X-Username"] = username
-    
-    # Add admin status, roles, and permissions from token
+    # Add admin status, roles, and permissions from token (and ensure X-Username when we have a valid token)
     if credentials and credentials.credentials:
         token = credentials.credentials
         try:
@@ -2281,12 +2278,13 @@ async def build_alert_headers(request: Request, credentials: Optional[HTTPAuthor
             if payload:
                 user_permissions = payload.get("permissions", [])
                 user_roles = payload.get("roles", [])
-                
+                # Use username from token payload if request.state.username was not set (e.g. middleware path or auth response missing username)
+                if not username:
+                    username = payload.get("username") or (f"user-{payload.get('sub', 'unknown')}" if payload.get("sub") else None)
                 # Check if admin
                 is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
                 if is_admin:
                     headers["X-Admin"] = "true"
-                
                 # Add roles and permissions
                 if user_roles:
                     headers["X-User-Roles"] = ",".join(user_roles)
@@ -2294,6 +2292,8 @@ async def build_alert_headers(request: Request, credentials: Optional[HTTPAuthor
                     headers["X-User-Permissions"] = ",".join(user_permissions)
         except Exception:
             pass  # If token verification fails, headers won't have admin info
+    if username:
+        headers["X-Username"] = username
     
     return headers
 
