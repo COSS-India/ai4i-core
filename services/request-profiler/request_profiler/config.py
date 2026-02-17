@@ -1,8 +1,11 @@
 """Configuration management using pydantic-settings."""
+import logging
 from pathlib import Path
 from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -26,7 +29,7 @@ class Settings(BaseSettings):
     log_level: str = "info"
 
     # Model paths
-    model_dir: Path = Path("models")
+    model_dir: str = "models"  # Will be converted to Path in __init__
     domain_model_path: Optional[Path] = None
     complexity_model_path: Optional[Path] = None
     fasttext_model_path: Optional[Path] = None
@@ -48,6 +51,14 @@ class Settings(BaseSettings):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        # Convert model_dir string to Path (handles both relative and absolute paths from env var)
+        # This allows MODEL_DIR environment variable to be properly read as a string and converted
+        if isinstance(self.model_dir, str):
+            self.model_dir = Path(self.model_dir)
+        # Ensure model_dir is a Path object
+        if not isinstance(self.model_dir, Path):
+            self.model_dir = Path(str(self.model_dir))
+        
         # Set default model paths if not provided
         if self.domain_model_path is None:
             self.domain_model_path = self.model_dir / "domain_pipeline.pkl"
@@ -58,6 +69,18 @@ class Settings(BaseSettings):
             ftz_path = self.model_dir / "lid.176.ftz"
             bin_path = self.model_dir / "lid.176.bin"
             self.fasttext_model_path = ftz_path if ftz_path.exists() else bin_path
+        
+        # Log configuration after initialization (logging may not be configured yet, so use try/except)
+        try:
+            logger.info(f"Model directory configured as: {self.model_dir} (absolute: {self.model_dir.is_absolute()})")
+            logger.info(f"Domain model path: {self.domain_model_path}")
+            logger.info(f"Complexity model path: {self.complexity_model_path}")
+            logger.info(f"Model directory exists: {self.model_dir.exists()}")
+            if self.model_dir.exists():
+                logger.info(f"Contents of model directory: {list(self.model_dir.iterdir())}")
+        except Exception:
+            # Logging not configured yet, that's okay - the path conversion still works
+            pass
 
 
 # Global settings instance
