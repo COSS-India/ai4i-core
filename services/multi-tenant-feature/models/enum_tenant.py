@@ -14,6 +14,14 @@ class TenantUserStatus(str, Enum):
     DEACTIVATED = "DEACTIVATED"
 
 
+class TenantUserRole(str, Enum):
+    """Roles assignable to tenant users. Must exist in auth service."""
+    ADMIN = "ADMIN"
+    USER = "USER"
+    GUEST = "GUEST"
+    MODERATOR = "MODERATOR"
+
+
 class SubscriptionType(str, Enum):
     TTS = "tts"
     ASR = "asr"

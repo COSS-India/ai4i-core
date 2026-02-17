@@ -2,6 +2,8 @@
  * Utility functions for handling and formatting API errors
  */
 
+import { ASR_ERRORS, TTS_ERRORS, NMT_ERRORS, PIPELINE_ERRORS, COMMON_ERRORS, OCR_ERRORS, TRANSLITERATION_ERRORS, LANGUAGE_DETECTION_ERRORS, SPEAKER_DIARIZATION_ERRORS, AUDIO_LANGUAGE_DETECTION_ERRORS, NER_ERRORS } from '../config/constants';
+
 export interface ErrorInfo {
   title: string;
   message: string;
@@ -16,13 +18,21 @@ export interface ErrorInfo {
  * - { message: "Error message" }
  * - Standard error objects
  */
-export function extractErrorInfo(error: any): ErrorInfo {
+export type ErrorHandlerService = 'asr' | 'tts' | 'nmt' | 'pipeline' | 'ocr' | 'transliteration' | 'language-detection' | 'speaker-diarization' | 'audio-language-detection' | 'ner';
+
+export function extractErrorInfo(error: any, service?: ErrorHandlerService): ErrorInfo {
   let errorMessage = 'An unexpected error occurred. Please try again.';
   let errorTitle = 'Error';
 
   // Check for API error response structure
   if (error?.response?.data) {
     const data = error.response.data;
+    
+    // Prefer backend message as default when we have one (for unknown error codes)
+    const backendMessage = data.detail?.message || data.message;
+    if (backendMessage && typeof backendMessage === 'string') {
+      errorMessage = backendMessage;
+    }
     
     // Handle Pydantic validation errors (detail is an array)
     if (data.detail && Array.isArray(data.detail) && data.detail.length > 0) {
@@ -113,7 +123,193 @@ export function extractErrorInfo(error: any): ErrorInfo {
       }
       
       if (data.detail.error) {
-        const errorCode = String(data.detail.error);
+        const errorCode = String(data.detail.error).toUpperCase();
+        
+        // Check for common errors first (apply to all services)
+        if (COMMON_ERRORS[errorCode as keyof typeof COMMON_ERRORS]) {
+          const commonError = COMMON_ERRORS[errorCode as keyof typeof COMMON_ERRORS];
+          errorTitle = commonError.title;
+          errorMessage = data.detail.message || commonError.description;
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        // Check for TTS-specific error codes when service is TTS
+        if (service === 'tts' && TTS_ERRORS[errorCode as keyof typeof TTS_ERRORS]) {
+          const ttsError = TTS_ERRORS[errorCode as keyof typeof TTS_ERRORS];
+          errorTitle = ttsError.title;
+          errorMessage = data.detail.message || ttsError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        // Check for NMT-specific error codes when service is NMT
+        if (service === 'nmt' && NMT_ERRORS[errorCode as keyof typeof NMT_ERRORS]) {
+          const nmtError = NMT_ERRORS[errorCode as keyof typeof NMT_ERRORS];
+          errorTitle = nmtError.title;
+          // Handle LANGUAGE_PAIR_NOT_SUPPORTED with source/target replacement
+          if (errorCode === 'LANGUAGE_PAIR_NOT_SUPPORTED') {
+            const source = data.detail.sourceLanguage || data.detail.source || 'source';
+            const target = data.detail.targetLanguage || data.detail.target || 'target';
+            errorMessage = data.detail.message || nmtError.description.replace('{source}', source).replace('{target}', target);
+          } else {
+            errorMessage = data.detail.message || nmtError.description;
+          }
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        // Check for Pipeline-specific error codes when service is pipeline
+        if (service === 'pipeline' && PIPELINE_ERRORS[errorCode as keyof typeof PIPELINE_ERRORS]) {
+          const pipelineError = PIPELINE_ERRORS[errorCode as keyof typeof PIPELINE_ERRORS];
+          errorTitle = pipelineError.title;
+          // Handle S2S_LANGUAGE_PAIR_NOT_SUPPORTED with source/target replacement
+          if (errorCode === 'S2S_LANGUAGE_PAIR_NOT_SUPPORTED') {
+            const source = data.detail.sourceLanguage || data.detail.source || 'source';
+            const target = data.detail.targetLanguage || data.detail.target || 'target';
+            errorMessage = data.detail.message || pipelineError.description.replace('{source}', source).replace('{target}', target);
+          } else {
+            errorMessage = data.detail.message || pipelineError.description;
+          }
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        // Check for OCR-specific error codes when service is OCR
+        if (service === 'ocr' && OCR_ERRORS[errorCode as keyof typeof OCR_ERRORS]) {
+          const ocrError = OCR_ERRORS[errorCode as keyof typeof OCR_ERRORS];
+          errorTitle = ocrError.title;
+          errorMessage = data.detail.message || ocrError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        // Check for Transliteration-specific error codes when service is Transliteration
+        if (service === 'transliteration' && TRANSLITERATION_ERRORS[errorCode as keyof typeof TRANSLITERATION_ERRORS]) {
+          const transliterationError = TRANSLITERATION_ERRORS[errorCode as keyof typeof TRANSLITERATION_ERRORS];
+          errorTitle = transliterationError.title;
+          errorMessage = data.detail.message || transliterationError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        // Check for Language Detection-specific error codes when service is Language Detection
+        if (service === 'language-detection' && LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof LANGUAGE_DETECTION_ERRORS]) {
+          const languageDetectionError = LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof LANGUAGE_DETECTION_ERRORS];
+          errorTitle = languageDetectionError.title;
+          errorMessage = data.detail.message || languageDetectionError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        // Check for Speaker Diarization-specific error codes when service is Speaker Diarization
+        if (service === 'speaker-diarization' && SPEAKER_DIARIZATION_ERRORS[errorCode as keyof typeof SPEAKER_DIARIZATION_ERRORS]) {
+          const speakerDiarizationError = SPEAKER_DIARIZATION_ERRORS[errorCode as keyof typeof SPEAKER_DIARIZATION_ERRORS];
+          errorTitle = speakerDiarizationError.title;
+          errorMessage = data.detail.message || speakerDiarizationError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        // Check for Audio Language Detection-specific error codes when service is Audio Language Detection
+        if (service === 'audio-language-detection' && AUDIO_LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof AUDIO_LANGUAGE_DETECTION_ERRORS]) {
+          const audioLanguageDetectionError = AUDIO_LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof AUDIO_LANGUAGE_DETECTION_ERRORS];
+          errorTitle = audioLanguageDetectionError.title;
+          errorMessage = data.detail.message || audioLanguageDetectionError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        // Check for NER-specific error codes when service is NER
+        if (service === 'ner' && NER_ERRORS[errorCode as keyof typeof NER_ERRORS]) {
+          const nerError = NER_ERRORS[errorCode as keyof typeof NER_ERRORS];
+          errorTitle = nerError.title;
+          errorMessage = data.detail.message || nerError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        // Check for ASR-specific error codes (or when no service / asr)
+        if (ASR_ERRORS[errorCode as keyof typeof ASR_ERRORS]) {
+          const asrError = ASR_ERRORS[errorCode as keyof typeof ASR_ERRORS];
+          errorTitle = asrError.title;
+          errorMessage = data.detail.message || asrError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        // Unknown error code: use backend message (already set above) and format title from code
+        if (data.detail.message) {
+          errorTitle = formatErrorCode(errorCode);
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
         
         // Format permission denied errors with clear title
         if (errorCode === 'PERMISSION_DENIED' || errorCode.includes('PERMISSION_DENIED')) {
@@ -127,7 +323,181 @@ export function extractErrorInfo(error: any): ErrorInfo {
           errorTitle = formatErrorCode(errorCode);
         }
       } else if (data.detail.code) {
-        const errorCode = String(data.detail.code);
+        const errorCode = String(data.detail.code).toUpperCase();
+        
+        // Check for common errors first (apply to all services)
+        if (COMMON_ERRORS[errorCode as keyof typeof COMMON_ERRORS]) {
+          const commonError = COMMON_ERRORS[errorCode as keyof typeof COMMON_ERRORS];
+          errorTitle = commonError.title;
+          errorMessage = data.detail.message || commonError.description;
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        if (service === 'tts' && TTS_ERRORS[errorCode as keyof typeof TTS_ERRORS]) {
+          const ttsError = TTS_ERRORS[errorCode as keyof typeof TTS_ERRORS];
+          errorTitle = ttsError.title;
+          errorMessage = data.detail.message || ttsError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        if (service === 'nmt' && NMT_ERRORS[errorCode as keyof typeof NMT_ERRORS]) {
+          const nmtError = NMT_ERRORS[errorCode as keyof typeof NMT_ERRORS];
+          errorTitle = nmtError.title;
+          if (errorCode === 'LANGUAGE_PAIR_NOT_SUPPORTED') {
+            const source = data.detail.sourceLanguage || data.detail.source || 'source';
+            const target = data.detail.targetLanguage || data.detail.target || 'target';
+            errorMessage = data.detail.message || nmtError.description.replace('{source}', source).replace('{target}', target);
+          } else {
+            errorMessage = data.detail.message || nmtError.description;
+          }
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        if (service === 'pipeline' && PIPELINE_ERRORS[errorCode as keyof typeof PIPELINE_ERRORS]) {
+          const pipelineError = PIPELINE_ERRORS[errorCode as keyof typeof PIPELINE_ERRORS];
+          errorTitle = pipelineError.title;
+          if (errorCode === 'S2S_LANGUAGE_PAIR_NOT_SUPPORTED') {
+            const source = data.detail.sourceLanguage || data.detail.source || 'source';
+            const target = data.detail.targetLanguage || data.detail.target || 'target';
+            errorMessage = data.detail.message || pipelineError.description.replace('{source}', source).replace('{target}', target);
+          } else {
+            errorMessage = data.detail.message || pipelineError.description;
+          }
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        if (service === 'ocr' && OCR_ERRORS[errorCode as keyof typeof OCR_ERRORS]) {
+          const ocrError = OCR_ERRORS[errorCode as keyof typeof OCR_ERRORS];
+          errorTitle = ocrError.title;
+          errorMessage = data.detail.message || ocrError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        if (service === 'transliteration' && TRANSLITERATION_ERRORS[errorCode as keyof typeof TRANSLITERATION_ERRORS]) {
+          const transliterationError = TRANSLITERATION_ERRORS[errorCode as keyof typeof TRANSLITERATION_ERRORS];
+          errorTitle = transliterationError.title;
+          errorMessage = data.detail.message || transliterationError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        if (service === 'language-detection' && LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof LANGUAGE_DETECTION_ERRORS]) {
+          const languageDetectionError = LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof LANGUAGE_DETECTION_ERRORS];
+          errorTitle = languageDetectionError.title;
+          errorMessage = data.detail.message || languageDetectionError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        if (service === 'speaker-diarization' && SPEAKER_DIARIZATION_ERRORS[errorCode as keyof typeof SPEAKER_DIARIZATION_ERRORS]) {
+          const speakerDiarizationError = SPEAKER_DIARIZATION_ERRORS[errorCode as keyof typeof SPEAKER_DIARIZATION_ERRORS];
+          errorTitle = speakerDiarizationError.title;
+          errorMessage = data.detail.message || speakerDiarizationError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        if (service === 'audio-language-detection' && AUDIO_LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof AUDIO_LANGUAGE_DETECTION_ERRORS]) {
+          const audioLanguageDetectionError = AUDIO_LANGUAGE_DETECTION_ERRORS[errorCode as keyof typeof AUDIO_LANGUAGE_DETECTION_ERRORS];
+          errorTitle = audioLanguageDetectionError.title;
+          errorMessage = data.detail.message || audioLanguageDetectionError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        if (service === 'ner' && NER_ERRORS[errorCode as keyof typeof NER_ERRORS]) {
+          const nerError = NER_ERRORS[errorCode as keyof typeof NER_ERRORS];
+          errorTitle = nerError.title;
+          errorMessage = data.detail.message || nerError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        if (ASR_ERRORS[errorCode as keyof typeof ASR_ERRORS]) {
+          const asrError = ASR_ERRORS[errorCode as keyof typeof ASR_ERRORS];
+          errorTitle = asrError.title;
+          errorMessage = data.detail.message || asrError.description;
+          if (errorCode === 'RATE_LIMIT_EXCEEDED' && data.detail.retryAfter) {
+            errorMessage = `Too many requests. Please wait ${data.detail.retryAfter} seconds before trying again.`;
+          }
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
+        if (data.detail.message) {
+          errorTitle = formatErrorCode(errorCode);
+          return {
+            title: errorTitle,
+            message: errorMessage,
+            showOnlyMessage: true,
+          };
+        }
+        
         if (errorCode === 'PERMISSION_DENIED' || errorCode.includes('PERMISSION_DENIED')) {
           errorTitle = 'PERMISSION DENIED';
         } else {
@@ -158,7 +528,7 @@ export function extractErrorInfo(error: any): ErrorInfo {
       errorMessage = String(data.message);
     }
   }
-  // Handle API key missing or invalid (from backend or when no key set)
+  // Check for ASR-specific error messages in detail string or message
   const detailStr = typeof error?.response?.data?.detail === 'string' ? error.response.data.detail : '';
   const detailObj = error?.response?.data?.detail;
   const detailMessage = typeof detailObj === 'object' && detailObj !== null && detailObj.message ? String(detailObj.message) : '';
@@ -190,12 +560,49 @@ export function extractErrorInfo(error: any): ErrorInfo {
     errorTitle = 'Authentication Failed';
     if (error?.message?.includes('API key') || error?.message?.includes('api key')) {
       errorMessage = 'API key is required to access this service.';
-    } else if (error?.message?.includes('token') || error?.message?.includes('Token')) {
-      errorMessage = 'Your session has expired. Please sign in again.';
     } else {
-      errorMessage = 'Authentication failed. Please check your API key and login status, then try again.';
+      errorMessage = ASR_ERRORS.AUTH_FAILED.description;
+    }
+    return {
+      title: errorTitle,
+      message: errorMessage,
+      showOnlyMessage: true,
+    };
+  }
+  
+  const lowerMessage = (errorMessage || detailMessage || (error?.message && String(error.message)) || '').toLowerCase();
+  if (status === 403) {
+    const errorCode = String(error?.response?.data?.detail?.error || error?.response?.data?.detail?.code || '').toUpperCase();
+    if (errorCode === 'TENANT_SUSPENDED' || errorCode.includes('SUSPENDED')) {
+      const err = ASR_ERRORS.TENANT_SUSPENDED;
+      return {
+        title: err.title,
+        message: err.description,
+        showOnlyMessage: true,
+      };
+    }
+    // Check if it's unauthorized access (not permission denied)
+    if (errorCode === 'UNAUTHORIZED' || lowerMessage.includes('unauthorized') || lowerMessage.includes('permission')) {
+      const err = COMMON_ERRORS.UNAUTHORIZED;
+      return {
+        title: err.title,
+        message: errorMessage !== 'An unexpected error occurred. Please try again.' ? errorMessage : err.description,
+        showOnlyMessage: true,
+      };
     }
   }
+  // Handle network errors (connection refused, not found, etc.)
+  if (error?.code === 'ECONNREFUSED' || error?.code === 'ENOTFOUND' || error?.code === 'ETIMEDOUT' || 
+      error?.code === 'ECONNABORTED' || error?.message?.includes('Network Error') || 
+      error?.message?.includes('network') || error?.message?.includes('Failed to fetch')) {
+    const err = COMMON_ERRORS.NETWORK_ERROR;
+    return {
+      title: err.title,
+      message: err.description,
+      showOnlyMessage: true,
+    };
+  }
+  
   // Use error.message only when we didn't get a message from response.data (e.g. avoid overwriting "Invalid API key" with "Request failed with status code 403")
   else if (error?.message && errorMessage === 'An unexpected error occurred. Please try again.') {
     errorMessage = error.message;

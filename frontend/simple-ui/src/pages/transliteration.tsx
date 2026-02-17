@@ -14,7 +14,6 @@ import {
   Spinner,
   Text,
   Textarea,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
@@ -22,9 +21,12 @@ import Head from "next/head";
 import React, { useState, useEffect } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import { performTransliterationInference, listTransliterationServices } from "../services/transliterationService";
+import { TRANSLITERATION_ERRORS, MIN_TRANSLITERATION_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
+import { extractErrorInfo } from "../utils/errorHandler";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const TransliterationPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const [inputText, setInputText] = useState("");
   const [sourceLanguage, setSourceLanguage] = useState("en");
@@ -52,11 +54,39 @@ const TransliterationPage: React.FC = () => {
   }, [transliterationServices, serviceId]);
 
   const handleProcess = async () => {
-    if (!inputText.trim()) {
+    const trimmedText = inputText.trim();
+    
+    // Validate input text
+    if (!trimmedText) {
+      const err = TRANSLITERATION_ERRORS.TEXT_REQUIRED;
       toast({
-        title: "Input Required",
-        description: "Please enter text to transliterate.",
-        status: "warning",
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    if (trimmedText.length < MIN_TRANSLITERATION_TEXT_LENGTH) {
+      const err = TRANSLITERATION_ERRORS.TEXT_TOO_SHORT;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    if (trimmedText.length > MAX_TEXT_LENGTH) {
+      const err = TRANSLITERATION_ERRORS.TEXT_TOO_LONG;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -80,7 +110,7 @@ const TransliterationPage: React.FC = () => {
 
     try {
       const startTime = Date.now();
-      const response = await performTransliterationInference(inputText, {
+      const response = await performTransliterationInference(trimmedText, {
         serviceId: serviceId,
         language: {
           sourceLanguage,
@@ -96,24 +126,12 @@ const TransliterationPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Prioritize API error message from response
-      let errorMessage = "Failed to perform transliteration";
-      
-      if (err?.response?.data?.detail?.message) {
-        errorMessage = err.response.data.detail.message;
-      } else if (err?.response?.data?.message) {
-        errorMessage = err.response.data.message;
-      } else if (err?.response?.data?.detail) {
-        if (typeof err.response.data.detail === 'string') {
-          errorMessage = err.response.data.detail;
-        }
-      } else if (err?.message) {
-        errorMessage = err.message;
-      }
+      // Use centralized error handler (transliteration context so backend message shown as default when no specific mapping)
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'transliteration');
       
       setError(errorMessage);
       toast({
-        title: "Error",
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: "error",
         duration: 5000,

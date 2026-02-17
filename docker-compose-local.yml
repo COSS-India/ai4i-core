@@ -100,6 +100,7 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
     container_name: ai4v-zookeeper
@@ -516,6 +517,8 @@ services:
       - ALLOW_ANONYMOUS_ACCESS=true
       - TRITON_ENDPOINT=http://13.200.133.97:9000
       - TRITON_TIMEOUT=120
+    env_file:
+      - ./services/asr-service/.env
     depends_on:
       config-service:
         condition: service_healthy
@@ -603,6 +606,8 @@ services:
     container_name: ai4v-ocr-service
     ports:
       - "8099:8099"
+    env_file:
+      - ./services/ocr-service/.env
     environment:
       - ENV_FILE=.env
     depends_on:
@@ -1217,6 +1222,17 @@ services:
   fluent-bit:
     image: fluent/fluent-bit:latest
     container_name: ai4v-fluent-bit
+    env_file:
+      - ./.env
+    # Log filtering configuration is read from .env file (no hardcoding)
+    # - EXCLUDE_INIT_LOGS: Filter initialization/noise logs (startup messages)
+    #   Set to "true" to exclude service initialization logs (e.g., "Service started successfully", 
+    #   "Registered service with service registry", "Plugin initialized", etc.)
+    #   This prevents logs with trace_ids that don't exist in Jaeger from appearing in OpenSearch Dashboards
+    #   Example: EXCLUDE_INIT_LOGS=true
+    # - INCLUDE_SERVICE_LOGS: Service allowlist (comma-separated list of services to keep)
+    #   Example: INCLUDE_SERVICE_LOGS=asr,tts,ocr,ner,nmt,llm,pipeline,transliteration,language-detection,language-diarization,audio-lang-detection,speaker-diarization,auth
+    #   If not set, all logs are kept (no filtering)
     volumes:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf

@@ -95,7 +95,7 @@ You should see `postgres`, `redis`, `kafka`, `zookeeper`, `influxdb`, and `unlea
 
 ## Step 5: Initialize Database
 
-Run the database initialization script to create all databases and tables. You can use any of these methods:
+Run the database initialization script from the **project root** (the directory containing `docker-compose-local.yml`) to create all databases, tables, and seed data.
 
 **Method 1 (Recommended - using wrapper script):**
 
@@ -103,7 +103,7 @@ Run the database initialization script to create all databases and tables. You c
 ./infrastructure/postgres/init-all-databases.sh
 ```
 
-**Note:** If you get a "permission denied" error, you can run it with `bash`:
+**Note:** If you get a "permission denied" error, run it with `bash`:
 ```bash
 bash infrastructure/postgres/init-all-databases.sh
 ```
@@ -126,7 +126,7 @@ docker compose -f docker-compose-local.yml exec postgres psql -U dhruva_user -d 
 **Note:** The SQL file `infrastructure/postgres/init-all-databases.sql` contains everything needed to set up all databases, tables, and seed data in a single execution. The script now handles existing databases gracefully (errors are ignored if databases already exist).
 
 This script will:
-- Create all required databases (auth_db, config_db, model_management_db, unleash)
+- Create all required databases
 - Create all tables and schemas
 - Set up indexes and triggers
 - Insert seed data (default admin user, roles, permissions, etc.)
@@ -214,8 +214,10 @@ Once all services are running, you can access:
 
 ### Default Credentials
 
-- **Admin User**: `admin@ai4i.com`
-- **Password**: `admin123`
+- **Username**: `admin`
+- **Email**: `admin@ai4inclusion.org`
+- **Password**: `Admin@123`
+- **Role**: ADMIN (all permissions)
 
 ## Troubleshooting
 
@@ -230,6 +232,20 @@ Once all services are running, you can access:
 1. Ensure PostgreSQL is running: `docker compose -f docker-compose-local.yml ps postgres`
 2. Wait a few seconds after starting services for databases to initialize
 3. Re-run the database initialization script if needed
+
+### Postgres volume or "no such file or directory" for pg_data
+
+The default `docker-compose-local.yml` uses a Docker-managed volume (no bind mount), so this error should not occur. If you see it, your compose file (or an override) likely uses a bind mount. Create the host directory that matches `volumes.postgres-data.driver_opts.device` in that file before starting Postgres, for example:
+
+```bash
+mkdir -p /home/ubuntu/ai4i-v/volumes/pg_data
+```
+
+Or use a path in the project: `mkdir -p volumes/pg_data` and set `device: "./volumes/pg_data"` under `postgres-data.driver_opts`.
+
+### Default admin login not working
+
+Use the credentials from the [Default Credentials](#default-credentials) section: **Username** `admin`, **Email** `admin@ai4inclusion.org`, **Password** `Admin@123`. Log in with email or username depending on your UI. If login still fails, re-run the database initialization script from the project root so the default admin and role assignment are (re)created.
 
 ### Port conflicts
 

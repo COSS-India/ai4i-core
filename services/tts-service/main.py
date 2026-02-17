@@ -497,6 +497,9 @@ async def health_check() -> Dict[str, Any]:
         "timestamp": None
     }
     
+    # Check if health logs should be excluded
+    exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+    
     try:
         import time
         health_status["timestamp"] = time.time()
@@ -509,7 +512,8 @@ async def health_check() -> Dict[str, Any]:
             health_status["redis"] = "unavailable"
             
     except Exception as e:
-        logger.error(f"Redis health check failed: {e}")
+        if not exclude_health_logs:
+            logger.error(f"Redis health check failed: {e}")
         health_status["redis"] = "unhealthy"
     
     try:
@@ -522,7 +526,8 @@ async def health_check() -> Dict[str, Any]:
             health_status["postgres"] = "unavailable"
             
     except Exception as e:
-        logger.error(f"PostgreSQL health check failed: {e}")
+        if not exclude_health_logs:
+            logger.error(f"PostgreSQL health check failed: {e}")
         health_status["postgres"] = "unhealthy"
     
     try:
@@ -544,7 +549,8 @@ async def health_check() -> Dict[str, Any]:
         except ImportError:
             health_status["triton"] = "unavailable"
     except Exception as e:
-        logger.error(f"Triton health check failed: {e}")
+        if not exclude_health_logs:
+            logger.error(f"Triton health check failed: {e}")
         health_status["triton"] = "unhealthy"
     
     # Determine overall status

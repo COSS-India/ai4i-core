@@ -11,12 +11,12 @@ import {
   Textarea,
   Button,
   HStack,
-  useToast,
   Box,
   Text,
 } from '@chakra-ui/react';
 import { FaCopy, FaDownload } from 'react-icons/fa';
 import { ASRResultsProps } from '../../types/asr';
+import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
 
 const ASRResults: React.FC<ASRResultsProps> = ({
   transcript,
@@ -30,7 +30,7 @@ const ASRResults: React.FC<ASRResultsProps> = ({
 }) => {
   // For backward compatibility, use wordCount if responseWordCount is not provided
   const finalResponseWordCount = responseWordCount ?? wordCount ?? 0;
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   const handleCopy = () => {
     if (navigator.clipboard) {

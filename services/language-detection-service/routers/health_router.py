@@ -4,12 +4,20 @@ Health check and monitoring endpoints
 """
 
 import logging
+import os
 from typing import Dict, Any
 
 from fastapi import APIRouter, Request, Response
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
+
+# Check if health logs should be excluded
+EXCLUDE_HEALTH_LOGS = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+
+def _should_log_health() -> bool:
+    """Check if health-related logs should be written."""
+    return not EXCLUDE_HEALTH_LOGS
 
 # Create router
 health_router = APIRouter(
@@ -43,7 +51,8 @@ async def health_check(request: Request, response: Response) -> Dict[str, Any]:
             await rc.ping()
             redis_ok = True
     except Exception as e:
-        logger.warning(f"/health: Redis check failed: {e}")
+        if _should_log_health():
+            logger.warning(f"/health: Redis check failed: {e}")
     
     # Check DB
     try:
@@ -53,7 +62,8 @@ async def health_check(request: Request, response: Response) -> Dict[str, Any]:
                 await session.execute(text("SELECT 1"))
             db_ok = True
     except Exception as e:
-        logger.warning(f"/health: PostgreSQL check failed: {e}")
+        if _should_log_health():
+            logger.warning(f"/health: PostgreSQL check failed: {e}")
     
     # Check Triton (optional - don't fail health if Triton is down)
     # Note: Triton endpoint must be resolved via Model Management - no hardcoded fallback
@@ -64,9 +74,11 @@ async def health_check(request: Request, response: Response) -> Dict[str, Any]:
         # Try to get Triton endpoint from a test request if available
         # For health check, we skip Triton validation as it requires serviceId
         # Health check focuses on Redis and DB availability
-        logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
+        if _should_log_health():
+            logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
     except Exception as e:
-        logger.warning(f"/health: Triton check skipped: {e}")
+        if _should_log_health():
+            logger.warning(f"/health: Triton check skipped: {e}")
         triton_ok = False
     
     status_str = "ok" if (redis_ok and db_ok) else "degraded"

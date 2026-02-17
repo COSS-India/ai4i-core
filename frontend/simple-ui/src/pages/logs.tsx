@@ -19,7 +19,6 @@ import {
   TableContainer,
   Text,
   VStack,
-  useToast,
   Badge,
   Spinner,
   Flex,
@@ -52,9 +51,10 @@ import {
   LogSearchResponse,
   LogAggregationResponse,
 } from "../services/observabilityService";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const LogsPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const [page, setPage] = useState(1);

@@ -55,14 +55,32 @@ class AudioConfig(BaseModel):
 
 class ASRInferenceConfig(BaseModel):
     """Configuration for ASR inference."""
-    serviceId: str = Field(..., description="Identifier for ASR service/model")
+    # serviceId is optional to allow SMR to select a service when not provided
+    serviceId: Optional[str] = Field(
+        None,
+        description=(
+            "Identifier for ASR service/model. "
+            "If not provided, SMR service will be called to select a serviceId."
+        ),
+    )
     language: LanguageConfig = Field(..., description="Language configuration")
     audioFormat: Optional[AudioFormat] = Field(None, description="Audio format")
     preProcessors: Optional[List[str]] = Field(None, description="List of preprocessors (e.g., ['vad', 'denoiser'])")
     postProcessors: Optional[List[str]] = Field(None, description="List of postprocessors (e.g., ['itn', 'punctuation'])")
     transcriptionFormat: TranscriptionFormat = Field(TranscriptionFormat.TRANSCRIPT, description="Output format")
     bestTokenCount: int = Field(0, description="Number of n-best tokens", ge=0, le=10)
-    
+
+    @validator("serviceId")
+    def normalize_service_id(cls, v: Optional[str]) -> Optional[str]:
+        """
+        Normalize serviceId:
+        - Allow None or empty string so SMR can resolve when missing
+        - Strip whitespace when provided
+        """
+        if v is not None and v.strip():
+            return v.strip()
+        return None
+
     @validator('preProcessors')
     def normalize_and_validate_preprocessors(cls, v):
         """
@@ -118,5 +136,12 @@ class ASRInferenceRequest(BaseModel):
         return v
     
     def dict(self, **kwargs):
-        """Override dict() to exclude None values."""
+        """
+        Override dict() to exclude None values by default.
+
+        If exclude_none is explicitly set to False by the caller (e.g., for SMR),
+        respect that and return all fields including None.
+        """
+        if "exclude_none" in kwargs and kwargs["exclude_none"] is False:
+            return super().dict(**kwargs)
         return super().dict(exclude_none=True, **kwargs)
