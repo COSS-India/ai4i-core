@@ -22,8 +22,8 @@ from datetime import datetime, date
 from typing import Dict, Any, List, Optional, Tuple, Union
 from enum import Enum
 from uuid import UUID
-from urllib.parse import urlencode, urlparse, parse_qs
-from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security
+from urllib.parse import urlencode, urlparse, parse_qs, quote
+from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security, status
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -44,8 +44,43 @@ from ai4icore_logging import (
     CorrelationMiddleware,
     configure_logging,
 )
-from ai4icore_telemetry import setup_tracing
+from ai4icore_telemetry import setup_tracing, IPCaptureMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
+from smr import (
+    call_policy_engine_for_smr,
+    fetch_candidate_services_for_task,
+    select_service_deterministically,
+    get_downstream_for_task,
+    inject_service_id_if_missing,
+)
+
+# Tenant resolver function - extract tenant context from JWT payload
+# Replicated from services/multi-tenant-feature/utils/tenant_resolver.py
+def resolve_tenant_from_jwt(jwt_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Extract tenant context from JWT payload.
+    
+    This function extracts tenant information from the JWT token payload.
+    It returns a dictionary with tenant context or None if tenant_id is missing.
+    
+    Args:
+        jwt_payload: Dictionary containing JWT token claims
+        
+    Returns:
+        Dictionary with tenant context (tenant_id, tenant_uuid, schema_name, subscriptions, user_subscriptions)
+        or None if tenant_id is not present in the payload
+    """
+    tenant_id = jwt_payload.get("tenant_id")
+    if not tenant_id:
+        return None
+    
+    return {
+        "tenant_id": tenant_id,
+        "tenant_uuid": jwt_payload.get("tenant_uuid"),
+        "schema_name": jwt_payload.get("schema_name"),
+        "subscriptions": jwt_payload.get("subscriptions", []),
+        "user_subscriptions": jwt_payload.get("user_subscriptions", []),
+    }
 
 # OpenTelemetry for distributed tracing
 try:
@@ -107,6 +142,9 @@ except ImportError:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
+# Auth service base URL (also used by SMR for auth metadata if needed)
+AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8081")
+
 # Pydantic models for ASR endpoints
 class AudioInput(BaseModel):
     """Audio input for ASR processing."""
@@ -119,7 +157,7 @@ class LanguageConfig(BaseModel):
 
 class ASRInferenceConfig(BaseModel):
     """Configuration for ASR inference."""
-    serviceId: str = Field(..., description="ASR service/model ID")
+    serviceId: Optional[str] = Field(None, description="ASR service/model ID (optional; Smart Router will assign if omitted)")
     language: LanguageConfig = Field(..., description="Language configuration")
     audioFormat: str = Field(default="wav", description="Audio format")
     samplingRate: int = Field(default=16000, description="Audio sampling rate")
@@ -155,8 +193,11 @@ class NMTTextInput(BaseModel):
 
 class NMTInferenceConfig(BaseModel):
     """Configuration for NMT inference."""
-    serviceId: str = Field(..., description="Identifier for NMT service/model")
+    serviceId: Optional[str] = Field(None, description="Identifier for NMT service/model (optional; Smart Router will assign if omitted)")
     language: NMTLanguagePair = Field(..., description="Language pair configuration")
+    # Optional context for context-aware routing. When X-Context-Aware is true,
+    # this field becomes required at runtime in the NMT fast-path logic.
+    context: Optional[str] = Field(None, description="Optional context string for context-aware translation")
 
 class NMTInferenceRequest(BaseModel):
     """NMT inference request model."""
@@ -172,6 +213,32 @@ class NMTTranslationOutput(BaseModel):
 class NMTInferenceResponse(BaseModel):
     """NMT inference response model."""
     output: List[NMTTranslationOutput] = Field(..., description="Translation results")
+
+# Pydantic models for LLM endpoints
+class LLMTextInput(BaseModel):
+    """Text input for LLM processing."""
+    source: str = Field(..., description="Input text to process")
+
+class LLMInferenceConfig(BaseModel):
+    """Configuration for LLM inference."""
+    serviceId: Optional[str] = Field(None, description="Identifier for LLM service/model (optional; Smart Router will assign if omitted)")
+    inputLanguage: Optional[str] = Field(None, description="Input language code (e.g., 'en', 'hi')")
+    outputLanguage: Optional[str] = Field(None, description="Output language code")
+
+class LLMInferenceRequest(BaseModel):
+    """LLM inference request model."""
+    input: List[LLMTextInput] = Field(..., description="List of text inputs to process", min_items=1)
+    config: LLMInferenceConfig = Field(..., description="Configuration for inference")
+    controlConfig: Optional[Dict[str, Any]] = Field(None, description="Additional control parameters")
+
+class LLMOutput(BaseModel):
+    """LLM output result."""
+    source: str = Field(..., description="Source text")
+    target: str = Field(..., description="Processed text")
+
+class LLMInferenceResponse(BaseModel):
+    """LLM inference response model."""
+    output: List[LLMOutput] = Field(..., description="Processing results")
 
 # Pydantic models for TTS endpoints
 class Gender(str, Enum):
@@ -198,7 +265,7 @@ class TTSTextInput(BaseModel):
 
 class TTSInferenceConfig(BaseModel):
     """Configuration for TTS inference."""
-    serviceId: str = Field(..., description="TTS service/model ID")
+    serviceId: Optional[str] = Field(None, description="TTS service/model ID (optional; Smart Router will assign if omitted)")
     language: TTSLanguageConfig = Field(..., description="Language configuration")
     gender: Gender = Field(default=Gender.FEMALE, description="Voice gender")
     audioFormat: AudioFormat = Field(default=AudioFormat.WAV, description="Output audio format")
@@ -294,10 +361,9 @@ class OCRInferenceConfig(BaseModel):
 
 
 
-    serviceId: str = Field(
-
-        ..., description="OCR service/model ID (e.g., ai4bharat/surya-ocr-v1--gpu--t4)"
-
+    serviceId: Optional[str] = Field(
+        None,
+        description="OCR service/model ID (optional; Smart Router will assign if omitted)",
     )
 
     language: OCRLanguageConfig = Field(..., description="Language configuration")
@@ -385,8 +451,8 @@ class NERTextInput(BaseModel):
 
 class NERInferenceConfig(BaseModel):
     """Configuration for NER inference."""
-    serviceId: str = Field(
-        ..., description="NER service/model ID (e.g., Dhruva NER)"
+    serviceId: Optional[str] = Field(
+        None, description="NER service/model ID (optional; Smart Router will assign if omitted)"
     )
     language: NERLanguageConfig = Field(..., description="Language configuration")
 
@@ -465,7 +531,10 @@ class TransliterationTextInput(BaseModel):
 
 class TransliterationInferenceConfig(BaseModel):
     """Transliteration inference configuration."""
-    serviceId: str = Field(..., description="Identifier for transliteration service/model")
+    serviceId: Optional[str] = Field(
+        None,
+        description="Identifier for transliteration service/model (optional; Smart Router will assign if omitted)",
+    )
     language: TransliterationLanguagePair = Field(..., description="Language pair configuration")
     isSentence: bool = Field(True, description="True for sentence-level, False for word-level transliteration")
     numSuggestions: int = Field(
@@ -498,7 +567,10 @@ class LanguageDetectionTextInput(BaseModel):
 
 class LanguageDetectionInferenceConfig(BaseModel):
     """Configuration for language detection inference."""
-    serviceId: str = Field(..., description="Language detection service/model ID")
+    serviceId: Optional[str] = Field(
+        None,
+        description="Language detection service/model ID (optional; Smart Router will assign if omitted)",
+    )
 
 
 class LanguageDetectionInferenceRequest(BaseModel):
@@ -524,7 +596,10 @@ class SpeakerDiarizationControlConfig(BaseModel):
 
 class SpeakerDiarizationConfig(BaseModel):
     """Configuration for speaker diarization inference."""
-    serviceId: str = Field(..., description="Identifier for speaker diarization service/model")
+    serviceId: Optional[str] = Field(
+        None,
+        description="Identifier for speaker diarization service/model (optional; Smart Router will assign if omitted)",
+    )
 
 class SpeakerDiarizationAudioInput(BaseModel):
     """Audio input for speaker diarization."""
@@ -569,7 +644,10 @@ class LanguageDiarizationControlConfig(BaseModel):
 
 class LanguageDiarizationConfig(BaseModel):
     """Configuration for language diarization inference."""
-    serviceId: str = Field(..., description="Identifier for language diarization service/model")
+    serviceId: Optional[str] = Field(
+        None,
+        description="Identifier for language diarization service/model (optional; Smart Router will assign if omitted)",
+    )
 
 class LanguageDiarizationAudioInput(BaseModel):
     """Audio input for language diarization."""
@@ -613,7 +691,10 @@ class AudioLangDetectionControlConfig(BaseModel):
 
 class AudioLangDetectionConfig(BaseModel):
     """Configuration for audio language detection inference."""
-    serviceId: str = Field(..., description="Identifier for audio language detection service/model")
+    serviceId: Optional[str] = Field(
+        None,
+        description="Identifier for audio language detection service/model (optional; Smart Router will assign if omitted)",
+    )
 
 class AudioLangDetectionAudioInput(BaseModel):
     """Audio input for audio language detection."""
@@ -832,7 +913,93 @@ class Task(BaseModel):
     """Task type."""
     type: str = Field(..., description="Task type")
 
-#pydantic models for model management
+# Pydantic models for Smart Model Router / Policy Engine integration
+
+
+# Policy Enums (matching policy-engine models)
+class LatencyPolicy(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+class CostPolicy(str, Enum):
+    TIER_1 = "tier_1"
+    TIER_2 = "tier_2"
+    TIER_3 = "tier_3"
+
+class AccuracyPolicy(str, Enum):
+    SENSITIVE = "sensitive"
+    STANDARD = "standard"
+
+
+class SMRPolicyInput(BaseModel):
+    """Optional policy overrides for Smart Model Router."""
+
+    latency: Optional[str] = Field(
+        None, description="Desired latency profile (low, medium, high)"
+    )
+    cost: Optional[str] = Field(
+        None, description="Desired cost profile (tier_1, tier_2, tier_3)"
+    )
+    accuracy: Optional[str] = Field(
+        None, description="Desired accuracy profile (sensitive, standard)"
+    )
+
+
+class SMRInferenceRequest(BaseModel):
+    """
+    Generic Smart Model Routing request.
+
+    - Client sends original inference request body without serviceId.
+    - Gateway calls Policy Engine for latency/cost/accuracy policy.
+    - Gateway queries Model Management and deterministically selects a serviceId.
+    - Gateway injects serviceId into config.serviceId and forwards the inference call.
+    """
+
+    task_type: "ModelTaskTypeEnum" = Field(
+        ...,
+        description="Task type to route for (asr, nmt, tts, llm, ocr, transliteration, etc.)",
+    )
+    request_body: Dict[str, Any] = Field(
+        ..., description="Original inference request body (without serviceId)"
+    )
+    tenant_id: Optional[str] = Field(
+        None, description="Tenant identifier used for policy lookup"
+    )
+    user_id: Optional[str] = Field(
+        None, description="User identifier used for policy evaluation"
+    )
+    language: Optional[str] = Field(
+        None,
+        description="Preferred language code for routing (used to prefer matching benchmarks when available)",
+    )
+    policy: Optional[SMRPolicyInput] = Field(
+        None, description="Optional policy overrides for latency/cost/accuracy"
+    )
+    service_id: Optional[str] = Field(
+        None,
+        description="Explicit service ID. If provided, router will skip selection and use this directly.",
+    )
+
+
+class SMRSelectedService(BaseModel):
+    """Details of the selected service used for routing (for observability/debugging)."""
+
+    service_id: str = Field(..., description="Selected service identifier")
+    model_id: Optional[str] = Field(None, description="Associated model identifier")
+    name: Optional[str] = Field(None, description="Service name")
+    task_type: Optional["ModelTaskTypeEnum"] = Field(
+        None, description="Task type of the selected service"
+    )
+    policy_id: Optional[str] = Field(
+        None, description="Policy ID returned by policy-engine"
+    )
+    policy_version: Optional[str] = Field(
+        None, description="Policy version returned by policy-engine"
+    )
+
+
+# pydantic models for model management
 
 class ModelTaskTypeEnum(str, Enum):
     
@@ -847,6 +1014,11 @@ class ModelTaskTypeEnum(str, Enum):
     language_diarization = "language-diarization"
     ocr = "ocr"
     ner = "ner"
+
+
+# Resolve forward references for SMR models that reference ModelTaskTypeEnum
+SMRInferenceRequest.model_rebuild()
+SMRSelectedService.model_rebuild()
 
 class VersionStatus(str, Enum):
     """Model version status."""
@@ -1188,6 +1360,118 @@ class ServiceListResponse(BaseModel):
     modelVersion: Optional[str] = Field(None, description="Model version associated with this service")
     versionStatus: Optional[str] = Field(None, description="Version status of the associated model (ACTIVE or DEPRECATED)")
 
+# A/B Testing Experiment Models
+class ExperimentVariantRequest(BaseModel):
+    """Request model for creating/updating an experiment variant"""
+    variant_name: str = Field(..., description="Name of the variant (e.g., 'control', 'variant-a')")
+    service_id: str = Field(..., description="Service ID to use for this variant")
+    traffic_percentage: int = Field(..., ge=0, le=100, description="Traffic percentage (0-100)")
+    description: Optional[str] = Field(None, description="Optional description of the variant")
+
+class ExperimentVariantResponse(BaseModel):
+    """Response model for experiment variant"""
+    id: str
+    variant_name: str
+    service_id: str
+    traffic_percentage: int
+    description: Optional[str] = None
+    created_at: Union[str, datetime]
+    updated_at: Union[str, datetime]
+
+class ExperimentCreateRequest(BaseModel):
+    """Request model for creating an experiment"""
+    name: str = Field(..., min_length=1, max_length=255, description="Experiment name")
+    description: Optional[str] = Field(None, description="Experiment description")
+    task_type: Optional[List[str]] = Field(None, description="List of task types to filter (e.g., ['asr', 'tts'])")
+    languages: Optional[List[str]] = Field(None, description="List of language codes to filter (e.g., ['hi', 'en'])")
+    start_date: Optional[Union[datetime, str]] = Field(None, description="Experiment start date (optional, defaults to now)")
+    end_date: Optional[Union[datetime, str]] = Field(None, description="Experiment end date (optional)")
+    variants: List[ExperimentVariantRequest] = Field(..., min_items=2, description="At least 2 variants required")
+
+class ExperimentUpdateRequest(BaseModel):
+    """Request model for updating an experiment"""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    task_type: Optional[List[str]] = None
+    languages: Optional[List[str]] = None
+    start_date: Optional[Union[datetime, str]] = None
+    end_date: Optional[Union[datetime, str]] = None
+    variants: Optional[List[ExperimentVariantRequest]] = None
+
+class ExperimentStatusUpdateRequest(BaseModel):
+    """Request model for updating experiment status"""
+    action: str = Field(..., description="Action to perform: 'start', 'stop', 'pause', 'resume', or 'cancel'")
+
+class ExperimentResponse(BaseModel):
+    """Response model for experiment"""
+    id: str
+    name: str
+    description: Optional[str] = None
+    status: str
+    task_type: Optional[List[str]] = None
+    languages: Optional[List[str]] = None
+    start_date: Optional[Union[datetime, str]] = None
+    end_date: Optional[Union[datetime, str]] = None
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+    created_at: Union[datetime, str]
+    updated_at: Union[datetime, str]
+    started_at: Optional[Union[datetime, str]] = None
+    completed_at: Optional[Union[datetime, str]] = None
+    variants: List[ExperimentVariantResponse] = []
+
+class ExperimentListResponse(BaseModel):
+    """Response model for listing experiments"""
+    id: str
+    name: str
+    description: Optional[str] = None
+    status: str
+    task_type: Optional[List[str]] = None
+    languages: Optional[List[str]] = None
+    start_date: Optional[Union[datetime, str]] = None
+    end_date: Optional[Union[datetime, str]] = None
+    created_at: Union[datetime, str]
+    updated_at: Union[datetime, str]
+    variant_count: int = 0
+
+class ExperimentVariantSelectionRequest(BaseModel):
+    """Request model for selecting a variant for a given request"""
+    task_type: str = Field(..., description="Task type (e.g., 'asr', 'tts')")
+    language: Optional[str] = Field(None, description="Language code (e.g., 'hi', 'en')")
+    request_id: Optional[str] = Field(None, description="Optional request ID for consistent routing")
+    user_id: Optional[str] = Field(None, description="Optional user ID so same user gets same variant")
+    service_id: Optional[str] = Field(
+        None,
+        description="Optional service ID; when set, only experiments that include this service as a variant are considered"
+    )
+
+class ExperimentVariantSelectionResponse(BaseModel):
+    """Response model for variant selection"""
+    experiment_id: Optional[str] = None
+    variant_id: Optional[str] = None
+    variant_name: Optional[str] = None
+    service_id: Optional[str] = None
+    model_id: Optional[str] = None
+    model_version: Optional[str] = None
+    endpoint: Optional[str] = None
+    api_key: Optional[str] = None
+    is_experiment: bool = False
+
+
+class ExperimentMetricsResponse(BaseModel):
+    """Response model for experiment metrics (per variant per day)"""
+    experiment_id: str
+    variant_id: str
+    variant_name: str
+    request_count: int
+    success_count: int
+    error_count: int
+    success_rate: float
+    avg_latency_ms: Optional[int] = None
+    custom_metrics: Optional[Dict[str, Any]] = None
+    metric_date: Union[datetime, str]
+
+
 # Auth models (for API documentation)
 class RegisterUser(BaseModel):
     email: str = Field(..., description="Email address")
@@ -1255,6 +1539,9 @@ class APIKeyUpdateBody(BaseModel):
         description="Set to true to activate the key, or false to deactivate (soft revoke) the key",
     )
 
+class APIKeySelectBody(BaseModel):
+    api_key_id: int = Field(..., description="API key ID to mark as selected for the current user")
+
 class AssignRoleBody(BaseModel):
     user_id: int = Field(..., description="ID of the user to assign role to")
     role_name: str = Field(..., description="Name of the role to assign (e.g., 'USER', 'ADMIN', 'MODERATOR', 'GUEST')")
@@ -1270,11 +1557,13 @@ class TenantStatus(str, Enum):
     IN_PROGRESS = "IN_PROGRESS"
     ACTIVE = "ACTIVE"
     SUSPENDED = "SUSPENDED"
+    DEACTIVATED = "DEACTIVATED"
 
 class TenantUserStatus(str, Enum):
     """Tenant user status enumeration."""
     ACTIVE = "ACTIVE"
     SUSPENDED = "SUSPENDED"
+    DEACTIVATED = "DEACTIVATED"
 
 class SubscriptionType(str, Enum):
     """Subscription type enumeration."""
@@ -1285,6 +1574,7 @@ class SubscriptionType(str, Enum):
     PIPELINE = "pipeline"
     OCR = "ocr"
     NER = "ner"
+    Speech_to_Speech_Pipeline = "speech_to_speech_pipeline"
     Transliteration = "transliteration"
     Langauage_detection = "language_detection"
     Speaker_diarization = "speaker_diarization"
@@ -1303,13 +1593,19 @@ class ServiceCurrencyType(str, Enum):
     """Service currency type enumeration."""
     INR = "INR"
 
+class QuotaStructure(BaseModel):
+    """Structure for quota limits"""
+    characters_length: Optional[int] = Field(None, ge=0, description="Character length quota")
+    audio_length_in_min: Optional[int] = Field(None, ge=0, description="Audio length quota in minutes")
+
 class TenantRegisterRequest(BaseModel):
     """Request model for tenant registration."""
     organization_name: str = Field(..., min_length=2, max_length=255)
     domain: str = Field(..., min_length=3, max_length=255)
     contact_email: EmailStr = Field(..., description="Contact email for the tenant")
-    requested_subscriptions: Optional[List[SubscriptionType]] = Field(default=[], description="List of requested service subscriptions")
-    requested_quotas: Optional[Dict[str, Any]] = Field(None, description="Requested quotas configuration")
+    requested_subscriptions: Optional[List[SubscriptionType]] = Field(default=[], description="List of requested service subscriptions, e.g. ['tts', 'asr']")
+    requested_quotas: Optional[QuotaStructure] = Field(None, description="Requested quota limits for the tenant")
+    usage_quota: Optional[QuotaStructure] = Field(None, description="Initial usage quota values")
 
 class TenantRegisterResponse(BaseModel):
     """Response model for tenant registration."""
@@ -1319,8 +1615,8 @@ class TenantRegisterResponse(BaseModel):
     schema_name: str = Field(..., description="Database schema name")
     subscriptions: List[str] = Field(..., description="List of active subscriptions")
     quotas: Dict[str, Any] = Field(..., description="Quota configuration")
+    usage_quota: Optional[Dict[str, Any]] = Field(None, description="Usage quota values")
     status: str = Field(..., description="Tenant status")
-    token: str = Field(..., description="Email verification token")
     message: Optional[str] = Field(None, description="Additional message")
 
 class UserRegisterRequest(BaseModel):
@@ -1328,9 +1624,14 @@ class UserRegisterRequest(BaseModel):
     tenant_id: str = Field(..., description="Tenant identifier", example="acme-corp-5d448a")
     email: EmailStr = Field(..., description="User email address")
     username: str = Field(..., min_length=3, max_length=100, description="Username")
-    full_name: str = Field(None, description="Full name of the user")
+    full_name: Optional[str] = Field(None, description="Full name of the user")
     services: List[str] = Field(..., description="List of services the user has access to", example=["tts", "asr"])
     is_approved: bool = Field(False, description="Indicates if the user is approved by tenant admin")
+    role: Optional[str] = Field(
+        None,
+        description="Role for the user (key-value: {'role': 'USER'}). Allowed: ADMIN, USER, GUEST, MODERATOR.",
+        example="USER",
+    )
 
 class UserRegisterResponse(BaseModel):
     """Response model for user registration."""
@@ -1339,7 +1640,9 @@ class UserRegisterResponse(BaseModel):
     username: str = Field(..., description="Username")
     email: str = Field(..., description="User email")
     services: List[str] = Field(..., description="List of services")
+    schema: str = Field(..., description="Tenant schema name")
     created_at: datetime = Field(..., description="Creation timestamp")
+    role: str = Field(..., description="Role for the user (key-value: {'role': 'USER'})")
 
 class TenantStatusUpdateRequest(BaseModel):
     """Request model for updating tenant status."""
@@ -1369,10 +1672,23 @@ class TenantUserStatusUpdateResponse(BaseModel):
 
 class TenantResendEmailVerificationRequest(BaseModel):
     """Request model for resending email verification."""
-    tenant_id: UUID = Field(..., description="Tenant UUID")
+    tenant_id: str = Field(..., description="Tenant identifier (e.g., 'acme-corp')")
 
 class TenantResendEmailVerificationResponse(BaseModel):
     """Response model for resending email verification."""
+    tenant_uuid: UUID = Field(..., description="Tenant UUID")
+    tenant_id: str = Field(..., description="Tenant identifier")
+    token: str = Field(..., description="Verification token")
+    message: str = Field(..., description="Response message")
+
+
+class TenantSendEmailVerificationRequest(BaseModel):
+    """Request model for sending initial email verification link."""
+    tenant_id: str = Field(..., description="Tenant identifier (e.g., 'acme-corp')")
+
+
+class TenantSendEmailVerificationResponse(BaseModel):
+    """Response model for sending initial email verification link."""
     tenant_uuid: UUID = Field(..., description="Tenant UUID")
     tenant_id: str = Field(..., description="Tenant identifier")
     token: str = Field(..., description="Verification token")
@@ -1392,6 +1708,27 @@ class TenantSubscriptionResponse(BaseModel):
     """Response model for tenant subscription operations."""
     tenant_id: str = Field(..., description="Tenant identifier")
     subscriptions: List[str] = Field(..., description="Updated list of subscriptions")
+
+
+class UserSubscriptionAddRequest(BaseModel):
+    """Request model for adding user subscriptions under a tenant."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="Auth user id for tenant user")
+    subscriptions: List[str] = Field(..., min_items=1, description="List of subscriptions to add for the user")
+
+
+class UserSubscriptionRemoveRequest(BaseModel):
+    """Request model for removing user subscriptions under a tenant."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="Auth user id for tenant user")
+    subscriptions: List[str] = Field(..., min_items=1, description="List of subscriptions to remove for the user")
+
+
+class UserSubscriptionResponse(BaseModel):
+    """Response model for user subscription operations."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="Auth user id for tenant user")
+    subscriptions: List[str] = Field(..., description="Updated list of user subscriptions")
 
 class ServiceCreateRequest(BaseModel):
     """Request model for creating a service."""
@@ -1437,6 +1774,27 @@ class ServiceUpdateResponse(BaseModel):
     changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
 
 
+class TenantUpdateRequest(BaseModel):
+    """Request model for updating tenant information"""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    organization_name: Optional[str] = Field(None, min_length=2, max_length=255, description="Organization name")
+    contact_email: Optional[str] = Field(None, description="Contact email address")
+    domain: Optional[str] = Field(None, min_length=3, max_length=255, description="Domain name")
+    requested_quotas: Optional[QuotaStructure] = Field(None, description="Requested quota limits (characters_length, audio_length_in_min)")
+    usage_quota: Optional[QuotaStructure] = Field(None, description="Usage quota values (characters_length, audio_length_in_min)")
+    role: Optional[str] = Field(
+        None,
+        description="Role for tenant admin (key-value: {'role': 'ADMIN'}). Allowed: ADMIN, USER, GUEST, MODERATOR.",
+    )
+
+class TenantUpdateResponse(BaseModel):
+    """Response model for tenant update"""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    message: str = Field(..., description="Update message")
+    changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
+    updated_fields: List[str] = Field(..., description="List of updated field names")
+    role: Optional[str] = Field(None, description="Current tenant admin role after update")
+
 class TenantViewResponse(BaseModel):
     """Response model for viewing tenant information."""
     id: UUID = Field(..., description="Tenant UUID")
@@ -1449,8 +1807,10 @@ class TenantViewResponse(BaseModel):
     subscriptions: list[str] = Field(..., description="List of subscriptions")
     status: str = Field(..., description="Tenant status")
     quotas: Dict[str , Any] = Field(..., description="Quotas for the tenant")
+    usage_quota: Optional[Dict[str, Any]] = Field(None, description="Usage quota values")
     created_at: str = Field(..., description="Creation timestamp")
     updated_at: str = Field(..., description="Update timestamp")
+    role: str = Field("", description="Role for tenant admin (key-value: {'role': 'ADMIN'})")
 
 
 class TenantUserViewResponse(BaseModel):
@@ -1464,6 +1824,56 @@ class TenantUserViewResponse(BaseModel):
     status: str = Field(..., description="User status")
     created_at: str = Field(..., description="Creation timestamp")
     updated_at: str = Field(..., description="Update timestamp")
+    is_approved: bool = Field(False, description="Whether the user is approved by tenant admin")
+    role: str = Field("", description="Role for the user (key-value: {'role': 'USER'})")
+
+
+class ListTenantsResponse(BaseModel):
+    """Response model for listing all tenants"""
+    count: int = Field(..., description="Total number of tenants")
+    tenants: List[TenantViewResponse] = Field(..., description="List of tenant details")
+
+
+class ListUsersResponse(BaseModel):
+    """Response model for listing all tenant users"""
+    count: int = Field(..., description="Total number of users")
+    users: List[TenantUserViewResponse] = Field(..., description="List of user details")
+
+
+class TenantUserUpdateRequest(BaseModel):
+    """Request model for updating tenant user information."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="Auth user id for tenant user")
+    username: Optional[str] = Field(None,min_length=3,max_length=100,description="Username for the tenant user")
+    email: Optional[EmailStr] = Field(None,description="Email address for the tenant user")
+    is_approved: Optional[bool] = Field(None,description="Whether the tenant user is approved by the tenant admin")
+    role: Optional[str] = Field(
+        None,
+        description="Role for the user (key-value: {'role': 'USER'}). Allowed: ADMIN, USER, GUEST, MODERATOR.",
+    )
+
+
+class TenantUserUpdateResponse(BaseModel):
+    """Response model for tenant user update."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="Auth user id for tenant user")
+    message: str = Field(..., description="Update message")
+    changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
+    updated_fields: List[str] = Field(..., description="List of updated field names")
+    role: Optional[str] = Field(None, description="Current role after update (key-value: {'role': 'USER'})")
+
+
+class TenantUserDeleteRequest(BaseModel):
+    """Request model for deleting a tenant user."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="User ID")
+
+
+class TenantUserDeleteResponse(BaseModel):
+    """Response model for tenant user deletion."""
+    tenant_id: str = Field(..., description="Tenant identifier")
+    user_id: int = Field(..., description="User ID")
+    message: str = Field(..., description="Deletion message")
 
 
 
@@ -1590,6 +2000,7 @@ class RouteManager:
             '/api/v1/feature-flags': 'config-service',
             '/api/v1/metrics': 'metrics-service',
             '/api/v1/telemetry': 'telemetry-service',
+            '/api/v1/observability': 'telemetry-service',
             '/api/v1/alerting': 'alerting-service',
             '/api/v1/dashboard': 'dashboard-service',
             '/api/v1/asr': 'asr-service',
@@ -1629,6 +2040,7 @@ class RouteManager:
                 logger.info(f"Loaded {len(self.routes)} routes from Redis")
         except Exception as e:
             logger.warning(f"Failed to load routes from Redis: {e}")
+
 
 # OpenAPI Tags Metadata for organizing endpoints by service
 tags_metadata = [
@@ -1695,6 +2107,10 @@ tags_metadata = [
     {
         "name": "Multi-Tenant",
         "description": "Multi-tenant management endpoints. Tenant registration, user management, billing, and subscriptions.",
+    },
+    {
+        "name": "Observability",
+        "description": "Observability endpoints for logs and traces. Search, aggregate, and query logs and distributed traces with RBAC support.",
     },
     {
         "name": "Status",
@@ -1791,18 +2207,30 @@ def requires_both_auth_and_api_key(request: Request) -> bool:
     path = request.url.path.lower()
     services_requiring_both = [
         "asr", "nmt", "tts", "pipeline", "llm", "ocr", "transliteration",
-        "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection"
-        # Note: NER removed - it only requires API key, not both
+        "language-detection", "speaker-diarization", "language-diarization", "audio-lang-detection", "ner"
     ]
     for svc in services_requiring_both:
         if f"/api/v1/{svc}" in path:
             return True
     return False
 
-async def validate_api_key_permissions(api_key: str, service: str, action: str) -> None:
-    """Call auth-service to validate API key permissions."""
+def is_multi_tenant_request(request: Request) -> bool:
+    """Multi-tenant endpoints should use only auth tokens (no API key)."""
+    return request.url.path.lower().startswith("/api/v1/multi-tenant")
+
+async def validate_api_key_permissions(api_key: str, service: str, action: str, user_id: Optional[int] = None) -> None:
+    """Call auth-service to validate API key permissions.
+    
+    Args:
+        api_key: The API key to validate
+        service: Service name (ocr, asr, etc.)
+        action: Action type (read, inference)
+        user_id: Optional user ID from JWT for ownership check in BOTH mode
+    """
     url = f"{AUTH_SERVICE_URL}/api/v1/auth/validate-api-key"
     request_body = {"api_key": api_key, "service": service, "action": action}
+    if user_id is not None:
+        request_body["user_id"] = user_id
     
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -1846,10 +2274,14 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str) 
         if data.get("valid") is False:
             # Extract the actual error message from auth-service
             error_message = data.get("message", "Invalid API key or insufficient permissions")
+            # Format error message to be consistent with "insufficient permission" format
+            if "does not have" in error_message.lower() or "permission" in error_message.lower():
+                if "insufficient permission" not in error_message.lower():
+                    error_message = f"Authorization error: Insufficient permission. {error_message}"
             raise HTTPException(
                 status_code=403,
                 detail={
-                    "error": "INVALID_API_KEY",
+                    "error": "AUTHORIZATION_ERROR",
                     "message": error_message
                 }
             )
@@ -1918,7 +2350,17 @@ def build_auth_headers(request: Request, credentials: Optional[HTTPAuthorization
         headers['Authorization'] = f"Bearer {credentials.credentials}"
     if api_key:
         headers['X-API-Key'] = api_key
+    # Forward user ID for downstream A/B variant sticky assignment (set by ensure_authenticated_for_request after JWT validation)
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is not None:
+        headers["X-User-Id"] = str(user_id)
     
+    # Multi-tenant endpoints: AUTH_TOKEN only (Bearer JWT); API key not required
+    if is_multi_tenant_request(request):
+        headers.pop("X-API-Key", None)
+        headers["X-Auth-Source"] = "AUTH_TOKEN"
+        return headers
+
     # Set X-Auth-Source based on what's present (API Gateway has already validated)
     # Always overwrite X-Auth-Source for services requiring both (don't trust incoming header)
     if requires_both_auth_and_api_key(request):
@@ -1963,6 +2405,184 @@ async def _increment_try_it_count(key: str) -> int:
     entry["count"] += 1
     try_it_counters[key] = entry
     return entry["count"]
+
+async def get_verified_tenant_id(request: Request) -> str:
+    """
+    Extract and verify tenant_id from JWT token.
+    
+    The tenant_id in JWT is already verified by auth-service when token was issued,
+    so we trust it. However, we verify that:
+    1. User is authenticated (user_id exists)
+    2. Tenant_id is present in JWT (user belongs to a tenant)
+    
+    Returns:
+        str: Verified tenant_id from JWT token
+        
+    Raises:
+        HTTPException: If user_id or tenant_id is missing
+    """
+    user_id = getattr(request.state, "user_id", None)
+    
+    # Verify user_id is present (required for authenticated requests)
+    if not user_id:
+        logger.warning(
+            "Tenant verification: user_id missing from authenticated request",
+            extra={"context": {"path": request.url.path}}
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "code": "AUTHENTICATION_REQUIRED",
+                "message": "User ID not found in authentication token. Please log in again."
+            }
+        )
+    
+    # Extract tenant_id from JWT token (set by auth middleware)
+    tenant_id = getattr(request.state, "tenant_id", None)
+    
+    # If tenant_id is missing from JWT, user is not associated with any tenant.
+    # For free-user flows we allow this and simply return None so that callers
+    # (e.g. SMR) can apply free-user routing logic without tenant context.
+    if not tenant_id:
+        logger.warning(
+            "Tenant verification: tenant_id missing from JWT token (treating as free user)",
+            extra={
+                "context": {
+                    "user_id": user_id,
+                    "path": request.url.path,
+                    "message": "No tenant_id in token; falling back to free-user routing.",
+                }
+            },
+        )
+        return None
+    
+    logger.debug(
+        "Tenant verified from JWT",
+        extra={
+            "context": {
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "path": request.url.path
+            }
+        }
+    )
+    
+    return tenant_id
+
+
+def extract_and_validate_policy_headers(request: Request) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Extract and validate policy headers from request.
+    
+    Headers:
+    - X-Latency-Policy: low, medium, or high
+    - X-Cost-Policy: tier_1, tier_2, or tier_3
+    - X-Accuracy-Policy: sensitive or standard
+    
+    Returns:
+        Tuple[Optional[str], Optional[str], Optional[str]]: (latency_policy, cost_policy, accuracy_policy)
+        
+    Raises:
+        HTTPException: If any header value is invalid or the combination is against policy
+    """
+    latency_policy = None
+    cost_policy = None
+    accuracy_policy = None
+    
+    # Extract latency policy header
+    latency_header = request.headers.get("X-Latency-Policy") or request.headers.get("x-latency-policy")
+    if latency_header:
+        latency_header = latency_header.strip().lower()
+        try:
+            # Validate against enum
+            LatencyPolicy(latency_header)
+            latency_policy = latency_header
+        except ValueError:
+            valid_values = ", ".join([e.value for e in LatencyPolicy])
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_LATENCY_POLICY",
+                    "message": f"Invalid X-Latency-Policy header value: '{latency_header}'. Expected one of: {valid_values}"
+                }
+            )
+    
+    # Extract cost policy header
+    cost_header = request.headers.get("X-Cost-Policy") or request.headers.get("x-cost-policy")
+    if cost_header:
+        cost_header = cost_header.strip().lower()
+        try:
+            # Validate against enum
+            CostPolicy(cost_header)
+            cost_policy = cost_header
+        except ValueError:
+            valid_values = ", ".join([e.value for e in CostPolicy])
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_COST_POLICY",
+                    "message": f"Invalid X-Cost-Policy header value: '{cost_header}'. Expected one of: {valid_values}"
+                }
+            )
+    
+    # Extract accuracy policy header
+    accuracy_header = request.headers.get("X-Accuracy-Policy") or request.headers.get("x-accuracy-policy")
+    if accuracy_header:
+        accuracy_header = accuracy_header.strip().lower()
+        try:
+            # Validate against enum
+            AccuracyPolicy(accuracy_header)
+            accuracy_policy = accuracy_header
+        except ValueError:
+            valid_values = ", ".join([e.value for e in AccuracyPolicy])
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_ACCURACY_POLICY",
+                    "message": f"Invalid X-Accuracy-Policy header value: '{accuracy_header}'. Expected one of: {valid_values}"
+                }
+            )
+    
+    # ------------------------------------------------------------------
+    # Cross-header policy constraints (only applied when user passes
+    # explicit headers).
+    #
+    # Business rules:
+    # - "High accuracy" (mapped to AccuracyPolicy.SENSITIVE) cannot be
+    #   combined with "low cost" (CostPolicy.TIER_1).
+    # - "Low latency" (LatencyPolicy.LOW) cannot be combined with
+    #   "low cost" (CostPolicy.TIER_1).
+    # ------------------------------------------------------------------
+    if cost_policy == CostPolicy.TIER_1.value:
+        # Low cost + high accuracy (sensitive) is not allowed
+        if accuracy_policy == AccuracyPolicy.SENSITIVE.value:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "POLICY_CONSTRAINT_VIOLATION",
+                    "message": (
+                        "Requested combination X-Accuracy-Policy='sensitive' with "
+                        "X-Cost-Policy='tier_1' is against policy. "
+                        "Please choose a higher cost tier or lower accuracy profile."
+                    ),
+                },
+            )
+        # Low cost + low latency is not allowed
+        if latency_policy == LatencyPolicy.LOW.value:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "POLICY_CONSTRAINT_VIOLATION",
+                    "message": (
+                        "Requested combination X-Latency-Policy='low' with "
+                        "X-Cost-Policy='tier_1' is against policy. "
+                        "Please choose a higher cost tier or higher latency profile."
+                    ),
+                },
+            )
+    
+    return latency_policy, cost_policy, accuracy_policy
+
 
 async def ensure_authenticated_for_request(req: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str]) -> None:
     """Enforce authentication - require BOTH Bearer token AND API key for all services."""
@@ -2045,6 +2665,29 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             },
                             headers={"WWW-Authenticate": "Bearer"}
                         )
+                    
+                    # Set user context in request state (in case middleware didn't set it)
+                    if payload:
+                        # Basic identity used by downstream (e.g. A/B variant sticky assignment via X-User-Id)
+                        req.state.user_id = payload.get("sub") or payload.get("user_id")
+                        req.state.username = payload.get("username")
+                        req.state.permissions = payload.get("permissions", [])
+                        req.state.is_authenticated = True
+                        req.state.jwt_payload = payload
+                        
+                        # Extract tenant information using resolve_tenant_from_jwt
+                        # NOTE:
+                        #   - If tenant info is present, we treat this as a tenant-scoped request.
+                        #   - If tenant info is missing, we now allow "free user" flows (no tenant),
+                        #     so we DO NOT raise an error here. Downstream logic (SMR, services)
+                        #     can handle tenant_id=None appropriately.
+                        tenant_context = resolve_tenant_from_jwt(payload)
+                        if tenant_context:
+                            req.state.tenant_id = tenant_context.get("tenant_id")
+                            req.state.tenant_uuid = tenant_context.get("tenant_uuid")
+                            req.state.schema_name = tenant_context.get("schema_name")
+                            req.state.subscriptions = tenant_context.get("subscriptions", [])
+                            req.state.user_subscriptions = tenant_context.get("user_subscriptions", [])
                 except HTTPException:
                     raise
                 except Exception as e:
@@ -2097,7 +2740,9 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                         authz_span.set_attribute("auth.method", "API_KEY")
                     
                     try:
-                        await validate_api_key_permissions(api_key, service, action)
+                        # In BOTH mode, pass user_id to validate API key ownership
+                        jwt_user_id = getattr(req.state, "user_id", None)
+                        await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
                         if authz_span:
                             authz_span.set_attribute("auth.authorized", True)
                             authz_span.set_status(Status(StatusCode.OK))
@@ -2131,10 +2776,26 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
         else:
             # For other services: existing logic (either Bearer OR API key)
             auth_source = (req.headers.get("x-auth-source") or "").upper()
+            if is_multi_tenant_request(req):
+                auth_source = "AUTH_TOKEN"
             use_api_key = api_key is not None and auth_source == "API_KEY"
             if auth_span:
                 auth_span.set_attribute("auth.source", auth_source)
                 auth_span.set_attribute("auth.use_api_key", use_api_key)
+
+            # If x-auth-source is explicitly set to API_KEY, require API key
+            if auth_source == "API_KEY" and not api_key:
+                if auth_span:
+                    auth_span.set_attribute("auth.authenticated", False)
+                    auth_span.set_attribute("error.type", "MissingAPIKey")
+                    auth_span.set_status(Status(StatusCode.ERROR, "API key required"))
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error": "API_KEY_MISSING",
+                        "message": "API key is required when X-Auth-Source is set to API_KEY"
+                    }
+                )
 
             if use_api_key:
                 # Validate API key permissions via auth-service
@@ -2158,7 +2819,8 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             authz_span.set_attribute("auth.method", "API_KEY")
                         
                         try:
-                            await validate_api_key_permissions(api_key, service, action)
+                            # For API_KEY-only mode, no user_id to check ownership
+                            await validate_api_key_permissions(api_key, service, action, user_id=None)
                             if authz_span:
                                 authz_span.set_attribute("auth.authorized", True)
                                 authz_span.set_status(Status(StatusCode.OK))
@@ -2238,6 +2900,38 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             },
                             headers={"WWW-Authenticate": "Bearer"}
                         )
+                    
+                    # Set user context in request state (in case middleware didn't set it)
+                    if payload:
+                        # Basic identity used by downstream (e.g. A/B variant sticky assignment via X-User-Id)
+                        req.state.user_id = payload.get("sub") or payload.get("user_id")
+                        req.state.username = payload.get("username")
+                        req.state.permissions = payload.get("permissions", [])
+                        req.state.is_authenticated = True
+                        req.state.jwt_payload = payload
+                        
+                        # Extract tenant information using resolve_tenant_from_jwt
+                        tenant_context = resolve_tenant_from_jwt(payload)
+                        if tenant_context:
+                            req.state.tenant_id = tenant_context.get("tenant_id")
+                            req.state.tenant_uuid = tenant_context.get("tenant_uuid")
+                            req.state.schema_name = tenant_context.get("schema_name")
+                            req.state.subscriptions = tenant_context.get("subscriptions", [])
+                            req.state.user_subscriptions = tenant_context.get("user_subscriptions", [])
+                        else:
+                            pass
+                            # Tenant is required - return error if not present
+                            # if auth_span:
+                            #     auth_span.set_attribute("error", True)
+                            #     auth_span.set_attribute("error.type", "TenantMissing")
+                            #     auth_span.set_status(Status(StatusCode.ERROR, "Tenant ID missing from token"))
+                            # raise HTTPException(
+                            #     status_code=403,
+                            #     detail={
+                            #         "code": "TENANT_REQUIRED",
+                            #         "message": "Tenant ID is required for this operation. Your account is not associated with any tenant. Please contact your administrator."
+                            #     }
+                            # )
                     if auth_span:
                         auth_span.set_attribute("auth.authenticated", True)
                         auth_span.set_attribute("auth.authorized", True)  # Bearer token implies authorization
@@ -2303,6 +2997,22 @@ def custom_openapi():
         "/api/v1/auth/oauth2/callback",
         "/api/v1/auth/oauth2/google/authorize",
         "/api/v1/auth/oauth2/google/callback",
+        "/api/v1/multi-tenant/register/tenant",
+        "/api/v1/multi-tenant/register/users",
+        "/api/v1/multi-tenant/update/tenants/status",
+        "/api/v1/multi-tenant/update/users/status",
+        "/api/v1/multi-tenant/email/verify",
+        "/api/v1/multi-tenant/view/tenant",
+        "/api/v1/multi-tenant/view/user",
+        "/api/v1/multi-tenant/email/resend",
+        "/api/v1/multi-tenant/subscriptions/add",
+        "/api/v1/multi-tenant/subscriptions/remove",
+        "/api/v1/multi-tenant/user/subscriptions/add",
+        "/api/v1/multi-tenant/user/subscriptions/remove",
+        "/api/v1/multi-tenant/register/services",
+        "/api/v1/multi-tenant/update/services",
+        "/api/v1/multi-tenant/list/services",
+        "/api/v1/multi-tenant/resolve-tenant-from-user/{user_id}",
     ])
 
     # Auto-tag operations by path prefix for better grouping in Swagger and inject header where applicable
@@ -2321,6 +3031,8 @@ def custom_openapi():
         ("/api/v1/audio-lang-detection", "Audio Language Detection"),
         ("/api/v1/pipeline", "Pipeline"),
         ("/api/v1/feature-flags", "Feature Flags"),
+        ("/api/v1/observability", "Observability"),
+        ("/api/v1/telemetry", "Observability"),
         ("/api/v1/protected", "Protected"),
         ("/api/v1/status", "Status"),
         ("/health", "Status"),
@@ -2409,11 +3121,24 @@ def prepare_forwarding_headers(request: Request, correlation_id: str, request_id
     return headers
 
 def log_request(method: str, path: str, service: str, instance: str, duration: float, status_code: int) -> None:
-    """Log request details for observability"""
-    # Skip logging 400-series errors - these are logged by RequestLoggingMiddleware to avoid duplicates
+    """Log downstream service requests for observability.
+
+    Successful 2xx responses are already logged at the service level, so we
+    skip them here to avoid duplicate 200 logs in OpenSearch. 4xx client
+    errors are handled by the API gateway's RequestLoggingMiddleware.
+    This helper is therefore reserved for server-side failures (5xx) so that
+    only one error log is emitted per failing call.
+    """
+    # Skip 2xx/3xx responses – these are logged by downstream services
+    if 200 <= status_code < 400:
+        return
+
+    # Skip 4xx client errors – these are logged by RequestLoggingMiddleware
     if 400 <= status_code < 500:
         return
-    logger.info(
+
+    # Log 5xx errors that originate from downstream services
+    logger.error(
         f"Request: {method} {path} -> {service}:{instance} "
         f"({duration:.3f}s, {status_code})"
     )
@@ -2519,6 +3244,10 @@ if TRACING_AVAILABLE:
                 excluded_urls="/health,/metrics,/enterprise/metrics,/docs,/redoc,/openapi.json"
             )
             logger.info("✅ FastAPI instrumented for distributed tracing")
+            
+            # Instrument httpx client in auth_middleware for tracing HTTP calls to auth-service
+            # This must happen AFTER tracing is set up
+            auth_middleware.instrument_http_client()
         else:
             logger.warning("⚠️ Tracing setup returned None")
     except Exception as e:
@@ -2526,6 +3255,10 @@ if TRACING_AVAILABLE:
 
 # Add correlation middleware (must be first to set correlation ID)
 app.add_middleware(CorrelationMiddleware)
+
+# Add IP capture middleware (after FastAPIInstrumentor, captures IP for all spans)
+if TRACING_AVAILABLE:
+    app.add_middleware(IPCaptureMiddleware)
 
 # Add authentication/authorization middleware (after correlation, before logging)
 from middleware.auth_middleware_gateway import AuthGatewayMiddleware
@@ -2587,6 +3320,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Expose all response headers so browser-based tools (like smr_ui.html)
+    # can read and display them via the Fetch API.
+    expose_headers=["*"],
 )
 
 # Add trusted host middleware
@@ -2604,6 +3340,27 @@ load_balancer = None
 route_manager = None
 health_monitor_task = None
 
+# Import alert management module
+try:
+    from alert_management import (
+        RoutingRuleTimingUpdate,
+        init_db_pool, close_db_pool,
+        extract_organization, validate_organization,
+        AlertDefinitionCreate, AlertDefinitionUpdate, AlertDefinitionResponse,
+        NotificationReceiverCreate, NotificationReceiverUpdate, NotificationReceiverResponse,
+        RoutingRuleCreate, RoutingRuleUpdate, RoutingRuleResponse,
+        create_alert_definition, get_alert_definition_by_id, list_alert_definitions,
+        update_alert_definition, delete_alert_definition, toggle_alert_definition,
+        create_notification_receiver, get_notification_receiver_by_id, list_notification_receivers,
+        update_notification_receiver, delete_notification_receiver,
+        create_routing_rule, get_routing_rule_by_id, list_routing_rules,
+        update_routing_rule, delete_routing_rule, update_routing_rule_timing
+    )
+    ALERT_MANAGEMENT_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Alert management module not available: {e}")
+    ALERT_MANAGEMENT_AVAILABLE = False
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize connections and components on startup"""
@@ -2618,6 +3375,14 @@ async def startup_event():
         route_manager = RouteManager(redis_client=None if not redis_client else redis_client)
         await route_manager.load_routes_from_redis()  # Try to load from Redis if available
         logger.info("Route manager initialized")
+        
+        # Initialize alert management database pool
+        if ALERT_MANAGEMENT_AVAILABLE:
+            try:
+                await init_db_pool()
+                logger.info("Alert management database pool initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize alert management database pool: {e}")
         
         logger.info("API Gateway initialized successfully (using direct service URLs)")
         
@@ -2634,6 +3399,14 @@ async def shutdown_event():
     if http_client:
         await http_client.aclose()
         logger.info("HTTP client closed")
+    
+    # Close alert management database pool
+    if ALERT_MANAGEMENT_AVAILABLE:
+        try:
+            await close_db_pool()
+            logger.info("Alert management database pool closed")
+        except Exception as e:
+            logger.warning(f"Error closing alert management database pool: {e}")
 
 @app.get("/")
 async def root():
@@ -2666,6 +3439,52 @@ async def health_check():
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail="Service unhealthy")
 
+
+def _get_downstream_for_task(task_type: ModelTaskTypeEnum) -> Tuple[str, str]:
+    """
+    Map task_type to (service_name, inference_path) for downstream call.
+
+    This keeps Smart Model Router generic while reusing existing inference endpoints.
+    """
+    mapping: Dict[ModelTaskTypeEnum, Tuple[str, str]] = {
+        ModelTaskTypeEnum.asr: ("asr-service", "/api/v1/asr/inference"),
+        ModelTaskTypeEnum.nmt: ("nmt-service", "/api/v1/nmt/inference"),
+        ModelTaskTypeEnum.tts: ("tts-service", "/api/v1/tts/inference"),
+        ModelTaskTypeEnum.ocr: ("ocr-service", "/api/v1/ocr/inference"),
+        ModelTaskTypeEnum.llm: ("llm-service", "/api/v1/llm/inference"),
+        ModelTaskTypeEnum.transliteration: (
+            "transliteration-service",
+            "/api/v1/transliteration/inference",
+        ),
+        ModelTaskTypeEnum.language_detection: (
+            "language-detection-service",
+            "/api/v1/language-detection/inference",
+        ),
+        ModelTaskTypeEnum.speaker_diarization: (
+            "speaker-diarization-service",
+            "/api/v1/speaker-diarization/inference",
+        ),
+        ModelTaskTypeEnum.language_diarization: (
+            "language-diarization-service",
+            "/api/v1/language-diarization/inference",
+        ),
+        ModelTaskTypeEnum.audio_lang_detection: (
+            "audio-lang-detection-service",
+            "/api/v1/audio-lang-detection/inference",
+        ),
+        ModelTaskTypeEnum.ner: ("ner-service", "/api/v1/ner/inference"),
+    }
+
+    if task_type not in mapping:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "UNSUPPORTED_TASK",
+                "message": f"Smart routing does not support task_type '{task_type.value}'",
+            },
+        )
+    return mapping[task_type]
+
 @app.get("/api/v1/status", tags=["Status"])
 async def api_status():
     """API status endpoint - Get information about all available services"""
@@ -2693,6 +3512,205 @@ async def api_status():
             "pipeline": os.getenv("PIPELINE_SERVICE_URL", "http://pipeline-service:8090"),
             "multi-tenant": os.getenv("MULTI_TENANT_SERVICE_URL", "http://multi-tenant-service:8001")
         }
+    }
+
+
+@app.post(
+    "/api/v1/smr/inference",
+    tags=["Smart Routing"],
+    response_model=Dict[str, Any],
+)
+async def smart_model_routed_inference(
+    payload: SMRInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    Deterministic Smart Model Routed inference entrypoint.
+
+    - Accepts an inference request body without serviceId (wrapped in request_body).
+    - Calls Policy Engine to evaluate latency/cost/accuracy policies.
+    - Fetches candidate services from Model Management for the given task_type.
+    - Deterministically selects a serviceId using benchmark latency and health.
+    - Injects the selected serviceId into request_body.config.serviceId.
+    - Forwards the call to the appropriate downstream inference endpoint.
+    """
+    # Enforce authentication (same semantics as other inference endpoints)
+    await ensure_authenticated_for_request(request, credentials, api_key)
+
+    # Extract verified tenant_id from JWT token (not from request body)
+    tenant_id = await get_verified_tenant_id(request)
+    user_id = getattr(request.state, "user_id", None)
+
+    # Extract and validate policy headers (prefer headers over payload.policy)
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
+    
+    # Fall back to payload.policy if headers not provided
+    if not latency_policy and payload.policy and payload.policy.latency:
+        latency_policy = payload.policy.latency
+    if not cost_policy and payload.policy and payload.policy.cost:
+        cost_policy = payload.policy.cost
+    if not accuracy_policy and payload.policy and payload.policy.accuracy:
+        accuracy_policy = payload.policy.accuracy
+
+    # Reuse global HTTP client and tracing
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+
+    # Short-circuit: explicit service_id provided -> skip policy/model-management
+    selected_service_id: Optional[str] = payload.service_id
+    policy_result: Optional[Dict[str, Any]] = None
+
+    if not selected_service_id:
+        # Determine policy values: prioritize headers, fall back to Policy Engine
+        # Check if any policy headers are provided (highest priority)
+        headers_provided = latency_policy is not None or cost_policy is not None or accuracy_policy is not None
+        
+        actual_latency_policy: Optional[str] = None
+        actual_cost_policy: Optional[str] = None
+        actual_accuracy_policy: Optional[str] = None
+        
+        if headers_provided:
+            # Headers are present: use them directly, skip Policy Engine call
+            logger.info(
+                "SMR: Using policy headers directly (skipping Policy Engine)",
+                extra={
+                    "context": {
+                        "task_type": payload.task_type.value,
+                        "user_id": user_id,
+                        "tenant_id": tenant_id,
+                        "latency_policy": latency_policy,
+                        "cost_policy": cost_policy,
+                        "accuracy_policy": accuracy_policy,
+                        "decision": "header_priority",
+                    }
+                },
+            )
+            # Use header values directly
+            actual_latency_policy = latency_policy
+            actual_cost_policy = cost_policy
+            actual_accuracy_policy = accuracy_policy
+        else:
+            # No headers provided: call Policy Engine to get tenant-specific policies
+            logger.info(
+                "SMR: No policy headers provided, calling Policy Engine for tenant policies",
+                extra={
+                    "context": {
+                        "task_type": payload.task_type.value,
+                        "user_id": user_id,
+                        "tenant_id": tenant_id,
+                        "decision": "policy_engine_lookup",
+                    }
+                },
+            )
+            
+            policy_result = await call_policy_engine_for_smr(
+                http_client=http_client,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                latency_policy=None,  # No headers, let Policy Engine determine from tenant
+                cost_policy=None,
+                accuracy_policy=None,
+            )
+
+            # Extract actual policy values from policy_result (policy engine returns tenant-specific policies)
+            actual_latency_policy = policy_result.get("latency_policy")
+            actual_cost_policy = policy_result.get("cost_policy")
+            actual_accuracy_policy = policy_result.get("accuracy_policy")
+            
+            # Convert enum values to strings if needed
+            if actual_latency_policy and hasattr(actual_latency_policy, 'value'):
+                actual_latency_policy = actual_latency_policy.value
+            if actual_cost_policy and hasattr(actual_cost_policy, 'value'):
+                actual_cost_policy = actual_cost_policy.value
+            if actual_accuracy_policy and hasattr(actual_accuracy_policy, 'value'):
+                actual_accuracy_policy = actual_accuracy_policy.value
+
+        # 2. Fetch candidate services for the given task_type
+        candidate_services = await fetch_candidate_services_for_task(
+            http_client=http_client,
+            task_type=payload.task_type.value,
+        )
+
+        if not candidate_services:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "NO_CANDIDATE_SERVICES",
+                    "message": "No candidate services found for the given task type.",
+                },
+            )
+
+        # 3. Deterministically select best service based on policy values and benchmarks/health
+        # Use the actual policy values (from headers or Policy Engine)
+        selected_service = select_service_deterministically(
+            candidate_services,
+            preferred_language=payload.language,
+            latency_policy=actual_latency_policy,
+            cost_policy=actual_cost_policy,
+            accuracy_policy=actual_accuracy_policy,
+        )
+        selected_service_id = str(selected_service.get("serviceId"))
+
+    # 4. Inject selected serviceId into request body under config.serviceId
+    body_dict = json.loads(json.dumps(payload.request_body))
+    if not isinstance(body_dict, dict):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_REQUEST_BODY",
+                "message": "request_body must be a JSON object.",
+            },
+        )
+
+    config_obj = body_dict.get("config") or {}
+    if not isinstance(config_obj, dict):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_CONFIG",
+                "message": "request_body.config must be an object.",
+            },
+        )
+    config_obj["serviceId"] = selected_service_id
+    body_dict["config"] = config_obj
+
+    # 5. Determine downstream service and inference path based on task_type
+    service_name, inference_path = get_downstream_for_task(payload.task_type.value)
+
+    # 6. Build headers (reuse auth headers helper) and proxy to downstream
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    downstream_body = json.dumps(body_dict).encode("utf-8")
+
+    # Forward to downstream inference endpoint
+    downstream_response = await proxy_to_service(
+        None,
+        inference_path,
+        service_name,
+        method="POST",
+        body=downstream_body,
+        headers=headers,
+    )
+
+    # Attach routing metadata in response headers for observability
+    if isinstance(downstream_response, Response):
+        downstream_response.headers["X-SMR-ServiceId"] = selected_service_id or ""
+        if policy_result:
+            downstream_response.headers["X-SMR-PolicyId"] = str(
+                policy_result.get("policy_id", "")
+            )
+            downstream_response.headers["X-SMR-PolicyVersion"] = str(
+                policy_result.get("policy_version", "")
+            )
+        return downstream_response
+
+    # Fallback: ensure we always return a JSON-like object
+    return {
+        "detail": "Inference completed via Smart Model Router.",
+        "serviceId": selected_service_id,
     }
 
 # Authentication Endpoints (Proxy to Auth Service)
@@ -2723,7 +3741,10 @@ async def login_user(
     body: LoginRequestBody,
     request: Request
 ):
-    """Login user"""
+    """
+    Login user. Returns access_token, refresh_token, and user object.
+    For tenant admins/users, the user object includes tenant_id.
+    """
     import json
     # Prepare headers without Content-Length (httpx will set it)
     headers = {k: v for k, v in request.headers.items() 
@@ -2798,7 +3819,7 @@ async def get_current_user(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """Get current user info"""
+    """Get current user info including tenant_id for tenant admins/users"""
     return await proxy_to_auth_service(request, "/api/v1/auth/me")
 
 @app.put("/api/v1/auth/me", tags=["Authentication"])
@@ -2987,6 +4008,29 @@ async def create_api_key(
     return await proxy_to_service(
         None,
         "/api/v1/auth/api-keys",
+        "auth-service",
+        method="POST",
+        body=payload,
+        headers=headers
+    )
+
+
+@app.post("/api/v1/auth/api-keys/select", tags=["Authentication"])
+async def select_api_key(
+    body: APIKeySelectBody,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Select an API key for the current user."""
+    import json
+    payload = json.dumps(body.dict()).encode("utf-8")
+
+    headers = build_auth_headers(request, credentials, None)
+    headers["Content-Type"] = "application/json"
+
+    return await proxy_to_service(
+        None,
+        "/api/v1/auth/api-keys/select",
         "auth-service",
         method="POST",
         body=payload,
@@ -3217,7 +4261,679 @@ async def get_all_users(
     """
     return await proxy_to_auth_service(request, "/api/v1/auth/users")
 
-    # ASR Service Endpoints (Proxy to ASR Service)
+# Alert Management Endpoints (Dynamic Alert Configuration)
+if ALERT_MANAGEMENT_AVAILABLE:
+    @app.post("/api/v1/alerts/definitions", response_model=AlertDefinitionResponse, tags=["Alerts"])
+    async def create_alert_definition_endpoint(
+        payload: AlertDefinitionCreate,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Create a new alert definition
+        
+        - Regular users: organization is automatically extracted from API key or X-Organization header
+        - Admin users: Can specify organization as query parameter to create alerts for any organization
+        
+        Requires: alerts.create permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.create", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            # Admin explicitly specified organization - use it
+            validate_organization(organization)
+            target_organization = organization
+        else:
+            # Regular user or admin didn't specify - extract from request
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await create_alert_definition(target_organization, payload, username)
+    
+    @app.get("/api/v1/alerts/definitions", response_model=List[AlertDefinitionResponse], tags=["Alerts"])
+    async def list_alert_definitions_endpoint(
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        enabled_only: bool = Query(False, description="Only return enabled alerts")
+    ):
+        """
+        List alert definitions.
+        
+        - Regular users: See only alerts for their organization (determined by API key or X-Organization header)
+        - Admin users: See all alerts across all organizations (requires "alerts.admin" permission or "ADMIN" role)
+        
+        Requires: alerts.read permission (alerts.admin for viewing all alerts)
+        """
+        await check_permission("alerts.read", request, credentials)
+        
+        # Check if user is admin (has alerts.admin permission or ADMIN role)
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload = await auth_middleware.verify_token(token)
+            if payload:
+                user_permissions = payload.get("permissions", [])
+                user_roles = payload.get("roles", [])
+                # Check for admin permission or role
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # If admin, return all alerts (organization=None)
+        # Otherwise, return only alerts for the user's organization
+        if is_admin:
+            organization = None  # None means return all alerts
+        else:
+            organization = extract_organization(request)
+        
+        return await list_alert_definitions(organization, enabled_only)
+    
+    @app.get("/api/v1/alerts/definitions/{alert_id}", response_model=AlertDefinitionResponse, tags=["Alerts"])
+    async def get_alert_definition_endpoint(
+        alert_id: int,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Get a specific alert definition by ID
+        
+        - Regular users: Can only get alerts for their organization
+        - Admin users: Can get alerts for any organization by specifying organization, or omit to get any alert
+        
+        Requires: alerts.read permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.read", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin:
+            # Admin can access any alert - pass None to skip organization check
+            if organization:
+                validate_organization(organization)
+                return await get_alert_definition_by_id(alert_id, organization)
+            else:
+                # Admin didn't specify organization - allow access to any alert
+                return await get_alert_definition_by_id(alert_id, None)
+        else:
+            # Regular user - only their organization
+            target_organization = extract_organization(request)
+            return await get_alert_definition_by_id(alert_id, target_organization)
+    
+    @app.put("/api/v1/alerts/definitions/{alert_id}", response_model=AlertDefinitionResponse, tags=["Alerts"])
+    async def update_alert_definition_endpoint(
+        alert_id: int,
+        payload: AlertDefinitionUpdate,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Update an alert definition
+        
+        - Regular users: Can only update alerts for their organization
+        - Admin users: Can update alerts for any organization by specifying organization
+        
+        Requires: alerts.update permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.update", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            # Admin explicitly specified organization - use it
+            validate_organization(organization)
+            target_organization = organization
+        elif is_admin:
+            # Admin didn't specify - allow update of any alert (will be checked in update function)
+            target_organization = None
+        else:
+            # Regular user - only their organization
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await update_alert_definition(alert_id, target_organization, payload, username)
+    
+    @app.delete("/api/v1/alerts/definitions/{alert_id}", tags=["Alerts"])
+    async def delete_alert_definition_endpoint(
+        alert_id: int,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Delete an alert definition
+        
+        - Regular users: Can only delete alerts for their organization
+        - Admin users: Can delete alerts for any organization by specifying organization
+        
+        Requires: alerts.delete permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.delete", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            # Admin explicitly specified organization - use it
+            validate_organization(organization)
+            target_organization = organization
+        elif is_admin:
+            # Admin didn't specify - allow delete of any alert
+            target_organization = None
+        else:
+            # Regular user - only their organization
+            target_organization = extract_organization(request)
+        
+        await delete_alert_definition(alert_id, target_organization)
+        return {"message": "Alert definition deleted successfully"}
+    
+    @app.patch("/api/v1/alerts/definitions/{alert_id}/enabled", response_model=AlertDefinitionResponse, tags=["Alerts"])
+    async def toggle_alert_definition_endpoint(
+        alert_id: int,
+        request: Request,
+        enabled: bool = Body(..., description="Enable or disable the alert"),
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Enable or disable an alert definition
+        
+        - Regular users: Can only toggle alerts for their organization (determined by API key or X-Organization header)
+        - Admin users: Can toggle alerts for any organization by specifying organization, or omit to toggle any alert
+        
+        Requires: alerts.update permission (alerts.admin for cross-organization operations)
+        """
+        await check_permission("alerts.update", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload = await auth_middleware.verify_token(token)
+            if payload:
+                user_permissions = payload.get("permissions", [])
+                user_roles = payload.get("roles", [])
+                # Check for admin permission or role
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine target organization
+        if is_admin:
+            if organization:
+                # Admin explicitly specified organization - use it
+                validate_organization(organization)
+                target_organization = organization
+            else:
+                # Admin didn't specify - allow toggling any alert (pass None)
+                target_organization = None
+        else:
+            # Regular user - extract from request
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await toggle_alert_definition(alert_id, target_organization, enabled, username)
+
+    
+    @app.post("/api/v1/alerts/receivers", response_model=NotificationReceiverResponse, tags=["Alerts"])
+    async def create_notification_receiver_endpoint(
+        payload: NotificationReceiverCreate,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Create a new notification receiver
+        
+        - Regular users: organization is automatically extracted from API key or X-Organization header
+        - Admin users: Can specify organization as query parameter to create receivers for any organization
+        
+        Requires: alerts.create permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.create", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            validate_organization(organization)
+            target_organization = organization
+        else:
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await create_notification_receiver(target_organization, payload, username)
+    
+    @app.get("/api/v1/alerts/receivers", response_model=List[NotificationReceiverResponse], tags=["Alerts"])
+    async def list_notification_receivers_endpoint(
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        enabled_only: bool = Query(False, description="Only return enabled receivers")
+    ):
+        """
+        List notification receivers
+        
+        - Regular users: See only receivers for their organization
+        - Admin users: See all receivers across all organizations
+        
+        Requires: alerts.read permission (alerts.admin for viewing all receivers)
+        """
+        await check_permission("alerts.read", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # If admin, return all receivers (organization=None)
+        if is_admin:
+            organization = None
+        else:
+            organization = extract_organization(request)
+        
+        return await list_notification_receivers(organization, enabled_only)
+    
+    @app.get("/api/v1/alerts/receivers/{receiver_id}", response_model=NotificationReceiverResponse, tags=["Alerts"])
+    async def get_notification_receiver_endpoint(
+        receiver_id: int,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Get a specific notification receiver by ID
+        
+        - Regular users: Can only get receivers for their organization
+        - Admin users: Can get receivers for any organization by specifying organization, or omit to get any receiver
+        
+        Requires: alerts.read permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.read", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin:
+            if organization:
+                validate_organization(organization)
+                return await get_notification_receiver_by_id(receiver_id, organization)
+            else:
+                return await get_notification_receiver_by_id(receiver_id, None)
+        else:
+            target_organization = extract_organization(request)
+            return await get_notification_receiver_by_id(receiver_id, target_organization)
+    
+    @app.put("/api/v1/alerts/receivers/{receiver_id}", response_model=NotificationReceiverResponse, tags=["Alerts"])
+    async def update_notification_receiver_endpoint(
+        receiver_id: int,
+        payload: NotificationReceiverUpdate,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Update a notification receiver
+        
+        - Regular users: Can only update receivers for their organization
+        - Admin users: Can update receivers for any organization by specifying organization
+        
+        Requires: alerts.update permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.update", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            validate_organization(organization)
+            target_organization = organization
+        elif is_admin:
+            target_organization = None
+        else:
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await update_notification_receiver(receiver_id, target_organization, payload, username)
+    
+    @app.delete("/api/v1/alerts/receivers/{receiver_id}", tags=["Alerts"])
+    async def delete_notification_receiver_endpoint(
+        receiver_id: int,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Delete a notification receiver
+        
+        - Regular users: Can only delete receivers for their organization
+        - Admin users: Can delete receivers for any organization by specifying organization
+        
+        Requires: alerts.delete permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.delete", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            validate_organization(organization)
+            target_organization = organization
+        elif is_admin:
+            target_organization = None
+        else:
+            target_organization = extract_organization(request)
+        
+        await delete_notification_receiver(receiver_id, target_organization)
+        return {"message": "Notification receiver deleted successfully"}
+    
+    @app.post("/api/v1/alerts/routing-rules", response_model=RoutingRuleResponse, tags=["Alerts"])
+    async def create_routing_rule_endpoint(
+        payload: RoutingRuleCreate,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Create a new routing rule
+        
+        - Regular users: organization is automatically extracted from API key or X-Organization header
+        - Admin users: Can specify organization as query parameter to create rules for any organization
+        
+        Requires: alerts.create permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.create", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            validate_organization(organization)
+            target_organization = organization
+        else:
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await create_routing_rule(target_organization, payload, username)
+    
+    @app.get("/api/v1/alerts/routing-rules", response_model=List[RoutingRuleResponse], tags=["Alerts"])
+    async def list_routing_rules_endpoint(
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        enabled_only: bool = Query(False, description="Only return enabled rules")
+    ):
+        """
+        List routing rules
+        
+        - Regular users: See only rules for their organization
+        - Admin users: See all rules across all organizations
+        
+        Requires: alerts.read permission (alerts.admin for viewing all rules)
+        """
+        await check_permission("alerts.read", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # If admin, return all rules (organization=None)
+        if is_admin:
+            organization = None
+        else:
+            organization = extract_organization(request)
+        
+        return await list_routing_rules(organization, enabled_only)
+    
+    @app.get("/api/v1/alerts/routing-rules/{rule_id}", response_model=RoutingRuleResponse, tags=["Alerts"])
+    async def get_routing_rule_endpoint(
+        rule_id: int,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Get a specific routing rule by ID
+        
+        - Regular users: Can only get rules for their organization
+        - Admin users: Can get rules for any organization by specifying organization, or omit to get any rule
+        
+        Requires: alerts.read permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.read", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin:
+            if organization:
+                validate_organization(organization)
+                return await get_routing_rule_by_id(rule_id, organization)
+            else:
+                return await get_routing_rule_by_id(rule_id, None)
+        else:
+            target_organization = extract_organization(request)
+            return await get_routing_rule_by_id(rule_id, target_organization)
+    
+    @app.put("/api/v1/alerts/routing-rules/{rule_id}", response_model=RoutingRuleResponse, tags=["Alerts"])
+    async def update_routing_rule_endpoint(
+        rule_id: int,
+        payload: RoutingRuleUpdate,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Update a routing rule
+        
+        - Regular users: Can only update rules for their organization
+        - Admin users: Can update rules for any organization by specifying organization
+        
+        Requires: alerts.update permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.update", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            validate_organization(organization)
+            target_organization = organization
+        elif is_admin:
+            target_organization = None
+        else:
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await update_routing_rule(rule_id, target_organization, payload, username)
+    
+    @app.delete("/api/v1/alerts/routing-rules/{rule_id}", tags=["Alerts"])
+    async def delete_routing_rule_endpoint(
+        rule_id: int,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Delete a routing rule
+        
+        - Regular users: Can only delete rules for their organization
+        - Admin users: Can delete rules for any organization by specifying organization
+        
+        Requires: alerts.delete permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.delete", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            validate_organization(organization)
+            target_organization = organization
+        elif is_admin:
+            target_organization = None
+        else:
+            target_organization = extract_organization(request)
+        
+        await delete_routing_rule(rule_id, target_organization)
+        return {"message": "Routing rule deleted successfully"}
+    
+    @app.patch("/api/v1/alerts/routing-rules/timing", tags=["Alerts"])
+    async def update_routing_rule_timing_endpoint(
+        payload: RoutingRuleTimingUpdate,
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    ):
+        """
+        Update timing parameters (group_wait, group_interval, repeat_interval) for routing rules
+        matching the specified criteria.
+        
+        This endpoint updates all routing rules that match:
+        - organization (if specified, or all for admin)
+        - category
+        - severity
+        - alert_type (if specified)
+        - priority (if specified)
+        
+        - Regular users: Can only update rules for their organization
+        - Admin users: Can update rules for any organization by specifying organization, or all organizations if not specified
+        
+        Requires: alerts.update permission (alerts.admin for cross-customer operations)
+        """
+        await check_permission("alerts.update", request, credentials)
+        
+        # Check if user is admin
+        token = credentials.credentials if credentials else None
+        is_admin = False
+        if token:
+            payload_data = await auth_middleware.verify_token(token)
+            if payload_data:
+                user_permissions = payload_data.get("permissions", [])
+                user_roles = payload_data.get("roles", [])
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+        
+        # Determine organization
+        if is_admin and organization:
+            validate_organization(organization)
+            target_organization = organization
+        elif is_admin:
+            target_organization = None  # Admin can update across all organizations
+        else:
+            target_organization = extract_organization(request)
+        
+        username = getattr(request.state, "username", "system")
+        return await update_routing_rule_timing(target_organization, payload, username)
+
+# ASR Service Endpoints (Proxy to ASR Service)
 
 @app.post("/api/v1/asr/transcribe", response_model=ASRInferenceResponse, tags=["ASR"])
 async def transcribe_audio(
@@ -3245,14 +4961,49 @@ async def asr_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Perform batch ASR inference on audio inputs"""
+    """Perform batch ASR inference on audio inputs.
+
+    If config.serviceId is omitted, Smart Model Router will select the best ASR service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     await ensure_authenticated_for_request(request, credentials, api_key)
     import json
-    # Convert Pydantic model to JSON for proxy
-    body = json.dumps(payload.dict()).encode()
-    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+
+    # Convert Pydantic model to dict for routing logic
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+
+    # Derive user/tenant context for policy evaluation
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
+
+    # Ensure serviceId via Smart Model Router if missing
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="asr",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
     headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/asr/inference", "asr-service", method="POST", body=body, headers=headers)
+    return await proxy_to_service(
+        None,
+        "/api/v1/asr/inference",
+        "asr-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
 
 @app.get("/api/v1/asr/streaming/info", response_model=StreamingInfo, tags=["ASR"])
 async def get_streaming_info(
@@ -3329,14 +5080,45 @@ async def tts_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Perform batch TTS inference on text inputs"""
+    """Perform batch TTS inference on text inputs.
+
+    If config.serviceId is omitted, Smart Model Router will select the best TTS service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     await ensure_authenticated_for_request(request, credentials, api_key)
     import json
-    # Convert Pydantic model to JSON for proxy
-    body = json.dumps(payload.dict()).encode()
-    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="tts",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
     headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/tts/inference", "tts-service", method="POST", body=body, headers=headers)
+    return await proxy_to_service(
+        None,
+        "/api/v1/tts/inference",
+        "tts-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
 
 @app.get("/api/v1/tts/models", tags=["TTS"])
 async def get_tts_models(
@@ -3401,16 +5183,39 @@ async def speaker_diarization_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
-    """Perform speaker diarization inference on one or more audio inputs"""
+    """Perform speaker diarization inference on one or more audio inputs.
+    
+    If config.serviceId is omitted, Smart Model Router will select the best service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     ensure_authenticated_for_request(request, credentials, api_key)
     import json
 
-    body = json.dumps(payload.dict()).encode()
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="speaker-diarization",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
     headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(
         None, "/api/v1/speaker-diarization/inference", "speaker-diarization-service", method="POST", body=body, headers=headers
     )
@@ -3436,16 +5241,38 @@ async def language_diarization_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
-    """Perform language diarization inference on one or more audio files"""
+    """Perform language diarization inference on one or more audio files.
+    
+    If config.serviceId is omitted, Smart Model Router will select the best service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     ensure_authenticated_for_request(request, credentials, api_key)
     import json
 
-    body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="language-diarization",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(
         None, "/api/v1/language-diarization/inference", "language-diarization-service", method="POST", body=body, headers=headers
     )
@@ -3459,7 +5286,7 @@ async def audio_lang_detection_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Audio Language Detection service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "audio-lang-detection-service", method="GET", headers=headers)
 
@@ -3471,14 +5298,18 @@ async def audio_lang_detection_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
-    """Perform audio language detection inference on one or more audio files"""
+    """Perform audio language detection inference on one or more audio files.
+    
+    If config.serviceId is omitted, Smart Model Router will select the best service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
     # Log incoming request for debugging
     logger.info(
         f"Received audio-lang-detection inference request - has_token={credentials is not None and credentials.credentials is not None}, has_api_key={api_key is not None}, path={request.url.path}"
     )
     
     try:
-        ensure_authenticated_for_request(request, credentials, api_key)
+        await ensure_authenticated_for_request(request, credentials, api_key)
     except HTTPException as e:
         logger.warning(
             f"Authentication failed for audio-lang-detection inference: status={e.status_code}, detail={e.detail}, path={request.url.path}"
@@ -3487,12 +5318,30 @@ async def audio_lang_detection_inference(
     
     import json
 
-    body = json.dumps(payload.dict()).encode()
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="audio-lang-detection",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
+    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+    headers = build_auth_headers(request, credentials, api_key)
     
     logger.info(f"Proxying audio-lang-detection inference request to service")
     return await proxy_to_service(
@@ -3539,16 +5388,408 @@ async def nmt_inference(
     payload: NMTInferenceRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
+    api_key: Optional[str] = Security(api_key_scheme),
 ):
-    """Perform NMT inference"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    """Perform NMT inference.
+
+    If config.serviceId is omitted, Smart Model Router will select the best NMT service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
-    # Convert Pydantic model to JSON for proxy
-    body = json.dumps(payload.dict()).encode()
-    # Use build_auth_headers which automatically forwards all headers including X-Auth-Source
+
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+
+    # ------------------------------------------------------------------
+    # Context-awareness fast-path for tenant-scoped requests
+    # If tenant_id is present AND header "X-Context-Aware" is truthy,
+    # bypass SMR/Policy Engine and call LLM inference directly.
+    # ------------------------------------------------------------------
+    context_aware_header = request.headers.get("X-Context-Aware")
+    is_context_aware = bool(
+        context_aware_header
+        and context_aware_header.strip().lower() in {"1", "true", "yes", "y"}
+    )
+
+    # Log the context-aware decision
+    logger.info(
+        "NMT inference: context-aware header check",
+        extra={
+            "context": {
+                "context_aware_header": context_aware_header,
+                "is_context_aware": is_context_aware,
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+            }
+        },
+    )
+
+    # Allow context-aware routing even without tenant_id if header is explicitly set
+    if is_context_aware:
+        logger.info(
+            "NMT inference: context-aware routing enabled, calling translate API directly",
+            extra={
+                "context": {
+                    "user_id": user_id,
+                    "tenant_id": tenant_id,
+                    "context_aware": context_aware_header,
+                    "request_body": body_dict,
+                }
+            },
+        )
+
+        try:
+            # Language code to full name mapping
+            LANGUAGE_CODE_TO_NAME = {
+                "en": "English", "hi": "Hindi", "ta": "Tamil", "te": "Telugu",
+                "kn": "Kannada", "ml": "Malayalam", "bn": "Bengali", "gu": "Gujarati",
+                "mr": "Marathi", "pa": "Punjabi", "or": "Oriya", "as": "Assamese",
+                "ur": "Urdu", "sa": "Sanskrit", "ks": "Kashmiri", "ne": "Nepali",
+                "sd": "Sindhi", "kok": "Konkani", "doi": "Dogri", "mai": "Maithili",
+                "brx": "Bodo", "mni": "Manipuri", "sat": "Santali", "gom": "Goan Konkani",
+                "fr": "French", "es": "Spanish", "de": "German", "it": "Italian",
+                "pt": "Portuguese", "ru": "Russian", "ja": "Japanese", "ko": "Korean",
+                "zh": "Chinese", "ar": "Arabic", "th": "Thai", "vi": "Vietnamese"
+            }
+            
+            # Extract input text, language configuration, and required context
+            nmt_config = body_dict.get("config") or {}
+            if not isinstance(nmt_config, dict):
+                raise HTTPException(status_code=400, detail="config must be an object when X-Context-Aware is true")
+
+            # When context-aware routing is enabled, config.context is required
+            if "context" not in nmt_config:
+                raise HTTPException(
+                    status_code=400,
+                    detail="config.context is required when X-Context-Aware is true",
+                )
+            context_value = nmt_config.get("context")
+
+            lang_cfg = nmt_config.get("language") or {}
+            source_lang_code = lang_cfg.get("sourceLanguage", "en")
+            target_lang_code = lang_cfg.get("targetLanguage", "en")
+            
+            # Map language codes to full names
+            source_language = LANGUAGE_CODE_TO_NAME.get(source_lang_code, source_lang_code.capitalize())
+            target_language = LANGUAGE_CODE_TO_NAME.get(target_lang_code, target_lang_code.capitalize())
+            
+            # Get input text (use first input if multiple)
+            input_list = body_dict.get("input", [])
+            if not input_list:
+                raise HTTPException(status_code=400, detail="Input text is required")
+            
+            # Combine all input texts or use first one
+            text = " ".join([item.get("source", "") for item in input_list if item.get("source")])
+            if not text:
+                raise HTTPException(status_code=400, detail="Source text cannot be empty")
+            
+            # Prepare translate API request (include context from config)
+            translate_payload = {
+                "text": text,
+                "source_language": source_language,
+                "target_language": target_language,
+                "context": context_value,
+            }
+            
+            logger.debug(
+                "NMT inference: calling translate API",
+                extra={
+                    "context": {
+                        "translate_payload": translate_payload,
+                        "endpoint": "http://13.201.75.118:8000/api/translate"
+                    }
+                },
+            )
+            
+            # Call translate API directly
+            # Use a local client for this request
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                translate_response = await client.post(
+                    "http://13.201.75.118:8000/api/translate",
+                    json=translate_payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                
+                translate_response.raise_for_status()
+                translate_result = translate_response.json()
+                
+                # Extract translated text from response
+                # Response format: {"success":true,"result":"...","model":"gpt-oss:20b"}
+                translated_text = None
+                
+                # Try common response field names (check if key exists and value is not None/empty)
+                if "translated_text" in translate_result and translate_result.get("translated_text"):
+                    translated_text = str(translate_result["translated_text"])
+                elif "translation" in translate_result and translate_result.get("translation"):
+                    translated_text = str(translate_result["translation"])
+                elif "result" in translate_result and translate_result.get("result"):
+                    translated_text = str(translate_result["result"])
+                elif "text" in translate_result and translate_result.get("text"):
+                    translated_text = str(translate_result["text"])
+                elif "output" in translate_result and translate_result.get("output"):
+                    translated_text = str(translate_result["output"])
+                elif isinstance(translate_result, str):
+                    translated_text = translate_result
+                
+                if not translated_text:
+                    logger.warning(
+                        "Translate API response format unexpected",
+                        extra={"context": {"response": translate_result}}
+                    )
+                    translated_text = "Translation unavailable"
+            
+            # Format response in NMT format
+            output_list = []
+            for item in input_list:
+                output_list.append({
+                    "source": item.get("source", ""),
+                    "target": translated_text  # Use same translation for all inputs
+                })
+            
+            response_data = {"output": output_list}
+            
+            downstream_response = Response(
+                content=json.dumps(response_data).encode("utf-8"),
+                status_code=200,
+                headers={"Content-Type": "application/json"},
+                media_type="application/json"
+            )
+
+            if isinstance(downstream_response, Response):
+                downstream_response.headers["X-SMR-ContextAware"] = "true"
+                downstream_response.headers["X-SMR-TenantId"] = tenant_id or "free_user"
+                downstream_response.headers["X-SMR-ServiceType"] = "llm translate"
+                # Expose the underlying LLM service identifier for observability.
+                # Prefer the model name from the translate API if present; otherwise
+                # fall back to a stable logical service id.
+                llm_service_id = None
+                if isinstance(translate_result, dict):
+                    llm_service_id = str(translate_result.get("model") or "").strip() or None
+                downstream_response.headers["X-SMR-ServiceId"] = llm_service_id or "llm_gptoss"
+                
+                # Log response status for debugging
+                if downstream_response.status_code >= 400:
+                    logger.warning(
+                        "NMT inference: Translate API returned error status",
+                        extra={
+                            "context": {
+                                "status_code": downstream_response.status_code,
+                                "tenant_id": tenant_id,
+                            }
+                        },
+                    )
+                else:
+                    logger.info(
+                        "NMT inference: Translate API call successful",
+                        extra={
+                            "context": {
+                                "source_language": source_language,
+                                "target_language": target_language,
+                                "text_length": len(text)
+                            }
+                        },
+                    )
+
+            return downstream_response
+            
+        except httpx.HTTPStatusError as e:
+            # HTTP error from translate API
+            logger.error(
+                "NMT inference: Translate API returned error",
+                extra={
+                    "context": {
+                        "status_code": e.response.status_code,
+                        "response_text": e.response.text[:500] if e.response else None,
+                        "tenant_id": tenant_id,
+                    }
+                },
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=e.response.status_code if e.response else 500,
+                detail={
+                    "code": "TRANSLATE_API_ERROR",
+                    "message": f"Translation service error: {e.response.text[:200] if e.response else str(e)}",
+                },
+            )
+        except httpx.RequestError as e:
+            # Network/connection error
+            logger.error(
+                "NMT inference: Translate API connection error",
+                extra={
+                    "context": {
+                        "error": str(e),
+                        "tenant_id": tenant_id,
+                    }
+                },
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "TRANSLATE_API_UNAVAILABLE",
+                    "message": "Translation service is temporarily unavailable. Please try again later.",
+                },
+            )
+        except HTTPException as e:
+            # Re-raise HTTP exceptions (from proxy_to_service)
+            logger.error(
+                "NMT inference: context-aware routing failed with HTTP exception",
+                extra={
+                    "context": {
+                        "status_code": e.status_code,
+                        "detail": e.detail,
+                        "tenant_id": tenant_id,
+                    }
+                },
+                exc_info=True,
+            )
+            raise
+        except Exception as e:
+            # Catch any other unexpected errors
+            logger.error(
+                "NMT inference: context-aware routing failed with unexpected error",
+                extra={
+                    "context": {
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "tenant_id": tenant_id,
+                    }
+                },
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "CONTEXT_AWARE_ROUTING_ERROR",
+                    "message": f"Context-aware routing failed: {str(e)}",
+                }
+            )
+
+    # ------------------------------------------------------------------
+    # Default SMR + Policy Engine flow (including free-user path)
+    # This path is taken when X-Context-Aware is "no", missing, or any other value
+    # ------------------------------------------------------------------
+    logger.info(
+        "NMT inference: using normal SMR flow (context-aware disabled or not set)",
+        extra={
+            "context": {
+                "context_aware_header": context_aware_header,
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+            }
+        },
+    )
+    
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(
+        request
+    )
+
+    # Log incoming request for SMR flow
+    logger.info(
+        "NMT inference request received",
+        extra={
+            "context": {
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "latency_policy": latency_policy,
+                "cost_policy": cost_policy,
+                "accuracy_policy": accuracy_policy,
+                "request_body": body_dict,
+            }
+        },
+    )
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    selected_service_id, body_dict, policy_result = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="nmt",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    # Log final routing decision before calling downstream NMT
+    logger.info(
+        "NMT inference routing decision",
+        extra={
+            "context": {
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "selected_service_id": selected_service_id,
+                "policy_result": policy_result,
+                "final_request_body": body_dict,
+            }
+        },
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
     headers = build_auth_headers(request, credentials, api_key)
-    return await proxy_to_service(None, "/api/v1/nmt/inference", "nmt-service", method="POST", body=body, headers=headers)
+    downstream_response = await proxy_to_service(
+        None,
+        "/api/v1/nmt/inference",
+        "nmt-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+    # Attach SMR debug metadata in response headers for observability
+    if isinstance(downstream_response, Response):
+        downstream_response.headers["X-SMR-ServiceId"] = selected_service_id or ""
+        # If no tenant_id in token, mark as "free_user" for observability
+        downstream_response.headers["X-SMR-TenantId"] = tenant_id or "free_user"
+        # Mark normal NMT SMR flow as translate
+        downstream_response.headers["X-SMR-ServiceType"] = "translate"
+
+        if policy_result:
+            downstream_response.headers["X-SMR-PolicyId"] = str(
+                policy_result.get("policy_id", "")
+            )
+            downstream_response.headers["X-SMR-PolicyVersion"] = str(
+                policy_result.get("policy_version", "")
+            )
+        # Attach effective latency / cost / accuracy policy details as headers
+        # Prefer explicit headers; if not provided, fall back to policy engine result.
+        effective_latency_policy = (
+            latency_policy.value if hasattr(latency_policy, "value") else latency_policy
+        )
+        effective_cost_policy = (
+            cost_policy.value if hasattr(cost_policy, "value") else cost_policy
+        )
+        effective_accuracy_policy = (
+            accuracy_policy.value if hasattr(accuracy_policy, "value") else accuracy_policy
+        )
+
+        if policy_result:
+            # If no explicit header, use tenant-specific policy from Policy Engine
+            if not effective_latency_policy:
+                effective_latency_policy = policy_result.get("latency_policy")
+            if not effective_cost_policy:
+                effective_cost_policy = policy_result.get("cost_policy")
+            if not effective_accuracy_policy:
+                effective_accuracy_policy = policy_result.get("accuracy_policy")
+
+        if effective_latency_policy:
+            downstream_response.headers["X-SMR-LatencyPolicy"] = str(
+                effective_latency_policy
+            )
+        if effective_cost_policy:
+            downstream_response.headers["X-SMR-CostPolicy"] = str(
+                effective_cost_policy
+            )
+        if effective_accuracy_policy:
+            downstream_response.headers["X-SMR-AccuracyPolicy"] = str(
+                effective_accuracy_policy
+            )
+    return downstream_response
 
 @app.post("/api/v1/nmt/batch-translate", tags=["NMT"])
 async def batch_translate(
@@ -3649,7 +5890,7 @@ async def ocr_health(
 
     """OCR service health check"""
 
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
 
     headers = build_auth_headers(request, credentials, api_key)
 
@@ -3666,18 +5907,41 @@ async def ocr_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
-    """Perform OCR inference on one or more images"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    """Perform OCR inference on one or more images.
+
+    If config.serviceId is omitted, Smart Model Router will select the best OCR service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
 
     import json
 
-    body = json.dumps(payload.dict()).encode()
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
 
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="ocr",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
+
+    # Use build_auth_headers which automatically sets X-Auth-Source to BOTH when both JWT and API key are present
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
 
     return await proxy_to_service(
         None, "/api/v1/ocr/inference", "ocr-service", method="POST", body=body, headers=headers
@@ -3705,26 +5969,141 @@ async def ner_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
 ):
-    """Perform NER inference on one or more text inputs"""
-    try:
-        ensure_authenticated_for_request(request, credentials, api_key)
-    except Exception as e:
-        raise
+    """Perform NER inference on one or more text inputs.
+
+    If config.serviceId is omitted, Smart Model Router will select the best NER service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
 
     import json
 
-    body = json.dumps(payload.dict()).encode()
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
 
-    headers: Dict[str, str] = {}
-    if credentials and credentials.credentials:
-        headers["Authorization"] = f"Bearer {credentials.credentials}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="ner",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
+
+    headers = build_auth_headers(request, credentials, api_key)
 
     result = await proxy_to_service(
         None, "/api/v1/ner/inference", "ner-service", method="POST", body=body, headers=headers
     )
     return result
+
+
+# LLM Service Endpoints (Proxy to LLM Service)
+
+@app.post("/api/v1/llm/inference", response_model=LLMInferenceResponse, tags=["LLM"])
+async def llm_inference(
+    payload: LLMInferenceRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Perform LLM inference.
+
+    If config.serviceId is omitted, Smart Model Router will select the best LLM service
+    based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    import json
+
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(
+        request
+    )
+
+    # Log incoming request for SMR flow
+    logger.info(
+        "LLM inference request received",
+        extra={
+            "context": {
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "latency_policy": latency_policy,
+                "cost_policy": cost_policy,
+                "accuracy_policy": accuracy_policy,
+                "request_body": body_dict,
+            }
+        },
+    )
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    selected_service_id, body_dict, policy_result = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="llm",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    # Log final routing decision before calling downstream LLM
+    logger.info(
+        "LLM inference routing decision",
+        extra={
+            "context": {
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "selected_service_id": selected_service_id,
+                "policy_result": policy_result,
+                "final_request_body": body_dict,
+            }
+        },
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    
+    downstream_response = await proxy_to_service(
+        None,
+        "/api/v1/llm/inference",
+        "llm-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+    # Attach SMR debug metadata in response headers for observability
+    if isinstance(downstream_response, Response):
+        downstream_response.headers["X-SMR-ServiceId"] = selected_service_id or ""
+        downstream_response.headers["X-SMR-TenantId"] = tenant_id or "free_user"
+        if policy_result:
+            downstream_response.headers["X-SMR-PolicyId"] = str(
+                policy_result.get("policy_id", "")
+            )
+            downstream_response.headers["X-SMR-PolicyVersion"] = str(
+                policy_result.get("policy_version", "")
+            )
+
+    return downstream_response
 
 
 # Transliteration Service Endpoints (Proxy to Transliteration Service)
@@ -3739,13 +6118,37 @@ async def transliteration_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Perform transliteration inference"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    """Perform transliteration inference.
+
+    If config.serviceId is omitted, Smart Model Router will select the best transliteration
+    service based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
-    body = json.dumps(
-        payload.model_dump(mode="json", exclude_none=True)
-    ).encode("utf-8")
+
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="transliteration",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
     return await proxy_to_service(
         None,
         "/api/v1/transliteration/inference",
@@ -3762,7 +6165,7 @@ async def get_transliteration_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available transliteration models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/models", "transliteration-service", headers=headers)
 
@@ -3773,7 +6176,7 @@ async def get_transliteration_services(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available transliteration services"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/services", "transliteration-service", headers=headers)
 
@@ -3784,7 +6187,7 @@ async def get_transliteration_languages(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get supported languages for transliteration"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/languages", "transliteration-service", headers=headers)
 
@@ -3795,7 +6198,7 @@ async def transliteration_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Transliteration service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "transliteration-service", headers=headers)
 
@@ -3811,13 +6214,38 @@ async def language_detection_inference(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Perform language detection inference"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    """Perform language detection inference.
+
+    If config.serviceId is omitted, Smart Model Router will select the best language
+    detection service based on Policy Engine + Model Management and inject the chosen serviceId.
+    """
+    # Ensure authentication/authorization with tracing spans (gateway.authenticate, gateway.authorize, etc.)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
-    body = json.dumps(
-        payload.model_dump(mode="json", exclude_none=True)
-    ).encode("utf-8")
+
+    body_dict = payload.model_dump(mode="json", exclude_none=True)
+    user_id = getattr(request.state, "user_id", None)
+    tenant_id = await get_verified_tenant_id(request)
+    
+    # Extract and validate policy headers
+    latency_policy, cost_policy, accuracy_policy = extract_and_validate_policy_headers(request)
+
+    global http_client
+    if http_client is None:
+        http_client = httpx.AsyncClient(timeout=30.0)
+    _, body_dict, _ = await inject_service_id_if_missing(
+        http_client=http_client,
+        task_type="language-detection",
+        body_dict=body_dict,
+        user_id=user_id,
+        tenant_id=tenant_id,
+        latency_policy=latency_policy,
+        cost_policy=cost_policy,
+        accuracy_policy=accuracy_policy,
+    )
+
+    body = json.dumps(body_dict).encode("utf-8")
     return await proxy_to_service(
         None,
         "/api/v1/language-detection/inference",
@@ -3895,7 +6323,7 @@ async def get_transliteration_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available transliteration models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/models", "transliteration-service", headers=headers)
 
@@ -3906,7 +6334,7 @@ async def get_transliteration_services(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available transliteration services"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/services", "transliteration-service", headers=headers)
 
@@ -3917,7 +6345,7 @@ async def get_transliteration_languages(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get supported languages for transliteration"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/transliteration/languages", "transliteration-service", headers=headers)
 
@@ -3928,7 +6356,7 @@ async def transliteration_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Transliteration service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "transliteration-service", headers=headers)
 
@@ -3945,7 +6373,8 @@ async def language_detection_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Perform language detection inference"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    # Ensure authentication/authorization with tracing spans (gateway.authenticate, gateway.authorize, etc.)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     body = json.dumps(
@@ -4001,9 +6430,10 @@ async def list_models(
     task_type: Union[ModelTaskTypeEnum,None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
     include_deprecated: bool = Query(True, description="Include deprecated versions. Set to false to show only ACTIVE versions."),
     model_name: Optional[str] = Query(None, description="Filter by model name. Returns all versions of models matching this name."),
+    created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the model."),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """List all registered models. Use include_deprecated=false to show only ACTIVE versions. Use model_name to filter by model name and get all versions. Requires Bearer token authentication with 'model.read' permission."""
+    """List all registered models. Use include_deprecated=false to show only ACTIVE versions. Use model_name to filter by model name and get all versions. Use created_by to filter by creator. Requires Bearer token authentication with 'model.read' permission."""
     await check_permission("model.read", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     params = {
@@ -4012,9 +6442,11 @@ async def list_models(
     }
     if model_name:
         params["model_name"] = model_name
+    if created_by:
+        params["created_by"] = created_by
     return await proxy_to_service_with_params(
         None, 
-        "/services/details/list_models", 
+        "/api/v1/model-management/models", 
         "model-management-service",
         params, 
         method="GET",
@@ -4038,7 +6470,7 @@ async def get_model_get(
         query_params["version"] = version
     return await proxy_to_service_with_params(
         None,
-        f"/models/{model_id}",
+        f"/api/v1/model-management/models/{model_id}",
         "model-management-service",
         query_params,
         method="GET",
@@ -4064,7 +6496,7 @@ async def get_model(
     payload_body = json.dumps(payload_dict).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/details/view_model",
+        f"/api/v1/model-management/models/{model_id}",
         "model-management-service",
         method="POST",
         body=payload_body,
@@ -4086,7 +6518,7 @@ async def create_model(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/create/model",
+        "/api/v1/model-management/models",
         "model-management-service",
         method="POST",
         body=body,
@@ -4108,7 +6540,7 @@ async def update_model(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/update/model",
+        "/api/v1/model-management/models",
         "model-management-service",
         method="PATCH",
         body=body,
@@ -4125,40 +6557,45 @@ async def delete_model(
     """Delete a model by ID. Requires Bearer token authentication with 'model.delete' permission."""
     await check_permission("model.delete", request, credentials)
     headers = build_auth_headers(request, credentials, None)
-    return await proxy_to_service_with_params(
+    return await proxy_to_service(
         None,
-        "/services/admin/delete/model",
+        f"/api/v1/model-management/models/{uuid}",
         "model-management-service",
-        {"id": uuid},
         method="DELETE",
         headers=headers,
     )
 
 
 
-@app.get("/api/v1/model-management/services/", response_model=List[ServiceListResponse], tags=["Model Management"])
+@app.get("/api/v1/model-management/services", response_model=List[ServiceListResponse], tags=["Model Management"])
 async def list_services(
     request: Request,
     task_type: Union[ModelTaskTypeEnum,None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
     is_published: Optional[bool] = Query(None, description="Filter by publish status. True = published only, False = unpublished only, None = all services"),
+    created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the service."),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """List all deployed services. Requires Bearer token authentication with 'service.read' permission."""
+    """List all deployed services. Use created_by to filter by creator. Requires Bearer token authentication with 'service.read' permission."""
     await check_permission("service.read", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     params = {"task_type": task_type.value if task_type else None}
     if is_published is not None:
         params["is_published"] = str(is_published).lower()
+    if created_by:
+        params["created_by"] = created_by
     return await proxy_to_service_with_params(
-        None, 
-        "/services/details/list_services", 
+        None,
+        "/api/v1/model-management/services",
         "model-management-service",
-        params, 
-        method="GET", 
-        headers=headers
-        )
+        params,
+        method="GET",
+        headers=headers,
+    )
 
 
+# Note: This route is intentionally placed before the catch-all route
+# It handles /api/v1/model-management/services/{service_id} for viewing service details
+# Admin routes like /api/v1/model-management/services/admin/* are handled by the catch-all route
 @app.post("/api/v1/model-management/services/{service_id:path}", response_model=ServiceViewResponse, tags=["Model Management"])
 async def get_service_details(
     service_id: str,
@@ -4166,13 +6603,28 @@ async def get_service_details(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Fetch metadata for a specific runtime service. Requires Bearer token authentication with 'service.read' permission."""
+    # Exclude admin routes - they should be handled by the catch-all route.
+    # Only paths whose first segment is "admin" are admin routes (e.g. "admin/add/service/policy").
+    if service_id == "admin" or service_id.startswith("admin/"):
+        # This is an admin route; forward to catch-all route handler
+        # Extract the path after /api/v1/model-management
+        full_path = request.url.path
+        if full_path.startswith("/api/v1/model-management/"):
+            path_after_prefix = full_path[len("/api/v1/model-management/"):]
+        else:
+            path_after_prefix = full_path.lstrip("/")
+        # Call the catch-all handler directly (it's defined later in this file)
+        return await proxy_request(request, path_after_prefix)
+    
     await check_permission("service.read", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     payload = json.dumps({"serviceId": service_id}).encode("utf-8")
+    # Encode service_id so IDs with "/" (e.g. ai4bharat/surya-ocr-v1--gpu--t4) are one path segment for backend
+    encoded_service_id = quote(service_id, safe="")
     return await proxy_to_service(
         None,
-        "/services/details/view_service",
+        f"/api/v1/model-management/services/{encoded_service_id}",
         "model-management-service",
         method="POST",
         body=payload,
@@ -4194,7 +6646,7 @@ async def create_service_entry(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/create/service",
+        "/api/v1/model-management/services",
         "model-management-service",
         method="POST",
         body=body,
@@ -4221,7 +6673,7 @@ async def update_service_entry(
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/update/service",
+        "/api/v1/model-management/services",
         "model-management-service",
         method="PATCH",
         body=body,
@@ -4238,11 +6690,10 @@ async def delete_service_entry(
     """Delete a service entry. Requires Bearer token authentication with 'service.delete' permission."""
     await check_permission("service.delete", request, credentials)
     headers = build_auth_headers(request, credentials, None)
-    return await proxy_to_service_with_params(
+    return await proxy_to_service(
         None,
-        "/services/admin/delete/service",
+        f"/api/v1/model-management/services/{uuid}",
         "model-management-service",
-        {"id": uuid},
         method="DELETE",
         headers=headers,
     )
@@ -4266,9 +6717,189 @@ async def update_service_health(
     body = json.dumps(body_data).encode("utf-8")
     return await proxy_to_service(
         None,
-        "/services/admin/health",
+        f"/api/v1/model-management/services/{service_id}/health",
         "model-management-service",
         method="PATCH",
+        body=body,
+        headers=headers,
+    )
+
+
+# A/B Testing Experiment Endpoints
+
+@app.post("/api/v1/model-management/experiments", response_model=ExperimentResponse, status_code=status.HTTP_201_CREATED, tags=["A/B Testing"])
+async def create_experiment(
+    payload: ExperimentCreateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Create a new A/B testing experiment. Requires at least 2 variants with traffic percentages summing to 100."""
+    # await check_permission("experiment.create", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/api/v1/model-management/experiments",
+        "model-management-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.get("/api/v1/model-management/experiments", response_model=List[ExperimentListResponse], tags=["A/B Testing"])
+async def list_experiments(
+    request: Request,
+    status: Optional[str] = Query(None, description="Filter by experiment status"),
+    task_type: Optional[str] = Query(None, description="Filter by task type"),
+    created_by: Optional[str] = Query(None, description="Filter by creator user ID"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """List all experiments with optional filters."""
+    # await check_permission("experiment.read", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    params = {}
+    if status:
+        params["status"] = status
+    if task_type:
+        params["task_type"] = task_type
+    if created_by:
+        params["created_by"] = created_by
+    return await proxy_to_service_with_params(
+        None,
+        "/api/v1/model-management/experiments",
+        "model-management-service",
+        params,
+        method="GET",
+        headers=headers
+    )
+
+
+@app.get("/api/v1/model-management/experiments/{experiment_id}", response_model=ExperimentResponse, tags=["A/B Testing"])
+async def get_experiment(
+    experiment_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Get experiment details by ID."""
+    # await check_permission("experiment.read", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    return await proxy_to_service(
+        None,
+        f"/api/v1/model-management/experiments/{experiment_id}",
+        "model-management-service",
+        method="GET",
+        headers=headers,
+    )
+
+
+@app.get("/api/v1/model-management/experiments/{experiment_id}/metrics", response_model=List[ExperimentMetricsResponse], tags=["A/B Testing"])
+async def get_experiment_metrics(
+    experiment_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Get metrics for an A/B experiment by ID. Returns aggregated metrics per variant per day."""
+    headers = build_auth_headers(request, credentials, None)
+    return await proxy_to_service(
+        None,
+        f"/api/v1/model-management/experiments/{experiment_id}/metrics",
+        "model-management-service",
+        method="GET",
+        headers=headers,
+    )
+
+
+@app.patch("/api/v1/model-management/experiments/{experiment_id}", response_model=ExperimentResponse, tags=["A/B Testing"])
+async def update_experiment(
+    experiment_id: str,
+    payload: ExperimentUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Update an experiment. Cannot update variants of a RUNNING experiment."""
+    # await check_permission("experiment.update", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        f"/api/v1/model-management/experiments/{experiment_id}",
+        "model-management-service",
+        method="PATCH",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.post("/api/v1/model-management/experiments/{experiment_id}/status", response_model=ExperimentResponse, tags=["A/B Testing"])
+async def update_experiment_status(
+    experiment_id: str,
+    payload: ExperimentStatusUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """
+    Update experiment status by action.
+    
+    Actions:
+    - 'start': Start a DRAFT experiment (changes to RUNNING)
+    - 'stop': Stop a RUNNING experiment (changes to COMPLETED)
+    - 'pause': Pause a RUNNING experiment (changes to PAUSED)
+    - 'resume': Resume a PAUSED experiment (changes to RUNNING)
+    - 'cancel': Cancel a non-RUNNING experiment (changes to CANCELLED)
+    
+    """
+    # await check_permission("experiment.update", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        f"/api/v1/model-management/experiments/{experiment_id}/status",
+        "model-management-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.delete("/api/v1/model-management/experiments/{experiment_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["A/B Testing"])
+async def delete_experiment(
+    experiment_id: str,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+):
+    """Delete an experiment. Cannot delete a RUNNING experiment. Stop it first."""
+    # await check_permission("experiment.delete", request, credentials)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, None)
+    return await proxy_to_service(
+        None,
+        f"/api/v1/model-management/experiments/{experiment_id}",
+        "model-management-service",
+        method="DELETE",
+        headers=headers,
+    )
+
+
+@app.post("/api/v1/model-management/experiments/select-variant", response_model=ExperimentVariantSelectionResponse, tags=["A/B Testing"])
+async def select_experiment_variant(
+    payload: ExperimentVariantSelectionRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Select an experiment variant for a given request. This endpoint is used by services to determine which variant to route a request to."""
+    # await ensure_authenticated_for_request(request, credentials, api_key)  # Commented out - no permission requirements for A/B testing
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/api/v1/model-management/experiments/select-variant",
+        "model-management-service",
+        method="POST",
         body=body,
         headers=headers,
     )
@@ -4457,7 +7088,7 @@ async def get_user_profile(request: Request):
     """Get user profile (requires authentication)"""
     user = await auth_middleware.require_auth(request)
     return {
-        "user_id": user.get("user_id"),
+        "user_id": user.get("user_id") or user.get("sub"),
         "username": user.get("username"),
         "permissions": user.get("permissions", []),
         "message": "User profile data would be fetched here"
@@ -4488,7 +7119,7 @@ async def register_tenant(
     )
 
 @app.post("/api/v1/multi-tenant/register/users", response_model=UserRegisterResponse, tags=["Multi-Tenant"], status_code=201)
-async def register_user_multi_tenant(
+async def register_user_for_multi_tenant(
     payload: UserRegisterRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
@@ -4531,6 +7162,52 @@ async def update_tenant_status(
         headers=headers
     )
 
+@app.patch("/api/v1/multi-tenant/update/tenant", response_model=TenantUpdateResponse, tags=["Multi-Tenant"])
+async def update_tenant(
+    payload: TenantUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Update tenant information including organization_name, contact_email, domain,
+    requested_quotas, and usage_quota. Supports partial updates - only provided
+    fields will be updated.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/admin/update/tenant",
+        "multi-tenant-service",
+        method="PATCH",
+        body=body,
+        headers=headers
+    )
+
+@app.delete("/api/v1/multi-tenant/delete/user", response_model=TenantUserDeleteResponse, tags=["Multi-Tenant"])
+async def delete_tenant_user(
+    payload: TenantUserDeleteRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """Delete a tenant user"""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers['Content-Type'] = 'application/json'
+    body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/admin/delete/user",
+        "multi-tenant-service",
+        method="DELETE",
+        body=body,
+        headers=headers
+    )
+
 @app.patch("/api/v1/multi-tenant/update/users/status", response_model=TenantUserStatusUpdateResponse, tags=["Multi-Tenant"])
 async def update_tenant_user_status(
     payload: TenantUserStatusUpdateRequest,
@@ -4553,27 +7230,49 @@ async def update_tenant_user_status(
         headers=headers
     )
 
+
+@app.patch("/api/v1/multi-tenant/update/user", response_model=TenantUserUpdateResponse, tags=["Multi-Tenant"])
+async def update_tenant_user_for_multi_tenant(
+    payload: TenantUserUpdateRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    Update tenant user information (username, email, is_approved, role) via API Gateway.
+    Supports partial updates - only provided fields will be updated.
+    Role: ADMIN, USER, GUEST, MODERATOR (key-value: {"role": "USER"}).
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_unset=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/admin/update/user",
+        "multi-tenant-service",
+        method="PATCH",
+        body=body,
+        headers=headers,
+    )
+
 @app.get("/api/v1/multi-tenant/email/verify", tags=["Multi-Tenant"])
 async def verify_email(
     request: Request,
     token: str = Query(..., description="Email verification token"),
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Verify tenant email"""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    headers['Content-Type'] = 'application/json'
-    query_string = f"?token={token}"
-
+    """
+    Verify tenant email.
     
+    This endpoint is PUBLIC (no authentication required) since users
+    click the verification link from their email client before logging in.
+    """
     return await proxy_to_service_with_params(
         request,
         "/email/verify",
         "multi-tenant-service",
         {"token": token},
         method="GET",
-        headers=headers
     )
 
 
@@ -4586,7 +7285,6 @@ async def view_tenant(
 ):
     """
     View tenant details by tenant_id via API Gateway.
-    Proxies to multi-tenant-service /admin/view/tenant.
     """
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
@@ -4610,7 +7308,6 @@ async def view_tenant_user(
 ):
     """
     View tenant user details by user_id via API Gateway.
-    Proxies to multi-tenant-service /admin/view/user.
     """
     await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
@@ -4624,17 +7321,67 @@ async def view_tenant_user(
         headers=headers,
     )
 
+@app.get("/api/v1/multi-tenant/list/tenants", response_model=ListTenantsResponse, tags=["Multi-Tenant"])
+async def list_tenants(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    List all tenants with their details via API Gateway.
+    Returns a list of all tenants registered in the system.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    return await proxy_to_service(
+        request,
+        "/admin/list/tenants",
+        "multi-tenant-service",
+        method="GET",
+        headers=headers,
+    )
+
+@app.get("/api/v1/multi-tenant/list/users", response_model=ListUsersResponse, tags=["Multi-Tenant"])
+async def list_users(
+    request: Request,
+    tenant_id: Optional[str] = Query(None, description="Filter users by tenant_id"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    List all tenant users across all tenants if tenant_id is not provided.
+    Returns a list of all users registered under any tenant if tenant_id is provided.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+
+    params: Dict[str, Any] = {}
+    if tenant_id:
+        params["tenant_id"] = tenant_id
+
+    return await proxy_to_service_with_params(
+        request,
+        "/admin/list/users",
+        "multi-tenant-service",
+        params,
+        method="GET",
+        headers=headers,
+    )
+
 @app.post("/api/v1/multi-tenant/email/resend", response_model=TenantResendEmailVerificationResponse, tags=["Multi-Tenant"], status_code=201)
 async def resend_verification_email(
     payload: TenantResendEmailVerificationRequest,
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-    api_key: Optional[str] = Security(api_key_scheme)
 ):
-    """Resend email verification"""
-    await ensure_authenticated_for_request(request, credentials, api_key)
-    headers = build_auth_headers(request, credentials, api_key)
-    headers['Content-Type'] = 'application/json'
+    """
+    Resend email verification (POST version).
+    
+    This endpoint is PUBLIC (no authentication required) since users
+    need to resend verification before they can log in.
+    """
+    headers = {'Content-Type': 'application/json'}
     body = json.dumps(payload.model_dump(mode='json', exclude_unset=False)).encode("utf-8")
     return await proxy_to_service(
         None,
@@ -4643,6 +7390,31 @@ async def resend_verification_email(
         method="POST",
         body=body,
         headers=headers
+    )
+
+
+@app.post("/api/v1/multi-tenant/email/send-verification", response_model=TenantSendEmailVerificationResponse, tags=["Multi-Tenant"], status_code=201)
+async def send_verification_email(
+    payload: TenantSendEmailVerificationRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """
+    Send the initial email verification link for a tenant.
+    This email is intiated by Admin , and is different from the resend endpoint which is initiated by users.
+    """
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/admin/email/send/verification",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers,
     )
 
 @app.post("/api/v1/multi-tenant/subscriptions/add", response_model=TenantSubscriptionResponse, tags=["Multi-Tenant"], status_code=201)
@@ -4685,6 +7457,59 @@ async def remove_tenant_subscriptions(
         method="POST",
         body=body,
         headers=headers
+    )
+
+
+@app.post(
+    "/api/v1/multi-tenant/user/subscriptions/add",
+    response_model=UserSubscriptionResponse,
+    tags=["Multi-Tenant"],
+    status_code=201,
+)
+async def add_user_subscriptions(
+    payload: UserSubscriptionAddRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Add subscriptions to a tenant user."""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/user/subscriptions/add",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers,
+    )
+
+
+@app.post(
+    "/api/v1/multi-tenant/user/subscriptions/remove",
+    response_model=UserSubscriptionResponse,
+    tags=["Multi-Tenant"],
+)
+async def remove_user_subscriptions(
+    payload: UserSubscriptionRemoveRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Remove subscriptions from a tenant user."""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/user/subscriptions/remove",
+        "multi-tenant-service",
+        method="POST",
+        body=body,
+        headers=headers,
     )
 
 @app.post("/api/v1/multi-tenant/register/services", response_model=ServiceResponse, tags=["Multi-Tenant"], status_code=201)
@@ -4771,6 +7596,129 @@ async def resolve_tenant_from_user(
         headers=headers
     )
 
+# ==================== Observability Endpoints ====================
+
+@app.get("/api/v1/observability/logs/search", tags=["Observability"])
+async def search_logs(
+    request: Request,
+    service: Optional[str] = Query(None, description="Filter by service name"),
+    level: Optional[str] = Query(None, description="Filter by log level (INFO, WARN, ERROR, DEBUG)"),
+    search_text: Optional[str] = Query(None, description="Search text in log messages"),
+    start_time: Optional[str] = Query(None, description="Start time (ISO format or timestamp)"),
+    end_time: Optional[str] = Query(None, description="End time (ISO format or timestamp)"),
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(50, ge=1, le=100, description="Results per page"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Search logs with filters and pagination.
+    
+    Requires 'logs.read' permission.
+    Admin users see all logs, normal users see only their tenant's logs.
+    """
+    return await proxy_to_service(request, "/api/v1/observability/logs/search", "telemetry-service")
+
+
+@app.get("/api/v1/observability/logs/aggregate", tags=["Observability"])
+async def get_log_aggregations(
+    request: Request,
+    start_time: Optional[str] = Query(None, description="Start time (ISO format or timestamp)"),
+    end_time: Optional[str] = Query(None, description="End time (ISO format or timestamp)"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Get log aggregations and statistics.
+    
+    Requires 'logs.read' permission.
+    Returns total logs, error count, warning count, breakdown by level and service.
+    """
+    return await proxy_to_service(request, "/api/v1/observability/logs/aggregate", "telemetry-service")
+
+
+@app.get("/api/v1/observability/logs/services", tags=["Observability"])
+async def get_log_services(
+    request: Request,
+    start_time: Optional[str] = Query(None, description="Start time (ISO format or timestamp)"),
+    end_time: Optional[str] = Query(None, description="End time (ISO format or timestamp)"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Get list of services that have logs.
+    
+    Requires 'logs.read' permission.
+    Admin users see all services, normal users see only services registered to their tenant.
+    """
+    return await proxy_to_service(request, "/api/v1/observability/logs/services", "telemetry-service")
+
+
+@app.get("/api/v1/observability/traces/search", tags=["Observability"])
+async def search_traces(
+    request: Request,
+    service: Optional[str] = Query(None, description="Filter by service name"),
+    operation: Optional[str] = Query(None, description="Filter by operation name"),
+    start_time: Optional[int] = Query(None, description="Start time (microseconds since epoch)"),
+    end_time: Optional[int] = Query(None, description="End time (microseconds since epoch)"),
+    limit: int = Query(20, ge=1, le=100, description="Maximum number of traces"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Search traces with filters.
+    
+    Requires 'traces.read' permission.
+    Admin users see all traces, normal users see only their organization's traces.
+    """
+    return await proxy_to_service(request, "/api/v1/observability/traces/search", "telemetry-service")
+
+
+@app.get("/api/v1/observability/traces/{trace_id}", tags=["Observability"])
+async def get_trace_by_id(
+    trace_id: str = Path(..., description="Trace ID"),
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Get a specific trace by ID.
+    
+    Requires 'traces.read' permission.
+    Returns 404 if trace not found or not accessible.
+    """
+    return await proxy_to_service(request, f"/api/v1/observability/traces/{trace_id}", "telemetry-service")
+
+
+@app.get("/api/v1/observability/traces/services", tags=["Observability"])
+async def get_trace_services(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Get list of services that have traces.
+    
+    Requires 'traces.read' permission.
+    """
+    return await proxy_to_service(request, "/api/v1/observability/traces/services", "telemetry-service")
+
+
+@app.get("/api/v1/observability/traces/services/{service}/operations", tags=["Observability"])
+async def get_trace_operations(
+    service: str = Path(..., description="Service name"),
+    request: Request = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme)
+):
+    """
+    Get list of operations for a specific service.
+    
+    Requires 'traces.read' permission.
+    """
+    return await proxy_to_service(request, f"/api/v1/observability/traces/services/{service}/operations", "telemetry-service")
+
+
 # Helper function to proxy requests to auth service
 async def proxy_to_auth_service(request: Request, path: str):
     """Proxy request to auth service"""
@@ -4848,7 +7796,13 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             method = request.method
             if method in ['POST', 'PUT', 'PATCH']:
                 body = await request.body()
-            headers = dict(request.headers)
+            out_headers = dict(request.headers)
+            # Merge caller-built auth headers (e.g. X-Auth-Source for multi-tenant) so downstream gets correct auth mode
+            if headers:
+                for k, v in headers.items():
+                    if k and v is not None:
+                        out_headers[k] = v
+            headers = out_headers
             params = request.query_params
             
             # Inject trace context if not already present
@@ -4861,10 +7815,7 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             # IMPORTANT: leave params as None so any querystring already present
             # in the URL (e.g. "/path?x=1") is not overwritten by an empty dict.
             params = None
-            if headers is None:
-                headers = {}
-            
-            # Inject trace context
+            headers = dict(headers) if headers else {}
             if TRACING_AVAILABLE and inject:
                 try:
                     inject(headers)
@@ -4883,20 +7834,8 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             timeout_value = float(os.getenv("DEFAULT_SERVICE_TIMEOUT_SECONDS", "60.0"))
         final_url = f"{service_url}{path}"
         
-        # Log proxy request details for debugging
-        logger.info(
-            f"Proxying {method} request to {service_name}: {final_url}",
-            extra={
-                "context": {
-                    "method": method,
-                    "path": path,
-                    "service": service_name,
-                    "url": final_url,
-                    "has_body": body is not None,
-                    "body_size": len(body) if body else 0,
-                }
-            }
-        )
+        # Don't log proxy request details for successful requests - service-level logging handles this
+        # Only log proxy details for errors (handled below after response)
         
         start_time = time.time()
         try:
@@ -4912,22 +7851,90 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             
             response_time = time.time() - start_time
             
-            # Log successful proxy response
-            logger.info(
-                f"Proxy response from {service_name}: {response.status_code} in {response_time:.3f}s",
+            # Only log non-2xx responses here – successful 2xx responses are
+            # already logged at the service level, so logging them again at the
+            # gateway would create duplicate 200 entries in OpenSearch.
+            if not (200 <= response.status_code < 300):
+                logger.warning(
+                    f"Proxy response from {service_name}: {response.status_code} in {response_time:.3f}s",
+                    extra={
+                        "context": {
+                            "method": method,
+                            "path": path,
+                            "service": service_name,
+                            "status_code": response.status_code,
+                            "response_time_ms": round(response_time * 1000, 2),
+                        }
+                    }
+                )
+            
+            # Don't log 403 errors here - RequestLoggingMiddleware handles all 400-series errors to avoid duplicates
+            
+        except httpx.ConnectError as e:
+            response_time = time.time() - start_time
+            # Mark span as error if tracing is available
+            if TRACING_AVAILABLE and trace:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.message", str(e))
+                    current_span.set_attribute("error.type", "connection_error")
+            logger.error(
+                f"Connection error proxying to {service_name}: {e}",
                 extra={
                     "context": {
                         "method": method,
                         "path": path,
                         "service": service_name,
-                        "status_code": response.status_code,
+                        "service_url": service_url,
+                        "error": "connection_error",
                         "response_time_ms": round(response_time * 1000, 2),
                     }
+                },
+                exc_info=True
+            )
+            raise HTTPException(
+                status_code=503, 
+                detail={
+                    "code": "SERVICE_UNAVAILABLE",
+                    "message": f"{service_name.replace('-', ' ').title()} is not reachable. Please check if the service is running.",
+                    "service": service_name,
+                    "service_url": service_url
                 }
             )
-            
-            # Don't log 403 errors here - RequestLoggingMiddleware handles all 400-series errors to avoid duplicates
-            
+        except httpx.TimeoutException as e:
+            response_time = time.time() - start_time
+            # Mark span as error if tracing is available
+            if TRACING_AVAILABLE and trace:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.message", str(e))
+                    current_span.set_attribute("error.type", "timeout")
+            logger.error(
+                f"Timeout proxying to {service_name}: {e}",
+                extra={
+                    "context": {
+                        "method": method,
+                        "path": path,
+                        "service": service_name,
+                        "timeout": timeout_value,
+                        "error": "timeout",
+                        "response_time_ms": round(response_time * 1000, 2),
+                    }
+                },
+                exc_info=True
+            )
+            raise HTTPException(
+                status_code=504, 
+                detail={
+                    "code": "SERVICE_TIMEOUT",
+                    "message": f"{service_name.replace('-', ' ').title()} did not respond within {timeout_value}s. The service may be overloaded.",
+                    "service": service_name
+                }
+            )
         except Exception as e:
             response_time = time.time() - start_time
             # Mark span as error if tracing is available
@@ -4944,13 +7951,22 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
                         "method": method,
                         "path": path,
                         "service": service_name,
+                        "service_url": service_url,
                         "error": "proxy_error",
+                        "error_type": type(e).__name__,
                         "response_time_ms": round(response_time * 1000, 2),
                     }
                 },
                 exc_info=True
             )
-            raise HTTPException(status_code=500, detail=f"{service_name} temporarily unavailable")
+            raise HTTPException(
+                status_code=503, 
+                detail={
+                    "code": "SERVICE_UNAVAILABLE",
+                    "message": f"{service_name.replace('-', ' ').title()} is temporarily unavailable. Please try again later.",
+                    "service": service_name
+                }
+            )
         
         # Return response
         return Response(
@@ -5097,7 +8113,9 @@ async def proxy_request(request: Request, path: str):
                         route_span.set_attribute("gateway.method", request.method)
                     
                     # Determine target service
-                    service_name = await route_manager.get_service_for_path(f"/{path}")
+                    # Use the full request path for route matching, not just the captured path parameter
+                    full_request_path = request.url.path
+                    service_name = await route_manager.get_service_for_path(full_request_path)
                     
                     if route_span:
                         if service_name:
@@ -5129,7 +8147,20 @@ async def proxy_request(request: Request, path: str):
                             select_span.set_attribute("gateway.selection_method", "direct_fallback")
                             select_span.set_status(Status(StatusCode.OK))
                         logger.debug(f"Using direct service URL fallback for {service_name}")
-                        return await proxy_to_service(request, f"/{path}", service_name)
+                        # Strip the route prefix from path before forwarding
+                        route_prefix = None
+                        for route_pref, svc_name in route_manager.routes.items():
+                            if svc_name == service_name and full_request_path.startswith(route_pref):
+                                route_prefix = route_pref
+                                break
+                        
+                        if route_prefix:
+                            # Model-management and llm-service expect full path /api/v1/... (same as gateway)
+                            services_full_path = ("model-management-service", "llm-service")
+                            service_path = full_request_path if service_name in services_full_path else (full_request_path[len(route_prefix):] or "/")
+                        else:
+                            service_path = full_request_path
+                        return await proxy_to_service(request, service_path, service_name)
 
                     # Select healthy instance
                     instance_info = await load_balancer.select_instance(service_name)
@@ -5157,10 +8188,39 @@ async def proxy_request(request: Request, path: str):
                 # Prepare forwarding headers (includes trace context injection)
                 headers = prepare_forwarding_headers(request, correlation_id, request_id)
                 
+                # Ensure Content-Type is set for POST/PUT/PATCH requests
+                if request.method in ['POST', 'PUT', 'PATCH']:
+                    if 'Content-Type' not in headers or not headers.get('Content-Type'):
+                        headers['Content-Type'] = 'application/json'
+                
+                # Strip the route prefix from path before forwarding
+                route_prefix = None
+                for route_pref, svc_name in route_manager.routes.items():
+                    if svc_name == service_name and full_request_path.startswith(route_pref):
+                        route_prefix = route_pref
+                        break
+                
+                if route_prefix:
+                    # Model-management and llm-service expect full path /api/v1/... (same as gateway)
+                    services_full_path = ("model-management-service", "llm-service")
+                    service_path = full_request_path if service_name in services_full_path else (full_request_path[len(route_prefix):] or "/")
+                else:
+                    service_path = full_request_path
+                
                 # Prepare request body
                 body = None
                 if request.method in ['POST', 'PUT', 'PATCH']:
                     body = await request.body()
+                    # Log body size and content for debugging
+                    if body:
+                        logger.info(f"Forwarding {len(body)} bytes of body for {request.method} {service_path}")
+                        try:
+                            body_preview = body.decode('utf-8')[:200] if len(body) > 0 else ""
+                            logger.debug(f"Body preview: {body_preview}")
+                        except:
+                            pass
+                    else:
+                        logger.warning(f"No body found for {request.method} request to {service_path}")
                 
                 # Create child span for request preparation
                 prep_span_context = tracer_instance.start_as_current_span("gateway.prepare_request") if tracer_instance else nullcontext()
@@ -5175,15 +8235,26 @@ async def proxy_request(request: Request, path: str):
                 with http_span_context as http_span:
                     if http_span:
                         http_span.set_attribute("http.method", request.method)
-                        http_span.set_attribute("http.url", f"{instance_url}/{path}")
-                        http_span.set_attribute("http.target", f"/{path}")
+                        http_span.set_attribute("http.url", f"{instance_url}{service_path}")
+                        http_span.set_attribute("http.target", service_path)
                         http_span.set_attribute("service.name", service_name)
                         http_span.set_attribute("service.instance", instance_id)
                     
                     # Forward request
+                    # Log request details for debugging
+                    logger.warning(f"🔍 Proxying {request.method} request to {service_name}")
+                    logger.warning(f"🔍 Full request path: {full_request_path}")
+                    logger.warning(f"🔍 Service path after stripping: {service_path}")
+                    logger.warning(f"🔍 Target URL: {instance_url}{service_path}")
+                    if body:
+                        body_str = body[:200].decode('utf-8', errors='ignore') if len(body) > 0 else 'empty'
+                        logger.warning(f"🔍 Request body size: {len(body)} bytes, preview: {body_str}")
+                    else:
+                        logger.warning(f"🔍 No body for {request.method} request to {service_path}")
+                    
                     response = await http_client.request(
                         method=request.method,
-                        url=f"{instance_url}/{path}",
+                        url=f"{instance_url}{service_path}",
                         headers=headers,
                         params=request.query_params,
                         content=body,
@@ -5213,8 +8284,9 @@ async def proxy_request(request: Request, path: str):
                 
                 # Update proxy span with response info
                 if proxy_span:
+                    # service_path is already computed above in the http_span context
                     proxy_span.set_attribute("http.status_code", response.status_code)
-                    proxy_span.set_attribute("http.url", f"{instance_url}/{path}")
+                    proxy_span.set_attribute("http.url", f"{instance_url}{service_path}")
                     proxy_span.set_attribute("response.time_ms", round(response_time * 1000, 2))
                     proxy_span.set_attribute("gateway.total_time_ms", round(response_time * 1000, 2))
                     

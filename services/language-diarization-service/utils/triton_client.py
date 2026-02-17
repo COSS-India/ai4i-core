@@ -13,6 +13,16 @@ import numpy as np
 import tritonclient.http as http_client
 from tritonclient.utils import np_to_triton_dtype
 
+# OpenTelemetry imports
+try:
+    from opentelemetry import trace
+    from opentelemetry.trace import Status, StatusCode
+    tracer = trace.get_tracer("language-diarization-service")
+    TRACING_AVAILABLE = True
+except ImportError:
+    tracer = None
+    TRACING_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -120,6 +130,56 @@ class TritonClient:
         Returns a parsed JSON object from the diarization model.
         If the result cannot be parsed, an empty dict is returned.
         """
+        if not tracer:
+            # Fallback if tracing not available
+            return self._run_language_diarization_inference_impl(audio_base64, target_language)
+        
+        with tracer.start_as_current_span("triton.inference") as span:
+            try:
+                span.set_attribute("triton.model_name", "lang_diarization")
+                span.set_attribute("triton.endpoint", self.triton_url)
+                span.set_attribute("triton.has_auth", bool(self.api_key))
+                span.set_attribute("triton.target_language", target_language)
+                
+                # Calculate audio size (approximate from base64)
+                try:
+                    audio_size = len(audio_base64) if audio_base64 else 0
+                    span.set_attribute("triton.audio_size_bytes", audio_size)
+                except Exception:
+                    pass
+                
+                # Add span event for Triton call start
+                span.add_event("triton.inference.start", {
+                    "model": "lang_diarization",
+                    "endpoint": self.triton_url,
+                    "target_language": target_language
+                })
+                
+                result = self._run_language_diarization_inference_impl(audio_base64, target_language)
+                
+                # Add span event for Triton call completion
+                span.add_event("triton.inference.complete", {
+                    "model": "lang_diarization",
+                    "has_segments": bool(result)
+                })
+                span.set_status(Status(StatusCode.OK))
+                
+                logger.debug(f"Triton inference completed for model lang_diarization")
+                return result
+                
+            except Exception as e:
+                error_msg = str(e)
+                span.set_attribute("error", True)
+                span.set_attribute("error.type", type(e).__name__)
+                span.set_attribute("error.message", error_msg)
+                span.set_status(Status(StatusCode.ERROR, error_msg))
+                span.record_exception(e)
+                raise
+    
+    def _run_language_diarization_inference_impl(
+        self, audio_base64: str, target_language: str = ""
+    ) -> Dict:
+        """Implementation of run_language_diarization_inference without tracing"""
         if not audio_base64:
             return {}
 

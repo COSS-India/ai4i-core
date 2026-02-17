@@ -38,6 +38,9 @@ from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
+from middleware.tenant_schema_router import TenantSchemaRouter
+from middleware.tenant_context import get_tenant_context
+from middleware.tenant_middleware import TenantMiddleware
 
 # Import models to ensure they are registered with SQLAlchemy
 from models import database_models, auth_models
@@ -90,6 +93,10 @@ REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
 DATABASE_URL = os.getenv( "DATABASE_URL")
+
+# Multi-tenant database URL for tenant schema routing
+MULTI_TENANT_DB_URL = os.getenv("MULTI_TENANT_DB_URL")
+
 # NOTE: Triton endpoint/model MUST come from Model Management for inference.
 # No environment variable fallback - all resolution via Model Management database.
 MODEL_MANAGEMENT_SERVICE_URL = os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091")
@@ -99,6 +106,7 @@ MODEL_MANAGEMENT_SERVICE_API_KEY = os.getenv(
 )
 MODEL_MANAGEMENT_CACHE_TTL = int(os.getenv("MODEL_MANAGEMENT_CACHE_TTL", "300"))  # 5 minutes default
 TRITON_ENDPOINT_CACHE_TTL = int(os.getenv("TRITON_ENDPOINT_CACHE_TTL", "300"))
+SMR_SERVICE_URL = os.getenv("SMR_SERVICE_URL", "http://smr-service:8097")
 
 # Global variables
 redis_client: Optional[redis.Redis] = None
@@ -220,6 +228,20 @@ async def lifespan(app: FastAPI):
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
     
+    # Initialize tenant schema router for multi-tenant routing
+    # Use MULTI_TENANT_DB_URL for tenant schema routing (different from auth DATABASE_URL)
+    if not MULTI_TENANT_DB_URL:
+        logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
+        # Fallback to DATABASE_URL but log warning
+        multi_tenant_db_url = DATABASE_URL
+    else:
+        multi_tenant_db_url = MULTI_TENANT_DB_URL
+    
+    logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")  # Mask password in logs
+    tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
+    app.state.tenant_schema_router = tenant_schema_router
+    logger.info("Tenant schema router initialized with multi-tenant database")
+    
     # Create Model Management client and store in app state
     # NOTE: Triton endpoint/model MUST come from Model Management for inference.
     # No environment variable fallback - all resolution via Model Management database.
@@ -284,6 +306,16 @@ async def lifespan(app: FastAPI):
         if db_engine:
             await db_engine.dispose()
             logger.info("PostgreSQL connection closed")
+        
+        # Close tenant schema router connections
+        tenant_router = getattr(app.state, 'tenant_schema_router', None)
+        if tenant_router:
+            await tenant_router.close_all()
+            logger.info("Tenant schema router connections closed")
+        
+        if model_management_client:
+            await model_management_client.close()
+            logger.info("Model Management Service client closed")
 
     except Exception as e:
         logger.error(f"Error during shutdown: {e}")
@@ -408,6 +440,10 @@ if tracer:
 else:
     logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
 
+# Add tenant middleware (after auth, before routes)
+# This extracts tenant context from JWT or user_id
+app.add_middleware(TenantMiddleware)
+
 # Add rate limiting middleware (will use app.state.redis_client when available)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
@@ -452,13 +488,17 @@ async def health(request: Request):
     db_ok = False
 
     # Check Redis
+    # Check if health logs should be excluded
+    exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+    
     try:
         rc = getattr(request.app.state, "redis_client", None)
         if rc is not None:
             await rc.ping()
             redis_ok = True
     except Exception as e:
-        logger.warning(f"/health: Redis check failed: {e}")
+        if not exclude_health_logs:
+            logger.warning(f"/health: Redis check failed: {e}")
 
     # Check DB
     try:
@@ -468,7 +508,8 @@ async def health(request: Request):
                 await session.execute(text("SELECT 1"))
             db_ok = True
     except Exception as e:
-        logger.warning(f"/health: PostgreSQL check failed: {e}")
+        if not exclude_health_logs:
+            logger.warning(f"/health: PostgreSQL check failed: {e}")
 
     status_str = "ok" if (redis_ok and db_ok) else "degraded"
     status_code = 200 if status_str == "ok" else 503

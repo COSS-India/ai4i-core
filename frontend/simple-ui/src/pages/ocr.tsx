@@ -18,7 +18,6 @@ import {
   TabPanels,
   Tab,
   TabPanel,
-  useToast,
   VStack,
   IconButton,
   Icon,
@@ -30,9 +29,12 @@ import { CopyIcon, CheckIcon, AttachmentIcon, DeleteIcon } from "@chakra-ui/icon
 import { useQuery } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
 import { performOCRInference, listOCRServices } from "../services/ocrService";
+import { OCR_ERRORS, MAX_IMAGE_FILE_SIZE } from "../config/constants";
+import { extractErrorInfo } from "../utils/errorHandler";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const OCRPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageUri, setImageUri] = useState("");
   const [sourceLanguage, setSourceLanguage] = useState("en");
@@ -111,6 +113,48 @@ const OCRPage: React.FC = () => {
   };
 
   const processFile = (file: File) => {
+    // Validate file type
+    const isJPG = file.type === 'image/jpeg' || file.type === 'image/jpg' || file.name.toLowerCase().endsWith('.jpg') || file.name.toLowerCase().endsWith('.jpeg');
+    const isPNG = file.type === 'image/png' || file.name.toLowerCase().endsWith('.png');
+    
+    if (!isJPG && !isPNG) {
+      const err = OCR_ERRORS.INVALID_FORMAT;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    // Validate file size
+    if (file.size > MAX_IMAGE_FILE_SIZE) {
+      const err = OCR_ERRORS.FILE_TOO_LARGE;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
+    // Validate file is not empty
+    if (file.size === 0) {
+      const err = OCR_ERRORS.EMPTY_FILE;
+      toast({
+        title: err.title,
+        description: err.description,
+        status: 'error',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    
     setImageFile(file);
     setImageUri("");
     const url = URL.createObjectURL(file);
@@ -135,9 +179,10 @@ const OCRPage: React.FC = () => {
     if (file && file.type.startsWith('image/')) {
       processFile(file);
     } else {
+      const err = OCR_ERRORS.INVALID_FORMAT;
       toast({
-        title: "Invalid File",
-        description: "Please upload an image file.",
+        title: err.title,
+        description: err.description,
         status: "error",
         duration: 3000,
         isClosable: true,
@@ -197,10 +242,11 @@ const OCRPage: React.FC = () => {
 
   const handleProcess = async () => {
     if (!imageFile && !imageUri) {
+      const err = OCR_ERRORS.FILE_REQUIRED;
       toast({
-        title: "Input Required",
-        description: "Please upload an image or provide an image URL.",
-        status: "warning",
+        title: err.title,
+        description: err.description,
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -216,7 +262,25 @@ const OCRPage: React.FC = () => {
       let imageUriValue: string | null = null;
 
       if (imageFile) {
-        imageContent = await fileToBase64(imageFile);
+        try {
+          imageContent = await fileToBase64(imageFile);
+          if (!imageContent || imageContent.length === 0) {
+            throw new Error('EMPTY_FILE');
+          }
+        } catch (err: any) {
+          const error = err?.message === 'EMPTY_FILE' 
+            ? OCR_ERRORS.EMPTY_FILE 
+            : OCR_ERRORS.INVALID_FILE;
+          toast({
+            title: error.title,
+            description: error.description,
+            status: 'error',
+            duration: 3000,
+            isClosable: true,
+          });
+          setFetching(false);
+          return;
+        }
       } else {
         imageUriValue = imageUri;
       }
@@ -253,24 +317,12 @@ const OCRPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Prioritize API error message from response
-      let errorMessage = "Failed to perform OCR inference";
-      
-      if (err?.response?.data?.detail?.message) {
-        errorMessage = err.response.data.detail.message;
-      } else if (err?.response?.data?.message) {
-        errorMessage = err.response.data.message;
-      } else if (err?.response?.data?.detail) {
-        if (typeof err.response.data.detail === 'string') {
-          errorMessage = err.response.data.detail;
-        }
-      } else if (err?.message) {
-        errorMessage = err.message;
-      }
+      // Use centralized error handler (ocr context so backend message shown as default when no specific mapping)
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'ocr');
       
       setError(errorMessage);
       toast({
-        title: "Error",
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: "error",
         duration: 5000,
@@ -320,21 +372,21 @@ const OCRPage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               OCR - Optical Character Recognition
             </Heading>
-            <Text color="gray.600" fontSize="lg">
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
               OCR service for Indic and English languages running on NVIDIA T4 GPU. Provides high-accuracy text extraction from images with bounding boxes, confidence scores, and line-by-line results.
             </Text>
           </Box>
 
-          <Grid
-            templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
-            gap={8}
-            w="full"
+        <Grid
+          templateColumns={{ base: "1fr", lg: "1fr 1fr" }}
+          gap={8}
+          w="full"
             maxW="1200px"
-            mx="auto"
-          >
+          mx="auto"
+        >
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
@@ -352,7 +404,7 @@ const OCRPage: React.FC = () => {
                     <Select
                       value={selectedServiceId}
                       onChange={(e) => setSelectedServiceId(e.target.value)}
-                      placeholder="Select an OCR service"
+                      placeholder="Select a OCR service"
                       disabled={fetching}
                       size="md"
                       borderColor="gray.300"
@@ -377,16 +429,12 @@ const OCRPage: React.FC = () => {
                             <Text fontSize="sm" color="gray.700" mb={1}>
                               <strong>Service ID:</strong> {selectedService.service_id}
                             </Text>
-                            {selectedService.serviceDescription && (
-                              <Text fontSize="sm" color="gray.700" mb={1}>
-                                <strong>Description:</strong> {selectedService.serviceDescription}
-                              </Text>
-                            )}
-                            {selectedService.supported_languages.length > 0 && (
-                              <Text fontSize="sm" color="gray.700">
-                                <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
-                              </Text>
-                            )}
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                            </Text>
                           </>
                         ) : null;
                       })()}
@@ -515,27 +563,27 @@ const OCRPage: React.FC = () => {
                 </Tabs>
               </FormControl>
 
-                {previewUrl && (
-                  <Box>
-                    <Text fontSize="sm" fontWeight="semibold" mb={2}>
-                      Image Preview:
-                    </Text>
-                    <Box
-                      border="1px"
-                      borderColor="gray.300"
-                      borderRadius="md"
-                      overflow="hidden"
-                      bg="gray.50"
-                      p={2}
-                    >
-                      <img
-                        src={previewUrl}
-                        alt="Preview"
-                        style={{ maxWidth: "100%", height: "auto", display: "block" }}
-                      />
-                    </Box>
+              {previewUrl && (
+                <Box>
+                  <Text fontSize="sm" fontWeight="semibold" mb={2}>
+                    Image Preview:
+                  </Text>
+                  <Box
+                    border="1px"
+                    borderColor="gray.300"
+                    borderRadius="md"
+                    overflow="hidden"
+                    bg="gray.50"
+                    p={2}
+                  >
+                    <img
+                      src={previewUrl}
+                      alt="Preview"
+                      style={{ maxWidth: "100%", height: "auto", display: "block" }}
+                    />
                   </Box>
-                )}
+                </Box>
+              )}
 
                 <Button
                   colorScheme="orange"
@@ -555,29 +603,29 @@ const OCRPage: React.FC = () => {
             <GridItem>
               <VStack spacing={6} align="stretch">
                 {/* Progress Indicator */}
-                {fetching && (
-                  <Box>
-                    <Text mb={2} fontSize="sm" color="gray.600">
-                      Processing image...
-                    </Text>
+              {fetching && (
+                <Box>
+                  <Text mb={2} fontSize="sm" color="gray.600">
+                    Processing image...
+                  </Text>
                     <Progress size="xs" isIndeterminate colorScheme="orange" />
-                  </Box>
-                )}
+                </Box>
+              )}
 
                 {/* Error Display */}
-                {error && (
-                  <Box
-                    p={4}
-                    bg="red.50"
-                    borderRadius="md"
-                    border="1px"
-                    borderColor="red.200"
-                  >
-                    <Text color="red.600" fontSize="sm">
-                      {error}
-                    </Text>
-                  </Box>
-                )}
+              {error && (
+                <Box
+                  p={4}
+                  bg="red.50"
+                  borderRadius="md"
+                  border="1px"
+                  borderColor="red.200"
+                >
+                  <Text color="red.600" fontSize="sm">
+                    {error}
+                  </Text>
+                </Box>
+              )}
 
                 {/* Metrics Box */}
                 {fetched && (
@@ -610,40 +658,40 @@ const OCRPage: React.FC = () => {
                 )}
 
                 {/* OCR Results */}
-                {fetched && extractedText && (
+              {fetched && extractedText && (
                   <>
-                    <Box>
-                      <HStack justify="space-between" mb={2}>
-                        <Text fontSize="sm" fontWeight="semibold">
-                          Extracted Text:
-                        </Text>
-                        <IconButton
-                          aria-label="Copy text"
-                          icon={copied ? <CheckIcon /> : <CopyIcon />}
-                          size="sm"
-                          onClick={handleCopy}
-                          colorScheme={copied ? "green" : "gray"}
-                        />
-                      </HStack>
-                      <Box
-                        p={4}
-                        bg="white"
-                        borderRadius="md"
-                        border="1px"
-                        borderColor="gray.300"
-                        maxH="300px"
-                        overflowY="auto"
-                      >
-                        <Text fontSize="sm" whiteSpace="pre-wrap" wordBreak="break-word">
-                          {extractedText}
-                        </Text>
-                      </Box>
-                    </Box>
+                <Box>
+                  <HStack justify="space-between" mb={2}>
+                    <Text fontSize="sm" fontWeight="semibold">
+                      Extracted Text:
+                    </Text>
+                    <IconButton
+                      aria-label="Copy text"
+                      icon={copied ? <CheckIcon /> : <CopyIcon />}
+                      size="sm"
+                      onClick={handleCopy}
+                      colorScheme={copied ? "green" : "gray"}
+                    />
+                  </HStack>
+                  <Box
+                    p={4}
+                    bg="white"
+                    borderRadius="md"
+                    border="1px"
+                    borderColor="gray.300"
+                    maxH="300px"
+                    overflowY="auto"
+                  >
+                    <Text fontSize="sm" whiteSpace="pre-wrap" wordBreak="break-word">
+                      {extractedText}
+                    </Text>
+                  </Box>
+                </Box>
 
                     {/* Clear Results Button */}
                     <Box textAlign="center">
                       <button
-                        onClick={clearResults}
+                  onClick={clearResults}
                         style={{
                           padding: "8px 16px",
                           backgroundColor: "#f7fafc",
@@ -653,15 +701,15 @@ const OCRPage: React.FC = () => {
                           fontSize: "14px",
                           color: "#4a5568",
                         }}
-                      >
-                        Clear Results
+                >
+                  Clear Results
                       </button>
                     </Box>
                   </>
-                )}
-              </VStack>
-            </GridItem>
-          </Grid>
+              )}
+            </VStack>
+          </GridItem>
+        </Grid>
         </VStack>
       </ContentLayout>
     </>

@@ -20,6 +20,8 @@ CREATE DATABASE auth_db;
 CREATE DATABASE config_db;
 CREATE DATABASE model_management_db;
 
+CREATE DATABASE multi_tenant_db;
+
 -- Feature flag management
 CREATE DATABASE unleash
     WITH ENCODING = 'UTF8'
@@ -32,12 +34,14 @@ CREATE DATABASE unleash
 GRANT ALL PRIVILEGES ON DATABASE auth_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE config_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE model_management_db TO dhruva_user;
+GRANT ALL PRIVILEGES ON DATABASE multi_tenant_db TO dhruva_user;
 GRANT ALL PRIVILEGES ON DATABASE unleash TO dhruva_user;
 
 -- Add comments documenting which service uses each database
 COMMENT ON DATABASE auth_db IS 'Authentication & Authorization Service database';
 COMMENT ON DATABASE config_db IS 'Configuration Management Service database';
 COMMENT ON DATABASE model_management_db IS 'Model Management Service database - stores AI models and services registry';
+COMMENT ON DATABASE multi_tenant_db IS 'Multi-tenant feature database - tenant schemas and user registrations';
 COMMENT ON DATABASE unleash IS 'Unleash feature flag management database';
 
 -- Re-enable error stopping

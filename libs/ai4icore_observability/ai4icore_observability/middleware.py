@@ -11,6 +11,7 @@ import io
 import wave
 import hashlib
 import logging
+import random
 from typing import Optional, Dict, Any
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -46,20 +47,25 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # Extract organization and app (including from JWT token)
         organization, app = self._extract_customer_app(request)
         
-        # Store organization in request.state for other middlewares to access
+        # Extract tenant_id from JWT token
+        tenant_id = self._extract_tenant_id_from_jwt(request)
+        
+        # Store organization and tenant_id in request.state for other middlewares to access
         # IMPORTANT: Set this BEFORE await call_next() so it's available to inner middlewares
         request.state.organization = organization
+        request.state.tenant_id = tenant_id
         
         # Set organization in logging context for log formatter
         try:
-            from ai4icore_logging.context import set_organization
+            from ai4icore_logging.context import set_organization, set_tenant_id
             set_organization(organization)
+            set_tenant_id(tenant_id)
             if self.config.debug:
-                logger.debug(f"Set organization in logging context: {organization}")
+                logger.debug(f"Set organization in logging context: {organization}, tenant_id: {tenant_id}")
         except Exception as e:
             # Log error for debugging
             if self.config.debug:
-                logger.debug(f"Failed to set organization in context: {e}", exc_info=True)
+                logger.debug(f"Failed to set organization/tenant_id in context: {e}", exc_info=True)
             pass
         
         # Initialize body_bytes variable for potential reuse
@@ -220,7 +226,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         return organizations[org_index]
     
     def _extract_customer_from_token(self, request: Request) -> Optional[str]:
-        """Extract customer name from JWT token in authorization header."""
+        """Extract customer name from JWT token in authorization header.
+        
+        Only extracts organization names that are valid (non-numeric, known organizations).
+        Numeric 'sub' fields (like user IDs) are ignored to prevent them from being used as organization names.
+        """
         auth_header = request.headers.get("authorization", "")
         
         if auth_header:
@@ -229,75 +239,80 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 # Extract customer name from 'name' field in token
                 customer_name = decoded_token.get("name")
                 if customer_name:
-                    if self.config.debug:
-                        logger.debug(f"Extracted customer from JWT: {customer_name}")
-                    return customer_name
+                    # Validate that it's a valid organization name (not numeric)
+                    if customer_name and not customer_name.isdigit():
+                        if self.config.debug:
+                            logger.debug(f"Extracted customer from JWT 'name': {customer_name}")
+                        return customer_name
                 
                 # Fallback: try to extract from 'sub' field if 'name' is not available
+                # BUT: Only use 'sub' if it's not numeric (user IDs are numeric, org names are not)
                 sub = decoded_token.get("sub")
-                if sub:
-                    if self.config.debug:
-                        logger.debug(f"Using 'sub' field as customer: {sub}")
-                    return sub
+                if sub and not str(sub).isdigit():
+                    # Check if it's one of the known organizations
+                    known_orgs = ["irctc", "kisanmitra", "bashadaan", "beml"]
+                    if str(sub).lower() in known_orgs:
+                        if self.config.debug:
+                            logger.debug(f"Using 'sub' field as customer: {sub}")
+                        return str(sub).lower()
         
         return None
+    
+    def _extract_tenant_id_from_jwt(self, request: Request) -> str:
+        """
+        Extract tenant_id from JWT token in authorization header.
+        If tenant_id is not found in JWT, returns a temporary default value.
+        
+        Returns:
+            tenant_id from JWT if present, otherwise "new-organization-487578" (temporary fix)
+        """
+        auth_header = request.headers.get("authorization", "")
+        
+        if auth_header:
+            decoded_token = self._decode_jwt_token(auth_header)
+            if decoded_token:
+                # Extract tenant_id from JWT token
+                tenant_id = decoded_token.get("tenant_id")
+                if tenant_id:
+                    if self.config.debug:
+                        logger.debug(f"Extracted tenant_id from JWT: {tenant_id}")
+                    return tenant_id
+        
+        # Temporary fix: if tenant_id is missing, use default value
+        # TODO: Remove this temporary fix once all users are registered to tenants
+        default_tenant_id = "new-organization-487578"
+        if self.config.debug:
+            logger.debug(f"tenant_id not found in JWT, using temporary default: {default_tenant_id}")
+        return default_tenant_id
     
     def _extract_customer_app(self, request: Request) -> tuple:
         """Extract organization and app from request headers and JWT token.
 
-        For consistency, whenever an API key or Authorization token is present,
-        we always derive the organization using `_get_organization_from_api_key`
-        (hash-based mapping). JWT claims and `X-Customer-ID` are only used as
-        fallbacks when no key is available.
+        Priority order:
+        1. X-Customer-ID header (explicit organization identifier - highest priority)
+        2. JWT token claims
+        3. Random organization assignment (for even distribution across organizations)
         """
         organization: Optional[str] = None
 
-        # Determine API key source: prefer X-API-Key over Authorization header
-        # X-API-Key is the actual API key for organization mapping
-        # Authorization header may contain JWT token which is not suitable for hashing
-        auth_header = request.headers.get("authorization", "")
-        api_key_header = request.headers.get("X-API-Key")
-
-        if self.config.debug:
-            logger.debug(f"Organization extraction - auth_header present: {bool(auth_header)}, X-API-Key present: {bool(api_key_header)}")
-
-        api_key: Optional[str] = None
-        # Prefer X-API-Key header for organization mapping (it's the actual API key)
-        if api_key_header:
-            api_key = api_key_header
+        # PRIORITY 1: Check X-Customer-ID first (explicit organization identifier)
+        customer_id_header = request.headers.get("X-Customer-ID")
+        if customer_id_header:
+            organization = customer_id_header
             if self.config.debug:
-                logger.debug(f"Extracted API key from X-API-Key header (length: {len(api_key)})")
-        elif auth_header:
-            # Only use Authorization header if X-API-Key is not present
-            # Extract the API key (remove "Bearer " prefix if present)
-            api_key = auth_header
-            if auth_header.startswith("Bearer "):
-                api_key = auth_header[7:]
-            if self.config.debug:
-                logger.debug(f"Extracted API key from Authorization header (length: {len(api_key)})")
-
-        if api_key:
-            # Always map API key to organization using consistent hashing
-            organization = self._get_organization_from_api_key(api_key)
-
-            if self.config.debug:
-                logger.debug(f"Mapped API key to organization using hash: {organization}")
+                logger.debug(f"Found organization from X-Customer-ID header: {organization}")
         else:
-            # No API key found; fall back to token claim or header if available
+            # PRIORITY 2: Try JWT token extraction
             if self.config.debug:
-                logger.debug("No API key found, trying JWT token extraction...")
+                logger.debug("No X-Customer-ID found, trying JWT token extraction...")
             organization = self._extract_customer_from_token(request)
 
-            if organization is None:
-                organization = request.headers.get("X-Customer-ID")
-                if organization and self.config.debug:
-                    logger.debug(f"Found organization from X-Customer-ID header: {organization}")
-
-        # If still no organization, use "unknown"
+        # PRIORITY 3: If still no organization, randomly assign one for even distribution
         if organization is None:
-            organization = "unknown"
+            organizations = ["irctc", "kisanmitra", "bashadaan", "beml"]
+            organization = random.choice(organizations)
             if self.config.debug:
-                logger.debug(f"No organization found, using: {organization}")
+                logger.debug(f"No organization found, randomly assigned: {organization}")
 
         # Get app from header or use "unknown"
         app = request.headers.get("X-App-ID")

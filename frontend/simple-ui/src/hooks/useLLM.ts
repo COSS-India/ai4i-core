@@ -1,8 +1,8 @@
 // Custom React hook for LLM functionality with text processing
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { useToast } from '@chakra-ui/react';
+import { useToastWithDeduplication } from './useToastWithDeduplication';
 import { performLLMInference } from '../services/llmService';
 import { performNMTInference } from '../services/nmtService';
 import { getWordCount } from '../utils/helpers';
@@ -34,8 +34,11 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
   const [nmtRequestTime, setNmtRequestTime] = useState<string>('0');
   const [error, setError] = useState<string | null>(null);
 
+  // Only show "text exceeds limit" toast once per exceed (not every keystroke)
+  const hasShownTextLimitToastRef = useRef(false);
+
   // Toast hook
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   // LLM inference mutation
   const llmMutation = useMutation({
@@ -73,12 +76,12 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
       console.error('LLM inference error:', error);
       
       // Use centralized error handler
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(error);
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(error);
       
       setError(errorMessage);
       setFetching(false);
       toast({
-        title: errorTitle,
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: 'error',
         duration: 7000,
@@ -224,18 +227,24 @@ export const useLLM = (serviceId?: string): UseLLMReturn => {
     }
   }, [serviceId, selectedModelId, inputLanguage, outputLanguage, toast]);
 
-  // Set input text with validation
+  // Set input text with validation — show toast only when first exceeding limit, not every keystroke
   const setInputTextWithValidation = useCallback((text: string) => {
     setInputText(text);
-    
+
     if (text.length > MAX_TEXT_LENGTH) {
-      toast({
-        title: 'Text Length Warning',
-        description: `Text length (${text.length}) exceeds recommended limit of ${MAX_TEXT_LENGTH} characters.`,
-        status: 'warning',
-        duration: 3000,
-        isClosable: true,
-      });
+      if (!hasShownTextLimitToastRef.current) {
+        hasShownTextLimitToastRef.current = true;
+        toast({
+          id: 'llm-text-exceeds-limit',
+          title: 'Text Length Warning',
+          description: `Text length (${text.length}) exceeds recommended limit of ${MAX_TEXT_LENGTH} characters.`,
+          status: 'warning',
+          duration: 3000,
+          isClosable: true,
+        });
+      }
+    } else {
+      hasShownTextLimitToastRef.current = false;
     }
   }, [toast]);
 

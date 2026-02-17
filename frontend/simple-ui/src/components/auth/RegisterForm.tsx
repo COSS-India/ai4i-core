@@ -1,7 +1,7 @@
 /**
  * Register form component with Chakra UI
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Heading,
@@ -17,22 +17,23 @@ import {
   Link,
   Select,
   FormErrorMessage,
-  useToast,
 } from '@chakra-ui/react';
 import { ViewIcon, ViewOffIcon } from '@chakra-ui/icons';
 import { useAuth } from '../../hooks/useAuth';
 import { RegisterRequest } from '../../types/auth';
 import LoadingSpinner from '../common/LoadingSpinner';
+import { useToastWithDeduplication } from '../../hooks/useToastWithDeduplication';
 
 interface RegisterFormProps {
   onSuccess?: () => void;
   onSwitchToLogin?: () => void;
   onRegisterSuccess?: () => void; // New prop to handle post-registration (switch to login)
+  isActive?: boolean; // Prop to indicate if the register tab is currently active
 }
 
-const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin, onRegisterSuccess }) => {
+const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin, onRegisterSuccess, isActive = true }) => {
   const { register, isLoading, error, clearError } = useAuth();
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [formData, setFormData] = useState<RegisterRequest>({
     email: '',
     username: '',
@@ -43,6 +44,25 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const prevIsActiveRef = useRef<boolean>(isActive);
+
+  // Reset form when component becomes active (when switching back to register tab)
+  useEffect(() => {
+    // Only reset when switching from inactive to active (not on initial mount or re-renders)
+    if (isActive && !prevIsActiveRef.current) {
+      setFormData({
+        email: '',
+        username: '',
+        password: '',
+        confirm_password: '',
+      });
+      setValidationErrors({});
+      setShowPassword(false);
+      setShowConfirmPassword(false);
+      clearError();
+    }
+    prevIsActiveRef.current = isActive;
+  }, [isActive, clearError]);
 
   const validateForm = (): boolean => {
     const errors: Record<string, string> = {};
@@ -77,6 +97,17 @@ const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchToLogin,
 
     try {
       await register(formData);
+      
+      // Clear form data after successful registration
+      setFormData({
+        email: '',
+        username: '',
+        password: '',
+        confirm_password: '',
+      });
+      setValidationErrors({});
+      setShowPassword(false);
+      setShowConfirmPassword(false);
       
       // Show success toast
       toast({

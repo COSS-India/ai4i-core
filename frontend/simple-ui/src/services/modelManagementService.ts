@@ -24,12 +24,8 @@ export const unpublishModel = async (
     return response.data;
   } catch (error: any) {
     console.error('Unpublish model error:', error);
-    const errorMessage =
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
-      'Failed to unpublish model';
-    throw new Error(errorMessage);
+    // Don't transform the error - let extractErrorInfo handle it
+    throw error;
   }
 };
 
@@ -43,12 +39,8 @@ export const getAllModels = async (): Promise<any[]> => {
     return response.data;
   } catch (error: any) {
     console.error('Get models error:', error);
-    const errorMessage =
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
-      'Failed to fetch models';
-    throw new Error(errorMessage);
+    // Don't transform the error - let extractErrorInfo handle it
+    throw error;
   }
 };
 
@@ -63,12 +55,8 @@ export const createModel = async (modelData: any): Promise<any> => {
     return response.data;
   } catch (error: any) {
     console.error('Create model error:', error);
-    const errorMessage =
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
-      'Failed to create model';
-    throw new Error(errorMessage);
+    // Don't transform the error - let extractErrorInfo handle it
+    throw error;
   }
 };
 
@@ -80,18 +68,14 @@ export const createModel = async (modelData: any): Promise<any> => {
 export const getModelById = async (modelId: string): Promise<any> => {
   try {
     const response = await apiClient.post<any>(
-      `/api/v1/model-management/models/${modelId}`,
+      `/api/v1/model-management/models/${encodeURIComponent(modelId)}`,
       { modelId }
     );
     return response.data;
   } catch (error: any) {
     console.error('Get model error:', error);
-    const errorMessage =
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
-      'Failed to fetch model';
-    throw new Error(errorMessage);
+    // Don't transform the error - let extractErrorInfo handle it
+    throw error;
   }
 };
 
@@ -106,12 +90,8 @@ export const updateModel = async (modelData: any): Promise<any> => {
     return response.data;
   } catch (error: any) {
     console.error('Update model error:', error);
-    const errorMessage =
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
-      'Failed to update model';
-    throw new Error(errorMessage);
+    // Don't transform the error - let extractErrorInfo handle it
+    throw error;
   }
 };
 
@@ -120,20 +100,16 @@ export const updateModel = async (modelData: any): Promise<any> => {
  * @param modelId - The ID of the model to publish
  * @returns Promise with publish response
  */
-export const publishModel = async (modelId: string): Promise<string> => {
+export const publishModel = async (modelId: string): Promise<any> => {
   try {
-    const response = await apiClient.post<string>(
+    const response = await apiClient.post<any>(
       `/api/v1/model-management/models/publish?model_id=${encodeURIComponent(modelId)}`
     );
     return response.data;
   } catch (error: any) {
     console.error('Publish model error:', error);
-    const errorMessage =
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      error.message ||
-      'Failed to publish model';
-    throw new Error(errorMessage);
+    // Don't transform the error - let extractErrorInfo handle it
+    throw error;
   }
 };
 
@@ -144,7 +120,7 @@ export const publishModel = async (modelId: string): Promise<string> => {
  */
 export const listServices = async (taskType?: string): Promise<any[]> => {
   try {
-    const url = '/api/v1/model-management/services/';
+    const url = '/api/v1/model-management/services';
     const params = taskType ? { task_type: taskType } : {};
     const response = await apiClient.get<any[]>(url, { params });
     return response.data;

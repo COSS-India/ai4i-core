@@ -37,6 +37,8 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
+from middleware.tenant_middleware import TenantMiddleware
+from middleware.tenant_schema_router import TenantSchemaRouter
 from utils.triton_client import TritonClient
 
 # Configure structured logging
@@ -89,6 +91,12 @@ REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db",
+)
+
+# Multi-tenant database URL (for tenant schema routing)
+MULTI_TENANT_DB_URL = os.getenv(
+    "MULTI_TENANT_DB_URL",
+    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/multi_tenant_db",
 )
 
 # NOTE: Triton endpoint/model MUST come from Model Management for inference.
@@ -206,6 +214,19 @@ async def lifespan(app: FastAPI):
     app.state.triton_api_key = TRITON_API_KEY
     app.state.triton_timeout = TRITON_TIMEOUT
 
+    # Initialize tenant schema router for multi-tenant routing
+    # Use MULTI_TENANT_DB_URL for tenant schema routing (different from auth DATABASE_URL)
+    if not MULTI_TENANT_DB_URL:
+        logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
+        multi_tenant_db_url = DATABASE_URL
+    else:
+        multi_tenant_db_url = MULTI_TENANT_DB_URL
+
+    logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")  # Mask password in logs
+    tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
+    app.state.tenant_schema_router = tenant_schema_router
+    logger.info("Tenant schema router initialized with multi-tenant database")
+
     # Service registry
     try:
         registry_client = ServiceRegistryHttpClient()
@@ -258,6 +279,11 @@ async def lifespan(app: FastAPI):
         if db_engine:
             await db_engine.dispose()
             logger.info("PostgreSQL connection closed")
+
+        # Close tenant schema router connections
+        if hasattr(app.state, 'tenant_schema_router') and app.state.tenant_schema_router:
+            await app.state.tenant_schema_router.close_all()
+            logger.info("Tenant schema router connections closed")
     except Exception as e:
         logger.error("Error during shutdown: %s", e)
 
@@ -354,6 +380,9 @@ app.add_middleware(CorrelationMiddleware)
 # This ensures organization is set in context before logging
 app.add_middleware(RequestLoggingMiddleware)
 
+# Tenant middleware (marks requests for tenant context extraction)
+app.add_middleware(TenantMiddleware)
+
 # Rate limiting (Redis client will be picked from app.state)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
@@ -387,13 +416,17 @@ async def health(request: Request):
     db_ok = False
     triton_ok = False
 
+    # Check if health logs should be excluded
+    exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+    
     try:
         rc = getattr(request.app.state, "redis_client", None)
         if rc is not None:
             await rc.ping()
             redis_ok = True
     except Exception as e:
-        logger.warning("/health: Redis check failed: %s", e)
+        if not exclude_health_logs:
+            logger.warning("/health: Redis check failed: %s", e)
 
     try:
         session_factory = getattr(request.app.state, "db_session_factory", None)
@@ -402,16 +435,19 @@ async def health(request: Request):
                 await session.execute(text("SELECT 1"))
             db_ok = True
     except Exception as e:
-        logger.warning("/health: PostgreSQL check failed: %s", e)
+        if not exclude_health_logs:
+            logger.warning("/health: PostgreSQL check failed: %s", e)
 
     # Triton endpoint must be resolved via Model Management - no hardcoded fallback
     # Health check focuses on Redis and DB availability
     triton_ok = False
     try:
         # Skip Triton check in health endpoint (requires Model Management serviceId)
-        logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
+        if not exclude_health_logs:
+            logger.debug("/health: Skipping Triton check (requires Model Management serviceId)")
     except Exception as e:
-        logger.warning("/health: Triton check skipped: %s", e)
+        if not exclude_health_logs:
+            logger.warning("/health: Triton check skipped: %s", e)
 
     status_str = "ok" if (redis_ok and db_ok and triton_ok) else "degraded"
     status_code = 200 if status_str == "ok" else 503

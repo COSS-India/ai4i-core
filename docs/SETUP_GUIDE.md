@@ -8,6 +8,10 @@ This guide provides step-by-step instructions for setting up and running the AI4
 - **[Git](https://git-scm.com/install/)** installed
 - At least **8GB RAM** and **20GB disk space**
 
+## Important Note
+
+**This guide uses `docker-compose-local.yml` for local development and testing.** All Docker Compose commands will use the `-f docker-compose-local.yml` flag to specify this configuration file.
+
 ## Step 1: Clone the Repository
 
 ```bash
@@ -29,15 +33,19 @@ Edit `.env` if needed (defaults should work for development).
 
 Copy the environment template for each service and the frontend:
 
+
+**Core Services**
 ```bash
-# Core Services
 cp services/api-gateway-service/env.template services/api-gateway-service/.env
 cp services/auth-service/env.template services/auth-service/.env
 cp services/config-service/env.template services/config-service/.env
 cp services/model-management-service/env.template services/model-management-service/.env
 cp services/multi-tenant-feature/env.template services/multi-tenant-feature/.env
+```
 
-# AI/ML Services
+
+**AI/ML Services**
+```bash
 cp services/asr-service/env.template services/asr-service/.env
 cp services/tts-service/env.template services/tts-service/.env
 cp services/nmt-service/env.template services/nmt-service/.env
@@ -50,38 +58,52 @@ cp services/language-diarization-service/env.template services/language-diarizat
 cp services/audio-lang-detection-service/env.template services/audio-lang-detection-service/.env
 cp services/speaker-diarization-service/env.template services/speaker-diarization-service/.env
 cp services/pipeline-service/env.template services/pipeline-service/.env
+```
 
-# Observability Services
+ **Observability Services**
+```bash
 cp services/alerting-service/env.template services/alerting-service/.env
 cp services/dashboard-service/env.template services/dashboard-service/.env
 cp services/metrics-service/env.template services/metrics-service/.env
 cp services/telemetry-service/env.template services/telemetry-service/.env
+```
 
-# Frontend
+**Frontend**
+```bash
 cp frontend/simple-ui/env.template frontend/simple-ui/.env
 ```
 
 **Note:** You can edit these `.env` files if you need to customize settings, but the defaults should work for initial setup.
 
-## Step 3: Start Infrastructure Services
+## Step 3: Build Docker Images
+
+Build all the Docker images using the local development compose file:
+
+```bash
+docker compose -f docker-compose-local.yml build
+```
+
+**Note:** The first build may take 20-40 minutes depending on your machine and network speed. Subsequent builds will be faster due to Docker's layer caching.
+
+## Step 4: Start Infrastructure Services
 
 Start the infrastructure services (PostgreSQL, Redis, Kafka, etc.). Application services depend on databases being initialized:
 
 ```bash
-docker compose up -d postgres redis kafka zookeeper influxdb unleash
+docker compose -f docker-compose-local.yml up -d postgres redis kafka zookeeper influxdb unleash
 ```
 
 Wait for all infrastructure services to be healthy:
 
 ```bash
-docker compose ps
+docker compose -f docker-compose-local.yml ps
 ```
 
 You should see `postgres`, `redis`, `kafka`, `zookeeper`, `influxdb`, and `unleash` all showing as "healthy" or "Up".
 
-## Step 4: Initialize Database
+## Step 5: Initialize Database
 
-Run the database initialization script to create all databases and tables. You can use any of these methods:
+Run the database initialization script from the **project root** (the directory containing `docker-compose-local.yml`) to create all databases, tables, and seed data.
 
 **Method 1 (Recommended - using wrapper script):**
 
@@ -89,7 +111,7 @@ Run the database initialization script to create all databases and tables. You c
 ./infrastructure/postgres/init-all-databases.sh
 ```
 
-**Note:** If you get a "permission denied" error, you can run it with `bash`:
+**Note:** If you get a "permission denied" error, run it with `bash`:
 ```bash
 bash infrastructure/postgres/init-all-databases.sh
 ```
@@ -97,7 +119,7 @@ bash infrastructure/postgres/init-all-databases.sh
 **Method 2 (Direct SQL execution):**
 
 ```bash
-docker compose exec postgres psql -U dhruva_user -d dhruva_platform -f /docker-entrypoint-initdb.d/init-all-databases.sql
+docker compose -f docker-compose-local.yml exec postgres psql -U dhruva_user -d dhruva_platform -f /docker-entrypoint-initdb.d/init-all-databases.sql
 ```
 
 **Method 3 (Alternative - copy file first):**
@@ -105,24 +127,24 @@ docker compose exec postgres psql -U dhruva_user -d dhruva_platform -f /docker-e
 If Method 2 doesn't work, copy the file into the container and run it:
 
 ```bash
-docker compose cp infrastructure/postgres/init-all-databases.sql postgres:/tmp/init-all-databases.sql
-docker compose exec postgres psql -U dhruva_user -d dhruva_platform -f /tmp/init-all-databases.sql
+docker compose -f docker-compose-local.yml cp infrastructure/postgres/init-all-databases.sql postgres:/tmp/init-all-databases.sql
+docker compose -f docker-compose-local.yml exec postgres psql -U dhruva_user -d dhruva_platform -f /tmp/init-all-databases.sql
 ```
 
 **Note:** The SQL file `infrastructure/postgres/init-all-databases.sql` contains everything needed to set up all databases, tables, and seed data in a single execution. The script now handles existing databases gracefully (errors are ignored if databases already exist).
 
 This script will:
-- Create all required databases (auth_db, config_db, model_management_db, unleash)
+- Create all required databases
 - Create all tables and schemas
 - Set up indexes and triggers
 - Insert seed data (default admin user, roles, permissions, etc.)
 
-## Step 5: Start Application Services
+## Step 6: Start Application Services
 
 Now that the databases are ready, start all application services:
 
 ```bash
-docker compose up -d \
+docker compose -f docker-compose-local.yml up -d \
   api-gateway-service \
   auth-service \
   config-service \
@@ -146,12 +168,10 @@ docker compose up -d \
   simple-ui-frontend
 ```
 
-**Note:** The first time you run this, Docker will build the images, which may take 20-40 minutes depending on your machine and network speed. Subsequent starts will be much faster.
-
 Check that all services are running:
 
 ```bash
-docker compose ps
+docker compose -f docker-compose-local.yml ps
 ```
 
 All services should show as "Up" or "healthy".
@@ -202,26 +222,42 @@ Once all services are running, you can access:
 
 ### Default Credentials
 
-- **Admin User**: `admin@ai4i.com`
-- **Password**: `admin123`
+- **Username**: `admin`
+- **Email**: `admin@ai4inclusion.org`
+- **Password**: `Admin@123`
+- **Role**: ADMIN (all permissions)
 
 ## Troubleshooting
 
 ### Services not starting
 
-1. Check logs: `docker compose logs <service-name>`
+1. Check logs: `docker compose -f docker-compose-local.yml logs <service-name>`
 2. Verify environment files exist in each service directory
 3. Check if ports are already in use: `netstat -tulpn | grep <port>`
 
 ### Database connection errors
 
-1. Ensure PostgreSQL is running: `docker compose ps postgres`
+1. Ensure PostgreSQL is running: `docker compose -f docker-compose-local.yml ps postgres`
 2. Wait a few seconds after starting services for databases to initialize
 3. Re-run the database initialization script if needed
 
+### Postgres volume or "no such file or directory" for pg_data
+
+The default `docker-compose-local.yml` uses a Docker-managed volume (no bind mount), so this error should not occur. If you see it, your compose file (or an override) likely uses a bind mount. Create the host directory that matches `volumes.postgres-data.driver_opts.device` in that file before starting Postgres, for example:
+
+```bash
+mkdir -p /home/ubuntu/ai4i-v/volumes/pg_data
+```
+
+Or use a path in the project: `mkdir -p volumes/pg_data` and set `device: "./volumes/pg_data"` under `postgres-data.driver_opts`.
+
+### Default admin login not working
+
+Use the credentials from the [Default Credentials](#default-credentials) section: **Username** `admin`, **Email** `admin@ai4inclusion.org`, **Password** `Admin@123`. Log in with email or username depending on your UI. If login still fails, re-run the database initialization script from the project root so the default admin and role assignment are (re)created.
+
 ### Port conflicts
 
-If ports are already in use, you can modify the port mappings in `docker-compose.yml` or stop the conflicting services.
+If ports are already in use, you can modify the port mappings in `docker-compose-local.yml` or stop the conflicting services.
 
 ## Next Steps
 
@@ -235,13 +271,13 @@ If ports are already in use, you can modify the port mappings in `docker-compose
 To stop all services:
 
 ```bash
-docker compose down
+docker compose -f docker-compose-local.yml down
 ```
 
 To stop and remove all data (volumes):
 
 ```bash
-docker compose down -v
+docker compose -f docker-compose-local.yml down -v
 ```
 
 ## Optional: Feature Flags Configuration

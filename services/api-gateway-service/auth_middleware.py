@@ -10,6 +10,13 @@ from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import httpx
 
+# OpenTelemetry instrumentation for httpx
+try:
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    HTTPX_INSTRUMENTATION_AVAILABLE = True
+except ImportError:
+    HTTPX_INSTRUMENTATION_AVAILABLE = False
+
 # Import ai4icore logging for structured JSON logs
 try:
     from ai4icore_logging import get_logger
@@ -78,6 +85,20 @@ class AuthMiddleware:
     
     def __init__(self):
         self.http_client = httpx.AsyncClient(timeout=10.0)
+        self._instrumented = False
+    
+    def instrument_http_client(self):
+        """Instrument httpx client for OpenTelemetry tracing after tracing is set up."""
+        if self._instrumented:
+            return  # Already instrumented
+        
+        if HTTPX_INSTRUMENTATION_AVAILABLE:
+            try:
+                HTTPXClientInstrumentor().instrument_client(self.http_client)
+                self._instrumented = True
+                logger.info("✅ HTTPX client instrumented for distributed tracing (auth service calls)")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to instrument httpx client: {e}")
     
     async def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
         """Verify JWT token with auth service (authentication happens at auth-service level)"""
@@ -90,12 +111,20 @@ class AuthMiddleware:
             )
             if response.status_code == 200:
                 data = response.json()
+                user_id = str(data.get("user_id", ""))
                 # Return token payload format expected by API Gateway
                 return {
-                    "sub": str(data.get("user_id")),
+                    "sub": user_id,
+                    "user_id": user_id,  # Include user_id for compatibility
                     "username": data.get("username"),
                     "permissions": data.get("permissions", []),
-                    "roles": data.get("roles", [])
+                    "roles": data.get("roles", []),
+                    # Optional multi-tenant context fields (if auth-service returns them)
+                    "tenant_id": data.get("tenant_id"),
+                    "tenant_uuid": data.get("tenant_uuid"),
+                    "schema_name": data.get("schema_name"),
+                    "subscriptions": data.get("subscriptions", []),
+                    "user_subscriptions": data.get("user_subscriptions", []),
                 }
             else:
                 logger.warning(f"Auth service validation failed with status {response.status_code}")
@@ -121,7 +150,12 @@ class AuthMiddleware:
         return {
             "user_id": payload.get("sub"),
             "username": payload.get("username"),
-            "permissions": payload.get("permissions", [])
+            "permissions": payload.get("permissions", []),
+            "tenant_id": payload.get("tenant_id"),
+            "tenant_uuid": payload.get("tenant_uuid"),
+            "schema_name": payload.get("schema_name"),
+            "subscriptions": payload.get("subscriptions", []),
+            "user_subscriptions": payload.get("user_subscriptions", []),
         }
     
     async def require_auth(self, request: Request) -> Dict[str, Any]:

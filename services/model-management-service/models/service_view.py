@@ -1,5 +1,5 @@
 from pydantic import BaseModel , field_validator
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from .service_create import ServiceStatus, BenchmarkEntry
 from .model_create import ModelCreateRequest
 from datetime import datetime
@@ -19,9 +19,12 @@ class ServiceResponse(BaseModel):
     api_key: Optional[str] = None
     healthStatus: Optional[ServiceStatus] = None
     benchmarks: Optional[Dict[str, List[BenchmarkEntry]]] = None
+    policy: Optional[Dict[str, Any]] = None  # Policy data (latency, cost, accuracy)
     isPublished: bool = False
     publishedAt: Optional[str] = None
     unpublishedAt: Optional[str] = None
+    createdBy: Optional[str] = None  # User ID (string) who created this service
+    updatedBy: Optional[str] = None  # User ID (string) who last updated this service
 
 
 class _ServiceUsage(BaseModel):

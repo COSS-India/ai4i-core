@@ -12,7 +12,35 @@
 #   docker compose exec postgres psql -U dhruva_user -d dhruva_platform -f /docker-entrypoint-initdb.d/init-all-databases.sql
 # ============================================================================
 
+
+# auth_db
+# -----------------------
+# ALTER TABLE users
+# ADD COLUMN is_tenant BOOLEAN;
+
+# ALTER TABLE user_sessions
+#     ALTER COLUMN refresh_token TYPE TEXT,
+#     ALTER COLUMN session_token TYPE TEXT;
+
+
+# multi tenant db
+# ----------------------
+# ALTER TABLE tenants
+# ADD COLUMN user_id INTEGER;
+
+# CREATE INDEX idx_tenants_user_id
+# ON tenants (user_id);
+
 set -e
+
+# Run from project root so docker-compose finds docker-compose-local.yml
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$PROJECT_ROOT"
+
+# Compose file: use same file as SETUP_GUIDE (docker-compose-local.yml) so postgres is the one you started
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose-local.yml}"
+COMPOSE_CMD="docker compose -f $COMPOSE_FILE"
 
 # Get database connection parameters from environment or use defaults
 DB_USER="${POSTGRES_USER:-dhruva_user}"
@@ -32,48 +60,53 @@ create_database_if_not_exists() {
     echo -e "${YELLOW}Checking for database: ${db_name}${NC}"
     
     # Check if database exists
-    DB_EXISTS=$(docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT 1 FROM pg_database WHERE datname='$db_name'" 2>/dev/null || echo "")
-    
+    DB_EXISTS=$($COMPOSE_CMD exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT 1 FROM pg_database WHERE datname='$db_name'" 2>/dev/null || echo "")
+
     if [ "$DB_EXISTS" = "1" ]; then
         echo -e "${GREEN}Database ${db_name} already exists, skipping...${NC}"
         return 0
     else
         echo -e "${GREEN}Creating database: ${db_name}${NC}"
-        docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" -c "CREATE DATABASE $db_name" 2>&1
+        $COMPOSE_CMD exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" -c "CREATE DATABASE $db_name" 2>&1
     fi
 }
 
-# Create databases
+# Create databases (must match databases created in init-all-databases.sql)
 create_database_if_not_exists "auth_db"
 create_database_if_not_exists "config_db"
 create_database_if_not_exists "model_management_db"
+create_database_if_not_exists "multi_tenant_db"
 create_database_if_not_exists "unleash"
+create_database_if_not_exists "alerting_db"
 
 # Grant privileges
 echo -e "${GREEN}Granting privileges...${NC}"
-docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" <<EOF
+$COMPOSE_CMD exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" <<EOF
 GRANT ALL PRIVILEGES ON DATABASE auth_db TO $DB_USER;
 GRANT ALL PRIVILEGES ON DATABASE config_db TO $DB_USER;
 GRANT ALL PRIVILEGES ON DATABASE model_management_db TO $DB_USER;
+GRANT ALL PRIVILEGES ON DATABASE multi_tenant_db TO $DB_USER;
 GRANT ALL PRIVILEGES ON DATABASE unleash TO $DB_USER;
+GRANT ALL PRIVILEGES ON DATABASE alerting_db TO $DB_USER;
 
 COMMENT ON DATABASE auth_db IS 'Authentication & Authorization Service database';
 COMMENT ON DATABASE config_db IS 'Configuration Management Service database';
 COMMENT ON DATABASE model_management_db IS 'Model Management Service database - stores AI models and services registry';
+COMMENT ON DATABASE multi_tenant_db IS 'Multi-tenant feature database';
 COMMENT ON DATABASE unleash IS 'Unleash feature flag management database';
+COMMENT ON DATABASE alerting_db IS 'Alerting Service database - stores dynamic alert configurations and notification settings';
 EOF
 
 # Now run the SQL schema initialization script
 echo -e "${GREEN}Running schema initialization script...${NC}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SQL_SCRIPT="$SCRIPT_DIR/init-all-databases.sql"
 
 # Copy the SQL script to the container
-docker compose cp "$SQL_SCRIPT" postgres:/tmp/init-all-databases.sql
+$COMPOSE_CMD cp "$SQL_SCRIPT" postgres:/tmp/init-all-databases.sql
 
 # Create a temporary SQL file without CREATE DATABASE, GRANT, and COMMENT statements
 # since we already created the databases and granted privileges above
-docker compose exec -T postgres sh <<'INNER_SCRIPT'
+$COMPOSE_CMD exec -T postgres sh <<'INNER_SCRIPT'
 # Remove CREATE DATABASE statements (handles both single-line and multi-line)
 # Pattern matches from line starting with CREATE DATABASE until line ending with semicolon
 # This correctly handles:
@@ -91,7 +124,7 @@ INNER_SCRIPT
 # This allows it to continue past CREATE DATABASE errors (which we've removed anyway)
 # We ignore exit code since some errors (like "already exists") are expected
 set +e
-docker compose exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" -f /tmp/init-schema-only.sql
+$COMPOSE_CMD exec -T postgres psql -U "$DB_USER" -d "$DB_NAME" -f /tmp/init-schema-only.sql
 EXIT_CODE=$?
 set -e
 

@@ -27,9 +27,10 @@ import TTSResults from "../components/tts/TTSResults";
 import VoiceSelector from "../components/tts/VoiceSelector";
 import { useTTS } from "../hooks/useTTS";
 import { listVoices, listTTSServices } from "../services/ttsService";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const TTSPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [serviceId, setServiceId] = useState<string>("");
   const {
     language,
@@ -60,11 +61,12 @@ const TTSPage: React.FC = () => {
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
 
-  // Fetch available voices
-  const { data: voicesData, isLoading: voicesLoading } = useQuery({
+  // Fetch available voices (short timeout + no retry so TTS page doesn't hang when TTS service is down)
+  const { data: voicesData, isLoading: voicesLoading, isError: voicesError } = useQuery({
     queryKey: ["tts-voices", language, gender],
     queryFn: () => listVoices({ language, gender }),
     staleTime: 5 * 60 * 1000, // 5 minutes
+    retry: false,
   });
 
   // Auto-select first available TTS service when list loads
@@ -107,10 +109,10 @@ const TTSPage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               Text-to-Speech
             </Heading>
-            <Text color="gray.600" fontSize="lg">
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
               Convert text to natural-sounding speech with multiple voice
               options
             </Text>
@@ -165,16 +167,12 @@ const TTSPage: React.FC = () => {
                             <Text fontSize="sm" color="gray.700" mb={1}>
                               <strong>Service ID:</strong> {selectedService.service_id}
                             </Text>
-                            {selectedService.serviceDescription && (
-                              <Text fontSize="sm" color="gray.700" mb={1}>
-                                <strong>Description:</strong> {selectedService.serviceDescription}
-                              </Text>
-                            )}
-                            {selectedService.supported_languages.length > 0 && (
-                              <Text fontSize="sm" color="gray.700">
-                                <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
-                              </Text>
-                            )}
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                            </Text>
                           </>
                         ) : null;
                       })()}
@@ -197,7 +195,7 @@ const TTSPage: React.FC = () => {
                     onFormatChange={setAudioFormat}
                     onSampleRateChange={setSamplingRate}
                     availableLanguages={serviceId ? indoAryanLanguages : []}
-                    availableVoices={voicesData?.voices}
+                    availableVoices={voicesData?.voices ?? []}
                     loading={voicesLoading}
                   />
                 </Box>
@@ -301,10 +299,17 @@ const TTSPage: React.FC = () => {
             </GridItem>
           </Grid>
 
-          {/* Voices Loading Indicator */}
+          {/* Voices Loading / Error */}
           {voicesLoading && (
             <Box textAlign="center">
               <LoadingSpinner label="Loading voice options..." />
+            </Box>
+          )}
+          {voicesError && !voicesLoading && (
+            <Box textAlign="center" p={3} bg="orange.50" borderRadius="md">
+              <Text color="orange.700" fontSize="sm">
+                Voice list unavailable (TTS service may be stopped). You can still generate speech if a TTS service is running.
+              </Text>
             </Box>
           )}
         </VStack>

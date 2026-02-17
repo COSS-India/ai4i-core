@@ -36,6 +36,8 @@ from services.text_service import TextService
 from services.voice_service import VoiceService
 from utils.triton_client import TritonClient
 from repositories.tts_repository import TTSRepository
+from middleware.tenant_schema_router import TenantSchemaRouter
+from middleware.tenant_middleware import TenantMiddleware
 
 # Try to import streaming service, but make it optional
 try:
@@ -52,6 +54,7 @@ from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
 
 # Import routers
 from routers import inference_router, health_router
@@ -170,6 +173,16 @@ async def lifespan(app: FastAPI):
         app.state.redis_client = redis_client
         app.state.db_session_factory = db_session_factory
         app.state.db_engine = db_engine
+
+         # Initialize tenant schema router for multi-tenant routing
+        multi_tenant_db_url = os.getenv("MULTI_TENANT_DB_URL")
+        if not multi_tenant_db_url:
+            logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
+            multi_tenant_db_url = database_url
+        logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")
+        tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
+        app.state.tenant_schema_router = tenant_schema_router
+        logger.info("Tenant schema router initialized with multi-tenant database")
         
         # Update rate limiting middleware with Redis client
         for middleware in app.user_middleware:
@@ -363,6 +376,58 @@ app.add_middleware(CorrelationMiddleware)
 # This ensures organization is set in context before logging
 app.add_middleware(RequestLoggingMiddleware)
 
+# Synchronous Redis client for Model Management middleware (A/B testing, service resolution)
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+redis_client_sync = None
+try:
+    import redis as redis_sync
+    redis_client_sync = redis_sync.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        password=REDIS_PASSWORD,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        retry_on_timeout=True,
+    )
+    redis_client_sync.ping()
+    logger.info("Redis client created for Model Management middleware (connection tested)")
+except Exception as e:
+    logger.warning("Redis connection failed for Model Management middleware: %s", e)
+    redis_client_sync = None
+
+# Model Management Plugin – service resolution and A/B experiment variant selection + metrics
+MODEL_MANAGEMENT_SERVICE_URL = os.getenv("MODEL_MANAGEMENT_SERVICE_URL", "http://model-management-service:8091")
+MODEL_MANAGEMENT_SERVICE_API_KEY = os.getenv(
+    "MODEL_MANAGEMENT_SERVICE_API_KEY",
+    os.getenv("MODEL_MANAGEMENT_API_KEY"),
+)
+MODEL_MANAGEMENT_CACHE_TTL = int(os.getenv("MODEL_MANAGEMENT_CACHE_TTL", "300"))
+TRITON_ENDPOINT_CACHE_TTL = int(os.getenv("TRITON_ENDPOINT_CACHE_TTL", "300"))
+_default_triton = (os.getenv("TRITON_ENDPOINT") or "").strip().replace("http://", "").replace("https://", "") or ""
+_default_triton_key = os.getenv("TRITON_API_KEY") or ""
+
+model_mgmt_config = ModelManagementConfig(
+    model_management_service_url=MODEL_MANAGEMENT_SERVICE_URL,
+    model_management_api_key=MODEL_MANAGEMENT_SERVICE_API_KEY,
+    cache_ttl_seconds=MODEL_MANAGEMENT_CACHE_TTL,
+    triton_endpoint_cache_ttl=TRITON_ENDPOINT_CACHE_TTL,
+    default_triton_endpoint=_default_triton,
+    default_triton_api_key=_default_triton_key,
+    middleware_enabled=True,
+    middleware_paths=["/api/v1"],
+)
+model_mgmt_plugin = ModelManagementPlugin(model_mgmt_config)
+model_mgmt_plugin.register_plugin(app, redis_client=redis_client_sync)
+logger.info("Model Management Plugin initialized for TTS service (A/B experiments + metrics)")
+
+# Add tenant middleware (after auth, before routes)
+# This extracts tenant context from JWT or user_id
+app.add_middleware(TenantMiddleware)
+
+
 # Add rate limiting middleware (will be configured with Redis in lifespan)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
@@ -432,6 +497,9 @@ async def health_check() -> Dict[str, Any]:
         "timestamp": None
     }
     
+    # Check if health logs should be excluded
+    exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
+    
     try:
         import time
         health_status["timestamp"] = time.time()
@@ -444,7 +512,8 @@ async def health_check() -> Dict[str, Any]:
             health_status["redis"] = "unavailable"
             
     except Exception as e:
-        logger.error(f"Redis health check failed: {e}")
+        if not exclude_health_logs:
+            logger.error(f"Redis health check failed: {e}")
         health_status["redis"] = "unhealthy"
     
     try:
@@ -457,7 +526,8 @@ async def health_check() -> Dict[str, Any]:
             health_status["postgres"] = "unavailable"
             
     except Exception as e:
-        logger.error(f"PostgreSQL health check failed: {e}")
+        if not exclude_health_logs:
+            logger.error(f"PostgreSQL health check failed: {e}")
         health_status["postgres"] = "unhealthy"
     
     try:
@@ -479,7 +549,8 @@ async def health_check() -> Dict[str, Any]:
         except ImportError:
             health_status["triton"] = "unavailable"
     except Exception as e:
-        logger.error(f"Triton health check failed: {e}")
+        if not exclude_health_logs:
+            logger.error(f"Triton health check failed: {e}")
         health_status["triton"] = "unhealthy"
     
     # Determine overall status

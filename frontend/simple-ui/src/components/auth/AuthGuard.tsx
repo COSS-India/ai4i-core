@@ -12,18 +12,25 @@ interface AuthGuardProps {
 
 // Routes that require authentication
 // Note: /nmt is excluded to allow anonymous "try-it" access
-const protectedRoutes = ['/asr', '/tts', '/llm', '/pipeline', '/pipeline-builder', '/model-management', '/profile'];
+const protectedRoutes = ['/asr', '/tts', '/llm', '/pipeline', '/pipeline-builder', '/model-management', '/services-management', '/profile'];
+
+// Routes that require ADMIN role
+const adminOnlyRoutes = ['/logs', '/traces'];
 
 // Routes that allow anonymous access with limited functionality
 const tryItRoutes = ['/nmt'];
 
 const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
   const router = useRouter();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
 
   // Check if current route requires authentication
   const isProtectedRoute = protectedRoutes.includes(router.pathname);
+  const isAdminOnlyRoute = adminOnlyRoutes.includes(router.pathname);
   const isTryItRoute = tryItRoutes.includes(router.pathname);
+  
+  // Check if user is ADMIN
+  const isAdmin = user?.roles?.includes('ADMIN') || false;
 
   // Redirect to auth page if accessing protected route without authentication
   // Allow access to try-it routes (like /nmt) for anonymous users
@@ -33,6 +40,14 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
       router.push('/auth');
     }
   }, [isLoading, isProtectedRoute, isAuthenticated, isTryItRoute, router]);
+
+  // Redirect non-ADMIN users away from admin-only routes
+  useEffect(() => {
+    if (!isLoading && isAdminOnlyRoute && (!isAuthenticated || !isAdmin)) {
+      console.log('AuthGuard: Admin-only route detected, user is not ADMIN, redirecting to home');
+      router.push('/');
+    }
+  }, [isLoading, isAdminOnlyRoute, isAuthenticated, isAdmin, router]);
 
   // Show loading spinner while checking auth
   if (isLoading) {
@@ -49,10 +64,16 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
     return null; // Will redirect via useEffect
   }
 
+  // If admin-only route and user is not ADMIN, don't render children (will redirect)
+  if (isAdminOnlyRoute && (!isAuthenticated || !isAdmin)) {
+    return null; // Will redirect via useEffect
+  }
+
   // Allow access if:
   // 1. User is authenticated, OR
   // 2. Route is not protected, OR
   // 3. Route is a try-it route (like /nmt for anonymous users)
+  // 4. For admin-only routes, user must be ADMIN
   return <>{children}</>;
 };
 

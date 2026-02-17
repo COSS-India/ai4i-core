@@ -56,10 +56,15 @@ try:
             field_formats = {}
     
     # Ensure jaeger_trace_url is configured as URL
+    # Get JAEGER_UI_URL from environment or use default
+    import os
+    jaeger_ui_url = os.getenv("JAEGER_UI_URL", "http://localhost:16686")
+    # In f-string, {{ becomes literal {, so {{{{value}}}} becomes {{value}} for OpenSearch template
+    url_template = f"{jaeger_ui_url}/jaeger/trace/{{{{value}}}}"
     field_formats['jaeger_trace_url'] = {
         "id": "url",
         "params": {
-            "urlTemplate": "{{value}}",
+            "urlTemplate": url_template,
             "labelTemplate": "View Trace in Jaeger",
             "openLinkInCurrentTab": False
         }

@@ -13,7 +13,6 @@ import {
   Select,
   Spinner,
   Text,
-  useToast,
   VStack,
 } from "@chakra-ui/react";
 import Head from "next/head";
@@ -24,9 +23,11 @@ import ContentLayout from "../components/common/ContentLayout";
 import { performAudioLanguageDetectionInference, listAudioLanguageDetectionServices } from "../services/audioLanguageDetectionService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { extractErrorInfo } from "../utils/errorHandler";
+import { AUDIO_LANGUAGE_DETECTION_ERRORS } from "../config/constants";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const AudioLanguageDetectionPage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const [audioData, setAudioData] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const [fetched, setFetched] = useState(false);
@@ -94,10 +95,11 @@ const AudioLanguageDetectionPage: React.FC = () => {
 
   const handleSubmit = async () => {
     if (!audioData) {
+      const err = AUDIO_LANGUAGE_DETECTION_ERRORS.FILE_REQUIRED;
       toast({
-        title: "No Audio",
-        description: "Please record or upload audio first.",
-        status: "warning",
+        title: err.title,
+        description: err.description,
+        status: "error",
         duration: 3000,
         isClosable: true,
       });
@@ -132,12 +134,12 @@ const AudioLanguageDetectionPage: React.FC = () => {
       setResponseTime(parseFloat(calculatedTime));
       setFetched(true);
     } catch (err: any) {
-      // Use centralized error handler
-      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
+      // Use centralized error handler (audio-language-detection context so backend message shown as default when no specific mapping)
+      const { title: errorTitle, message: errorMessage, showOnlyMessage } = extractErrorInfo(err, 'audio-language-detection');
       
       setError(errorMessage);
       toast({
-        title: errorTitle,
+        title: showOnlyMessage ? undefined : errorTitle,
         description: errorMessage,
         status: "error",
         duration: 5000,
@@ -169,10 +171,10 @@ const AudioLanguageDetectionPage: React.FC = () => {
         <VStack spacing={8} w="full">
           {/* Page Header */}
           <Box textAlign="center">
-            <Heading size="xl" color="gray.800" mb={2}>
+            <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
               Audio Language Detection
             </Heading>
-            <Text color="gray.600" fontSize="lg">
+            <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
               Detect the spoken language directly from an audio file. Identify which language is being spoken in audio recordings.
             </Text>
           </Box>
@@ -210,7 +212,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
                   <Select
                     value={selectedServiceId}
                     onChange={(e) => setSelectedServiceId(e.target.value)}
-                    placeholder="Select a service..."
+                    placeholder="Select a Audio Language Detection service"
                     disabled={fetching}
                     size="md"
                     borderColor="gray.300"
@@ -235,16 +237,12 @@ const AudioLanguageDetectionPage: React.FC = () => {
                           <Text fontSize="sm" color="gray.700" mb={1}>
                             <strong>Service ID:</strong> {selectedService.service_id}
                           </Text>
-                          {selectedService.serviceDescription && (
-                            <Text fontSize="sm" color="gray.700" mb={1}>
-                              <strong>Description:</strong> {selectedService.serviceDescription}
-                            </Text>
-                          )}
-                          {selectedService.supported_languages.length > 0 && (
-                            <Text fontSize="sm" color="gray.700">
-                              <strong>Languages:</strong> {selectedService.supported_languages.join(', ')}
-                            </Text>
-                          )}
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                          </Text>
+                          <Text fontSize="sm" color="gray.700" mb={1}>
+                            <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                          </Text>
                         </>
                       ) : null;
                     })()}

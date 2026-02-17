@@ -5,12 +5,12 @@
  */
 import { useCallback } from 'react';
 import { useRouter } from 'next/router';
-import { useToast } from '@chakra-ui/react';
+import { useToastWithDeduplication } from './useToastWithDeduplication';
 import authService from '../services/authService';
 
 export const useSessionExpiry = () => {
   const router = useRouter();
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
 
   /**
    * Check if session has expired and handle accordingly

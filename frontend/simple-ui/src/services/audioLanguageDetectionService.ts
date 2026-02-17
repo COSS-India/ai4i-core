@@ -114,7 +114,7 @@ export const performAudioLanguageDetectionInference = async (
     };
   } catch (error) {
     console.error('Audio language detection inference error:', error);
-    throw new Error('Failed to perform audio language detection inference');
+    throw error; // Re-throw so toast can show backend message via extractErrorInfo
   }
 };
 

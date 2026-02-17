@@ -20,7 +20,6 @@ import {
   StatNumber,
   Text,
   Textarea,
-  useToast,
   VStack,
   HStack,
   Flex,
@@ -40,18 +39,17 @@ import {
 import { usePipeline } from "../hooks/usePipeline";
 import { listASRServices, ASRServiceDetails } from "../services/asrService";
 import { listNMTServices } from "../services/nmtService";
-import { listVoices } from "../services/ttsService";
+import { listTTSServices, TTSServiceDetailsResponse } from "../services/ttsService";
+import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 
 const PipelinePage: React.FC = () => {
-  const toast = useToast();
+  const toast = useToastWithDeduplication();
   const router = useRouter();
   const [sourceLanguage, setSourceLanguage] = useState("hi");
   const [targetLanguage, setTargetLanguage] = useState("mr");
   const [asrServiceId, setAsrServiceId] = useState<string>("");
   const [nmtServiceId, setNmtServiceId] = useState<string>("");
-  const [ttsServiceId, setTtsServiceId] = useState(
-    "indic-tts-coqui-indo_aryan"
-  );
+  const [ttsServiceId, setTtsServiceId] = useState<string>("");
 
   const {
     isLoading,
@@ -78,6 +76,12 @@ const PipelinePage: React.FC = () => {
     staleTime: 5 * 60 * 1000,
   });
 
+  const { data: ttsServices } = useQuery<TTSServiceDetailsResponse[]>({
+    queryKey: ["tts-services"],
+    queryFn: listTTSServices,
+    staleTime: 5 * 60 * 1000,
+  });
+
   // Auto-select first available ASR service when list loads
   React.useEffect(() => {
     if (!asrServices || asrServices.length === 0) return;
@@ -94,11 +98,13 @@ const PipelinePage: React.FC = () => {
     }
   }, [nmtServices, nmtServiceId]);
 
-  const { data: ttsVoices } = useQuery({
-    queryKey: ["tts-voices"],
-    queryFn: () => listVoices(),
-    staleTime: 5 * 60 * 1000,
-  });
+  // Auto-select first available TTS service when list loads
+  React.useEffect(() => {
+    if (!ttsServices || ttsServices.length === 0) return;
+    if (!ttsServiceId) {
+      setTtsServiceId(ttsServices[0].service_id);
+    }
+  }, [ttsServices, ttsServiceId]);
 
   const handleRecordClick = async () => {
     if (isRecording) {
@@ -166,10 +172,10 @@ const PipelinePage: React.FC = () => {
               w="full"
             >
               <Box flex={1} textAlign="center">
-                <Heading size="lg" color="gray.800" mb={1}>
+                <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
                   Speech to Speech
                 </Heading>
-                <Text color="gray.600" fontSize="sm">
+                <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
                   Chain Speech, Translation, and Voice models for end-to-end speech
                   conversion.
                 </Text>
@@ -248,14 +254,34 @@ const PipelinePage: React.FC = () => {
                   <Select
                     value={asrServiceId}
                     onChange={(e) => setAsrServiceId(e.target.value)}
-                    placeholder="Select an ASR service"
+                    placeholder="Select a ASR service"
                   >
                     {asrServices?.map((service) => (
                       <option key={service.service_id} value={service.service_id}>
-                        {service.service_id}
+                        {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
                       </option>
                     ))}
                   </Select>
+                  {asrServiceId && asrServices && (
+                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                      {(() => {
+                        const selectedService = asrServices.find((s) => s.service_id === asrServiceId);
+                        return selectedService ? (
+                          <>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Service ID:</strong> {selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Description:</strong> {selectedService.description || "No description available"}
+                            </Text>
+                          </>
+                        ) : null;
+                      })()}
+                    </Box>
+                  )}
                 </FormControl>
 
                 {/* NMT Service */}
@@ -266,6 +292,7 @@ const PipelinePage: React.FC = () => {
                   <Select
                     value={nmtServiceId}
                     onChange={(e) => setNmtServiceId(e.target.value)}
+                    placeholder="Select a NMT service"
                   >
                     {nmtServices
                       ?.filter(
@@ -277,10 +304,30 @@ const PipelinePage: React.FC = () => {
                           key={service.service_id}
                           value={service.service_id}
                         >
-                          {service.service_id}
+                          {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
                         </option>
                       ))}
                   </Select>
+                  {nmtServiceId && nmtServices && (
+                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                      {(() => {
+                        const selectedService = nmtServices.find((s) => s.service_id === nmtServiceId);
+                        return selectedService ? (
+                          <>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Service ID:</strong> {selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Description:</strong> {selectedService.serviceDescription || selectedService.description || "No description available"}
+                            </Text>
+                          </>
+                        ) : null;
+                      })()}
+                    </Box>
+                  )}
                 </FormControl>
 
                 {/* TTS Service */}
@@ -291,11 +338,34 @@ const PipelinePage: React.FC = () => {
                   <Select
                     value={ttsServiceId}
                     onChange={(e) => setTtsServiceId(e.target.value)}
+                    placeholder="Select a TTS service"
                   >
-                    <option value="indic-tts-coqui-indo_aryan">
-                      indic-tts-coqui-indo_aryan
-                    </option>
+                    {ttsServices?.map((service) => (
+                      <option key={service.service_id} value={service.service_id}>
+                        {service.name || service.service_id} {service.model_version ? `(${service.model_version})` : ''}
+                      </option>
+                    ))}
                   </Select>
+                  {ttsServiceId && ttsServices && (
+                    <Box mt={2} p={3} bg="orange.50" borderRadius="md" border="1px" borderColor="orange.200">
+                      {(() => {
+                        const selectedService = ttsServices.find((s) => s.service_id === ttsServiceId);
+                        return selectedService ? (
+                          <>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Service ID:</strong> {selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Name:</strong> {selectedService.name || selectedService.service_id}
+                            </Text>
+                            <Text fontSize="sm" color="gray.700" mb={1}>
+                              <strong>Description:</strong> {selectedService.serviceDescription || "No description available"}
+                            </Text>
+                          </>
+                        ) : null;
+                      })()}
+                    </Box>
+                  )}
                 </FormControl>
 
                 {/* Recording Timer Display */}
