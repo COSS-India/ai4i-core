@@ -1,0 +1,459 @@
+# Auth Service - Public API (as exposed via API Gateway)
+# Schemas aligned with auth-service/models.py
+openapi: 3.0.3
+info:
+  title: Auth Service
+  description: Authentication, API keys, roles, OAuth2.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: Authentication
+  - name: OAuth2
+  - name: Role Management
+paths:
+  /api/v1/auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register user
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserCreate" }
+      responses:
+        "201": { description: User created; returns user profile }
+        "400": { description: Validation error (e.g. passwords do not match) }
+  /api/v1/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Login
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Tokens and optional user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+  /api/v1/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Logout
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: Logged out }
+  /api/v1/auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh token
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TokenRefreshRequest" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenRefreshResponse" }
+  /api/v1/auth/change-password:
+    post:
+      tags: [Authentication]
+      summary: Change password
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                current_password: { type: string }
+                new_password: { type: string }
+      responses:
+        "200": { description: Password changed }
+  /api/v1/auth/request-password-reset:
+    post:
+      tags: [Authentication]
+      summary: Request password reset
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "200": { description: Reset email sent if account exists }
+  /api/v1/auth/reset-password:
+    post:
+      tags: [Authentication]
+      summary: Reset password
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token: { type: string }
+                new_password: { type: string }
+      responses:
+        "200": { description: Password reset }
+  /api/v1/auth/validate:
+    get:
+      tags: [Authentication]
+      summary: Validate token
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenValidationResponse" }
+  /api/v1/auth/me:
+    get:
+      tags: [Authentication]
+      summary: Current user
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserResponse" }
+    put:
+      tags: [Authentication]
+      summary: Update current user
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserUpdate" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserResponse" }
+  /api/v1/auth/api-keys:
+    get:
+      tags: [Authentication]
+      summary: List API keys
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIKeyListResponse" }
+    post:
+      tags: [Authentication]
+      summary: Create API key
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/APIKeyCreate" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIKeyResponse" }
+  /api/v1/auth/api-keys/{key_id}:
+    delete:
+      tags: [Authentication]
+      summary: Revoke API key
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200": { description: Revoked }
+    patch:
+      tags: [Authentication]
+      summary: Update API key
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/APIKeyUpdate" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/APIKeyResponse" }
+  /api/v1/auth/api-keys/all:
+    get:
+      tags: [Authentication]
+      summary: List all API keys with users (admin)
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of all API keys with user info }
+  /api/v1/auth/api-keys/select:
+    post:
+      tags: [Authentication]
+      summary: Select API key
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                key_id: { type: integer }
+      responses:
+        "200": { description: Selected }
+  /api/v1/auth/oauth2/providers:
+    get:
+      tags: [OAuth2]
+      summary: List OAuth2 providers
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/OAuth2Provider" }
+  /api/v1/auth/oauth2/google/authorize:
+    get:
+      tags: [OAuth2]
+      summary: Google OAuth authorize
+      responses:
+        "302": { description: Redirect to Google consent }
+  /api/v1/auth/oauth2/google/callback:
+    get:
+      tags: [OAuth2]
+      summary: Google OAuth callback
+      parameters:
+        - name: code
+          in: query
+          schema: { type: string }
+        - name: state
+          in: query
+          schema: { type: string }
+      responses:
+        "200": { description: Tokens and user }
+  /api/v1/auth/oauth2/callback:
+    post:
+      tags: [OAuth2]
+      summary: OAuth2 callback
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code: { type: string }
+                state: { type: string }
+      responses:
+        "200": { description: Tokens and user }
+  /api/v1/auth/roles/assign:
+    post:
+      tags: [Role Management]
+      summary: Assign role
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id: { type: integer }
+                role_id: { type: integer }
+      responses:
+        "200": { description: Role assigned }
+  /api/v1/auth/roles/remove:
+    post:
+      tags: [Role Management]
+      summary: Remove role
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id: { type: integer }
+                role_id: { type: integer }
+      responses:
+        "200": { description: Role removed }
+  /api/v1/auth/roles/user/{user_id}:
+    get:
+      tags: [Role Management]
+      summary: Get user roles
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200": { description: User roles }
+  /api/v1/auth/roles/list:
+    get:
+      tags: [Role Management]
+      summary: List roles
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of roles }
+  /api/v1/auth/permission/list:
+    get:
+      tags: [Role Management]
+      summary: Get permission list
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of permissions }
+  /api/v1/auth/users/{user_id}:
+    get:
+      tags: [Role Management]
+      summary: Get user details
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserResponse" }
+  /api/v1/auth/permissions:
+    get:
+      tags: [Role Management]
+      summary: Get all permissions
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of permissions }
+  /api/v1/auth/users:
+    get:
+      tags: [Role Management]
+      summary: Get all users
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of users }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT or API Key
+  schemas:
+    UserCreate:
+      type: object
+      required: [email, username, password, confirm_password]
+      properties:
+        email: { type: string, format: email }
+        username: { type: string, minLength: 3, maxLength: 100 }
+        password: { type: string, minLength: 8, maxLength: 100 }
+        confirm_password: { type: string, minLength: 8, maxLength: 100 }
+        full_name: { type: string, maxLength: 255 }
+        phone_number: { type: string, maxLength: 20 }
+        timezone: { type: string, maxLength: 50, default: "UTC" }
+        language: { type: string, maxLength: 10, default: "en" }
+        is_tenant: { type: boolean, description: "True for tenant admin; False for tenant user; omit for regular user" }
+    UserUpdate:
+      type: object
+      properties:
+        full_name: { type: string, maxLength: 255 }
+        phone_number: { type: string, maxLength: 20 }
+        timezone: { type: string, maxLength: 50 }
+        language: { type: string, maxLength: 10 }
+        preferences: { type: object }
+    UserResponse:
+      type: object
+      properties:
+        id: { type: integer }
+        email: { type: string, format: email }
+        username: { type: string }
+        full_name: { type: string }
+        phone_number: { type: string }
+        timezone: { type: string }
+        language: { type: string }
+        is_active: { type: boolean }
+        is_verified: { type: boolean }
+        is_superuser: { type: boolean }
+        is_tenant: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        last_login: { type: string, format: date-time }
+        avatar_url: { type: string }
+        roles: { type: array, items: { type: string } }
+        tenant_id: { type: string }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+        remember_me: { type: boolean, default: false }
+    LoginResponse:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, default: "bearer" }
+        expires_in: { type: integer }
+        user: { $ref: "#/components/schemas/UserResponse" }
+    TokenRefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+    TokenRefreshResponse:
+      type: object
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, default: "bearer" }
+        expires_in: { type: integer }
+    TokenValidationResponse:
+      type: object
+      properties:
+        valid: { type: boolean }
+        user_id: { type: integer }
+        username: { type: string }
+        permissions: { type: array, items: { type: string } }
+        roles: { type: array, items: { type: string } }
+    APIKeyCreate:
+      type: object
+      required: [key_name]
+      properties:
+        key_name: { type: string, minLength: 1, maxLength: 100 }
+        permissions: { type: array, items: { type: string }, default: [] }
+        expires_days: { type: integer, minimum: 1, maximum: 365 }
+        userId: { type: integer, description: "User ID for whom key is created (admin only)" }
+    APIKeyUpdate:
+      type: object
+      properties:
+        key_name: { type: string, minLength: 1, maxLength: 100 }
+        permissions: { type: array, items: { type: string } }
+        is_active: { type: boolean }
+    APIKeyResponse:
+      type: object
+      properties:
+        id: { type: integer }
+        key_name: { type: string }
+        key_value: { type: string }
+        permissions: { type: array, items: { type: string } }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        last_used: { type: string, format: date-time }
+    APIKeyListResponse:
+      type: object
+      properties:
+        selected_api_key_id: { type: integer }
+        api_keys: { type: array, items: { $ref: "#/components/schemas/APIKeyResponse" } }
+    OAuth2Provider:
+      type: object
+      properties:
+        provider: { type: string }
+        client_id: { type: string }
+        authorization_url: { type: string }
+        scope: { type: array, items: { type: string } }
+security:
+  - BearerAuth: []

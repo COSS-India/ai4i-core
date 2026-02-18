@@ -1,0 +1,345 @@
+# Model Management Service - Public API (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: Model Management Service
+  description: Models, services, and A/B experiments.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: Model Management
+paths:
+  /api/v1/model-management/models:
+    get:
+      tags: [Model Management]
+      summary: List models
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of models }
+    post:
+      tags: [Model Management]
+      summary: Create model
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: Created }
+  /api/v1/model-management/models/{model_id}:
+    get:
+      tags: [Model Management]
+      summary: Get model
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: model_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Model details }
+    patch:
+      tags: [Model Management]
+      summary: Update model
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: model_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Updated }
+    delete:
+      tags: [Model Management]
+      summary: Delete model
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: model_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Deleted }
+  /api/v1/model-management/services:
+    get:
+      tags: [Model Management]
+      summary: List services
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of services }
+    post:
+      tags: [Model Management]
+      summary: Create service
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: Created }
+  /api/v1/model-management/experiments:
+    get:
+      tags: [Model Management]
+      summary: List experiments
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by experiment status
+        - name: task_type
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by task type
+        - name: created_by
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by creator user ID
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ExperimentListResponse" }
+    post:
+      tags: [Model Management]
+      summary: Create experiment
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExperimentCreateRequest"
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExperimentResponse" }
+  /api/v1/model-management/experiments/{experiment_id}:
+    get:
+      tags: [Model Management]
+      summary: Get experiment
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: experiment_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExperimentResponse" }
+        "404": { description: Experiment not found }
+    patch:
+      tags: [Model Management]
+      summary: Update experiment
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: experiment_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExperimentUpdateRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExperimentResponse" }
+        "404": { description: Experiment not found }
+    delete:
+      tags: [Model Management]
+      summary: Delete experiment
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: experiment_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Experiment not found }
+  /api/v1/model-management/experiments/{experiment_id}/status:
+    post:
+      tags: [Model Management]
+      summary: Update experiment status
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: experiment_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExperimentStatusUpdateRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExperimentResponse" }
+        "404": { description: Experiment not found }
+  /api/v1/model-management/experiments/select-variant:
+    post:
+      tags: [Model Management]
+      summary: Select experiment variant
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExperimentVariantSelectionRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExperimentVariantSelectionResponse" }
+  /api/v1/model-management/experiments/{experiment_id}/metrics:
+    get:
+      tags: [Model Management]
+      summary: Get experiment metrics
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: experiment_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ExperimentMetricsResponse" }
+        "404": { description: Experiment not found }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+  schemas:
+    ExperimentVariantRequest:
+      type: object
+      required: [variant_name, service_id, traffic_percentage]
+      properties:
+        variant_name: { type: string, description: "e.g. 'control', 'variant-a'" }
+        service_id: { type: string }
+        traffic_percentage: { type: integer, minimum: 0, maximum: 100 }
+        description: { type: string }
+    ExperimentVariantResponse:
+      type: object
+      properties:
+        id: { type: string }
+        variant_name: { type: string }
+        service_id: { type: string }
+        traffic_percentage: { type: integer }
+        description: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ExperimentCreateRequest:
+      type: object
+      required: [name, variants]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        description: { type: string }
+        task_type: { type: array, items: { type: string }, description: "e.g. ['asr', 'tts']" }
+        languages: { type: array, items: { type: string }, description: "e.g. ['hi', 'en']" }
+        start_date: { type: string, format: date-time }
+        end_date: { type: string, format: date-time }
+        variants:
+          type: array
+          minItems: 2
+          items:
+            $ref: "#/components/schemas/ExperimentVariantRequest"
+    ExperimentUpdateRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        description: { type: string }
+        task_type: { type: array, items: { type: string } }
+        languages: { type: array, items: { type: string } }
+        start_date: { type: string, format: date-time }
+        end_date: { type: string, format: date-time }
+        variants: { type: array, items: { $ref: "#/components/schemas/ExperimentVariantRequest" } }
+    ExperimentStatusUpdateRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [start, stop, pause, resume, cancel]
+          description: "start=DRAFT→RUNNING, stop=RUNNING→COMPLETED, pause/resume, cancel→CANCELLED"
+    ExperimentResponse:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        status: { type: string }
+        task_type: { type: array, items: { type: string } }
+        languages: { type: array, items: { type: string } }
+        start_date: { type: string, format: date-time }
+        end_date: { type: string, format: date-time }
+        created_by: { type: string }
+        updated_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        variants: { type: array, items: { $ref: "#/components/schemas/ExperimentVariantResponse" } }
+    ExperimentListResponse:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        status: { type: string }
+        task_type: { type: array, items: { type: string } }
+        languages: { type: array, items: { type: string } }
+        start_date: { type: string, format: date-time }
+        end_date: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        variant_count: { type: integer }
+    ExperimentVariantSelectionRequest:
+      type: object
+      required: [task_type]
+      properties:
+        task_type: { type: string, description: "e.g. 'asr', 'tts'" }
+        language: { type: string }
+        request_id: { type: string }
+        user_id: { type: string }
+        service_id: { type: string, description: "When set, only experiments including this service as a variant are considered" }
+    ExperimentVariantSelectionResponse:
+      type: object
+      properties:
+        experiment_id: { type: string }
+        variant_id: { type: string }
+        variant_name: { type: string }
+        service_id: { type: string }
+        model_id: { type: string }
+        model_version: { type: string }
+        endpoint: { type: string }
+        api_key: { type: string }
+        is_experiment: { type: boolean, default: false }
+    ExperimentMetricsResponse:
+      type: object
+      properties:
+        experiment_id: { type: string }
+        variant_id: { type: string }
+        variant_name: { type: string }
+        request_count: { type: integer }
+        success_count: { type: integer }
+        error_count: { type: integer }
+        success_rate: { type: number }
+        avg_latency_ms: { type: integer }
+        custom_metrics: { type: object }
+        metric_date: { type: string, format: date }
+security:
+  - BearerAuth: []

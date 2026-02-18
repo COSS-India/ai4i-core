@@ -1,0 +1,92 @@
+# NER Service - Public API (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: NER Service
+  description: Named Entity Recognition. Extract entities from text.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: NER
+paths:
+  /api/v1/ner/inference:
+    post:
+      tags: [NER]
+      summary: NER inference
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NERInferenceRequest" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NERInferenceResponse" }
+        "401": { description: Unauthorized }
+  /api/v1/ner/health:
+    get:
+      tags: [NER]
+      summary: Health check
+      responses:
+        "200": { description: Health status }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+  schemas:
+    NERLanguageConfig:
+      type: object
+      required: [sourceLanguage]
+      properties:
+        sourceLanguage: { type: string, description: "Source language code (e.g. 'en', 'hi', 'ta')" }
+    NERTextInput:
+      type: object
+      required: [source]
+      properties:
+        source: { type: string, description: Input text to analyze for entities }
+    NERInferenceConfig:
+      type: object
+      required: [language]
+      properties:
+        serviceId: { type: string, description: NER service/model ID (optional; Smart Router will assign if omitted) }
+        language: { $ref: "#/components/schemas/NERLanguageConfig" }
+    NERInferenceRequest:
+      type: object
+      required: [input, config]
+      properties:
+        input:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/NERTextInput" }
+        config: { $ref: "#/components/schemas/NERInferenceConfig" }
+        controlConfig: { type: object, description: Additional control parameters }
+    NERTokenPrediction:
+      type: object
+      properties:
+        token: { type: string }
+        tag: { type: string, description: "NER tag (e.g. PERSON, ORG, O)" }
+        tokenIndex: { type: integer }
+        tokenStartIndex: { type: integer }
+        tokenEndIndex: { type: integer }
+    NERPrediction:
+      type: object
+      properties:
+        source: { type: string, description: Original source text }
+        nerPrediction:
+          type: array
+          items: { $ref: "#/components/schemas/NERTokenPrediction" }
+    NERInferenceResponse:
+      type: object
+      properties:
+        taskType: { type: string, default: ner }
+        output:
+          type: array
+          items: { $ref: "#/components/schemas/NERPrediction" }
+        config: { type: object, description: Response configuration metadata }
+security:
+  - BearerAuth: []
