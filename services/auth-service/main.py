@@ -243,7 +243,6 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
                     t.status
                 FROM tenants t
                 WHERE t.user_id = :user_id
-                AND t.status = 'ACTIVE'
                 LIMIT 1
             """)
 
@@ -251,13 +250,13 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
             row = result.fetchone()
 
             if row:
-                # User is a tenant admin
+                # User is a tenant admin — return tenant info regardless of tenant status
                 return {
                     "tenant_id": row[0],
                     "tenant_uuid": str(row[1]),
                     "schema_name": row[2],
                     "subscriptions": row[3] if row[3] else [],
-                    "user_subscriptions": row[4] if row[4] else [],
+                    "user_subscriptions": [],  # tenant admin has no per-user subscriptions
                 }
         else:
             tenant_user_query = text("""
@@ -271,8 +270,6 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
                 FROM tenant_users tu
                 JOIN tenants t ON tu.tenant_uuid = t.id
                 WHERE tu.user_id = :user_id
-                AND t.status = 'ACTIVE'
-                AND tu.status = 'ACTIVE'
                 LIMIT 1
             """)
 
@@ -280,7 +277,7 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
             row = result.fetchone()
 
             if row:
-                # User is a tenant user
+                # User is a tenant user — return tenant info regardless of tenant/user status
                 return {
                     "tenant_id": row[0],
                     "tenant_uuid": str(row[1]),
