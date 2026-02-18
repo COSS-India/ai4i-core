@@ -606,7 +606,7 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     db_user = User(
         email=user_data.email,
         username=user_data.username,
-        hashed_password=hashed_password,
+        password_hash=hashed_password,
         full_name=user_data.full_name,
         phone_number=user_data.phone_number,
         timezone=user_data.timezone,
@@ -695,7 +695,7 @@ async def login(
         logger.debug(f"Fetching user from database: {login_data.email}")
         user = await AuthUtils.get_user_by_email(db, login_data.email)
         
-        if not user or not AuthUtils.verify_password(login_data.password, user.hashed_password):
+        if not user or not AuthUtils.verify_password(login_data.password, user.password_hash):
             logger.warning(f"❌ Login failed - invalid credentials: email={login_data.email}, ip={client_ip}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1205,7 +1205,7 @@ async def change_password(
 ):
     """Change user password"""
     # Validate current password
-    if not AuthUtils.verify_password(password_data.current_password, current_user.hashed_password):
+    if not AuthUtils.verify_password(password_data.current_password, current_user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Current password is incorrect"
@@ -1227,7 +1227,7 @@ async def change_password(
         )
     
     # Update password
-    current_user.hashed_password = AuthUtils.get_password_hash(password_data.new_password)
+    current_user.password_hash = AuthUtils.get_password_hash(password_data.new_password)
     current_user.updated_at = datetime.utcnow()
     await db.commit()
     
@@ -2157,39 +2157,17 @@ async def get_permission_list(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get list of inference permissions only (for API keys).
+    Get list of all available permissions that can be assigned to API keys.
     
-    Returns only inference permissions that can be assigned to API keys:
-    - asr.inference
-    - tts.inference
-    - nmt.inference
-    - audio-lang.inference
-    - language-detection.inference
-    - language-diarization.inference
-    - ner.inference
-    - ocr.inference
-    - speaker-diarization.inference
-    - transliteration.inference
-    - pipeline.inference
-    - llm.inference
+    Returns all permissions from the permissions table, sorted alphabetically.
+    This allows API keys to have any permission (inference, model management, etc.)
     """
-    # Define allowed inference permissions for API keys
-    allowed_permissions = [
-        "asr.inference",
-        "tts.inference",
-        "nmt.inference",
-        "audio-lang.inference",
-        "language-detection.inference",
-        "language-diarization.inference",
-        "ner.inference",
-        "ocr.inference",
-        "speaker-diarization.inference",
-        "transliteration.inference",
-        "pipeline.inference",
-        "llm.inference"
-    ]
+    # Fetch all permissions from database
+    result = await db.execute(select(Permission).order_by(Permission.name))
+    permissions = result.scalars().all()
     
-    return allowed_permissions
+    # Return list of permission names
+    return [perm.name for perm in permissions]
 
 
 @app.get("/api/v1/auth/users", response_model=List[UserListResponse], tags=["Admin"])

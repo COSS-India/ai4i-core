@@ -92,6 +92,12 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             ('service.read', 'service', 'read'),
             ('service.update', 'service', 'update'),
             ('service.delete', 'service', 'delete'),
+            # API Key Management
+            ('apiKey.create', 'apiKey', 'create'),
+            ('apiKey.read', 'apiKey', 'read'),
+            ('apiKey.update', 'apiKey', 'update'),
+            ('apiKey.delete', 'apiKey', 'delete'),
+            ('apiKey.revoke', 'apiKey', 'revoke'),
         ]
         
         for name, resource, action in permissions:
@@ -132,7 +138,8 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
                 'transliteration.inference', 'transliteration.read',
                 'speaker_diarization.inference', 'speaker_diarization.read',
                 'audio_lang_detection.inference', 'audio_lang_detection.read',
-                'logs.read', 'traces.read'
+                'logs.read', 'traces.read',
+                'apiKey.create', 'apiKey.read', 'apiKey.update', 'apiKey.delete', 'apiKey.revoke'
             )
             ON CONFLICT (role_id, permission_id) DO NOTHING
         """)

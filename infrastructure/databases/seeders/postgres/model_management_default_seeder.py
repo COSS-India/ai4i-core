@@ -29,11 +29,11 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'asr_am_ensemble',
                 'Automatic Speech Recognition model for Hindi language using Conformer architecture. UPDATE ENDPOINT before use.',
                 '{{"type": "asr"}}'::jsonb,
-                '["hi", "en"]'::jsonb,
+                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}]'::jsonb,
                 '["general", "conversational"]'::jsonb,
                 'Apache-2.0',
-                '{{"schema": {{"request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8001/asr/v1/recognize"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "role": "Maintainer"}}]}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "asr"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8001/asr/v1/recognize"}}'::jsonb,
+                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
             ) ON CONFLICT (name, version) DO NOTHING;
@@ -66,11 +66,11 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'tts',
                 'Text-to-Speech model for Hindi language using FastPitch architecture. UPDATE ENDPOINT before use.',
                 '{{"type": "tts"}}'::jsonb,
-                '["hi"]'::jsonb,
+                '[{{"sourceLanguage": "hi"}}]'::jsonb,
                 '["general"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8002/tts/v1/synthesize"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "role": "Maintainer"}}]}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "tts"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8002/tts/v1/synthesize"}}'::jsonb,
+                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
             ) ON CONFLICT (name, version) DO NOTHING;
@@ -103,11 +103,11 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'nmt',
                 'Neural Machine Translation model for English to Hindi using IndicTrans2. UPDATE ENDPOINT before use.',
                 '{{"type": "nmt"}}'::jsonb,
-                '["en", "hi"]'::jsonb,
+                '[{{"sourceLanguage": "en", "targetLanguage": "hi"}}]'::jsonb,
                 '["general", "news", "conversational"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8003/nmt/v1/translate"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "role": "Maintainer"}}]}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "nmt"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8003/nmt/v1/translate"}}'::jsonb,
+                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
             ) ON CONFLICT (name, version) DO NOTHING;
@@ -140,11 +140,11 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'llm',
                 'Large Language Model for Indic languages chat/completion. UPDATE ENDPOINT before use.',
                 '{{"type": "llm"}}'::jsonb,
-                '["hi", "en", "ta", "te", "bn", "mr", "gu", "kn", "ml", "pa", "or"]'::jsonb,
+                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}, {{"sourceLanguage": "gu"}}, {{"sourceLanguage": "kn"}}, {{"sourceLanguage": "ml"}}, {{"sourceLanguage": "pa"}}, {{"sourceLanguage": "or"}}]'::jsonb,
                 '["general", "conversational", "qa"]'::jsonb,
                 'Apache-2.0',
-                '{{"schema": {{"request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8004/llm/v1/completions"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "role": "Maintainer"}}]}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "llm"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8004/llm/v1/completions"}}'::jsonb,
+                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
             ) ON CONFLICT (name, version) DO NOTHING;
@@ -177,11 +177,11 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'transliteration',
                 'Transliteration model for Indic scripts using IndicXlit. UPDATE ENDPOINT before use.',
                 '{{"type": "transliteration"}}'::jsonb,
-                '["hi", "ta", "te", "bn", "mr", "gu", "kn", "ml", "pa", "or"]'::jsonb,
+                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}, {{"sourceLanguage": "gu"}}, {{"sourceLanguage": "kn"}}, {{"sourceLanguage": "ml"}}, {{"sourceLanguage": "pa"}}, {{"sourceLanguage": "or"}}]'::jsonb,
                 '["general"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8005/transliteration/v1/transliterate"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "role": "Maintainer"}}]}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "transliteration"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8005/transliteration/v1/transliterate"}}'::jsonb,
+                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
             ) ON CONFLICT (name, version) DO NOTHING;
@@ -214,11 +214,11 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'indiclid',
                 'Text language detection model for Indic languages. UPDATE ENDPOINT before use.',
                 '{{"type": "language-detection"}}'::jsonb,
-                '["hi", "en", "ta", "te", "bn", "mr", "gu", "kn", "ml", "pa", "or"]'::jsonb,
+                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}, {{"sourceLanguage": "gu"}}, {{"sourceLanguage": "kn"}}, {{"sourceLanguage": "ml"}}, {{"sourceLanguage": "pa"}}, {{"sourceLanguage": "or"}}]'::jsonb,
                 '["general"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8006/langdetect/v1/detect"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "role": "Maintainer"}}]}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "language-detection"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8006/langdetect/v1/detect"}}'::jsonb,
+                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
             ) ON CONFLICT (name, version) DO NOTHING;
@@ -251,11 +251,11 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'speaker_diarization',
                 'Speaker diarization model using Pyannote. UPDATE ENDPOINT before use.',
                 '{{"type": "speaker-diarization"}}'::jsonb,
-                '["*"]'::jsonb,
+                '[{{"sourceLanguage": "*"}}]'::jsonb,
                 '["general", "meetings", "podcasts"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8007/speaker-diarization/v1/diarize"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "role": "Maintainer"}}]}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "speaker-diarization"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8007/speaker-diarization/v1/diarize"}}'::jsonb,
+                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
             ) ON CONFLICT (name, version) DO NOTHING;
@@ -288,11 +288,11 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'AudioLangDetect-Whisper',
                 'Audio language detection model using Whisper. UPDATE ENDPOINT before use.',
                 '{{"type": "audio-lang-detection"}}'::jsonb,
-                '["hi", "en", "ta", "te", "bn", "mr"]'::jsonb,
+                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}]'::jsonb,
                 '["general"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8008/audio-langdetect/v1/detect"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "role": "Maintainer"}}]}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "audio-lang-detection"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8008/audio-langdetect/v1/detect"}}'::jsonb,
+                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
             ) ON CONFLICT (name, version) DO NOTHING;
@@ -325,11 +325,11 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'lang_diarization',
                 'Language diarization model for multi-language audio. UPDATE ENDPOINT before use.',
                 '{{"type": "language-diarization"}}'::jsonb,
-                '["hi", "en", "ta", "te"]'::jsonb,
+                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}]'::jsonb,
                 '["code-switching", "multilingual"]'::jsonb,
                 'Apache-2.0',
-                '{{"schema": {{"request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8009/lang-diarization/v1/diarize"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "role": "Maintainer"}}]}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "language-diarization"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8009/lang-diarization/v1/diarize"}}'::jsonb,
+                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
             ) ON CONFLICT (name, version) DO NOTHING;
@@ -362,11 +362,11 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'surya_ocr',
                 'Optical Character Recognition model for Indic scripts. UPDATE ENDPOINT before use.',
                 '{{"type": "ocr"}}'::jsonb,
-                '["hi", "ta", "te", "bn", "mr", "gu", "kn", "ml"]'::jsonb,
+                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}, {{"sourceLanguage": "gu"}}, {{"sourceLanguage": "kn"}}, {{"sourceLanguage": "ml"}}]'::jsonb,
                 '["documents", "handwritten", "printed"]'::jsonb,
                 'Apache-2.0',
-                '{{"schema": {{"request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8010/ocr/v1/recognize"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "role": "Maintainer"}}]}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "ocr"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8010/ocr/v1/recognize"}}'::jsonb,
+                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
             ) ON CONFLICT (name, version) DO NOTHING;
@@ -399,11 +399,11 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'ner',
                 'Named Entity Recognition model for Indic languages. UPDATE ENDPOINT before use.',
                 '{{"type": "ner"}}'::jsonb,
-                '["hi", "en", "ta", "te", "bn", "mr"]'::jsonb,
+                '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}]'::jsonb,
                 '["general", "news", "legal"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8011/ner/v1/extract"}}'::jsonb,
-                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "role": "Maintainer"}}]}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "ner"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8011/ner/v1/extract"}}'::jsonb,
+                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
             ) ON CONFLICT (name, version) DO NOTHING;

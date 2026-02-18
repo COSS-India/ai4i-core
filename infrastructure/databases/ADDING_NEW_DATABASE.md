@@ -248,3 +248,66 @@ python3 infrastructure/databases/cli.py migrate:all
 ```
 
 No need to update any loops or deployment scripts!
+
+---
+
+## 🔌 External Service Databases
+
+External services (like Unleash, Keycloak, etc.) manage their own database schemas. **Do not add them to `POSTGRES_DBS`** as they have their own migration systems.
+
+### How to Handle External Databases
+
+#### 1. Register in `EXTERNAL_DBS` List
+
+Edit `infrastructure/databases/cli.py`:
+
+```python
+# External service databases (managed by third-party services)
+EXTERNAL_DBS = [
+    'unleash',      # Unleash feature flags
+    'keycloak',     # If using Keycloak for auth
+    # Add other external services here
+]
+```
+
+#### 2. Initialize Before Starting Services
+
+Before starting the external service, ensure its database exists:
+
+```bash
+# Initialize all external databases
+python3 infrastructure/databases/cli.py init:external
+
+# Then start the service
+docker compose up -d unleash
+```
+
+#### 3. Let the Service Handle Its Schema
+
+The external service will:
+- Create its own tables on first startup
+- Run its own migrations
+- Manage its own schema versions
+
+**DO NOT** create migrations in our framework for external databases - they manage themselves!
+
+### Why This Separation?
+
+1. **Avoid Conflicts**: External services have their own `migrations` tables with different schemas
+2. **Respect Ownership**: Schema is owned and managed by the external service
+3. **Upgrade Safety**: Service upgrades handle their own migrations
+4. **Clear Boundaries**: Our migrations manage our databases, theirs manage theirs
+
+### Example: Unleash
+
+```bash
+# ✅ Correct approach
+python3 infrastructure/databases/cli.py init:external  # Creates 'unleash' database
+docker compose up -d unleash                           # Unleash creates its own tables
+
+# ❌ Wrong approach
+# Don't create migrations in our framework for Unleash tables
+# Don't try to run migrate --postgres-db unleash
+```
+
+---
