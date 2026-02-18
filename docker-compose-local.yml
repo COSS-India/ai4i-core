@@ -277,24 +277,6 @@ services:
       - microservices-network
     restart: unless-stopped
 
-  # Swagger UI for Kong-facing API documentation
-  swagger-kong-ui:
-    image: swaggerapi/swagger-ui
-    container_name: ai4v-swagger-kong-ui
-    ports:
-      - "8086:8080"
-    volumes:
-      # Generated OpenAPI spec that points to Kong and includes all endpoints.
-      # Mount it at a custom path; the swagger-ui entrypoint will copy it into
-      # /usr/share/nginx/html/openapi.json on startup.
-      - ./docs/kong-openapi.json:/kong-openapi.json:ro
-    environment:
-      SWAGGER_JSON: /kong-openapi.json
-    networks:
-      - microservices-network
-    depends_on:
-      - kong
-
   # Microservices
   api-gateway-service:
     build:
@@ -386,6 +368,23 @@ services:
     #   timeout: 10s
     #   retries: 3
     #   start_period: 30s
+    restart: unless-stopped
+
+  docs-manager:
+    build:
+      context: .
+      dockerfile: ./services/docs-manager/Dockerfile
+    container_name: ai4v-docs-manager
+    ports:
+      - "8103:8103"
+    environment:
+      - API_GATEWAY_URL=http://localhost:8080
+      - SPECS_ROOT=/app/specs
+      - SERVICE_DOCS_REGISTRY_PATH=/app/specs/service-docs-registry.yaml
+    volumes:
+      - ./services/docs-manager/specs:/app/specs
+    networks:
+      - microservices-network
     restart: unless-stopped
 
   metrics-service:
