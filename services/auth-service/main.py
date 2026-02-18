@@ -1071,14 +1071,15 @@ async def validate_api_key(
         )
     
     # Map service names to permission resource names (for compatibility)
-    # Permissions use resource names like "audio-lang" but services may send "audio-lang-detection"
+    # Permissions use resource names with underscores (e.g., "audio_lang_detection") 
+    # but services may send names with hyphens (e.g., "audio-lang-detection")
     service_to_resource = {
-        'audio-lang-detection': 'audio-lang',
-        'language-detection': 'language-detection',
-        'language-diarization': 'language-diarization',
+        'audio-lang-detection': 'audio_lang_detection',
+        'language-detection': 'language_detection',
+        'language-diarization': 'language_diarization',
         'ner': 'ner',
         'ocr': 'ocr',
-        'speaker-diarization': 'speaker-diarization',
+        'speaker-diarization': 'speaker_diarization',
         'transliteration': 'transliteration',
         'asr': 'asr',
         'tts': 'tts',

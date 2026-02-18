@@ -9,7 +9,7 @@ import httpx
 from fastapi import Request, Header
 from jose import JWTError, jwt
 
-from middleware.exceptions import AuthenticationError, AuthorizationError
+from middleware.exceptions import AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError
 
 logger = logging.getLogger(__name__)
 
@@ -187,25 +187,40 @@ async def AuthProvider(
     api_key = x_api_key or get_api_key_from_header(authorization)
 
     if auth_source == "BOTH":
-        # 1) Authenticate user via JWT
-        bearer_result = await authenticate_bearer_token(request, authorization)
-        jwt_user_id = bearer_result.get("user_id")
+        try:
+            # 1) Authenticate user via JWT
+            bearer_result = await authenticate_bearer_token(request, authorization)
+            jwt_user_id = bearer_result.get("user_id")
 
-        if not api_key:
-            raise AuthenticationError("Missing API key")
+            if not api_key:
+                raise AuthenticationError("Missing API key")
 
-        # 2) Validate API key + enforce ownership via auth-service (and local safety net)
-        service, action = determine_service_and_action(request)
-        await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
+            # 2) Validate API key + permissions via auth-service (single source of truth),
+            # passing jwt_user_id so auth-service can enforce ownership.
+            service, action = determine_service_and_action(request)
+            auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
+            
+            # CRITICAL: Always check valid field - auth-service may return valid=false for ownership mismatch
+            if not auth_result.get("valid", False):
+                error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
+                raise AuthenticationError("API key does not belong to the authenticated user")
 
-        # 3) Populate request state with JWT identity
-        request.state.user_id = jwt_user_id
-        request.state.api_key_id = None
-        request.state.api_key_name = None
-        request.state.user_email = bearer_result.get("user", {}).get("email")
-        request.state.is_authenticated = True
+            # 3) Populate request.state – keep JWT as primary identity (matching ASR/TTS/NMT)
+            request.state.user_id = jwt_user_id
+            request.state.api_key_id = None
+            request.state.api_key_name = None
+            request.state.user_email = bearer_result.get("user", {}).get("email")
+            request.state.is_authenticated = True
 
-        return bearer_result
+            return bearer_result
+        except (AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
+            # For ANY auth/key error in BOTH mode, surface a single, consistent message
+            logger.error(f"Language-detection BOTH mode: Authentication/Authorization error: {e}")
+            raise AuthenticationError("API key does not belong to the authenticated user")
+        except Exception as e:
+            logger.error(f"Language-detection BOTH mode: Unexpected error: {e}", exc_info=True)
+            # Even on unexpected errors we normalize the external message
+            raise AuthenticationError("API key does not belong to the authenticated user")
 
     # API_KEY-only mode
     if not api_key:

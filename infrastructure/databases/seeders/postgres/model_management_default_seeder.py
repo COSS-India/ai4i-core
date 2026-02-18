@@ -32,11 +32,18 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}]'::jsonb,
                 '["general", "conversational"]'::jsonb,
                 'Apache-2.0',
-                '{{"schema": {{"modelProcessingType": {{"type": "asr"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8001/asr/v1/recognize"}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "asr"}}, "model_name": "asr_am_ensemble", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8001/asr/v1/recognize"}}'::jsonb,
                 '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
-            ) ON CONFLICT (name, version) DO NOTHING;
+            ) ON CONFLICT (name, version) DO UPDATE SET
+                inference_endpoint = jsonb_set(
+                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
+                    '{{schema,model_name}}',
+                    '"asr_am_ensemble"'::jsonb,
+                    true
+                ),
+                updated_at = CURRENT_TIMESTAMP;
         """)
         
         adapter.execute(f"""
@@ -51,7 +58,8 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'GPU: NVIDIA T4, RAM: 16GB',
                 {timestamp_ms},
                 false
-            ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
+                updated_at = CURRENT_TIMESTAMP;
         """)
         print("    ✓ ASR model and service")
         
@@ -69,11 +77,18 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 '[{{"sourceLanguage": "hi"}}]'::jsonb,
                 '["general"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "tts"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8002/tts/v1/synthesize"}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "tts"}}, "model_name": "tts", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8002/tts/v1/synthesize"}}'::jsonb,
                 '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
-            ) ON CONFLICT (name, version) DO NOTHING;
+            ) ON CONFLICT (name, version) DO UPDATE SET
+                inference_endpoint = jsonb_set(
+                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
+                    '{{schema,model_name}}',
+                    '"tts"'::jsonb,
+                    true
+                ),
+                updated_at = CURRENT_TIMESTAMP;
         """)
         
         adapter.execute(f"""
@@ -88,7 +103,8 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'GPU: NVIDIA T4, RAM: 16GB',
                 {timestamp_ms},
                 false
-            ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
+                updated_at = CURRENT_TIMESTAMP;
         """)
         print("    ✓ TTS model and service")
         
@@ -106,11 +122,18 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 '[{{"sourceLanguage": "en", "targetLanguage": "hi"}}]'::jsonb,
                 '["general", "news", "conversational"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "nmt"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8003/nmt/v1/translate"}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "nmt"}}, "model_name": "nmt", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8003/nmt/v1/translate"}}'::jsonb,
                 '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
-            ) ON CONFLICT (name, version) DO NOTHING;
+            ) ON CONFLICT (name, version) DO UPDATE SET
+                inference_endpoint = jsonb_set(
+                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
+                    '{{schema,model_name}}',
+                    '"nmt"'::jsonb,
+                    true
+                ),
+                updated_at = CURRENT_TIMESTAMP;
         """)
         
         adapter.execute(f"""
@@ -125,9 +148,60 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'GPU: NVIDIA A10, RAM: 32GB',
                 {timestamp_ms},
                 false
-            ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
+                updated_at = CURRENT_TIMESTAMP;
         """)
-        print("    ✓ NMT model and service")
+        
+        # Add ai4bharat/indictrans model and service for compatibility with frontend
+        adapter.execute(f"""
+            INSERT INTO models (model_id, version, name, description, task, languages, domain, license, inference_endpoint, submitter, submitted_on, version_status)
+            VALUES (
+                generate_model_id('ai4bharat/indictrans', '1.0.0'),
+                '1.0.0',
+                'ai4bharat/indictrans',
+                'IndicTrans - Neural Machine Translation model supporting multiple Indic languages.',
+                '{{"type": "nmt"}}'::jsonb,
+                '[{{"sourceLanguage": "en", "targetLanguage": "hi"}}, {{"sourceLanguage": "hi", "targetLanguage": "en"}}]'::jsonb,
+                '["general", "news", "conversational"]'::jsonb,
+                'MIT',
+                '{{"schema": {{"modelProcessingType": {{"type": "nmt"}}, "model_name": "nmt", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://13.200.133.97:8000"}}'::jsonb,
+                '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
+                {timestamp_ms},
+                'ACTIVE'
+            ) ON CONFLICT (name, version) DO UPDATE SET
+                inference_endpoint = jsonb_set(
+                    jsonb_set(
+                        COALESCE(models.inference_endpoint, '{{}}'::jsonb),
+                        '{{schema,model_name}}',
+                        '"nmt"'::jsonb,
+                        true
+                    ),
+                    '{{callbackUrl}}',
+                    '"http://13.200.133.97:8000"'::jsonb,
+                    true
+                ),
+                updated_at = CURRENT_TIMESTAMP;
+        """)
+        
+        adapter.execute(f"""
+            INSERT INTO services (service_id, name, model_id, model_version, endpoint, service_description, hardware_description, published_on, is_published)
+            VALUES (
+                'ai4bharat/indictrans--gpu-t4',
+                'gpu-t4',
+                generate_model_id('ai4bharat/indictrans', '1.0.0'),
+                '1.0.0',
+                'http://13.200.133.97:8000',
+                'IndicTrans NMT service on GPU T4.',
+                'GPU: NVIDIA T4, RAM: 16GB',
+                {timestamp_ms},
+                false
+            ) ON CONFLICT (service_id) DO UPDATE SET
+                model_id = generate_model_id('ai4bharat/indictrans', '1.0.0'),
+                model_version = '1.0.0',
+                endpoint = 'http://13.200.133.97:8000',
+                updated_at = CURRENT_TIMESTAMP;
+        """)
+        print("    ✓ NMT model and service (including ai4bharat/indictrans--gpu-t4)")
         
         # ========================================================================
         # 4. LLM (Large Language Model) Model and Service
@@ -143,11 +217,18 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}, {{"sourceLanguage": "gu"}}, {{"sourceLanguage": "kn"}}, {{"sourceLanguage": "ml"}}, {{"sourceLanguage": "pa"}}, {{"sourceLanguage": "or"}}]'::jsonb,
                 '["general", "conversational", "qa"]'::jsonb,
                 'Apache-2.0',
-                '{{"schema": {{"modelProcessingType": {{"type": "llm"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8004/llm/v1/completions"}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "llm"}}, "model_name": "llm", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8004/llm/v1/completions"}}'::jsonb,
                 '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
-            ) ON CONFLICT (name, version) DO NOTHING;
+            ) ON CONFLICT (name, version) DO UPDATE SET
+                inference_endpoint = jsonb_set(
+                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
+                    '{{schema,model_name}}',
+                    '"llm"'::jsonb,
+                    true
+                ),
+                updated_at = CURRENT_TIMESTAMP;
         """)
         
         adapter.execute(f"""
@@ -162,7 +243,8 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'GPU: NVIDIA A100, RAM: 80GB',
                 {timestamp_ms},
                 false
-            ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
+                updated_at = CURRENT_TIMESTAMP;
         """)
         print("    ✓ LLM model and service")
         
@@ -180,11 +262,18 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}, {{"sourceLanguage": "gu"}}, {{"sourceLanguage": "kn"}}, {{"sourceLanguage": "ml"}}, {{"sourceLanguage": "pa"}}, {{"sourceLanguage": "or"}}]'::jsonb,
                 '["general"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "transliteration"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8005/transliteration/v1/transliterate"}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "transliteration"}}, "model_name": "transliteration", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8005/transliteration/v1/transliterate"}}'::jsonb,
                 '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
-            ) ON CONFLICT (name, version) DO NOTHING;
+            ) ON CONFLICT (name, version) DO UPDATE SET
+                inference_endpoint = jsonb_set(
+                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
+                    '{{schema,model_name}}',
+                    '"transliteration"'::jsonb,
+                    true
+                ),
+                updated_at = CURRENT_TIMESTAMP;
         """)
         
         adapter.execute(f"""
@@ -199,7 +288,8 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'CPU: 8 cores, RAM: 16GB',
                 {timestamp_ms},
                 false
-            ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
+                updated_at = CURRENT_TIMESTAMP;
         """)
         print("    ✓ Transliteration model and service")
         
@@ -217,11 +307,18 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}, {{"sourceLanguage": "gu"}}, {{"sourceLanguage": "kn"}}, {{"sourceLanguage": "ml"}}, {{"sourceLanguage": "pa"}}, {{"sourceLanguage": "or"}}]'::jsonb,
                 '["general"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "language-detection"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8006/langdetect/v1/detect"}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "language-detection"}}, "model_name": "indiclid", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8006/langdetect/v1/detect"}}'::jsonb,
                 '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
-            ) ON CONFLICT (name, version) DO NOTHING;
+            ) ON CONFLICT (name, version) DO UPDATE SET
+                inference_endpoint = jsonb_set(
+                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
+                    '{{schema,model_name}}',
+                    '"indiclid"'::jsonb,
+                    true
+                ),
+                updated_at = CURRENT_TIMESTAMP;
         """)
         
         adapter.execute(f"""
@@ -236,7 +333,8 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'CPU: 4 cores, RAM: 8GB',
                 {timestamp_ms},
                 false
-            ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
+                updated_at = CURRENT_TIMESTAMP;
         """)
         print("    ✓ Language Detection model and service")
         
@@ -254,11 +352,18 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 '[{{"sourceLanguage": "*"}}]'::jsonb,
                 '["general", "meetings", "podcasts"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "speaker-diarization"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8007/speaker-diarization/v1/diarize"}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "speaker-diarization"}}, "model_name": "speaker_diarization", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8007/speaker-diarization/v1/diarize"}}'::jsonb,
                 '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
-            ) ON CONFLICT (name, version) DO NOTHING;
+            ) ON CONFLICT (name, version) DO UPDATE SET
+                inference_endpoint = jsonb_set(
+                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
+                    '{{schema,model_name}}',
+                    '"speaker_diarization"'::jsonb,
+                    true
+                ),
+                updated_at = CURRENT_TIMESTAMP;
         """)
         
         adapter.execute(f"""
@@ -273,7 +378,8 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'GPU: NVIDIA T4, RAM: 16GB',
                 {timestamp_ms},
                 false
-            ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
+                updated_at = CURRENT_TIMESTAMP;
         """)
         print("    ✓ Speaker Diarization model and service")
         
@@ -291,11 +397,18 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}]'::jsonb,
                 '["general"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "audio-lang-detection"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8008/audio-langdetect/v1/detect"}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "audio-lang-detection"}}, "model_name": "AudioLangDetect-Whisper", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8008/audio-langdetect/v1/detect"}}'::jsonb,
                 '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
-            ) ON CONFLICT (name, version) DO NOTHING;
+            ) ON CONFLICT (name, version) DO UPDATE SET
+                inference_endpoint = jsonb_set(
+                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
+                    '{{schema,model_name}}',
+                    '"AudioLangDetect-Whisper"'::jsonb,
+                    true
+                ),
+                updated_at = CURRENT_TIMESTAMP;
         """)
         
         adapter.execute(f"""
@@ -310,7 +423,8 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'GPU: NVIDIA T4, RAM: 16GB',
                 {timestamp_ms},
                 false
-            ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
+                updated_at = CURRENT_TIMESTAMP;
         """)
         print("    ✓ Audio Language Detection model and service")
         
@@ -328,11 +442,18 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}]'::jsonb,
                 '["code-switching", "multilingual"]'::jsonb,
                 'Apache-2.0',
-                '{{"schema": {{"modelProcessingType": {{"type": "language-diarization"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8009/lang-diarization/v1/diarize"}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "language-diarization"}}, "model_name": "lang_diarization", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8009/lang-diarization/v1/diarize"}}'::jsonb,
                 '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
-            ) ON CONFLICT (name, version) DO NOTHING;
+            ) ON CONFLICT (name, version) DO UPDATE SET
+                inference_endpoint = jsonb_set(
+                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
+                    '{{schema,model_name}}',
+                    '"lang_diarization"'::jsonb,
+                    true
+                ),
+                updated_at = CURRENT_TIMESTAMP;
         """)
         
         adapter.execute(f"""
@@ -347,7 +468,8 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'GPU: NVIDIA T4, RAM: 16GB',
                 {timestamp_ms},
                 false
-            ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
+                updated_at = CURRENT_TIMESTAMP;
         """)
         print("    ✓ Language Diarization model and service")
         
@@ -365,11 +487,18 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}, {{"sourceLanguage": "gu"}}, {{"sourceLanguage": "kn"}}, {{"sourceLanguage": "ml"}}]'::jsonb,
                 '["documents", "handwritten", "printed"]'::jsonb,
                 'Apache-2.0',
-                '{{"schema": {{"modelProcessingType": {{"type": "ocr"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8010/ocr/v1/recognize"}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "ocr"}}, "model_name": "surya_ocr", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8010/ocr/v1/recognize"}}'::jsonb,
                 '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
-            ) ON CONFLICT (name, version) DO NOTHING;
+            ) ON CONFLICT (name, version) DO UPDATE SET
+                inference_endpoint = jsonb_set(
+                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
+                    '{{schema,model_name}}',
+                    '"surya_ocr"'::jsonb,
+                    true
+                ),
+                updated_at = CURRENT_TIMESTAMP;
         """)
         
         adapter.execute(f"""
@@ -384,7 +513,8 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'GPU: NVIDIA T4, RAM: 16GB',
                 {timestamp_ms},
                 false
-            ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
+                updated_at = CURRENT_TIMESTAMP;
         """)
         print("    ✓ OCR model and service")
         
@@ -402,11 +532,18 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 '[{{"sourceLanguage": "hi"}}, {{"sourceLanguage": "en"}}, {{"sourceLanguage": "ta"}}, {{"sourceLanguage": "te"}}, {{"sourceLanguage": "bn"}}, {{"sourceLanguage": "mr"}}]'::jsonb,
                 '["general", "news", "legal"]'::jsonb,
                 'MIT',
-                '{{"schema": {{"modelProcessingType": {{"type": "ner"}}, "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8011/ner/v1/extract"}}'::jsonb,
+                '{{"schema": {{"modelProcessingType": {{"type": "ner"}}, "model_name": "ner", "request": {{}}, "response": {{}}}}, "callbackUrl": "http://localhost:8011/ner/v1/extract"}}'::jsonb,
                 '{{"name": "AI4Bharat", "aboutMe": "AI research organization", "team": [{{"name": "Admin", "aboutMe": null}}]}}'::jsonb,
                 {timestamp_ms},
                 'ACTIVE'
-            ) ON CONFLICT (name, version) DO NOTHING;
+            ) ON CONFLICT (name, version) DO UPDATE SET
+                inference_endpoint = jsonb_set(
+                    COALESCE(models.inference_endpoint, '{{}}'::jsonb),
+                    '{{schema,model_name}}',
+                    '"ner"'::jsonb,
+                    true
+                ),
+                updated_at = CURRENT_TIMESTAMP;
         """)
         
         adapter.execute(f"""
@@ -421,7 +558,8 @@ class ModelManagementDefaultSeeder(BaseSeeder):
                 'CPU: 8 cores, RAM: 16GB',
                 {timestamp_ms},
                 false
-            ) ON CONFLICT (model_id, model_version, name) DO NOTHING;
+            ) ON CONFLICT (model_id, model_version, name) DO UPDATE SET
+                updated_at = CURRENT_TIMESTAMP;
         """)
         print("    ✓ NER model and service")
         
