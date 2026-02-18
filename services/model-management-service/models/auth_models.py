@@ -17,7 +17,7 @@ class UserDB(AuthDBBase):
     id = Column(Integer, primary_key=True)
     email = Column(String(255), unique=True, nullable=False)
     username = Column(String(100), unique=True, nullable=False)
-    hashed_password = Column(String(255), nullable=True)  # Matches database column name (nullable for OAuth users)
+    password_hash = Column(String(255), nullable=True)  # Matches database column name (nullable for OAuth users)
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -26,17 +26,6 @@ class UserDB(AuthDBBase):
     # Relationships
     api_keys = relationship("ApiKeyDB", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("SessionDB", back_populates="user", cascade="all, delete-orphan")
-    
-    # Compatibility property for code that uses 'password_hash'
-    @property
-    def password_hash(self):
-        """Get password_hash (alias for hashed_password)"""
-        return self.hashed_password
-    
-    @password_hash.setter
-    def password_hash(self, value):
-        """Set password_hash (alias for hashed_password)"""
-        self.hashed_password = value
 
 
 class ApiKeyDB(AuthDBBase):

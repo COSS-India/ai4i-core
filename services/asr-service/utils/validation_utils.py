@@ -4,7 +4,7 @@ Validation utility functions for request validation.
 
 import logging
 import base64
-from typing import List
+from typing import List, Optional
 from io import BytesIO
 from models.asr_request import AudioInput
 from .audio_utils import validate_audio_format, get_audio_duration, AudioProcessingError, InvalidAudioFormatError
@@ -140,11 +140,24 @@ def validate_language_code(language_code: str) -> bool:
         raise InvalidLanguageCodeError(f"Language code validation failed: {e}")
 
 
-def validate_service_id(service_id: str) -> bool:
-    """Validate service ID format."""
+def validate_service_id(service_id: Optional[str]) -> bool:
+    """
+    Validate service ID format.
+    
+    Args:
+        service_id: Optional service ID. If None or empty, validation is skipped
+                    (SMR will handle service selection when serviceId is missing).
+    
+    Returns:
+        True if valid or None/empty (which is allowed)
+    """
+    # Allow None or empty string - SMR will handle service selection when missing
+    if not service_id:
+        return True
+    
     try:
-        if not service_id or not isinstance(service_id, str):
-            raise InvalidServiceIdError("Service ID must be a non-empty string")
+        if not isinstance(service_id, str):
+            raise InvalidServiceIdError("Service ID must be a string")
         
         # Basic format validation (e.g., "ai4bharat/model-name--gpu--t4")
         if len(service_id) < 3:
