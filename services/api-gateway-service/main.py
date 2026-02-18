@@ -6562,13 +6562,17 @@ async def get_experiment(
 async def get_experiment_metrics(
     experiment_id: str,
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    aggregate: bool = Query(False, description="If true, return one row per variant with totals combined across all dates; if false, return per variant per day."),
 ):
-    """Get metrics for an A/B experiment by ID. Returns aggregated metrics per variant per day."""
+    """Get metrics for an A/B experiment by ID. Default: per variant per day. Use ?aggregate=true for one row per variant (totals)."""
     headers = build_auth_headers(request, credentials, None)
+    path = f"/api/v1/model-management/experiments/{experiment_id}/metrics"
+    if aggregate:
+        path = f"{path}?aggregate=true"
     return await proxy_to_service(
         None,
-        f"/api/v1/model-management/experiments/{experiment_id}/metrics",
+        path,
         "model-management-service",
         method="GET",
         headers=headers,
