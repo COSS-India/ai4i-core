@@ -22,7 +22,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB -h localhost -p 5432"]
-      interval: 6h
+      interval: 10s
       timeout: 5s
       retries: 5
       start_period: 5s
@@ -45,7 +45,7 @@ services:
           - redis
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -h localhost -p 6379 -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
-      interval: 6h
+      interval: 10s
       timeout: 5s
       retries: 5
       start_period: 5s
@@ -71,7 +71,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD-SHELL", "wget --spider -q http://localhost:8086/health || exit 1"]
-      interval: 6h
+      interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
@@ -95,7 +95,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD-SHELL", "curl -u ${ELASTIC_USERNAME}:${ELASTIC_PASSWORD} -f http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 60s
@@ -115,7 +115,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "2181"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 20s
@@ -141,7 +141,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4242/feature-flags/health || exit 1"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -173,7 +173,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 40s
@@ -204,7 +204,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -232,7 +232,7 @@ services:
           - auth-service
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -266,7 +266,7 @@ services:
           - config-service
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -311,7 +311,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -341,7 +341,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8084/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -369,7 +369,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8085/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -398,7 +398,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -433,7 +433,7 @@ services:
           - asr-service
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8087/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -464,7 +464,7 @@ services:
           - tts-service
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -494,7 +494,7 @@ services:
           - nmt-service
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8089/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -526,7 +526,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8099/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -557,7 +557,7 @@ services:
           - ner-service
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -587,7 +587,7 @@ services:
           - llm-service
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/llm/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -627,7 +627,7 @@ services:
           - pipeline-service
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -719,7 +719,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -747,7 +747,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/language-detection/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -774,7 +774,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -803,7 +803,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -832,7 +832,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8096/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -887,7 +887,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 40s
@@ -922,7 +922,7 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
 
@@ -941,7 +941,7 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
 
@@ -983,7 +983,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8097/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 10s
@@ -1015,7 +1015,7 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
 
@@ -1037,7 +1037,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9100/metrics"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 10s
@@ -1066,7 +1066,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 60s
@@ -1108,7 +1108,7 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 60s
@@ -1131,7 +1131,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:14269/"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 20s
@@ -1166,7 +1166,7 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "/fluent-bit/bin/fluent-bit", "--version"]
-      interval: 6h
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 20s
