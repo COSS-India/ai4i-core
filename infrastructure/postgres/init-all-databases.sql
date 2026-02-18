@@ -144,10 +144,19 @@ CREATE TABLE IF NOT EXISTS api_keys (
     last_used TIMESTAMP WITH TIME ZONE
 );
 
--- Selected API key reference (per user)
-ALTER TABLE users
-    ADD CONSTRAINT users_selected_api_key_id_fkey
-    FOREIGN KEY (selected_api_key_id) REFERENCES api_keys(id) ON DELETE SET NULL;
+-- Selected API key reference (per user) - idempotent: add FK only if missing
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'users_selected_api_key_id_fkey'
+    ) THEN
+        ALTER TABLE users
+            ADD CONSTRAINT users_selected_api_key_id_fkey
+            FOREIGN KEY (selected_api_key_id) REFERENCES api_keys(id) ON DELETE SET NULL;
+    END IF;
+END $$;
 
 -- Create sequence for user_sessions if it doesn't exist
 CREATE SEQUENCE IF NOT EXISTS sessions_id_seq;
@@ -272,7 +281,7 @@ CREATE TABLE IF NOT EXISTS llm_results (
 );
 
 -- NMT (Neural Machine Translation) Tables
-CREATE TABLE IF NOT EXISTS nmt_requests (
+    CREATE TABLE IF NOT EXISTS nmt_requests (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     api_key_id INTEGER REFERENCES api_keys(id) ON DELETE SET NULL,
@@ -1081,7 +1090,7 @@ CREATE TABLE IF NOT EXISTS tenant_email_verifications (
         ON DELETE CASCADE
 );
 
--- ----------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------- 
 -- Table: service_config
 -- Description: Service configuration and pricing
 -- ----------------------------------------------------------------------------
@@ -1168,32 +1177,39 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Apply trigger to all tables with updated_at column
+-- Apply trigger to all tables with updated_at column (idempotent)
+-- Drop existing triggers if they exist, then recreate
+DROP TRIGGER IF EXISTS update_tenants_updated_at ON tenants;
 CREATE TRIGGER update_tenants_updated_at
     BEFORE UPDATE ON tenants
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_tenant_billing_records_updated_at ON tenant_billing_records;
 CREATE TRIGGER update_tenant_billing_records_updated_at
     BEFORE UPDATE ON tenant_billing_records
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_tenant_audit_logs_updated_at ON tenant_audit_logs;
 CREATE TRIGGER update_tenant_audit_logs_updated_at
     BEFORE UPDATE ON tenant_audit_logs
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_service_config_updated_at ON service_config;
 CREATE TRIGGER update_service_config_updated_at
     BEFORE UPDATE ON service_config
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_tenant_users_updated_at ON tenant_users;
 CREATE TRIGGER update_tenant_users_updated_at
     BEFORE UPDATE ON tenant_users
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_user_billing_records_updated_at ON user_billing_records;
 CREATE TRIGGER update_user_billing_records_updated_at
     BEFORE UPDATE ON user_billing_records
     FOR EACH ROW
@@ -1218,7 +1234,7 @@ COMMENT ON TABLE tenant_users IS 'Users associated with tenants (many-to-one rel
 COMMENT ON TABLE user_billing_records IS 'Billing records for individual tenant users';
 
 -- ============================================================================
--- Verification
+-- Verification 
 -- ============================================================================
 
 DO $$
@@ -1277,6 +1293,7 @@ CREATE TABLE IF NOT EXISTS notification_receivers (
     receiver_name VARCHAR(255) NOT NULL, -- Unique receiver name per customer
     -- Email configuration
     email_to TEXT[] NOT NULL, -- Array of email addresses (required)
+    rbac_role VARCHAR(50), -- RBAC role name (ADMIN, MODERATOR, USER, GUEST) - if set, email_to will be resolved from users with this role
     email_subject_template TEXT, -- Custom subject template
     email_body_template TEXT, -- Custom HTML body template
     enabled BOOLEAN DEFAULT true,
@@ -1362,19 +1379,23 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Create triggers for updated_at columns
+-- Create triggers for updated_at columns (idempotent: drop if exists, then create)
+DROP TRIGGER IF EXISTS update_alert_definitions_updated_at ON alert_definitions;
 CREATE TRIGGER update_alert_definitions_updated_at 
     BEFORE UPDATE ON alert_definitions
     FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
 
+DROP TRIGGER IF EXISTS update_alert_annotations_updated_at ON alert_annotations;
 CREATE TRIGGER update_alert_annotations_updated_at 
     BEFORE UPDATE ON alert_annotations
     FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
 
+DROP TRIGGER IF EXISTS update_notification_receivers_updated_at ON notification_receivers;
 CREATE TRIGGER update_notification_receivers_updated_at 
     BEFORE UPDATE ON notification_receivers
     FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
 
+DROP TRIGGER IF EXISTS update_routing_rules_updated_at ON routing_rules;
 CREATE TRIGGER update_routing_rules_updated_at 
     BEFORE UPDATE ON routing_rules
     FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
@@ -1482,15 +1503,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Create audit triggers
+-- Create audit triggers (idempotent: drop if exists, then create)
+DROP TRIGGER IF EXISTS audit_alert_definitions_changes ON alert_definitions;
 CREATE TRIGGER audit_alert_definitions_changes
     AFTER INSERT OR UPDATE OR DELETE ON alert_definitions
     FOR EACH ROW EXECUTE FUNCTION log_alert_config_changes();
 
+DROP TRIGGER IF EXISTS audit_notification_receivers_changes ON notification_receivers;
 CREATE TRIGGER audit_notification_receivers_changes
     AFTER INSERT OR UPDATE OR DELETE ON notification_receivers
     FOR EACH ROW EXECUTE FUNCTION log_alert_config_changes();
 
+DROP TRIGGER IF EXISTS audit_routing_rules_changes ON routing_rules;
 CREATE TRIGGER audit_routing_rules_changes
     AFTER INSERT OR UPDATE OR DELETE ON routing_rules
     FOR EACH ROW EXECUTE FUNCTION log_alert_config_changes();
@@ -1513,6 +1537,9 @@ COMMENT ON TABLE alert_config_audit_log IS 'Audit trail of all changes to alert 
 --             ocr, ner
 -- ============================================================================
 
+-- Switch back to model_management_db for model/service seed data
+\c model_management_db;
+
 -- Helper function to generate model_id hash (matches Python implementation)
 CREATE OR REPLACE FUNCTION generate_model_id(model_name TEXT, version TEXT) 
 RETURNS VARCHAR(32) AS $$
@@ -1528,6 +1555,8 @@ BEGIN
     RETURN SUBSTRING(encode(sha256((LOWER(TRIM(model_name)) || ':' || LOWER(TRIM(model_version)) || ':' || LOWER(TRIM(service_name)))::bytea), 'hex'), 1, 32);
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
+
+
 
 -- Current timestamp in epoch milliseconds
 DO $$
@@ -1899,7 +1928,7 @@ END $$;
 -- STEP 5: Auth Service Seed Data (auth_db)
 -- ============================================================================
 
-\c auth_db;
+\c auth_db;     
 
 -- Insert default roles
 INSERT INTO roles (name, description) VALUES
@@ -1943,6 +1972,8 @@ INSERT INTO permissions (name, resource, action) VALUES
 ('model.delete', 'models', 'delete'),
 ('model.deprecate', 'models', 'deprecate'),
 ('model.activate', 'models', 'activate'),
+('model.publish', 'models', 'publish'),
+('model.unpublish', 'models', 'unpublish'),
 -- Service Management permissions
 ('service.create', 'services', 'create'),
 ('service.read', 'services', 'read'),
@@ -1954,10 +1985,14 @@ INSERT INTO permissions (name, resource, action) VALUES
 ('apiKey.create', 'apiKey', 'create'),
 ('apiKey.read', 'apiKey', 'read'),
 ('apiKey.update', 'apiKey', 'update'),
-('apiKey.delete', 'apiKey', 'delete')
+('apiKey.delete', 'apiKey', 'delete'),
+-- Observability permissions (logs, traces)
+('logs.read', 'logs', 'read'),
+('traces.read', 'traces', 'read')
 ON CONFLICT (name) DO NOTHING;
 
--- Assign permissions to ADMIN role
+-- Assign all permissions to ADMIN role (includes users, configs, metrics, alerts, dashboards,
+-- asr, tts, nmt, ner, model.*, service.*, apiKey.create, apiKey.read, apiKey.update, apiKey.delete, logs, traces)
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r, permissions p
@@ -1996,7 +2031,7 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 -- 
 -- Credentials:
 --   Username: admin
---   Email:    admin@ai4i.org
+--   Email:    admin@ai4inclusion.org
 --   Password: Admin@123
 --   Role:     ADMIN (all permissions)
 --   Status:   ACTIVE
@@ -2005,7 +2040,7 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 -- Create the default admin user
 -- Password hash for "Admin@123" (bcrypt)
 INSERT INTO users (email, username, hashed_password, is_active, is_verified, full_name, is_superuser) VALUES
-('admin@ai4i.org', 'admin', '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW', true, true, 'System Administrator', true)
+('admin@ai4inclusion.org', 'admin', '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW', true, true, 'System Administrator', true)
 ON CONFLICT (email) DO UPDATE
 SET 
     username = EXCLUDED.username,
@@ -2016,12 +2051,12 @@ SET
     is_superuser = EXCLUDED.is_superuser;
 
 -- Assign ADMIN role to the default admin user
--- This ensures the admin user has all permissions through the ADMIN role
+-- This ensures the admin user has all permissions through the ADMIN role (including apiKey.*)
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u, roles r
-WHERE u.email = 'admin@ai4i.org' AND u.username = 'admin' AND r.name = 'ADMIN'
-ON CONFLICT (user_id, role_id) DO NOTHING;
+WHERE u.email = 'admin@ai4inclusion.org' AND u.username = 'admin' AND r.name = 'ADMIN'
+ON CONFLICT (user_id, role_id) DO NOTHING;          
 
 \c config_db;
 -- ============================================================================

@@ -1,0 +1,88 @@
+# Language Detection Service - Public API (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: Language Detection Service
+  description: Detect language of text.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: Language Detection
+paths:
+  /api/v1/language-detection/inference:
+    post:
+      tags: [Language Detection]
+      summary: Language detection inference
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LanguageDetectionInferenceRequest" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LanguageDetectionInferenceResponse" }
+        "401": { description: Unauthorized }
+  /api/v1/language-detection/models:
+    get:
+      tags: [Language Detection]
+      summary: List models
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of models }
+  /api/v1/language-detection/languages:
+    get:
+      tags: [Language Detection]
+      summary: List languages
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of languages }
+  /api/v1/language-detection/health:
+    get:
+      tags: [Language Detection]
+      summary: Health check
+      responses:
+        "200": { description: Health status }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+  schemas:
+    LanguageDetectionTextInput:
+      type: object
+      required: [source]
+      properties:
+        source: { type: string, description: Input text to detect language }
+    LanguageDetectionInferenceConfig:
+      type: object
+      properties:
+        serviceId: { type: string, description: Language detection service/model ID (optional; Smart Router will assign if omitted) }
+    LanguageDetectionInferenceRequest:
+      type: object
+      required: [input, config]
+      properties:
+        input:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/LanguageDetectionTextInput" }
+        config: { $ref: "#/components/schemas/LanguageDetectionInferenceConfig" }
+        controlConfig: { type: object, description: Additional control parameters }
+    LanguageDetectionOutput:
+      type: object
+      properties:
+        source: { type: string, description: Input text }
+        detectedLanguage: { type: string, description: Detected language code }
+        confidence: { type: number, description: Confidence score }
+    LanguageDetectionInferenceResponse:
+      type: object
+      properties:
+        output:
+          type: array
+          items: { $ref: "#/components/schemas/LanguageDetectionOutput" }
+security:
+  - BearerAuth: []

@@ -3927,6 +3927,17 @@
                 "title": "Experiment Id"
               },
               "description": "Experiment UUID"
+            },
+            {
+              "name": "aggregate",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "boolean",
+                "default": false,
+                "title": "Aggregate"
+              },
+              "description": "If true, return one row per variant with totals combined across all dates; if false, return per variant per day."
             }
           ],
           "responses": {
@@ -5878,12 +5889,12 @@
             "success_rate": { "type": "number", "title": "Success Rate" },
             "avg_latency_ms": { "anyOf": [{ "type": "integer" }, { "type": "null" }], "title": "Avg Latency Ms" },
             "custom_metrics": { "anyOf": [{ "type": "object", "additionalProperties": true }, { "type": "null" }], "title": "Custom Metrics" },
-            "metric_date": { "type": "string", "format": "date-time", "title": "Metric Date" }
+            "metric_date": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }], "title": "Metric Date", "description": "Null when aggregate=true (one row per variant)." }
           },
           "type": "object",
-          "required": ["variant_id", "variant_name", "request_count", "success_count", "error_count", "success_rate", "metric_date"],
+          "required": ["variant_id", "variant_name", "request_count", "success_count", "error_count", "success_rate"],
           "title": "ExperimentMetricItem",
-          "description": "Metrics for one variant for one day."
+          "description": "Metrics for one variant (per day or aggregated when metric_date is null)."
         },
         "ExperimentMetricsResponse": {
           "properties": {

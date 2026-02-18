@@ -18,6 +18,7 @@ services:
       postgres
       -c password_encryption=md5
       -c listen_addresses='*'
+      -c max_connections=300
     networks:
       - microservices-network
     healthcheck:
@@ -275,24 +276,6 @@ services:
     networks:
       - microservices-network
     restart: unless-stopped
-
-  # Swagger UI for Kong-facing API documentation
-  swagger-kong-ui:
-    image: swaggerapi/swagger-ui
-    container_name: ai4v-swagger-kong-ui
-    ports:
-      - "8086:8080"
-    volumes:
-      # Generated OpenAPI spec that points to Kong and includes all endpoints.
-      # Mount it at a custom path; the swagger-ui entrypoint will copy it into
-      # /usr/share/nginx/html/openapi.json on startup.
-      - ./docs/kong-openapi.json:/kong-openapi.json:ro
-    environment:
-      SWAGGER_JSON: /kong-openapi.json
-    networks:
-      - microservices-network
-    depends_on:
-      - kong
 
   # Microservices
   api-gateway-service:
@@ -577,6 +560,8 @@ services:
       - "8091:8089"
     environment:
       - ENV_FILE=.env
+      - SMR_ENABLED=${SMR_ENABLED:-false}
+      - SMR_SERVICE_URL=http://smr-service:8097
     env_file:
       - ./services/nmt-service/.env
     depends_on:
@@ -1037,16 +1022,48 @@ services:
       timeout: 10s
       retries: 3
 
+  # Alert Management Service
+  # Provides CRUD operations for alert definitions, notification receivers, and routing rules
+  alert-management-service:
+    build:
+      context: .
+      dockerfile: ./services/alert-management-service/Dockerfile
+    container_name: ai4v-alert-management-service
+    ports:
+      - "8104:8098"
+    environment:
+      - SERVICE_NAME=alert-management-service
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - ALERT_CONFIG_SYNC_SERVICE_URL=http://alert-config-sync-service:8097
+      - ALERT_SYNC_ENABLED=true
+      - PORT=8098
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8098/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
   # Alert Configuration Sync Service
   # Generates Prometheus and Alertmanager YAML files from database and triggers hot reload
   alert-config-sync-service:
     build:
-      context: ./services/alert-config-sync-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/alert-config-sync-service/Dockerfile
     container_name: ai4v-alert-config-sync-service
     ports:
       - "8101:8097"
     environment:
+      - SERVICE_NAME=alert-config-sync-service
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER}
@@ -1246,6 +1263,69 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
       interval: 30s
       timeout: 5s
+
+  smr-service:
+    build:
+      context: .
+      dockerfile: ./services/smr-service/Dockerfile
+    container_name: ai4v-smr-service
+    ports:
+      - "8103:8097"
+    environment:
+      - ENV_FILE=.env
+    env_file:
+      - ./services/smr-service/.env
+    depends_on:
+      policy-engine:
+        condition: service_started
+      model-management-service:
+        condition: service_started
+    networks:
+      microservices-network:
+        aliases:
+          - smr-service
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8097/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  request-profiler-service:
+    build:
+      context: ./services/request-profiler
+      dockerfile: Dockerfile
+    container_name: ai4v-request-profiler-service
+    ports:
+      - "8888:8000"
+    volumes:
+      - ./services/request-profiler/models:/app/models:ro
+    environment:
+      - LOG_LEVEL=info
+      - MODEL_DIR=/app/models
+      - ENVIRONMENT=production
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "1.0"
+    networks:
+      microservices-network:
+        aliases:
+          - request-profiler-service
+          - profiler-service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
 
 
 volumes:

@@ -1,0 +1,99 @@
+# Telemetry Service - Observability (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: Telemetry Service (Observability)
+  description: Logs and traces search, aggregate, and query with RBAC support.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: Observability
+paths:
+  /api/v1/observability/logs/search:
+    get:
+      tags: [Observability]
+      summary: Search Logs
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: service
+          in: query
+          schema: { type: string }
+        - name: start_time
+          in: query
+          schema: { type: string }
+        - name: end_time
+          in: query
+          schema: { type: string }
+      responses:
+        "200": { description: Log search results }
+  /api/v1/observability/logs/aggregate:
+    get:
+      tags: [Observability]
+      summary: Get Log Aggregations
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: Log aggregations }
+  /api/v1/observability/logs/services:
+    get:
+      tags: [Observability]
+      summary: Get Log Services
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of log services }
+  /api/v1/observability/traces/search:
+    get:
+      tags: [Observability]
+      summary: Search Traces
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: service
+          in: query
+          schema: { type: string }
+        - name: start_time
+          in: query
+          schema: { type: string }
+        - name: end_time
+          in: query
+          schema: { type: string }
+      responses:
+        "200": { description: Trace search results }
+  /api/v1/observability/traces/{trace_id}:
+    get:
+      tags: [Observability]
+      summary: Get Trace By Id
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: trace_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Trace details }
+  /api/v1/observability/traces/services:
+    get:
+      tags: [Observability]
+      summary: Get Trace Services
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of trace services }
+  /api/v1/observability/traces/services/{service}/operations:
+    get:
+      tags: [Observability]
+      summary: Get Trace Operations
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Operations for the service }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+security:
+  - BearerAuth: []

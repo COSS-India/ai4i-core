@@ -21,7 +21,8 @@ from casbin_enforcer import check_apikey_permission
 logger = logging.getLogger(__name__)
 
 # Password hashing context
-pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+# Support both bcrypt (legacy/seeded data) and argon2 (new registrations)
+pwd_context = CryptContext(schemes=["bcrypt", "argon2"], deprecated="auto")
 
 # JWT Configuration
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
@@ -575,7 +576,7 @@ class AuthUtils:
         new_user = User(
             email=email,
             username=username,
-            hashed_password=None,  # OAuth users don't have passwords
+            password_hash=None,  # OAuth users don't have passwords
             full_name=full_name,
             avatar_url=avatar_url,
             is_verified=True,  # OAuth emails are pre-verified

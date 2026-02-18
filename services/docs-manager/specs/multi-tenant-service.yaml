@@ -1,0 +1,175 @@
+# Multi-Tenant Feature Service - Public API (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: Multi-Tenant Service
+  description: Tenant registration, user management, billing, and subscriptions.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: Multi-Tenant
+paths:
+  /api/v1/multi-tenant/register/tenant:
+    post:
+      tags: [Multi-Tenant]
+      summary: Register Tenant
+      security: [{ BearerAuth: [] }]
+      responses:
+        "201": { description: Tenant registered }
+  /api/v1/multi-tenant/register/users:
+    post:
+      tags: [Multi-Tenant]
+      summary: Register User For Multi Tenant
+      security: [{ BearerAuth: [] }]
+      responses:
+        "201": { description: User registered }
+  /api/v1/multi-tenant/update/tenants/status:
+    patch:
+      tags: [Multi-Tenant]
+      summary: Update Tenant Status
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: Updated }
+  /api/v1/multi-tenant/update/tenant:
+    patch:
+      tags: [Multi-Tenant]
+      summary: Update Tenant
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: Updated }
+  /api/v1/multi-tenant/delete/user:
+    delete:
+      tags: [Multi-Tenant]
+      summary: Delete Tenant User
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: Deleted }
+  /api/v1/multi-tenant/update/users/status:
+    patch:
+      tags: [Multi-Tenant]
+      summary: Update Tenant User Status
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: Updated }
+  /api/v1/multi-tenant/update/user:
+    patch:
+      tags: [Multi-Tenant]
+      summary: Update Tenant User For Multi Tenant
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: Updated }
+  /api/v1/multi-tenant/email/verify:
+    get:
+      tags: [Multi-Tenant]
+      summary: Verify Email
+      parameters:
+        - name: token
+          in: query
+          schema: { type: string }
+      responses:
+        "200": { description: Verification result }
+  /api/v1/multi-tenant/view/tenant:
+    get:
+      tags: [Multi-Tenant]
+      summary: View Tenant
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: Tenant details }
+  /api/v1/multi-tenant/view/user:
+    get:
+      tags: [Multi-Tenant]
+      summary: View Tenant User
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: User details }
+  /api/v1/multi-tenant/list/tenants:
+    get:
+      tags: [Multi-Tenant]
+      summary: List Tenants
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of tenants }
+  /api/v1/multi-tenant/list/users:
+    get:
+      tags: [Multi-Tenant]
+      summary: List Users
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of users }
+  /api/v1/multi-tenant/email/resend:
+    post:
+      tags: [Multi-Tenant]
+      summary: Resend Verification Email
+      security: [{ BearerAuth: [] }]
+      responses:
+        "201": { description: Email sent }
+  /api/v1/multi-tenant/subscriptions/add:
+    post:
+      tags: [Multi-Tenant]
+      summary: Add Tenant Subscriptions
+      security: [{ BearerAuth: [] }]
+      responses:
+        "201": { description: Subscriptions added }
+  /api/v1/multi-tenant/subscriptions/remove:
+    post:
+      tags: [Multi-Tenant]
+      summary: Remove Tenant Subscriptions
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: Subscriptions removed }
+  /api/v1/multi-tenant/user/subscriptions/add:
+    post:
+      tags: [Multi-Tenant]
+      summary: Add User Subscriptions
+      security: [{ BearerAuth: [] }]
+      responses:
+        "201": { description: Subscriptions added }
+  /api/v1/multi-tenant/user/subscriptions/remove:
+    post:
+      tags: [Multi-Tenant]
+      summary: Remove User Subscriptions
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: Subscriptions removed }
+  /api/v1/multi-tenant/register/services:
+    post:
+      tags: [Multi-Tenant]
+      summary: Register Service
+      security: [{ BearerAuth: [] }]
+      responses:
+        "201": { description: Service registered }
+  /api/v1/multi-tenant/update/services:
+    post:
+      tags: [Multi-Tenant]
+      summary: Update Service
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: Updated }
+  /api/v1/multi-tenant/list/services:
+    get:
+      tags: [Multi-Tenant]
+      summary: List Services
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200": { description: List of services }
+  /api/v1/multi-tenant/resolve-tenant-from-user/{user_id}:
+    get:
+      tags: [Multi-Tenant]
+      summary: Resolve Tenant From User
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Tenant ID for user }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+security:
+  - BearerAuth: []
