@@ -19,19 +19,7 @@ route:
 receivers:
 - name: default-admin
   email_configs:
-  - to: admin@ai4i.com
-    send_resolved: true
-    headers:
-      Subject: '[{{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.organization }}'
-    html: |
-      <h2 style="color: {{ if eq .GroupLabels.severity "critical" }}#d32f2f{{ else if eq .GroupLabels.severity "warning" }}#f57c00{{ else }}#1976d2{{ end }};">
-        {{ if eq .GroupLabels.severity "critical" }}🚨 CRITICAL{{ else if eq .GroupLabels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
-      </h2>
-      <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
-      <p><strong>Organization:</strong> {{ .GroupLabels.organization }}</p>
-      <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
-      <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
-  - to: bharathia0704@gmail.com
+  - to: admin@ai4inclusion.org
     send_resolved: true
     headers:
       Subject: '[{{ if eq .GroupLabels.severity "critical" }}CRITICAL{{ else if eq .GroupLabels.severity "warning" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.organization }}'
