@@ -622,9 +622,20 @@ async def AuthProvider(
             auth_span.set_attribute("error.message", str(exc))
             auth_span.set_status(Status(StatusCode.ERROR, str(exc)))
             auth_span.record_exception(exc)
-            # For BOTH mode, always present a single, stable error message on any
-            # auth/API-key failure so repeated calls behave consistently.
+            # For BOTH mode, check if error is from JWT failure or API key ownership
             if auth_source == "BOTH":
+                # Check if this is a JWT authentication failure
+                jwt_failure_messages = [
+                    "Invalid or expired token",
+                    "Missing bearer token",
+                    "Invalid token type",
+                    "User ID not found in token",
+                    "Failed to verify token"
+                ]
+                if any(msg in exc.message for msg in jwt_failure_messages):
+                    # JWT authentication failed - return AUTH_FAILED error
+                    raise AuthenticationError("Authentication failed. Please log in again.")
+                # Otherwise, it's an API key ownership issue
                 raise AuthenticationError("API key does not belong to the authenticated user")
             raise
         except Exception as exc:
@@ -636,6 +647,11 @@ async def AuthProvider(
             auth_span.record_exception(exc)
             logger.error(f"Authentication error: {exc}")
             if auth_source == "BOTH":
+                # Check if this is a JWT-related error
+                error_str = str(exc).lower()
+                jwt_error_indicators = ["jwt", "token", "expired", "invalid", "bearer"]
+                if any(indicator in error_str for indicator in jwt_error_indicators):
+                    raise AuthenticationError("Authentication failed. Please log in again.")
                 raise AuthenticationError("API key does not belong to the authenticated user")
             raise AuthenticationError("Authentication failed")
 
@@ -655,32 +671,47 @@ async def _auth_provider_impl(
     
     # Handle BOTH Bearer token AND API key (already validated by API Gateway)
     if auth_source == "BOTH":
-        # 1) Validate Bearer token to get user info
-        bearer_result = await authenticate_bearer_token(request, authorization)
-        jwt_user_id = bearer_result.get("user_id")
-        
-        # 2) Extract API key
-        api_key = x_api_key or get_api_key_from_header(authorization)
-        if not api_key:
-            raise AuthenticationError("Missing API key")
-        
-        # 3) (Lightweight) ownership enforcement: for pipeline we primarily depend on
-        #    auth-service permissions; ownership is best enforced there. Here we only
-        #    ensure that if an API key lookup is available, it must map to this user.
-        #    If such a lookup path is added later, plug it in here similar to NMT/ASR.
-        
-        # 4) Validate API key permissions via auth-service
-        service, action = determine_service_and_action(request)
-        await validate_api_key_permissions(api_key, service, action)
-        
-        # 5) Populate request state with auth context from Bearer token
-        request.state.user_id = jwt_user_id
-        request.state.api_key_id = None  # Not tracked for BOTH in current pipeline design
-        request.state.api_key_name = None
-        request.state.user_email = bearer_result.get("user", {}).get("email")
-        request.state.is_authenticated = True
-        
-        return bearer_result
+        try:
+            # 1) Validate Bearer token to get user info
+            bearer_result = await authenticate_bearer_token(request, authorization)
+            jwt_user_id = bearer_result.get("user_id")
+            
+            # 2) Extract API key
+            api_key = x_api_key or get_api_key_from_header(authorization)
+            if not api_key:
+                raise AuthenticationError("Missing API key")
+            
+            # 3) (Lightweight) ownership enforcement: for pipeline we primarily depend on
+            #    auth-service permissions; ownership is best enforced there. Here we only
+            #    ensure that if an API key lookup is available, it must map to this user.
+            #    If such a lookup path is added later, plug it in here similar to NMT/ASR.
+            
+            # 4) Validate API key permissions via auth-service
+            service, action = determine_service_and_action(request)
+            await validate_api_key_permissions(api_key, service, action)
+            
+            # 5) Populate request state with auth context from Bearer token
+            request.state.user_id = jwt_user_id
+            request.state.api_key_id = None  # Not tracked for BOTH in current pipeline design
+            request.state.api_key_name = None
+            request.state.user_email = bearer_result.get("user", {}).get("email")
+            request.state.is_authenticated = True
+            
+            return bearer_result
+        except AuthenticationError as e:
+            # Check if this is a JWT authentication failure
+            jwt_failure_messages = [
+                "Invalid or expired token",
+                "Missing bearer token",
+                "Invalid token type",
+                "User ID not found in token",
+                "Failed to verify token"
+            ]
+            if any(msg in e.message for msg in jwt_failure_messages):
+                # JWT authentication failed - return AUTH_FAILED error
+                raise AuthenticationError("Authentication failed. Please log in again.")
+            # Otherwise, re-raise the original error
+            raise
     
     # Handle API key authentication (requires permission check via auth-service)
     try:

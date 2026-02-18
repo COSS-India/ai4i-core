@@ -19,7 +19,8 @@ from middleware.exceptions import (
     PipelineTaskError,
     ServiceUnavailableError,
     ModelNotFoundError,
-    ErrorDetail
+    ErrorDetail,
+    AuthenticationError
 )
 
 # Import OpenTelemetry for tracing
@@ -146,6 +147,9 @@ async def run_pipeline_inference(
             logger.info("Pipeline inference completed successfully")
             return response
             
+        except AuthenticationError:
+            # Re-raise authentication errors as-is so they're handled by the error handler
+            raise
         except (PipelineTaskError, ModelNotFoundError, ServiceUnavailableError) as exc:
             span.set_attribute("error", True)
             span.set_attribute("error.type", type(exc).__name__)

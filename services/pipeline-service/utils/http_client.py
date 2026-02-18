@@ -308,6 +308,23 @@ class ServiceClient:
                     current_span.set_attribute("error.message", f"ASR service returned status {e.response.status_code}")
                     current_span.set_attribute("http.status_code", e.response.status_code)
             error_message, error_details = parse_service_error_response(e.response)
+            
+            # Check if this is an authentication error from downstream service
+            if e.response.status_code == 401:
+                # Check if the error indicates JWT authentication failure
+                jwt_failure_indicators = [
+                    "API key does not belong to the authenticated user",
+                    "Invalid or expired token",
+                    "Authentication failed",
+                    "Invalid token",
+                    "expired token"
+                ]
+                error_lower = error_message.lower()
+                # If the error message suggests JWT failure, raise AuthenticationError
+                if any(indicator.lower() in error_lower for indicator in jwt_failure_indicators):
+                    from middleware.exceptions import AuthenticationError
+                    raise AuthenticationError("Authentication failed. Please log in again.")
+            
             error_detail = f"ASR service returned status {e.response.status_code}: {error_message}"
             logger.error(f"❌ ASR service error: {error_detail}")
             # Create a structured error that can be parsed upstream
