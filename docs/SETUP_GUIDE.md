@@ -101,80 +101,94 @@ docker compose -f docker-compose-local.yml ps
 
 You should see `postgres`, `redis`, `kafka`, `zookeeper`, `influxdb`, and `unleash` all showing as "healthy" or "Up".
 
-## Step 5: Initialize Database
+## Step 5: Initialize Databases
 
-Run the database initialization script from the **project root** (the directory containing `docker-compose-local.yml`) to create all databases, tables, and seed data.
+The platform uses a custom Laravel-like migration framework for database management.
 
-**Method 1 (Recommended - using wrapper script):**
-
-```bash
-./infrastructure/postgres/init-all-databases.sh
-```
-
-**Note:** If you get a "permission denied" error, run it with `bash`:
-```bash
-bash infrastructure/postgres/init-all-databases.sh
-```
-
-**Method 2 (Direct SQL execution):**
+### Step 5.1: Install Migration Framework Dependencies
 
 ```bash
-docker compose -f docker-compose-local.yml exec postgres psql -U dhruva_user -d dhruva_platform -f /docker-entrypoint-initdb.d/init-all-databases.sql
+cd infrastructure/databases
+pip3 install -r requirements.txt
+cd ../..
 ```
 
-**Method 3 (Alternative - copy file first):**
+### Step 5.2: Initialize External Service Databases
 
-If Method 2 doesn't work, copy the file into the container and run it:
+External services (like Unleash) manage their own schemas. Create their databases first:
 
 ```bash
-docker compose -f docker-compose-local.yml cp infrastructure/postgres/init-all-databases.sql postgres:/tmp/init-all-databases.sql
-docker compose -f docker-compose-local.yml exec postgres psql -U dhruva_user -d dhruva_platform -f /tmp/init-all-databases.sql
+python3 infrastructure/databases/cli.py init:external
 ```
 
-**Note:** The SQL file `infrastructure/postgres/init-all-databases.sql` contains everything needed to set up all databases, tables, and seed data in a single execution. The script now handles existing databases gracefully (errors are ignored if databases already exist).
+This creates the `unleash` database for the Unleash feature flag service.
 
-This script will:
-- Create all required databases
-- Create all tables and schemas
-- Set up indexes and triggers
-- Insert seed data (default admin user, roles, permissions, etc.)
+### Step 5.3: Run All Migrations
 
-## Step 6: Start Application Services
-
-Now that the databases are ready, start all application services:
+Run migrations for all databases at once:
 
 ```bash
-docker compose -f docker-compose-local.yml up -d \
-  api-gateway-service \
-  auth-service \
-  config-service \
-  model-management-service \
-  asr-service \
-  tts-service \
-  nmt-service \
-  llm-service \
-  transliteration-service \
-  ocr-service \
-  ner-service \
-  language-detection-service \
-  language-diarization-service \
-  audio-lang-detection-service \
-  speaker-diarization-service \
-  pipeline-service \
-  metrics-service \
-  telemetry-service \
-  alerting-service \
-  dashboard-service \
-  simple-ui-frontend
+python3 infrastructure/databases/cli.py migrate:all
 ```
 
-Check that all services are running:
+This command will:
+- Create all required databases (auth_db, config_db, alerting_db, dashboard_db, metrics_db, telemetry_db, multi_tenant_db, model_management_db)
+- Create all tables, indexes, constraints, and triggers
+- Set up Redis cache structures
+- Configure InfluxDB metrics buckets (if available)
+
+### Step 5.4: Seed Default Data
+
+Populate databases with default data:
+
+```bash
+python3 infrastructure/databases/cli.py seed:all
+```
+
+This will create:
+- Default admin user: `admin@ai4inclusion.org` / `Admin@123`
+- Default roles (ADMIN, DEVELOPER, USER) and permissions
+- Sample service configurations
+- Default alert rules and dashboard configurations
+
+**Note:** The migration framework automatically handles database creation, so you don't need to create databases manually.
+
+## Step 6: Start All Services
+
+Now that the databases are ready, start all remaining services:
+
+```bash
+docker compose -f docker-compose-local.yml up -d
+```
+
+This will start all application services, monitoring tools, and the frontend.
+
+**Note:** Docker Compose will automatically start services in the correct order based on their dependencies.
+
+### Verify Services Are Running
+
+Check the status of all services:
 
 ```bash
 docker compose -f docker-compose-local.yml ps
 ```
 
-All services should show as "Up" or "healthy".
+All services should show as "Up" or "healthy". Services may take 30-60 seconds to become healthy after starting.
+
+### View Logs (Optional)
+
+To view logs for all services:
+
+```bash
+docker compose -f docker-compose-local.yml logs -f
+```
+
+To view logs for a specific service:
+
+```bash
+docker compose -f docker-compose-local.yml logs -f <service-name>
+# Example: docker compose -f docker-compose-local.yml logs -f auth-service
+```
 
 ## Step 7: Access the Platform
 
@@ -183,15 +197,15 @@ Once all services are running, you can access:
 ### Frontend & API
 
 - **Simple UI Frontend**: http://localhost:3000
-- **API Gateway**: http://localhost:8080
-- **API Gateway Swagger**: http://localhost:8080/docs
+- **API Gateway**: http://localhost:9000
+- **API Gateway Swagger**: http://localhost:9000/docs
 
 ### Service Swagger Documentation
 
 #### Core Services
 | Service | URL | Port |
 |---------|-----|------|
-| API Gateway | http://localhost:8080/docs | 8080 |
+| API Gateway | http://localhost:9000/docs | 9000 |
 | Auth Service | http://localhost:8081/docs | 8081 |
 | Config Service | http://localhost:8082/docs | 8082 |
 | Model Management Service | http://localhost:8094/docs | 8094 |
@@ -220,12 +234,27 @@ Once all services are running, you can access:
 | Alerting Service | http://localhost:8085/docs | 8085 |
 | Dashboard Service | http://localhost:8090/docs | 8090 |
 
+### Monitoring & Observability
+
+| Tool | URL | Purpose |
+|------|-----|---------|
+| Prometheus | http://localhost:9090 | Metrics collection and querying |
+| Grafana | http://localhost:8097 | Metrics visualization dashboards |
+| Jaeger | http://localhost:16686 | Distributed tracing |
+| OpenSearch Dashboards | http://localhost:5601 | Log analysis and visualization |
+
 ### Default Credentials
 
+**Platform Admin:**
 - **Username**: `admin`
 - **Email**: `admin@ai4inclusion.org`
-- **Password**: `Admin@123`
+- **Password**: `git`
 - **Role**: ADMIN (all permissions)
+
+**Unleash (Feature Flags):**
+- **URL**: http://localhost:4242/feature-flags
+- **Username**: `admin`
+- **Password**: `unleash4all`
 
 ## Troubleshooting
 
@@ -238,8 +267,12 @@ Once all services are running, you can access:
 ### Database connection errors
 
 1. Ensure PostgreSQL is running: `docker compose -f docker-compose-local.yml ps postgres`
-2. Wait a few seconds after starting services for databases to initialize
-3. Re-run the database initialization script if needed
+2. Check PostgreSQL is healthy: `docker compose -f docker-compose-local.yml ps | grep postgres`
+3. Re-run migrations if needed:
+   ```bash
+   python3 infrastructure/databases/cli.py migrate:all
+   python3 infrastructure/databases/cli.py seed:all
+   ```
 
 ### Postgres volume or "no such file or directory" for pg_data
 
@@ -253,18 +286,52 @@ Or use a path in the project: `mkdir -p volumes/pg_data` and set `device: "./vol
 
 ### Default admin login not working
 
-Use the credentials from the [Default Credentials](#default-credentials) section: **Username** `admin`, **Email** `admin@ai4inclusion.org`, **Password** `Admin@123`. Log in with email or username depending on your UI. If login still fails, re-run the database initialization script from the project root so the default admin and role assignment are (re)created.
+Use the credentials from the [Default Credentials](#default-credentials) section: **Username** `admin`, **Email** `admin@ai4inclusion.org`, **Password** `Admin@123`. 
+
+If login still fails:
+
+1. Check if the auth service is healthy:
+   ```bash
+   docker compose -f docker-compose-local.yml ps auth-service
+   ```
+
+2. Re-run the seeders to recreate the admin user:
+   ```bash
+   python3 infrastructure/databases/cli.py seed:all
+   ```
+
+3. Check auth service logs:
+   ```bash
+   docker compose -f docker-compose-local.yml logs auth-service
+   ```
 
 ### Port conflicts
 
 If ports are already in use, you can modify the port mappings in `docker-compose-local.yml` or stop the conflicting services.
 
+## Architecture Notes
+
+### Local Development Setup
+
+This `docker-compose-local.yml` configuration is optimized for local development:
+
+- **Direct service communication**: Services communicate directly without an API gateway layer
+- **Kong API Gateway**: Not included in local setup (production only)
+- **Health checks**: Configured with 6-hour intervals to reduce overhead
+- **Monitoring stack**: Full observability with Prometheus, Grafana, Jaeger, and OpenSearch
+- **Feature flags**: Unleash for gradual feature rollout and A/B testing
+
+### Production Deployment
+
+For production deployment with Kong API Gateway, load balancing, and enhanced security features, refer to the production docker-compose configuration.
+
 ## Next Steps
 
-- Explore the API using Swagger documentation
+- Explore the API using Swagger documentation at http://localhost:9000/docs
 - Test the frontend at http://localhost:3000
-- Review the [API Documentation](API_DOCUMENTATION.md) for detailed endpoint information
-- Check [Deployment Guide](DEPLOYMENT.md) for production setup
+- Configure feature flags in Unleash (optional)
+- Review service logs and metrics in Grafana
+- Check the API documentation for detailed endpoint information
 
 ## Stopping Services
 

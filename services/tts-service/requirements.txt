@@ -2,8 +2,8 @@
 # PyTorch — CPU ONLY (CRITICAL FOR BUILD SIZE & SPEED)
 # =========================================================
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.2.2+cpu
-torchaudio==2.2.2+cpu
+torch==2.2.2
+torchaudio==2.2.2
 
 # =========================================================
 # FastAPI & ASGI Server

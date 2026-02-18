@@ -13,7 +13,7 @@ from jose import JWTError, jwt
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from middleware.exceptions import AuthenticationError, AuthorizationError
+from middleware.exceptions import AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("audio-lang-detection-service")
@@ -700,41 +700,52 @@ async def AuthProvider(
                     method_span.set_status(Status(StatusCode.OK))
                     auth_span.set_attribute("auth.method", "JWT+API_KEY")
                     
-                    # Decision point: Check API key for BOTH mode
-                    with tracer.start_as_current_span("auth.decision.check_api_key_both") as both_span:
-                        both_span.set_attribute("auth.decision", "check_api_key_for_both_mode")
-                    
+                    try:
                         # 1) Authenticate via JWT
                         bearer_result = await authenticate_bearer_token(request, authorization)
                         jwt_user_id = bearer_result.get("user_id")
                     
                         # 2) Extract API key
                         if not api_key:
-                            both_span.set_attribute("auth.decision.result", "rejected")
-                            both_span.set_attribute("error", True)
-                            both_span.set_attribute("error.type", "MissingAPIKey")
-                            both_span.set_attribute("error.reason", "api_key_missing_in_both_mode")
-                            both_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
-                            
-                            auth_span.set_attribute("auth.authorized", False)
-                            auth_span.set_attribute("error", True)
-                            auth_span.set_attribute("error.type", "MissingAPIKey")
-                            auth_span.set_attribute("error.reason", "api_key_missing_in_both_mode")
-                            auth_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
                             raise AuthenticationError("Missing API key")
                     
-                        # 3) Permission + ownership check via auth-service (and local safety net)
+                        # 3) Validate API key + permissions via auth-service (single source of truth),
+                        # passing jwt_user_id so auth-service can enforce ownership.
                         service, action = determine_service_and_action(request)
-                        await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
+                        auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
+                        
+                        # CRITICAL: Always check valid field - auth-service may return valid=false for ownership mismatch
+                        if not auth_result.get("valid", False):
+                            error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
+                            raise AuthenticationError("API key does not belong to the authenticated user")
                     
-                        both_span.set_attribute("auth.decision.result", "passed")
-                        both_span.set_status(Status(StatusCode.OK))
-                    
-                    # 4) Mark request as authenticated with JWT user
-                    auth_span.set_attribute("auth.authorized", True)
-                    auth_span.set_attribute("auth.user_id", str(jwt_user_id))
-                    auth_span.set_status(Status(StatusCode.OK))
-                    return bearer_result
+                        # 4) Populate request.state – keep JWT as primary identity (matching ASR/TTS/NMT)
+                        request.state.user_id = jwt_user_id
+                        request.state.api_key_id = None
+                        request.state.api_key_name = None
+                        request.state.user_email = bearer_result.get("user", {}).get("email")
+                        request.state.is_authenticated = True
+                        
+                        auth_span.set_attribute("auth.authorized", True)
+                        auth_span.set_attribute("auth.user_id", str(jwt_user_id))
+                        auth_span.set_status(Status(StatusCode.OK))
+                        return bearer_result
+                    except (AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
+                        # For ANY auth/key error in BOTH mode, surface a single, consistent message
+                        logger.error(f"Audio-lang-detection BOTH mode: Authentication/Authorization error: {e}")
+                        auth_span.set_attribute("auth.authorized", False)
+                        auth_span.set_attribute("error", True)
+                        auth_span.set_attribute("error.type", type(e).__name__)
+                        auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
+                        raise AuthenticationError("API key does not belong to the authenticated user")
+                    except Exception as e:
+                        logger.error(f"Audio-lang-detection BOTH mode: Unexpected error: {e}", exc_info=True)
+                        auth_span.set_attribute("auth.authorized", False)
+                        auth_span.set_attribute("error", True)
+                        auth_span.set_attribute("error.type", type(e).__name__)
+                        auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
+                        # Even on unexpected errors we normalize the external message
+                        raise AuthenticationError("API key does not belong to the authenticated user")
 
                 # Default: API_KEY
                 method_span.set_attribute("auth.decision.result", "api_key")
@@ -808,25 +819,42 @@ async def _auth_provider_impl(
     api_key = x_api_key or get_api_key_from_header(authorization)
 
     if auth_source == "BOTH":
-        # 1) Authenticate via JWT
-        bearer_result = await _authenticate_bearer_token_impl(request, authorization)
-        jwt_user_id = bearer_result.get("user_id")
-        
-        if not api_key:
-            raise AuthenticationError("Missing API key")
-        
-        # 2) Permission + ownership check (non-tracing path)
-        service, action = determine_service_and_action(request)
-        await _validate_api_key_permissions_impl(api_key, service, action, user_id=jwt_user_id)
-        
-        # 3) Keep JWT as identity
-        request.state.user_id = jwt_user_id
-        request.state.api_key_id = None
-        request.state.api_key_name = None
-        request.state.user_email = bearer_result.get("user", {}).get("email")
-        request.state.is_authenticated = True
-        
-        return bearer_result
+        try:
+            # 1) Authenticate via JWT
+            bearer_result = await _authenticate_bearer_token_impl(request, authorization)
+            jwt_user_id = bearer_result.get("user_id")
+            
+            if not api_key:
+                raise AuthenticationError("Missing API key")
+            
+            # 2) Validate API key + permissions via auth-service (single source of truth),
+            # passing jwt_user_id so auth-service can enforce ownership (matching ASR/TTS/NMT)
+            service, action = determine_service_and_action(request)
+            auth_result = await _validate_api_key_permissions_impl(api_key, service, action, user_id=jwt_user_id)
+            
+            # CRITICAL: Always check valid field - auth-service may return valid=false for ownership mismatch
+            if not auth_result.get("valid", False):
+                error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
+                logger.error(
+                    "Audio-lang-detection BOTH auth (no tracing): API key validation failed: jwt_user_id=%s, error=%s",
+                    jwt_user_id,
+                    error_msg,
+                )
+                raise AuthenticationError("API key does not belong to the authenticated user")
+            
+            # 3) Populate request.state – keep JWT as primary identity (matching ASR/TTS/NMT)
+            request.state.user_id = jwt_user_id
+            request.state.api_key_id = None
+            request.state.api_key_name = None
+            request.state.user_email = bearer_result.get("user", {}).get("email")
+            request.state.is_authenticated = True
+            
+            return bearer_result
+        except (AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError):
+            raise
+        except Exception as e:
+            logger.error(f"Audio-lang-detection BOTH auth (no tracing): Unexpected error: {e}", exc_info=True)
+            raise AuthenticationError("API key does not belong to the authenticated user")
 
     # Default: API_KEY
     if not api_key:
