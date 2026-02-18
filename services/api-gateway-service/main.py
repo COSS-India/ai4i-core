@@ -4534,7 +4534,7 @@ async def delete_alert_definition_endpoint(
 async def toggle_alert_definition_endpoint(
     alert_id: int,
     request: Request,
-    enabled: bool = Body(..., description="Enable or disable the alert"),
+    enabled: bool = Body(..., embed=True, description="Enable or disable the alert"),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
     organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
@@ -6637,13 +6637,17 @@ async def get_experiment(
 async def get_experiment_metrics(
     experiment_id: str,
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    aggregate: bool = Query(False, description="If true, return one row per variant with totals combined across all dates; if false, return per variant per day."),
 ):
-    """Get metrics for an A/B experiment by ID. Returns aggregated metrics per variant per day."""
+    """Get metrics for an A/B experiment by ID. Default: per variant per day. Use ?aggregate=true for one row per variant (totals)."""
     headers = build_auth_headers(request, credentials, None)
+    path = f"/api/v1/model-management/experiments/{experiment_id}/metrics"
+    if aggregate:
+        path = f"{path}?aggregate=true"
     return await proxy_to_service(
         None,
-        f"/api/v1/model-management/experiments/{experiment_id}/metrics",
+        path,
         "model-management-service",
         method="GET",
         headers=headers,

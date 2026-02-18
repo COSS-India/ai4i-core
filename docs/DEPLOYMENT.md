@@ -18,7 +18,7 @@ Step-by-step guide for deploying the Dhruva AI/ML Microservices Platform in deve
 - curl (for health checks)
 
 ### Network Requirements
-- Ports 3000, 8080-8089, 5432, 6379, 8086, 9200, 9092, 2181 must be available
+- Ports 3000, 8080-8089, 5432, 6379, 9200, 9092, 2181 must be available
 - Internet access for pulling Docker images
 - Firewall rules configured for service communication
 

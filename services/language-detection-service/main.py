@@ -20,7 +20,7 @@ from ai4icore_logging import (
 )
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig, AuthContextMiddleware
 
 load_dotenv()
 
@@ -286,6 +286,7 @@ try:
     )
     model_mgmt_plugin = ModelManagementPlugin(config=mm_config)
     model_mgmt_plugin.register_plugin(app, redis_client=None)
+    app.add_middleware(AuthContextMiddleware, path_prefixes=mm_config.middleware_paths or ["/api/v1/language-detection"])
     logger.info("✅ Model Management Plugin initialized for Language Detection service")
 except Exception as e:
     logger.warning(f"Failed to initialize Model Management Plugin: {e}")

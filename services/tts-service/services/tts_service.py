@@ -9,7 +9,7 @@ import base64
 import logging
 import time
 from io import BytesIO
-from typing import Optional, List
+from typing import Optional, List, Any
 import numpy as np
 from scipy.io import wavfile
 from pydub import AudioSegment
@@ -51,20 +51,23 @@ class TTSService:
         repository: TTSRepository,
         audio_service: AudioService,
         text_service: TextService,
-        triton_client: TritonClient
+        triton_client: TritonClient,
+        resolved_model_name: Optional[str] = None
     ):
         """Initialize TTS service with dependencies."""
         self.repository = repository
         self.audio_service = audio_service
         self.text_service = text_service
         self.triton_client = triton_client
+        self.resolved_model_name = resolved_model_name  # Model name from Model Management
     
     async def run_inference(
         self,
         request: TTSInferenceRequest,
         user_id: Optional[int] = None,
         api_key_id: Optional[int] = None,
-        session_id: Optional[int] = None
+        session_id: Optional[int] = None,
+        http_request_state: Optional[Any] = None
     ) -> TTSInferenceResponse:
         """
         Run TTS inference for the given request.
@@ -81,12 +84,29 @@ class TTSService:
         with tracer.start_as_current_span("tts.process_batch") as span:
             try:
                 # Extract configuration
+                # Get service_id from request, with fallback to request.state (set by dependency)
                 service_id = request.config.serviceId
+                if not service_id and http_request_state:
+                    service_id = getattr(http_request_state, "service_id", None)
+                
+                if not service_id:
+                    raise TritonInferenceError(
+                        "serviceId is required. It should be provided in the request or resolved via SMR."
+                    )
+                
                 language = request.config.language.sourceLanguage
                 gender = request.config.gender.value
                 standard_rate = 22050  # TTS standard sample rate
                 target_sr = request.config.samplingRate or 22050
                 audio_format = request.config.audioFormat.value
+                
+                # Use resolved model name from Model Management (REQUIRED - no fallback)
+                if not self.resolved_model_name:
+                    raise TritonInferenceError(
+                        f"Model name not resolved via Model Management for serviceId: {service_id}. "
+                        f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+                    )
+                model_name = self.resolved_model_name
                 
                 # Convert PCM format to s16le for Triton
                 if audio_format == "pcm":
@@ -162,7 +182,7 @@ class TTSService:
                                         
                                         # Send Triton request (triton_client will create its own span)
                                         triton_response = self.triton_client.send_triton_request(
-                                            model_name="tts",
+                                            model_name=model_name,
                                             input_list=inputs,
                                             output_list=outputs
                                         )
@@ -400,12 +420,29 @@ class TTSService:
         
         try:
             # Extract configuration
+            # Get service_id from request, with fallback to request.state (set by dependency)
             service_id = request.config.serviceId
+            if not service_id and http_request_state:
+                service_id = getattr(http_request_state, "service_id", None)
+            
+            if not service_id:
+                raise TritonInferenceError(
+                    "serviceId is required. It should be provided in the request or resolved via SMR."
+                )
+            
             language = request.config.language.sourceLanguage
             gender = request.config.gender.value
             standard_rate = 22050  # TTS standard sample rate
             target_sr = request.config.samplingRate or 22050
             audio_format = request.config.audioFormat.value
+            
+            # Use resolved model name from Model Management (REQUIRED - no fallback)
+            if not self.resolved_model_name:
+                raise TritonInferenceError(
+                    f"Model name not resolved via Model Management for serviceId: {service_id}. "
+                    f"Please ensure the model is properly configured in Model Management database with inference endpoint schema."
+                )
+            model_name = self.resolved_model_name
             
             # Convert PCM format to s16le for Triton
             if audio_format == "pcm":
@@ -458,7 +495,7 @@ class TTSService:
                             
                             # Send Triton request
                             triton_response = self.triton_client.send_triton_request(
-                                model_name="tts",
+                                model_name=model_name,
                                 input_list=inputs,
                                 output_list=outputs
                             )
