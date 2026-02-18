@@ -59,7 +59,7 @@ import {
   IconButton,
   Tooltip,
 } from "@chakra-ui/react";
-import { FiBriefcase, FiUsers, FiMoreVertical, FiEye, FiEdit2, FiUserPlus, FiPlayCircle, FiRefreshCw, FiPlus, FiSettings, FiArrowLeft, FiMail } from "react-icons/fi";
+import { FiBriefcase, FiUsers, FiMoreVertical, FiEye, FiEdit2, FiUserPlus, FiPlayCircle, FiRefreshCw, FiPlus, FiSettings, FiArrowLeft, FiMail, FiPause, FiPower, FiTrash2 } from "react-icons/fi";
 import { useAuth } from "../../hooks/useAuth";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import { TENANT_USER_ROLE_OPTIONS } from "./types";
@@ -161,27 +161,27 @@ function TenantDetailUsersPanel(props: {
                   <Menu>
                     <MenuButton as={IconButton} icon={<FiMoreVertical />} variant="ghost" size="sm" aria-label="User actions" />
                     <MenuList>
-                      <MenuItem icon={<FiEye />} onClick={() => onViewUser(u)}>View Details</MenuItem>
+                      <MenuItem icon={<FiEye />} onClick={() => onViewUser(u)}>View</MenuItem>
                       <MenuItem icon={<FiSettings />} onClick={() => onManageServices(u)}>Manage Services</MenuItem>
                       {u.status !== "DEACTIVATED" && (
-                        <MenuItem icon={<FiEdit2 />} onClick={() => onEditUser(u)}>Edit User</MenuItem>
+                        <MenuItem icon={<FiEdit2 />} onClick={() => onEditUser(u)}>Edit</MenuItem>
                       )}
                       {u.status === "ACTIVE" && (
                         <>
-                          <MenuItem onClick={() => onUserStatus(u, "SUSPENDED")}>Suspend User</MenuItem>
-                          <MenuItem onClick={() => onDeleteUser(u)}>Delete User</MenuItem>
+                          <MenuItem icon={<FiPause />} onClick={() => onUserStatus(u, "SUSPENDED")}>Suspend</MenuItem>
+                          <MenuItem icon={<FiTrash2 />} onClick={() => onDeleteUser(u)}>Delete</MenuItem>
                         </>
                       )}
                       {u.status === "SUSPENDED" && (
                         <>
-                          <MenuItem icon={<FiPlayCircle />} onClick={() => onUserStatus(u, "ACTIVE")}>Reactivate User</MenuItem>
-                          <MenuItem onClick={() => onDeleteUser(u)}>Delete User</MenuItem>
+                          <MenuItem icon={<FiPlayCircle />} onClick={() => onUserStatus(u, "ACTIVE")}>Reactivate</MenuItem>
+                          <MenuItem icon={<FiTrash2 />} onClick={() => onDeleteUser(u)}>Delete</MenuItem>
                         </>
                       )}
                       {u.status === "DEACTIVATED" && (
-                        <MenuItem icon={<FiPlayCircle />} onClick={() => onUserStatus(u, "ACTIVE")}>Reactivate User</MenuItem>
+                        <MenuItem icon={<FiPlayCircle />} onClick={() => onUserStatus(u, "ACTIVE")}>Reactivate</MenuItem>
                       )}
-                      {u.status === "PENDING" && <MenuItem onClick={() => onDeleteUser(u)}>Delete User</MenuItem>}
+                      {u.status === "PENDING" && <MenuItem icon={<FiTrash2 />} onClick={() => onDeleteUser(u)}>Delete</MenuItem>}
                     </MenuList>
                   </Menu>
                 </Td>
@@ -423,7 +423,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                           <VStack align="stretch" spacing={1}>
                             {(tm.viewTenantDetail.subscriptions || []).map((s) => (
                               <HStack key={s} justify="space-between">
-                                <Text fontSize="sm">{s}</Text>
+                                <Text fontSize="sm">{String(s).toUpperCase()}</Text>
                                 <Badge colorScheme="green" fontSize="xs">Enabled</Badge>
                               </HStack>
                             ))}
@@ -509,7 +509,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                         <Td>
                           <HStack spacing={1} flexWrap="wrap">
                             {(t.subscriptions || []).slice(0, 3).map((s) => (
-                              <Badge key={s} colorScheme="blue" fontSize="xs">{s}</Badge>
+                              <Badge key={s} colorScheme="blue" fontSize="xs">{String(s).toUpperCase()}</Badge>
                             ))}
                             {(t.subscriptions?.length || 0) > 3 && <Badge colorScheme="gray">+{(t.subscriptions?.length || 0) - 3}</Badge>}
                           </HStack>
@@ -522,8 +522,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                           <Menu>
                             <MenuButton as={IconButton} icon={<FiMoreVertical />} variant="ghost" size="sm" aria-label="Tenant actions" />
                             <MenuList>
-                              <MenuItem icon={<FiEye />} onClick={() => tm.handleViewTenant(t)}>View Details</MenuItem>
-                              <MenuItem icon={<FiEdit2 />} onClick={() => tm.handleOpenEditTenant(t)}>Edit Tenant</MenuItem>
+                              <MenuItem icon={<FiEye />} onClick={() => tm.handleViewTenant(t)}>View</MenuItem>
+                              <MenuItem icon={<FiEdit2 />} onClick={() => tm.handleOpenEditTenant(t)}>Edit</MenuItem>
                               <MenuItem icon={<FiSettings />} onClick={() => tm.openManageServices(t)}>Manage Services</MenuItem>
                               <Tooltip
                                 label="Make tenant active to enable Add User"
@@ -552,18 +552,18 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                               )}
                               {t.status === "ACTIVE" && (
                                 <>
-                                  <MenuItem onClick={() => tm.handleOpenTenantStatus(t, "SUSPENDED")}>Suspend Tenant</MenuItem>
-                                  <MenuItem onClick={() => tm.handleOpenTenantStatus(t, "DEACTIVATED")}>Deactivate Tenant</MenuItem>
+                                  <MenuItem icon={<FiPause />} onClick={() => tm.handleOpenTenantStatus(t, "SUSPENDED")}>Suspend</MenuItem>
+                                  <MenuItem icon={<FiPower />} onClick={() => tm.handleOpenTenantStatus(t, "DEACTIVATED")}>Deactivate</MenuItem>
                                 </>
                               )}
                               {t.status === "SUSPENDED" && (
                                 <>
-                                  <MenuItem icon={<FiPlayCircle />} onClick={() => tm.handleOpenTenantStatus(t, "ACTIVE")}>Resume Tenant</MenuItem>
-                                  <MenuItem onClick={() => tm.handleOpenTenantStatus(t, "DEACTIVATED")}>Deactivate Tenant</MenuItem>
+                                  <MenuItem icon={<FiPlayCircle />} onClick={() => tm.handleOpenTenantStatus(t, "ACTIVE")}>Reactivate</MenuItem>
+                                  <MenuItem icon={<FiPower />} onClick={() => tm.handleOpenTenantStatus(t, "DEACTIVATED")}>Deactivate</MenuItem>
                                 </>
                               )}
                               {t.status === "DEACTIVATED" && (
-                                <MenuItem icon={<FiPlayCircle />} onClick={() => tm.handleOpenTenantStatus(t, "ACTIVE")}>Reactivate Tenant</MenuItem>
+                                <MenuItem icon={<FiPlayCircle />} onClick={() => tm.handleOpenTenantStatus(t, "ACTIVE")}>Reactivate</MenuItem>
                               )}
                             </MenuList>
                           </Menu>
@@ -606,7 +606,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                       <Td>
                         <HStack spacing={1} flexWrap="wrap">
                           {(u.subscriptions || []).slice(0, 3).map((s) => (
-                            <Badge key={s} colorScheme="blue" fontSize="xs">{s}</Badge>
+                            <Badge key={s} colorScheme="blue" fontSize="xs">{String(s).toUpperCase()}</Badge>
                           ))}
                           {(u.subscriptions?.length || 0) > 3 && <Badge colorScheme="gray">+{(u.subscriptions?.length || 0) - 3}</Badge>}
                         </HStack>
@@ -626,20 +626,20 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                             )}
                             {u.status === "ACTIVE" && (
                               <>
-                                <MenuItem onClick={() => tm.handleOpenUserStatus(u, "SUSPENDED")}>Suspend User</MenuItem>
-                                <MenuItem onClick={() => tm.handleOpenDeleteUser(u)}>Delete User</MenuItem>
+                                <MenuItem icon={<FiPause />} onClick={() => tm.handleOpenUserStatus(u, "SUSPENDED")}>Suspend User</MenuItem>
+                                <MenuItem icon={<FiTrash2 />} onClick={() => tm.handleOpenDeleteUser(u)}>Delete User</MenuItem>
                               </>
                             )}
                             {u.status === "SUSPENDED" && (
                               <>
                                 <MenuItem icon={<FiPlayCircle />} onClick={() => tm.handleOpenUserStatus(u, "ACTIVE")}>Reactivate User</MenuItem>
-                                <MenuItem onClick={() => tm.handleOpenDeleteUser(u)}>Delete User</MenuItem>
+                                <MenuItem icon={<FiTrash2 />} onClick={() => tm.handleOpenDeleteUser(u)}>Delete User</MenuItem>
                               </>
                             )}
                             {u.status === "DEACTIVATED" && (
                               <MenuItem icon={<FiPlayCircle />} onClick={() => tm.handleOpenUserStatus(u, "ACTIVE")}>Reactivate User</MenuItem>
                             )}
-                            {u.status === "PENDING" && <MenuItem onClick={() => tm.handleOpenDeleteUser(u)}>Delete User</MenuItem>}
+                            {u.status === "PENDING" && <MenuItem icon={<FiTrash2 />} onClick={() => tm.handleOpenDeleteUser(u)}>Delete User</MenuItem>}
                           </MenuList>
                         </Menu>
                       </Td>
@@ -711,8 +711,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                         <VStack align="stretch" spacing={2}>
                           {tm.availableServicesForCreate.map((svc) => (
                             <Checkbox key={svc.id} value={svc.service_name} colorScheme="blue" size="sm">
-                              <Text fontSize="sm">{svc.service_name}</Text>
-                              {svc.unit_type && <Text as="span" fontSize="xs" color="gray.500" ml={1}>({svc.unit_type})</Text>}
+                              <Text fontSize="sm">{(svc.service_name ?? "").toUpperCase()}</Text>
                             </Checkbox>
                           ))}
                         </VStack>
@@ -720,10 +719,11 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     </Box>
                   ) : (
                     <>
-                      <Button size="sm" colorScheme="blue" variant="outline" mb={2} onClick={tm.loadServicesForCreateTenant} isLoading={tm.isLoadingServicesForCreate} loadingText="Loading...">
+                      {/* <Button size="sm" colorScheme="blue" variant="outline" mb={2} onClick={tm.loadServicesForCreateTenant} isLoading={tm.isLoadingServicesForCreate} loadingText="Loading...">
                         Load Services
                       </Button>
                       <Text fontSize="xs" color="gray.500" mb={2}>Load available services from the server, or use the list below.</Text>
+                       */}
                       <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="140px" overflowY="auto">
                         <CheckboxGroup value={tm.tenantForm.requested_subscriptions || []} onChange={(values) => tm.setTenantForm((f) => ({ ...f, requested_subscriptions: values as string[] }))}>
                           <SimpleGrid columns={2} spacing={2}>
@@ -796,13 +796,38 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             {tm.manageServicesTenant && (
               <>
                 <Text fontWeight="semibold" color="gray.700" mb={2}>{tm.manageServicesTenant.organization_name || tm.manageServicesTenant.tenant_id}</Text>
-                {tm.availableServices.length === 0 ? (
-                  <VStack spacing={4} align="stretch">
-                    <Text fontSize="sm" color="gray.600">Click the button below to load available services for this tenant.</Text>
-                    <Button size="sm" colorScheme="blue" onClick={tm.loadServicesForManage} isLoading={tm.isLoadingServices} loadingText="Loading...">
-                      Load Services
-                    </Button>
-                  </VStack>
+                {tm.isLoadingServices ? (
+                  <Center py={10}>
+                    <VStack spacing={4}>
+                      <Spinner size="lg" color="blue.500" thickness="3px" />
+                      <Text fontSize="sm" color="gray.600">Loading available services...</Text>
+                      <Text fontSize="xs" color="gray.500">Fetching service list for this tenant</Text>
+                    </VStack>
+                  </Center>
+                ) : tm.availableServices.length === 0 ? (
+                  <Box py={4} px={4} borderWidth="1px" borderRadius="lg" borderStyle="dashed" borderColor="gray.300" bg="gray.50">
+                    <VStack spacing={4}>
+                      <Center>
+                        <Box p={3} borderRadius="full" bg="blue.50" color="blue.500">
+                          <FiSettings size={28} />
+                        </Box>
+                      </Center>
+                      <Text fontSize="sm" color="gray.700" fontWeight="medium" textAlign="center">
+                        Load available services for this tenant
+                      </Text>
+                      <Text fontSize="sm" color="gray.500" textAlign="center">
+                        Services you enable here will be available to users under this tenant.
+                      </Text>
+                      <Button
+                        size="md"
+                        colorScheme="blue"
+                        leftIcon={<FiRefreshCw />}
+                        onClick={tm.loadServicesForManage}
+                      >
+                        Load Services
+                      </Button>
+                    </VStack>
+                  </Box>
                 ) : (
                   <VStack spacing={3} align="stretch">
                     <Text fontSize="sm" color="gray.600">Check to add or uncheck to remove a service for this tenant. Changes are applied immediately.</Text>
@@ -817,10 +842,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                             colorScheme="blue"
                             size="sm"
                           >
-                            <Text fontSize="sm" fontWeight="medium">{svc.service_name}</Text>
-                            {svc.unit_type && (
-                              <Text as="span" fontSize="xs" color="gray.500" ml={2}>({svc.unit_type})</Text>
-                            )}
+                            <Text fontSize="sm" fontWeight="medium">{(svc.service_name ?? "").toUpperCase()}</Text>
                           </Checkbox>
                         ))}
                       </VStack>
@@ -854,13 +876,38 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             {tm.manageUserServicesUser && (
               <>
                 <Text fontWeight="semibold" color="gray.700" mb={2}>{tm.manageUserServicesUser.username} ({tm.manageUserServicesUser.email})</Text>
-                {tm.availableServicesForUser.length === 0 ? (
-                  <VStack spacing={4} align="stretch">
-                    <Text fontSize="sm" color="gray.600">Click the button below to load available services for this user.</Text>
-                    <Button size="sm" colorScheme="blue" onClick={tm.loadServicesForUserManage} isLoading={tm.isLoadingUserServices} loadingText="Loading...">
-                      Load Services
-                    </Button>
-                  </VStack>
+                {tm.isLoadingUserServices ? (
+                  <Center py={10}>
+                    <VStack spacing={4}>
+                      <Spinner size="lg" color="blue.500" thickness="3px" />
+                      <Text fontSize="sm" color="gray.600">Loading available services...</Text>
+                      <Text fontSize="xs" color="gray.500">Fetching services enabled for this user&apos;s tenant</Text>
+                    </VStack>
+                  </Center>
+                ) : tm.availableServicesForUser.length === 0 ? (
+                  <Box py={4} px={4} borderWidth="1px" borderRadius="lg" borderStyle="dashed" borderColor="gray.300" bg="gray.50">
+                    <VStack spacing={4}>
+                      <Center>
+                        <Box p={3} borderRadius="full" bg="blue.50" color="blue.500">
+                          <FiSettings size={28} />
+                        </Box>
+                      </Center>
+                      <Text fontSize="sm" color="gray.700" fontWeight="medium" textAlign="center">
+                        Load available services for this user
+                      </Text>
+                      <Text fontSize="sm" color="gray.500" textAlign="center">
+                        You can only assign services that are enabled for the tenant. Check or uncheck to grant or revoke access.
+                      </Text>
+                      <Button
+                        size="md"
+                        colorScheme="blue"
+                        leftIcon={<FiRefreshCw />}
+                        onClick={tm.loadServicesForUserManage}
+                      >
+                        Load Services
+                      </Button>
+                    </VStack>
+                  </Box>
                 ) : (
                   <VStack spacing={3} align="stretch">
                     <Text fontSize="sm" color="gray.600">Check to add or uncheck to remove a service for this user. Changes are applied immediately.</Text>
@@ -875,10 +922,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                             colorScheme="blue"
                             size="sm"
                           >
-                            <Text fontSize="sm" fontWeight="medium">{svc.service_name}</Text>
-                            {svc.unit_type && (
-                              <Text as="span" fontSize="xs" color="gray.500" ml={2}>({svc.unit_type})</Text>
-                            )}
+                            <Text fontSize="sm" fontWeight="medium">{(svc.service_name ?? "").toUpperCase()}</Text>
                           </Checkbox>
                         ))}
                       </SimpleGrid>
@@ -961,7 +1005,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                       <SimpleGrid columns={{ base: 2, sm: 3, md: 4 }} spacing={2}>
                         {tenantServices.map((svc) => (
                           <Checkbox key={svc} value={svc} colorScheme="blue" size="sm">
-                            <Text fontSize="sm" fontWeight="medium">{svc}</Text>
+                            <Text fontSize="sm" fontWeight="medium">{String(svc).toUpperCase()}</Text>
                           </Checkbox>
                         ))}
                       </SimpleGrid>
@@ -978,7 +1022,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           </ModalBody>
           <ModalFooter>
             <Button variant="ghost" mr={3} onClick={tm.closeUserModal} isDisabled={tm.isSubmittingUser}>Cancel</Button>
-            <Button colorScheme="blue" onClick={tm.handleRegisterUser} isLoading={tm.isSubmittingUser} loadingText="Adding..." isDisabled={!tm.userForm.tenant_id || !tm.userForm.email.trim() || !tm.userForm.username.trim() || tm.userForm.username.trim().length < 3}>
+            <Button colorScheme="blue" onClick={tm.handleRegisterUser} isLoading={tm.isSubmittingUser} loadingText="Adding..." isDisabled={!tm.userForm.tenant_id || !tm.userForm.full_name?.trim() || !tm.userForm.email.trim() || !tm.userForm.username.trim() || tm.userForm.username.trim().length < 3}>
               + Add User
             </Button>
           </ModalFooter>
@@ -1001,7 +1045,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Contact Email</Text><Text>{tm.viewTenantDetail.email}</Text></Box>
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Domain</Text><Text>{tm.viewTenantDetail.domain || "—"}</Text></Box>
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Status</Text><Badge colorScheme={tm.viewTenantDetail.status === "ACTIVE" ? "green" : tm.viewTenantDetail.status === "SUSPENDED" ? "orange" : "gray"}>{tm.viewTenantDetail.status}</Badge></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Subscriptions</Text><HStack flexWrap="wrap" spacing={1}>{(tm.viewTenantDetail.subscriptions || []).map((s) => <Badge key={s} colorScheme="blue" fontSize="xs">{s}</Badge>)}</HStack></Box>
+                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Subscriptions</Text><HStack flexWrap="wrap" spacing={1}>{(tm.viewTenantDetail.subscriptions || []).map((s) => <Badge key={s} colorScheme="blue" fontSize="xs">{String(s).toUpperCase()}</Badge>)}</HStack></Box>
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Created</Text><Text fontSize="sm">{tm.viewTenantDetail.created_at ? new Date(tm.viewTenantDetail.created_at).toLocaleString() : "—"}</Text></Box>
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Updated</Text><Text fontSize="sm">{tm.viewTenantDetail.updated_at ? new Date(tm.viewTenantDetail.updated_at).toLocaleString() : "—"}</Text></Box>
               </VStack>
@@ -1032,7 +1076,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Tenant ID</Text><Text>{tm.viewUserDetail.tenant_id}</Text></Box>
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Role</Text><Text>{tm.viewUserDetail.role ?? "—"}</Text></Box>
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Status</Text><Badge colorScheme={tm.viewUserDetail.status === "ACTIVE" ? "green" : tm.viewUserDetail.status === "PENDING" ? "blue" : tm.viewUserDetail.status === "SUSPENDED" ? "orange" : "gray"}>{tm.viewUserDetail.status}</Badge></Box>
-                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Services</Text><HStack flexWrap="wrap" spacing={1}>{(tm.viewUserDetail.subscriptions || []).map((s) => <Badge key={s} colorScheme="blue" fontSize="xs">{s}</Badge>)}</HStack></Box>
+                <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Services</Text><HStack flexWrap="wrap" spacing={1}>{(tm.viewUserDetail.subscriptions || []).map((s) => <Badge key={s} colorScheme="blue" fontSize="xs">{String(s).toUpperCase()}</Badge>)}</HStack></Box>
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Created</Text><Text fontSize="sm">{tm.viewUserDetail.created_at ? new Date(tm.viewUserDetail.created_at).toLocaleString() : "—"}</Text></Box>
                 <Box><Text fontWeight="semibold" color="gray.600" fontSize="sm">Updated</Text><Text fontSize="sm">{tm.viewUserDetail.updated_at ? new Date(tm.viewUserDetail.updated_at).toLocaleString() : "—"}</Text></Box>
               </VStack>
@@ -1059,19 +1103,19 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   <FormLabel>Tenant ID</FormLabel>
                   <Input value={tm.editTenantForm.tenant_id} isReadOnly variant="filled" />
                 </FormControl>
-                <FormControl>
+                <FormControl isRequired>
                   <FormLabel>Organization Name</FormLabel>
                   <Input value={tm.editTenantForm.organization_name ?? ""} onChange={(e) => tm.setEditTenantForm((f) => ({ ...f, organization_name: e.target.value }))} placeholder="Organization name" />
                 </FormControl>
-                <FormControl>
+                <FormControl isRequired>
                   <FormLabel>Contact Email</FormLabel>
                   <Input type="email" value={tm.editTenantForm.contact_email ?? ""} onChange={(e) => tm.setEditTenantForm((f) => ({ ...f, contact_email: e.target.value }))} placeholder="contact@example.com" />
                 </FormControl>
-                <FormControl>
+                <FormControl isRequired>
                   <FormLabel>Domain</FormLabel>
                   <Input value={tm.editTenantForm.domain ?? ""} onChange={(e) => tm.setEditTenantForm((f) => ({ ...f, domain: e.target.value }))} placeholder="example.com" />
                 </FormControl>
-                <Heading size="sm" pt={2}>Quotas (optional)</Heading>
+                {/* <Heading size="sm" pt={2}>Quotas (optional)</Heading>
                 <SimpleGrid columns={2} spacing={4}>
                   <FormControl>
                     <FormLabel fontSize="sm">Requested: characters_length</FormLabel>
@@ -1089,13 +1133,20 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     <FormLabel fontSize="sm">Usage quota: audio_length_in_min</FormLabel>
                     <Input type="number" value={tm.editTenantForm.usage_quota?.audio_length_in_min ?? ""} onChange={(e) => tm.setEditTenantForm((f) => ({ ...f, usage_quota: { ...f.usage_quota, audio_length_in_min: e.target.value ? Number(e.target.value) : undefined } }))} placeholder="—" />
                   </FormControl>
-                </SimpleGrid>
+                </SimpleGrid> */}
               </VStack>
             )}
           </ModalBody>
           <ModalFooter>
             <Button variant="ghost" mr={3} onClick={tm.closeEditTenantModal} isDisabled={tm.isSubmittingEditTenant}>Cancel</Button>
-            <Button colorScheme="blue" onClick={tm.handleSaveEditTenant} isLoading={tm.isSubmittingEditTenant}>Save Changes</Button>
+            <Button
+              colorScheme="blue"
+              onClick={tm.handleSaveEditTenant}
+              isLoading={tm.isSubmittingEditTenant}
+              isDisabled={!tm.editTenantForm.organization_name?.trim() || !tm.editTenantForm.contact_email?.trim() || !tm.editTenantForm.domain?.trim()}
+            >
+              Save Changes
+            </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -1117,16 +1168,16 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   <FormLabel>User ID</FormLabel>
                   <Input value={String(tm.editUserForm.user_id)} isReadOnly variant="filled" size="sm" />
                 </FormControl>
-                <FormControl>
+                <FormControl isRequired>
                   <FormLabel>Username</FormLabel>
                   <Input value={tm.editUserForm.username ?? ""} onChange={(e) => tm.setEditUserForm((f) => ({ ...f, username: e.target.value }))} placeholder="Username" minLength={3} />
                 </FormControl>
-                <FormControl>
+                <FormControl isRequired>
                   <FormLabel>Email</FormLabel>
                   <Input type="email" value={tm.editUserForm.email ?? ""} onChange={(e) => tm.setEditUserForm((f) => ({ ...f, email: e.target.value }))} placeholder="user@example.com" />
                 </FormControl>
                 <FormControl>
-                  <FormLabel>Role</FormLabel>
+                  <FormLabel>Role (optional)</FormLabel>
                   <Select value={tm.editUserForm.role ?? "USER"} onChange={(e) => tm.setEditUserForm((f) => ({ ...f, role: e.target.value }))} bg="white" size="sm">
                     {TENANT_USER_ROLE_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -1134,8 +1185,9 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   </Select>
                 </FormControl>
                 <FormControl>
+                  <FormLabel>Approved (optional)</FormLabel>
                   <Checkbox isChecked={tm.editUserForm.is_approved ?? false} onChange={(e) => tm.setEditUserForm((f) => ({ ...f, is_approved: e.target.checked }))}>
-                    Approved
+                    User can access immediately
                   </Checkbox>
                 </FormControl>
               </VStack>
@@ -1143,7 +1195,14 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
           </ModalBody>
           <ModalFooter>
             <Button variant="ghost" mr={3} onClick={tm.closeEditUserModal} isDisabled={tm.isSubmittingEditUser}>Cancel</Button>
-            <Button colorScheme="blue" onClick={tm.handleSaveEditUser} isLoading={tm.isSubmittingEditUser}>Save Changes</Button>
+            <Button
+              colorScheme="blue"
+              onClick={tm.handleSaveEditUser}
+              isLoading={tm.isSubmittingEditUser}
+              isDisabled={!tm.editUserForm.username?.trim() || tm.editUserForm.username.trim().length < 3 || !tm.editUserForm.email?.trim()}
+            >
+              Save Changes
+            </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
