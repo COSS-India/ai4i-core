@@ -1245,6 +1245,35 @@ BEGIN
 END $$;
 
 -- ============================================================================
+-- STEP 5A: Multi-tenant Schema Migrations (Status Columns + Phone Numbers)
+-- ============================================================================
+
+-- Align status columns with application enums (allow longer values like DEACTIVATED)
+ALTER TABLE tenants
+ALTER COLUMN status TYPE VARCHAR(50);
+
+ALTER TABLE tenant_users
+ALTER COLUMN status TYPE VARCHAR(50);
+
+ALTER TABLE user_billing_records
+ALTER COLUMN status TYPE VARCHAR(50);
+
+ALTER TABLE tenant_billing_records
+ALTER COLUMN billing_status TYPE VARCHAR(50);
+
+-- Add phone_number columns to tenant tables
+ALTER TABLE tenants
+ADD COLUMN IF NOT EXISTS phone_number VARCHAR(50) NULL;
+
+ALTER TABLE tenant_users
+ADD COLUMN IF NOT EXISTS phone_number VARCHAR(50) NULL;
+
+DO $$
+BEGIN
+    RAISE NOTICE 'Multi-tenant status/phone_number migrations applied in init-all-databases.sql';
+END $$;
+
+-- ============================================================================
 -- STEP 6: Alerting Service Schema (alerting_db)
 -- ============================================================================
 
