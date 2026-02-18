@@ -37,6 +37,8 @@ from middleware.exceptions import (
 )
 from middleware.exceptions import AuthenticationError, AuthorizationError
 from middleware.tenant_db_dependency import get_tenant_db_session
+import os
+import httpx
 
 from services.constants.error_messages import (
     NO_TEXT_INPUT,
@@ -173,6 +175,72 @@ async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_tenan
     )
 
 
+API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
+
+
+async def _enforce_tenant_and_service_checks(http_request: Request, service_name: str = "nmt"):
+    """
+    Enforce tenant status (ACTIVE only) and global service active flag (ServiceConfig.is_active).
+    - If tenant context exists (http_request.state.tenant_id), ensure tenant.status == ACTIVE.
+    - Ensure the service (e.g., 'nmt') is active in multi-tenant service_config.
+    """
+    # Always check service active flag first
+    auth_header = http_request.headers.get("Authorization") or http_request.headers.get("authorization")
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            svc_resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/list/services", headers={"Authorization": auth_header} if auth_header else None)
+            if svc_resp.status_code == 200:
+                services = svc_resp.json().get("services", [])
+                svc_entry = next((s for s in services if str(s.get("service_name")).lower() == service_name.lower()), None)
+                if not svc_entry or not svc_entry.get("is_active", False):
+                    # Service globally inactive
+                    raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message="Nmt service is not active at the moment.Please contact your administrator").dict())
+            else:
+                # If we cannot verify service active state, err on the safe side (allow) or deny? choose deny.
+                raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message="Cannot detect service availability.Please contact your administrator").dict())
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message=SERVICE_UNAVAILABLE_NMT_MESSAGE).dict())
+    except HTTPException:
+        raise
+    except Exception as e:
+        # If something unexpected happened, log and deny
+        logger.warning(f"Failed to verify service active state for '{service_name}': {e}")
+        raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message=SERVICE_UNAVAILABLE_NMT_MESSAGE).dict())
+
+    # Tenant status check - only when tenant context present
+    tenant_id = getattr(http_request.state, "tenant_id", None)
+    if not tenant_id:
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            headers = {"Authorization": auth_header} if auth_header else {}
+            resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/view/tenant", params={"tenant_id": tenant_id}, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                status_val = data.get("status", "").upper()
+                if status_val != "ACTIVE":
+                    # Tenant not active
+                    raise HTTPException(status_code=403, detail={"code": "TENANT_INACTIVE", "message": f"Tenant status is {status_val}. Access denied."})
+            elif resp.status_code == 404:
+                raise HTTPException(status_code=403, detail={"code": "TENANT_NOT_FOUND", "message": "Tenant not found or inactive"})
+            else:
+                raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant status"})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Failed to verify tenant status for tenant_id={tenant_id}: {e}")
+        raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant status"})
+
+async def enforce_nmt_checks(request: Request):
+    """FastAPI dependency that enforces tenant and service checks for NMT before other dependencies run."""
+    await _enforce_tenant_and_service_checks(request, service_name="nmt")
+
+# Add as a router-level dependency so it runs before path-operation dependencies like get_nmt_service
+inference_router.dependencies.insert(0, Depends(enforce_nmt_checks))
+
+
 @inference_router.post(
     "/inference",
     response_model=NMTInferenceResponse,
@@ -191,6 +259,7 @@ async def run_inference(
     """
     # Create a span for the entire inference operation
     # This will be a child of the FastAPI auto-instrumented span
+    
     if not tracer:
         # Fallback if tracing not available
         return await _run_nmt_inference_impl(request, http_request, nmt_service)
@@ -431,6 +500,8 @@ async def _run_nmt_inference_impl(
         request.config.language.targetLanguage
     )
     validate_batch_size(len(request.input))
+    
+    # tenant/service checks are enforced via router-level dependency
     
     user_id = getattr(http_request.state, "user_id", None)
     api_key_id = getattr(http_request.state, "api_key_id", None)
