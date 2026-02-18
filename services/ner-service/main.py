@@ -34,7 +34,7 @@ except ImportError:
     pass
 
 # Model Management imports (required)
-from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig, AuthContextMiddleware
 
 # Telemetry imports (optional)
 TELEMETRY_AVAILABLE = False
@@ -392,6 +392,7 @@ try:
     )
     model_mgmt_plugin = ModelManagementPlugin(config=mm_config)
     model_mgmt_plugin.register_plugin(app, redis_client=redis_client_sync)
+    app.add_middleware(AuthContextMiddleware, path_prefixes=mm_config.middleware_paths or ["/api/v1/ner"])
     logger.info("✅ Model Management Plugin initialized for NER service")
 except Exception as e:
     logger.warning(f"Failed to initialize Model Management Plugin: {e}")

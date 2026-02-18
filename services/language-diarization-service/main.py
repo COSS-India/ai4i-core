@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
-from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig, AuthContextMiddleware
 
 # Logging imports (structured JSON logging to OpenSearch via ai4icore_logging)
 LOGGING_AVAILABLE = False
@@ -334,6 +334,7 @@ try:
     )
     model_mgmt_plugin = ModelManagementPlugin(config=mm_config)
     model_mgmt_plugin.register_plugin(app, redis_client=None)
+    app.add_middleware(AuthContextMiddleware, path_prefixes=mm_config.middleware_paths or ["/api/v1/language-diarization"])
     logger.info("✅ Model Management Plugin initialized for Language Diarization service")
 except Exception as e:
     logger.warning(f"Failed to initialize Model Management Plugin: {e}")
