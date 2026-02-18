@@ -1017,7 +1017,7 @@ async def toggle_alert_definition(alert_id: int, organization: Optional[str], en
             )
         
         # Trigger configuration sync to update YAML files and reload Prometheus/Alertmanager
-        await trigger_config_sync(actor=created_by, request=request)
+        await trigger_config_sync(actor=updated_by, request=request)
         
         return result_obj
 
