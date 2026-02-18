@@ -242,12 +242,17 @@ sio.emit('data', {'audioData': audio_bytes, 'isSpeaking': True, 'disconnectStrea
 
 ## Interactive API Documentation
 
-Each service provides interactive Swagger UI documentation:
+**Unified public API docs (recommended):** One Swagger UI for all public APIs, sourced from per-service OpenAPI specs:
+
+- **Docs Manager**: http://localhost:8103/docs  
+  - Single merged OpenAPI spec from `services/docs-manager/specs/*.yaml` (registry + per-service OpenAPI files).
+  - Run: `docker compose -f docker-compose-local.yml up docs-manager` or run `uvicorn main:app --port 8103` from `services/docs-manager` with `SPECS_ROOT` pointing at repo `specs/`.
+
+Per-service Swagger (when services are running):
 
 - **ASR Service**: http://localhost:8087/docs
 - **TTS Service**: http://localhost:8088/docs
 - **NMT Service**: http://localhost:8089/docs
-- **API Gateway**: http://localhost:8080/docs (aggregated)
 
 ## OpenAPI Specifications
 

@@ -198,7 +198,7 @@ async def delete_alert_definition_endpoint(
 async def toggle_alert_definition_endpoint(
     alert_id: int,
     request: Request,
-    enabled: bool = Body(..., description="Enable or disable the alert"),
+    enabled: bool = Body(..., embed=True, description="Enable or disable the alert"),
     organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
 ):
     """

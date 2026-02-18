@@ -272,6 +272,23 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  docs-manager:
+    build:
+      context: .
+      dockerfile: ./services/docs-manager/Dockerfile
+    container_name: ai4v-docs-manager
+    ports:
+      - "8103:8103"
+    environment:
+      - API_GATEWAY_URL=http://localhost:8080
+      - SPECS_ROOT=/app/specs
+      - SERVICE_DOCS_REGISTRY_PATH=/app/specs/service-docs-registry.yaml
+    volumes:
+      - ./services/docs-manager/specs:/app/specs
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
   metrics-service:
     build:
       context: ./services/metrics-service

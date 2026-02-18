@@ -1,0 +1,88 @@
+# Audio Language Detection Service - Public API (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: Audio Language Detection Service
+  description: Detect language from audio.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: Audio Language Detection
+paths:
+  /api/v1/audio-lang-detection/inference:
+    post:
+      tags: [Audio Language Detection]
+      summary: Audio language detection inference
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AudioLangDetectionInferenceRequest" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AudioLangDetectionInferenceResponse" }
+        "401": { description: Unauthorized }
+  /api/v1/audio-lang-detection/health:
+    get:
+      tags: [Audio Language Detection]
+      summary: Health check
+      responses:
+        "200": { description: Health status }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+  schemas:
+    AudioLangDetectionControlConfig:
+      type: object
+      properties:
+        dataTracking: { type: boolean, default: true }
+    AudioLangDetectionConfig:
+      type: object
+      properties:
+        serviceId: { type: string, description: Audio language detection service/model ID (optional; Smart Router will assign if omitted) }
+    AudioLangDetectionAudioInput:
+      type: object
+      properties:
+        audioContent: { type: string, format: byte }
+        audioUri: { type: string }
+    AudioLangDetectionInferenceRequest:
+      type: object
+      required: [config, audio]
+      properties:
+        controlConfig: { $ref: "#/components/schemas/AudioLangDetectionControlConfig" }
+        config: { $ref: "#/components/schemas/AudioLangDetectionConfig" }
+        audio:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/AudioLangDetectionAudioInput" }
+    AudioLangDetectionAllScores:
+      type: object
+      properties:
+        predicted_language: { type: string }
+        confidence: { type: number }
+        top_scores: { type: array, items: { type: number } }
+    AudioLangDetectionOutput:
+      type: object
+      properties:
+        language_code: { type: string, description: "Detected language code with name (e.g. 'ta: Tamil')" }
+        confidence: { type: number }
+        all_scores: { $ref: "#/components/schemas/AudioLangDetectionAllScores" }
+    AudioLangDetectionResponseConfig:
+      type: object
+      properties:
+        serviceId: { type: string }
+    AudioLangDetectionInferenceResponse:
+      type: object
+      properties:
+        taskType: { type: string, default: audio-lang-detection }
+        output: { type: array, items: { $ref: "#/components/schemas/AudioLangDetectionOutput" } }
+        config: { $ref: "#/components/schemas/AudioLangDetectionResponseConfig" }
+security:
+  - BearerAuth: []
