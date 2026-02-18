@@ -96,7 +96,7 @@ python3 infrastructure/databases/cli.py seed --database redis
 ```
 
 **Default Admin Credentials:**
-- Email: `admin@ai4i.org`
+- Email: `admin@ai4inclusion.org`
 - Username: `admin`
 - Password: `Admin@123`
 
@@ -259,7 +259,7 @@ You'll know everything is working when:
 
 - ✅ All migrations run without errors
 - ✅ 72+ tables created across 9 PostgreSQL databases
-- ✅ Default admin user exists: `admin@ai4i.org`
+- ✅ Default admin user exists: `admin@ai4inclusion.org`
 - ✅ 40+ permissions are loaded
 - ✅ 4 default roles created (ADMIN, USER, GUEST, MODERATOR)
 - ✅ Redis cache is configured

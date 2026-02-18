@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 from influxdb_client import InfluxDBClient
 import httpx
 
@@ -138,7 +139,7 @@ async def health_check():
         # Check PostgreSQL connectivity
         if db_engine:
             async with db_engine.begin() as conn:
-                await conn.execute("SELECT 1")
+                await conn.execute(text("SELECT 1"))
             postgres_status = "healthy"
         else:
             postgres_status = "unhealthy"
