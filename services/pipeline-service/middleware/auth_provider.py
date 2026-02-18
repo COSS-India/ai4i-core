@@ -523,10 +523,7 @@ async def AuthProvider(
                     method_span.set_status(Status(StatusCode.OK))
                     auth_span.set_attribute("auth.method", "JWT+API_KEY")
                     
-                    # Decision point: Check API key for BOTH mode
-                    with tracer.start_as_current_span("auth.decision.check_api_key_both") as both_span:
-                        both_span.set_attribute("auth.decision", "check_api_key_for_both_mode")
-
+                    try:
                         # 1) Authenticate via JWT
                         bearer_result = await authenticate_bearer_token(request, authorization)
                         jwt_user_id = bearer_result.get("user_id")
@@ -534,39 +531,42 @@ async def AuthProvider(
                         # 2) Extract API key
                         api_key = x_api_key or get_api_key_from_header(authorization)
                         if not api_key:
-                            both_span.set_attribute("auth.decision.result", "rejected")
-                            both_span.set_attribute("error", True)
-                            both_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
-                            auth_span.set_attribute("auth.result", "failed")
-                            auth_span.set_attribute("auth.failure_reason", "missing_api_key")
                             raise AuthenticationError("Missing API key")
-
-                        # 3) Validate API key ownership via auth-service + auth DB
-                        #    For pipeline we rely on auth-service for permission, but we can still
-                        #    enforce ownership by looking up the key locally using JWT user id.
-                        from repositories.api_key_repository import ApiKeyRepository
-                        key_repo = ApiKeyRepository(request.app.state.db_session_factory())
-                        # Note: ApiKeyRepository API expects a DB session; here we use a short-lived one.
-                        # To avoid heavy refactors, we only verify that at least one active key with this
-                        # value exists for the same user id. If not, we treat it as an ownership mismatch.
-                        # (Exact implementation depends on repository; keeping it lightweight here.)
-                        both_span.set_attribute("auth.decision.result", "approved")
-                        both_span.set_status(Status(StatusCode.OK))
                     
-                    # 4) Validate API key permissions via auth-service
-                    service, action = determine_service_and_action(request)
-                    await validate_api_key_permissions(api_key, service, action)
+                        # 3) Validate API key + permissions via auth-service (single source of truth),
+                        # passing jwt_user_id so auth-service can enforce ownership.
+                        service, action = determine_service_and_action(request)
+                        auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
+                        
+                        # CRITICAL: Always check valid field - auth-service may return valid=false for ownership mismatch
+                        if not auth_result.get("valid", False):
+                            error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
+                            raise AuthenticationError("API key does not belong to the authenticated user")
                     
-                    # 5) Populate request state with auth context from Bearer token
-                    request.state.user_id = jwt_user_id
-                    request.state.api_key_id = None
-                    request.state.api_key_name = None
-                    request.state.user_email = bearer_result.get("user", {}).get("email")
-                    request.state.is_authenticated = True
-                    
-                    auth_span.set_attribute("auth.result", "success")
-                    auth_span.set_status(Status(StatusCode.OK))
-                    return bearer_result
+                        # 4) Populate request.state – keep JWT as primary identity (matching ASR/TTS/NMT)
+                        request.state.user_id = jwt_user_id
+                        request.state.api_key_id = None
+                        request.state.api_key_name = None
+                        request.state.user_email = bearer_result.get("user", {}).get("email")
+                        request.state.is_authenticated = True
+                        
+                        auth_span.set_attribute("auth.result", "success")
+                        auth_span.set_status(Status(StatusCode.OK))
+                        return bearer_result
+                    except (AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
+                        # For ANY auth/key error in BOTH mode, surface a single, consistent message
+                        logger.error(f"Pipeline BOTH mode: Authentication/Authorization error: {e}")
+                        auth_span.set_attribute("auth.result", "failed")
+                        auth_span.set_attribute("auth.failure_reason", "authentication_failed")
+                        auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
+                        raise AuthenticationError("API key does not belong to the authenticated user")
+                    except Exception as e:
+                        logger.error(f"Pipeline BOTH mode: Unexpected error: {e}", exc_info=True)
+                        auth_span.set_attribute("auth.result", "failed")
+                        auth_span.set_attribute("auth.failure_reason", "unexpected_error")
+                        auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
+                        # Even on unexpected errors we normalize the external message
+                        raise AuthenticationError("API key does not belong to the authenticated user")
                 
                 # Handle API key authentication (requires permission check via auth-service)
                 else:

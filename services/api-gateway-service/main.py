@@ -2903,17 +2903,17 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                         # Re-raise with the specific error message from auth-service
                         raise
         else:
-            # For other services: existing logic (either Bearer OR API key)
+            # For other services: existing logic (either Bearer OR API key, or BOTH)
             auth_source = (req.headers.get("x-auth-source") or "").upper()
             if is_multi_tenant_request(req):
                 auth_source = "AUTH_TOKEN"
-            use_api_key = api_key is not None and auth_source == "API_KEY"
+            use_api_key = api_key is not None and auth_source in ("API_KEY", "BOTH")
             if auth_span:
                 auth_span.set_attribute("auth.source", auth_source)
                 auth_span.set_attribute("auth.use_api_key", use_api_key)
 
-            # If x-auth-source is explicitly set to API_KEY, require API key
-            if auth_source == "API_KEY" and not api_key:
+            # If x-auth-source is explicitly set to API_KEY or BOTH, require API key
+            if auth_source in ("API_KEY", "BOTH") and not api_key:
                 if auth_span:
                     auth_span.set_attribute("auth.authenticated", False)
                     auth_span.set_attribute("error.type", "MissingAPIKey")
@@ -2922,11 +2922,86 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                     status_code=401,
                     detail={
                         "error": "API_KEY_MISSING",
-                        "message": "API key is required when X-Auth-Source is set to API_KEY"
+                        "message": f"API key is required when X-Auth-Source is set to {auth_source}"
                     }
+                )
+            
+            # If x-auth-source is BOTH, also require Bearer token
+            if auth_source == "BOTH" and (not credentials or not credentials.credentials):
+                if auth_span:
+                    auth_span.set_attribute("auth.authenticated", False)
+                    auth_span.set_attribute("error.type", "MissingToken")
+                    auth_span.set_status(Status(StatusCode.ERROR, "Bearer token required"))
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error": "AUTH_TOKEN_MISSING",
+                        "message": "Bearer token is required when X-Auth-Source is set to BOTH"
+                    },
+                    headers={"WWW-Authenticate": "Bearer"}
                 )
 
             if use_api_key:
+                # If auth_source is BOTH, validate JWT token first
+                jwt_user_id = None
+                if auth_source == "BOTH":
+                    token = credentials.credentials
+                    token_span_context = tracer.start_as_current_span("gateway.auth.validate_token") if tracer else nullcontext()
+                    with token_span_context as token_span:
+                        if token_span:
+                            token_span.set_attribute("auth.method", "Bearer")
+                            token_span.set_attribute("auth.token_present", bool(token))
+                        
+                        try:
+                            payload = await auth_middleware.verify_token(token)
+                            if token_span:
+                                token_span.set_attribute("auth.token_valid", payload is not None)
+                                if payload:
+                                    token_span.set_attribute("user.id", str(payload.get("sub", "unknown")))
+                                    token_span.set_attribute("user.username", payload.get("username", "unknown"))
+                                    token_span.set_status(Status(StatusCode.OK))
+                            
+                            if payload is None:
+                                if auth_span:
+                                    auth_span.set_attribute("auth.authenticated", False)
+                                    auth_span.set_attribute("error.type", "InvalidToken")
+                                    auth_span.set_status(Status(StatusCode.ERROR, "Token validation failed"))
+                                raise HTTPException(
+                                    status_code=401,
+                                    detail={
+                                        "code": AUTH_FAILED,
+                                        "message": AUTH_FAILED_MESSAGE
+                                    },
+                                    headers={"WWW-Authenticate": "Bearer"}
+                                )
+                            
+                            # Set user context from JWT
+                            if payload:
+                                req.state.user_id = payload.get("sub") or payload.get("user_id")
+                                req.state.username = payload.get("username")
+                                req.state.permissions = payload.get("permissions", [])
+                                req.state.is_authenticated = True
+                                req.state.jwt_payload = payload
+                                jwt_user_id = req.state.user_id
+                                
+                                # Extract tenant information
+                                tenant_context = resolve_tenant_from_jwt(payload)
+                                if tenant_context:
+                                    req.state.tenant_id = tenant_context.get("tenant_id")
+                                    req.state.tenant_uuid = tenant_context.get("tenant_uuid")
+                                    req.state.schema_name = tenant_context.get("schema_name")
+                                    req.state.subscriptions = tenant_context.get("subscriptions", [])
+                                    req.state.user_subscriptions = tenant_context.get("user_subscriptions", [])
+                        except HTTPException:
+                            raise
+                        except Exception as e:
+                            if token_span:
+                                token_span.set_attribute("error", True)
+                                token_span.set_attribute("error.type", type(e).__name__)
+                                token_span.set_attribute("error.message", str(e))
+                                token_span.set_status(Status(StatusCode.ERROR, str(e)))
+                            raise
+                
                 # Validate API key permissions via auth-service
                 service, action = determine_service_and_action(req)
                 
@@ -2945,11 +3020,11 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             authz_span.set_attribute("gateway.operation", "authorize_request")
                             authz_span.set_attribute("auth.service", service)
                             authz_span.set_attribute("auth.action", action)
-                            authz_span.set_attribute("auth.method", "API_KEY")
+                            authz_span.set_attribute("auth.method", "API_KEY" if auth_source == "API_KEY" else "BOTH")
                         
                         try:
-                            # For API_KEY-only mode, no user_id to check ownership
-                            await validate_api_key_permissions(api_key, service, action, user_id=None)
+                            # For BOTH mode, pass user_id to check ownership; for API_KEY-only, no user_id
+                            await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
                             if authz_span:
                                 authz_span.set_attribute("auth.authorized", True)
                                 authz_span.set_status(Status(StatusCode.OK))
@@ -4935,7 +5010,7 @@ async def speaker_diarization_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Speaker Diarization service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "speaker-diarization-service", method="GET", headers=headers)
 
@@ -4952,7 +5027,7 @@ async def speaker_diarization_inference(
     If config.serviceId is omitted, Smart Model Router will select the best service
     based on Policy Engine + Model Management and inject the chosen serviceId.
     """
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
 
     body_dict = payload.model_dump(mode="json", exclude_none=True)
@@ -4993,7 +5068,7 @@ async def language_diarization_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Language Diarization service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "language-diarization-service", method="GET", headers=headers)
 
@@ -5010,7 +5085,7 @@ async def language_diarization_inference(
     If config.serviceId is omitted, Smart Model Router will select the best service
     based on Policy Engine + Model Management and inject the chosen serviceId.
     """
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
 
     body_dict = payload.model_dump(mode="json", exclude_none=True)
@@ -5562,7 +5637,7 @@ async def batch_translate(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Batch translate multiple texts using NMT service"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/nmt/batch-translate", "nmt-service", headers=headers)
 
@@ -5575,7 +5650,7 @@ async def get_nmt_languages(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get supported languages for NMT service"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers: Dict[str, str] = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
@@ -5603,7 +5678,7 @@ async def get_nmt_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available NMT models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers: Dict[str, str] = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
@@ -5618,7 +5693,7 @@ async def get_nmt_services(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available NMT services"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers: Dict[str, str] = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
@@ -5721,7 +5796,7 @@ async def ner_health(
     api_key: Optional[str] = Security(api_key_scheme),
 ):
     """NER service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "ner-service", headers=headers)
 
@@ -6026,7 +6101,7 @@ async def get_language_detection_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available language detection models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/language-detection/models", "language-detection-service", headers=headers)
 
@@ -6037,7 +6112,7 @@ async def get_language_detection_languages(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get supported languages for language detection"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/language-detection/languages", "language-detection-service", headers=headers)
 
@@ -6048,7 +6123,7 @@ async def language_detection_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Language detection service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/language-detection/health", "language-detection-service", headers=headers)
 
@@ -6065,7 +6140,7 @@ async def transliteration_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Perform transliteration inference"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     body = json.dumps(
@@ -6160,7 +6235,7 @@ async def get_language_detection_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available language detection models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/language-detection/models", "language-detection-service", headers=headers)
 
@@ -6171,7 +6246,7 @@ async def get_language_detection_languages(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get supported languages for language detection"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/language-detection/languages", "language-detection-service", headers=headers)
 
@@ -6182,7 +6257,7 @@ async def language_detection_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Language detection service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/language-detection/health", "language-detection-service", headers=headers)
 
@@ -6683,7 +6758,7 @@ async def pipeline_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Execute pipeline inference (e.g., Speech-to-Speech translation)"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
@@ -6701,7 +6776,7 @@ async def get_pipeline_info(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get pipeline service information"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
@@ -6730,7 +6805,7 @@ async def evaluate_feature_flag(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Evaluate a single feature flag. Supports boolean, string, integer, float, and object (dict) flag types."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     body = json.dumps(payload.dict()).encode()
     headers = build_auth_headers(request, credentials, api_key)
@@ -6744,7 +6819,7 @@ async def evaluate_boolean_feature_flag(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Evaluate a boolean feature flag. Returns a simple boolean value indicating if the flag is enabled."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     body = json.dumps(payload.dict()).encode()
     headers = build_auth_headers(request, credentials, api_key)
@@ -6758,7 +6833,7 @@ async def bulk_evaluate_feature_flags(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Bulk evaluate multiple feature flags. Evaluates all specified flags in parallel and returns results as a dictionary."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     body = json.dumps(payload.dict()).encode()
     headers = build_auth_headers(request, credentials, api_key)
@@ -6773,7 +6848,7 @@ async def get_feature_flag(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get feature flag by name from Unleash. Retrieves flag details from Unleash API (cached in Redis)."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     # Use default environment if not provided (config service will also default, but we pass it for consistency)
     env = environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
@@ -6796,7 +6871,7 @@ async def list_feature_flags(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """List feature flags from Unleash. Returns paginated list of feature flags from Unleash (cached in Redis)."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     # Use default environment if not provided (config service will also default, but we pass it for consistency)
     env = environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
@@ -6828,7 +6903,7 @@ async def sync_feature_flags(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Refresh feature flags cache from Unleash (admin). Invalidates Redis cache and fetches fresh data from Unleash API."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     # Use default environment if not provided (config service will also default, but we pass it for consistency)
     env = environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
