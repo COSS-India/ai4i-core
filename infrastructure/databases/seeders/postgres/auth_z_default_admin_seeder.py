@@ -55,3 +55,14 @@ class AuthDefaultAdminSeeder(BaseSeeder):
             ON CONFLICT (user_id, role_id) DO NOTHING
         """)
         print("    ✓ Assigned ADMIN role to default admin user")
+        
+        # Ensure ADMIN role has ALL permissions (including any that might have been added)
+        # This ensures the admin user always has full access
+        adapter.execute("""
+            INSERT INTO role_permissions (role_id, permission_id)
+            SELECT r.id, p.id
+            FROM roles r, permissions p
+            WHERE r.name = 'ADMIN'
+            ON CONFLICT (role_id, permission_id) DO NOTHING
+        """)
+        print("    ✓ Ensured ADMIN role has all permissions")
