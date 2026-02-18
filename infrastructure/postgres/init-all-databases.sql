@@ -2040,7 +2040,7 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 -- Create the default admin user
 -- Password hash for "Admin@123" (bcrypt)
 INSERT INTO users (email, username, hashed_password, is_active, is_verified, full_name, is_superuser) VALUES
-('admin@ai4inclusion.org', 'admin', '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW', true, true, 'System Administrator', true)
+('admin@ai4inclusion.org', 'admin', '$argon2id$v=19$m=65536,t=3,p=4$aE2plbKW0tp77/0fw1irtQ$zZnAxRpKJHrUzZe6eETokcEgHxzvgX9rsFIABQvHQcI', true, true, 'System Administrator', true)
 ON CONFLICT (email) DO UPDATE
 SET 
     username = EXCLUDED.username,
@@ -2048,7 +2048,7 @@ SET
     is_active = EXCLUDED.is_active,
     is_verified = EXCLUDED.is_verified,
     full_name = EXCLUDED.full_name,
-    is_superuser = EXCLUDED.is_superuser;
+    is_superuser = EXCLUDED.is_superuser;       
 
 -- Assign ADMIN role to the default admin user
 -- This ensures the admin user has all permissions through the ADMIN role (including apiKey.*)

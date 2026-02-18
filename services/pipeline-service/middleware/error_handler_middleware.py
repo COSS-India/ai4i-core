@@ -108,43 +108,137 @@ def _log_error_to_opensearch(request: Request, status_code: int, error_code: str
             logger.error(f"{method} {path} - {status_code} - {error_message}")
 
 
+async def authentication_error_handler(request: Request, exc: AuthenticationError):
+    """Handle authentication errors."""
+    # Get message from exc.message or exc.detail (HTTPException uses detail)
+    error_message = getattr(exc, 'message', None) or str(exc.detail) if hasattr(exc, 'detail') else str(exc)
+    
+    if tracer:
+        with tracer.start_as_current_span("request.reject") as reject_span:
+            reject_span.set_attribute("auth.operation", "reject_authentication")
+            reject_span.set_attribute("auth.rejected", True)
+            # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
+            reject_span.set_attribute("http.method", request.method)
+            reject_span.set_attribute("http.path", request.url.path)
+            reject_span.set_attribute("http.status_code", 401)
+            reject_span.set_attribute("error.code", "AUTHENTICATION_ERROR")
+            reject_span.set_attribute("error.message", error_message)
+            
+            # Add correlation ID if available
+            correlation_id = get_correlation_id(request)
+            if correlation_id:
+                reject_span.set_attribute("correlation.id", correlation_id)
+            
+            reject_span.set_status(Status(StatusCode.ERROR, error_message))
+            reject_span.record_exception(exc)
+    
+    # Check if this is a JWT authentication failure (should return AUTH_FAILED)
+    jwt_failure_messages = [
+        "Authentication failed. Please log in again.",
+        "Invalid or expired token",
+        "Missing bearer token",
+        "Invalid token type",
+        "User ID not found in token",
+        "Failed to verify token"
+    ]
+    
+    is_jwt_failure = any(msg in error_message for msg in jwt_failure_messages)
+    error_code = "AUTH_FAILED" if is_jwt_failure else "AUTHENTICATION_ERROR"
+    
+    # Log to OpenSearch
+    _log_error_to_opensearch(request, 401, error_code, error_message)
+    
+    error_detail = ErrorDetail(
+        message=error_message,
+        code=error_code,
+        timestamp=time.time()
+    )
+    # Exclude timestamp from response
+    try:
+        detail_dict = error_detail.model_dump(exclude={'timestamp'}) if hasattr(error_detail, 'model_dump') else error_detail.dict(exclude={'timestamp'})
+    except Exception:
+        detail_dict = error_detail.dict(exclude={'timestamp'})
+    return JSONResponse(
+        status_code=401,
+        content={"detail": detail_dict}
+    )
+
+
+async def authentication_error_handler(request: Request, exc: AuthenticationError):
+    """Handle authentication errors."""
+    # Get message from exc.message or exc.detail (HTTPException uses detail)
+    error_message = getattr(exc, 'message', None) or str(exc.detail) if hasattr(exc, 'detail') else str(exc)
+    
+    if tracer:
+        with tracer.start_as_current_span("request.reject") as reject_span:
+            reject_span.set_attribute("auth.operation", "reject_authentication")
+            reject_span.set_attribute("auth.rejected", True)
+            # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
+            reject_span.set_attribute("http.method", request.method)
+            reject_span.set_attribute("http.path", request.url.path)
+            reject_span.set_attribute("http.status_code", 401)
+            reject_span.set_attribute("error.code", "AUTHENTICATION_ERROR")
+            reject_span.set_attribute("error.message", error_message)
+            
+            # Add correlation ID if available
+            correlation_id = get_correlation_id(request)
+            if correlation_id:
+                reject_span.set_attribute("correlation.id", correlation_id)
+            
+            reject_span.set_status(Status(StatusCode.ERROR, error_message))
+            reject_span.record_exception(exc)
+    
+    # Check if this is a JWT authentication failure (should return AUTH_FAILED)
+    jwt_failure_messages = [
+        "Authentication failed. Please log in again.",
+        "Invalid or expired token",
+        "Missing bearer token",
+        "Invalid token type",
+        "User ID not found in token",
+        "Failed to verify token"
+    ]
+    
+    is_jwt_failure = any(msg in error_message for msg in jwt_failure_messages)
+    error_code = "AUTH_FAILED" if is_jwt_failure else "AUTHENTICATION_ERROR"
+    
+    # Log to OpenSearch
+    _log_error_to_opensearch(request, 401, error_code, error_message)
+    
+    error_detail = ErrorDetail(
+        message=error_message,
+        code=error_code,
+        timestamp=time.time()
+    )
+    # Use model_dump() for Pydantic v2 compatibility, fallback to dict() for v1
+    # Exclude timestamp from response
+    try:
+        detail_dict = error_detail.model_dump(exclude={'timestamp'}) if hasattr(error_detail, 'model_dump') else error_detail.dict(exclude={'timestamp'})
+    except Exception:
+        detail_dict = error_detail.dict(exclude={'timestamp'})
+    
+    response_content = {"detail": detail_dict}
+    logger.info(f"AuthenticationError handler returning structured response: {response_content}")
+    
+    return JSONResponse(
+        status_code=401,
+        content=response_content
+    )
+
+
 def add_error_handlers(app: FastAPI) -> None:
     """Register exception handlers for common exceptions."""
     
     @app.exception_handler(AuthenticationError)
-    async def authentication_error_handler(request: Request, exc: AuthenticationError):
-        """Handle authentication errors."""
-        if tracer:
-            with tracer.start_as_current_span("request.reject") as reject_span:
-                reject_span.set_attribute("auth.operation", "reject_authentication")
-                reject_span.set_attribute("auth.rejected", True)
-                # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
-                reject_span.set_attribute("http.method", request.method)
-                reject_span.set_attribute("http.path", request.url.path)
-                reject_span.set_attribute("http.status_code", 401)
-                reject_span.set_attribute("error.code", "AUTHENTICATION_ERROR")
-                reject_span.set_attribute("error.message", exc.message)
-                
-                # Add correlation ID if available
-                correlation_id = get_correlation_id(request)
-                if correlation_id:
-                    reject_span.set_attribute("correlation.id", correlation_id)
-                
-                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
-                reject_span.record_exception(exc)
-        
-        # Log to OpenSearch
-        _log_error_to_opensearch(request, 401, "AUTHENTICATION_ERROR", exc.message)
-        
-        error_detail = ErrorDetail(
-            message=exc.message,
-            code="AUTHENTICATION_ERROR",
-            timestamp=time.time()
-        )
-        return JSONResponse(
-            status_code=401,
-            content={"detail": error_detail.dict()}
-        )
+    async def authentication_error_handler_wrapper(request: Request, exc: AuthenticationError):
+        """Wrapper to call the authentication error handler."""
+        logger.error(f"🔴 AuthenticationError handler wrapper CALLED for path: {request.url.path}, detail: {exc.detail}, message: {getattr(exc, 'message', None)}")
+        try:
+            response = await authentication_error_handler(request, exc)
+            logger.error(f"🔴 AuthenticationError handler returning response: {response.body.decode() if hasattr(response, 'body') else 'no body'}")
+            return response
+        except Exception as e:
+            logger.error(f"🔴 ERROR in authentication_error_handler: {e}", exc_info=True)
+            raise
     
     @app.exception_handler(AuthorizationError)
     async def authorization_error_handler(request: Request, exc: AuthorizationError):
@@ -176,9 +270,14 @@ def add_error_handlers(app: FastAPI) -> None:
             code="AUTHORIZATION_ERROR",
             timestamp=time.time()
         )
+        # Exclude timestamp from response
+        try:
+            detail_dict = error_detail.model_dump(exclude={'timestamp'}) if hasattr(error_detail, 'model_dump') else error_detail.dict(exclude={'timestamp'})
+        except Exception:
+            detail_dict = error_detail.dict(exclude={'timestamp'})
         return JSONResponse(
             status_code=403,
-            content={"detail": error_detail.dict()}
+            content={"detail": detail_dict}
         )
     
     @app.exception_handler(RateLimitExceededError)
@@ -212,15 +311,34 @@ def add_error_handlers(app: FastAPI) -> None:
             code="RATE_LIMIT_EXCEEDED",
             timestamp=time.time()
         )
+        # Exclude timestamp from response
+        try:
+            detail_dict = error_detail.model_dump(exclude={'timestamp'}) if hasattr(error_detail, 'model_dump') else error_detail.dict(exclude={'timestamp'})
+        except Exception:
+            detail_dict = error_detail.dict(exclude={'timestamp'})
         return JSONResponse(
             status_code=429,
-            content={"detail": error_detail.dict()},
+            content={"detail": detail_dict},
             headers={"Retry-After": str(exc.retry_after)}
         )
     
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle generic HTTP exceptions."""
+        # CRITICAL: Check for AuthenticationError FIRST before any other processing
+        # This ensures our custom handler is used instead of FastAPI's default
+        if isinstance(exc, AuthenticationError):
+            logger.error(f"🔴 HTTPException handler delegating AuthenticationError for path: {request.url.path}, detail: {exc.detail}")
+            try:
+                response = await authentication_error_handler(request, exc)
+                logger.error(f"🔴 HTTPException handler got response from authentication_error_handler")
+                return response
+            except Exception as e:
+                logger.error(f"🔴 ERROR in HTTPException handler delegation: {e}", exc_info=True)
+                raise
+        if isinstance(exc, AuthorizationError):
+            return await authorization_error_handler(request, exc)
+        
         # Log the error to OpenSearch (similar to RequestLoggingMiddleware)
         # This is important because exception handler responses might bypass RequestLoggingMiddleware
         method = request.method
@@ -309,15 +427,22 @@ def add_error_handlers(app: FastAPI) -> None:
                     content={"detail": exc.detail}
                 )
         
-        # Otherwise, wrap in ErrorDetail
+        # For string details (like AuthenticationError), always wrap in ErrorDetail format
+        # This ensures consistent structured error responses
         error_detail = ErrorDetail(
             message=error_message,
             code=error_code,
             timestamp=time.time()
         )
+        # Use model_dump() for Pydantic v2 compatibility, exclude timestamp
+        try:
+            detail_dict = error_detail.model_dump(exclude={'timestamp'}) if hasattr(error_detail, 'model_dump') else error_detail.dict(exclude={'timestamp'})
+        except Exception:
+            detail_dict = error_detail.dict(exclude={'timestamp'})
+        
         return JSONResponse(
             status_code=exc.status_code,
-            content={"detail": error_detail.dict()}
+            content={"detail": detail_dict}
         )
     
     @app.exception_handler(Exception)
@@ -385,9 +510,14 @@ def add_error_handlers(app: FastAPI) -> None:
             code="INTERNAL_ERROR",
             timestamp=time.time()
         )
+        # Exclude timestamp from response
+        try:
+            detail_dict = error_detail.model_dump(exclude={'timestamp'}) if hasattr(error_detail, 'model_dump') else error_detail.dict(exclude={'timestamp'})
+        except Exception:
+            detail_dict = error_detail.dict(exclude={'timestamp'})
         return JSONResponse(
             status_code=500,
-            content={"detail": error_detail.dict()}
+            content={"detail": detail_dict}
         )
     
     @app.exception_handler(RequestValidationError)
