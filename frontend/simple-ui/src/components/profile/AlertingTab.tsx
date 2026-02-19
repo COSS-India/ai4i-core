@@ -113,12 +113,12 @@ function OptionSelector({
           fontWeight="semibold"
           textAlign="center"
           cursor="pointer"
-          bg={value === opt ? "#F9A825" : "white"}
+          bg={value === opt ? "orange.500" : "white"}
           color={value === opt ? "white" : "gray.600"}
           borderRight="1px solid"
           borderRightColor="gray.200"
           _last={{ borderRight: "none" }}
-          _hover={{ bg: value === opt ? "#F9A825" : "gray.50" }}
+          _hover={{ bg: value === opt ? "orange.600" : "gray.50" }}
           transition="all 0.15s"
           onClick={() => onChange(opt)}
           textTransform="capitalize"
@@ -216,9 +216,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </Button>
               <Button
                 size="sm"
-                bg="#F9A825"
-                color="white"
-                _hover={{ bg: "#F57F17" }}
+                colorScheme="orange"
                 leftIcon={<AddIcon />}
                 onClick={defs.openCreate}
               >
@@ -402,20 +400,22 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     />
                     <Text fontSize="xs" color="gray.500" mt={1}>Prometheus query expression to evaluate this alert</Text>
                   </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
-                    <Select value={defs.createForm.evaluation_interval ?? "30s"} onChange={(e) => defs.setCreateForm({ ...defs.createForm, evaluation_interval: e.target.value })} bg="white">
-                      {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
-                    </Select>
-                    <Text fontSize="xs" color="gray.500" mt={1}>How often to check this condition</Text>
-                  </FormControl>
-                  <FormControl isRequired>
-                    <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
-                    <Select value={defs.createForm.for_duration ?? "5m"} onChange={(e) => defs.setCreateForm({ ...defs.createForm, for_duration: e.target.value })} bg="white">
-                      {FOR_DURATIONS.map((v) => (<option key={v} value={v}>{v}</option>))}
-                    </Select>
-                    <Text fontSize="xs" color="gray.500" mt={1}>How long the condition must persist before triggering</Text>
-                  </FormControl>
+                  <SimpleGrid columns={2} spacing={4}>
+                    <FormControl isRequired>
+                      <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
+                      <Select value={defs.createForm.evaluation_interval ?? "30s"} onChange={(e) => defs.setCreateForm({ ...defs.createForm, evaluation_interval: e.target.value })} bg="white">
+                        {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
+                      </Select>
+                      <Text fontSize="xs" color="gray.500" mt={1}>How often to check this condition</Text>
+                    </FormControl>
+                    <FormControl isRequired>
+                      <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
+                      <Select value={defs.createForm.for_duration ?? "5m"} onChange={(e) => defs.setCreateForm({ ...defs.createForm, for_duration: e.target.value })} bg="white">
+                        {FOR_DURATIONS.map((v) => (<option key={v} value={v}>{v}</option>))}
+                      </Select>
+                      <Text fontSize="xs" color="gray.500" mt={1}>How long the condition must persist before triggering</Text>
+                    </FormControl>
+                  </SimpleGrid>
                 </VStack>
               </Box>
 
@@ -437,7 +437,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
             <Button variant="outline" mr={3} onClick={defs.closeCreate} isDisabled={defs.isCreating}>Cancel</Button>
-            <Button bg="#F9A825" color="white" _hover={{ bg: "#F57F17" }} onClick={defs.handleCreate} isLoading={defs.isCreating} loadingText="Saving...">Save Alert Definition</Button>
+            <Button colorScheme="orange" onClick={defs.handleCreate} isLoading={defs.isCreating} loadingText="Saving...">Save Alert Definition</Button>
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
@@ -591,7 +591,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
             <Button variant="outline" mr={3} onClick={defs.closeUpdate} isDisabled={defs.isUpdating}>Cancel</Button>
-            <Button bg="#F9A825" color="white" _hover={{ bg: "#F57F17" }} onClick={defs.handleUpdate} isLoading={defs.isUpdating} loadingText="Saving...">Save Changes</Button>
+            <Button colorScheme="orange" onClick={defs.handleUpdate} isLoading={defs.isUpdating} loadingText="Saving...">Save Changes</Button>
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
@@ -1204,7 +1204,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </FormControl>
               </SimpleGrid>
               <FormControl display="flex" alignItems="center">
-                <FormLabel fontWeight="semibold" mb={0}>Enabled</FormLabel>
+                <FormLabel fontWeight="semibold" mb={0}>Enable immediately</FormLabel>
                 <Switch isChecked={rules.updateForm.enabled ?? true} onChange={(e) => rules.setUpdateForm({ ...rules.updateForm, enabled: e.target.checked })} colorScheme="green" />
               </FormControl>
             </VStack>
@@ -1262,7 +1262,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   right: 0,
                   height: "3px",
                   borderRadius: "3px 3px 0 0",
-                  bg: subTabIndex === idx ? "#F9A825" : "transparent",
+                  bg: subTabIndex === idx ? "orange.500" : "transparent",
                   transition: "background 0.2s",
                 }}
                 _hover={{ color: "gray.700" }}
