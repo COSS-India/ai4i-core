@@ -721,10 +721,12 @@ async def AuthProvider(
                         service, action = determine_service_and_action(request)
                         auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
                         
-                        # CRITICAL: Always check valid field - auth-service may return valid=false for ownership mismatch
+                        # CRITICAL: Always check valid field - auth-service may return valid=false
                         if not auth_result.get("valid", False):
+                            # Preserve detailed message from auth-service, e.g.:
+                            # "Invalid API key: This key does not have access to NMT service"
                             error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
-                            raise AuthenticationError("API key does not belong to the authenticated user")
+                            raise AuthenticationError(error_msg)
 
                         # 4) Populate request.state – keep JWT as primary identity (matching ASR/TTS)
                         request.state.user_id = jwt_user_id
@@ -738,22 +740,22 @@ async def AuthProvider(
                         auth_span.set_status(Status(StatusCode.OK))
 
                         return bearer_result
-                    except (AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
-                        # For ANY auth/key error in BOTH mode, surface a single, consistent message
-                        logger.error(f"NMT BOTH mode: Authentication/Authorization error: {e}")
+                    except (AuthenticationError, AuthorizationError) as e:
+                        # For ANY auth/key error in BOTH mode, surface the underlying message when available
+                        logger.error(f"NMT BOTH mode (tracing): Authentication/Authorization error: {e}")
                         auth_span.set_attribute("auth.authorized", False)
                         auth_span.set_attribute("error", True)
                         auth_span.set_attribute("error.type", type(e).__name__)
-                        auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
-                        raise AuthenticationError("API key does not belong to the authenticated user")
+                        auth_span.set_status(Status(StatusCode.ERROR, str(e)))
+                        raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
                     except Exception as e:
-                        logger.error(f"NMT BOTH mode: Unexpected error: {e}", exc_info=True)
+                        logger.error(f"NMT BOTH mode (tracing): Unexpected error: {e}", exc_info=True)
                         auth_span.set_attribute("auth.authorized", False)
                         auth_span.set_attribute("error", True)
                         auth_span.set_attribute("error.type", type(e).__name__)
-                        auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
-                        # Even on unexpected errors we normalize the external message
-                        raise AuthenticationError("API key does not belong to the authenticated user")
+                        auth_span.set_status(Status(StatusCode.ERROR, str(e)))
+                        # Even on unexpected errors we surface a useful message
+                        raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
 
                 # Default: API_KEY
                 method_span.set_attribute("auth.decision.result", "api_key")
@@ -820,10 +822,7 @@ async def AuthProvider(
             auth_span.set_attribute("error.type", "AuthenticationError")
             auth_span.set_attribute("error.reason", "authentication_failed")
             auth_span.set_status(Status(StatusCode.ERROR, str(exc)))
-            # For BOTH mode, always surface a single stable error message so that
-            # repeated calls with the same invalid API key/JWT pair don't flicker.
-            if auth_source == "BOTH":
-                raise AuthenticationError("API key does not belong to the authenticated user")
+            # Re-raise AuthenticationError as-is to preserve the actual error message
             raise
         except AuthorizationError as exc:
             # Mark auth span as failed (error handler will create request.reject span)
@@ -831,8 +830,7 @@ async def AuthProvider(
             auth_span.set_attribute("error.type", "AuthorizationError")
             auth_span.set_attribute("error.reason", "authorization_failed")
             auth_span.set_status(Status(StatusCode.ERROR, str(exc)))
-            if auth_source == "BOTH":
-                raise AuthenticationError("API key does not belong to the authenticated user")
+            # Re-raise AuthorizationError as-is to preserve the actual error message
             raise
 
 
@@ -871,15 +869,17 @@ async def _auth_provider_impl(
         service, action = determine_service_and_action(request)
         auth_result = await _validate_api_key_permissions_impl(api_key, service, action, user_id=jwt_user_id)
         
-        # CRITICAL: Always check valid field - auth-service may return valid=false for ownership mismatch
+        # CRITICAL: Always check valid field - auth-service may return valid=false
         if not auth_result.get("valid", False):
+            # Preserve detailed message from auth-service, e.g.:
+            # "Invalid API key: This key does not have access to NMT service"
             error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
             logger.error(
                 "NMT BOTH auth (no tracing): API key validation failed: jwt_user_id=%s, error=%s",
                 jwt_user_id,
                 error_msg,
             )
-            raise AuthenticationError("API key does not belong to the authenticated user")
+            raise AuthenticationError(error_msg)
 
         # 3) Populate request.state – keep JWT as primary identity (matching ASR/TTS)
         request.state.user_id = jwt_user_id

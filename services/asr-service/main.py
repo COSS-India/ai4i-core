@@ -195,10 +195,8 @@ async def lifespan(app: FastAPI):
         app.state.triton_api_key = TRITON_API_KEY
         app.state.triton_timeout = TRITON_TIMEOUT
         
-        # Register error handlers
-        add_error_handlers(app)
-        
-        # NOTE: Model Management Plugin is registered BEFORE app starts (outside lifespan)
+        # NOTE: Error handlers are registered AFTER app starts (outside lifespan)
+        # to match NMT/TTS pattern and ensure proper registration order
         # to ensure middleware can be added. See line ~330 for registration.
         
         # Register service in central registry via config-service
@@ -518,6 +516,9 @@ async def health_check() -> Dict[str, Any]:
 try:
     from routers.inference_router import inference_router
     from routers.health_router import health_router
+    
+    # Register error handlers (AFTER middleware, BEFORE routes - matches NMT/TTS pattern)
+    add_error_handlers(app)
     
     app.include_router(inference_router)
     app.include_router(health_router)

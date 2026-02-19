@@ -2278,10 +2278,6 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str, 
         if data.get("valid") is False:
             # Extract the actual error message from auth-service
             error_message = data.get("message", "Invalid API key or insufficient permissions")
-            # Format error message to be consistent with "insufficient permission" format
-            if "does not have" in error_message.lower() or "permission" in error_message.lower():
-                if "insufficient permission" not in error_message.lower():
-                    error_message = f"Authorization error: Insufficient permission. {error_message}"
             raise HTTPException(
                 status_code=403,
                 detail={
