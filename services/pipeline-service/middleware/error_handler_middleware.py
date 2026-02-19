@@ -8,11 +8,13 @@ from middleware.exceptions import (
     AuthenticationError, 
     AuthorizationError, 
     RateLimitExceededError,
-    ErrorDetail
+    ErrorDetail,
+    InvalidAPIKeyError
 )
 import logging
 import time
 import traceback
+import re
 
 import os
 
@@ -40,6 +42,23 @@ except ImportError:
 
 # Get Jaeger URL from environment or use default
 JAEGER_UI_URL = os.getenv("JAEGER_UI_URL", "http://localhost:16686")
+
+# Authentication error message constant
+AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."
+
+
+def _strip_status_prefix(message: str) -> str:
+    """
+    Remove leading HTTP status codes like '403: ' from error messages so that
+    user-facing messages match API Gateway (which does not include status
+    codes in the message text).
+    """
+    if not isinstance(message, str):
+        return message
+    match = re.match(r"^\s*(\d{3})\s*:\s*(.+)$", message)
+    if match:
+        return match.group(2)
+    return message
 
 
 def _log_error_to_opensearch(request: Request, status_code: int, error_code: str, error_message: str):
@@ -110,118 +129,138 @@ def _log_error_to_opensearch(request: Request, status_code: int, error_code: str
 
 async def authentication_error_handler(request: Request, exc: AuthenticationError):
     """Handle authentication errors."""
-    # Get message from exc.message or exc.detail (HTTPException uses detail)
-    error_message = getattr(exc, 'message', None) or str(exc.detail) if hasattr(exc, 'detail') else str(exc)
-    
+    # Capture original message for tracing and ownership checks
+    # Match NMT/TTS/ASR pattern exactly - simple string extraction
+    error_msg = (
+        getattr(exc, "message", None)
+        or (str(exc.detail) if hasattr(exc, "detail") and exc.detail else "")
+    )
+    error_msg = _strip_status_prefix(error_msg) if error_msg else ""
+
+    # Check if no API key header is provided first - return API_KEY_MISSING
+    # This handles cases where the error message might not be extracted correctly
+    x_auth_source = (request.headers.get("x-auth-source") or "API_KEY").upper()
+    x_api_key = request.headers.get("x-api-key")
+    if not x_api_key and x_auth_source == "API_KEY":
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": {
+                    "error": "API_KEY_MISSING",
+                    "message": "API key is required to access this service.",
+                }
+            },
+        )
+
     if tracer:
         with tracer.start_as_current_span("request.reject") as reject_span:
             reject_span.set_attribute("auth.operation", "reject_authentication")
             reject_span.set_attribute("auth.rejected", True)
             # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
-            reject_span.set_attribute("http.method", request.method)
-            reject_span.set_attribute("http.path", request.url.path)
-            reject_span.set_attribute("http.status_code", 401)
+            reject_span.set_attribute("error.type", "AuthenticationError")
+            reject_span.set_attribute("error.reason", "authentication_failed")
+            # Record the low-level message for debugging
+            reject_span.set_attribute("error.message", error_msg or exc.message)
             reject_span.set_attribute("error.code", "AUTHENTICATION_ERROR")
-            reject_span.set_attribute("error.message", error_message)
-            
-            # Add correlation ID if available
-            correlation_id = get_correlation_id(request)
-            if correlation_id:
-                reject_span.set_attribute("correlation.id", correlation_id)
-            
-            reject_span.set_status(Status(StatusCode.ERROR, error_message))
-            reject_span.record_exception(exc)
-    
-    # Check if this is a JWT authentication failure (should return AUTH_FAILED)
-    jwt_failure_messages = [
-        "Authentication failed. Please log in again.",
-        "Invalid or expired token",
-        "Missing bearer token",
-        "Invalid token type",
-        "User ID not found in token",
-        "Failed to verify token"
-    ]
-    
-    is_jwt_failure = any(msg in error_message for msg in jwt_failure_messages)
-    error_code = "AUTH_FAILED" if is_jwt_failure else "AUTHENTICATION_ERROR"
-    
-    # Log to OpenSearch
-    _log_error_to_opensearch(request, 401, error_code, error_message)
-    
-    error_detail = ErrorDetail(
-        message=error_message,
-        code=error_code,
-        timestamp=time.time()
-    )
-    # Exclude timestamp from response
-    try:
-        detail_dict = error_detail.model_dump(exclude={'timestamp'}) if hasattr(error_detail, 'model_dump') else error_detail.dict(exclude={'timestamp'})
-    except Exception:
-        detail_dict = error_detail.dict(exclude={'timestamp'})
+            reject_span.set_attribute("http.status_code", 401)
+            reject_span.set_status(
+                Status(StatusCode.ERROR, error_msg or exc.message or AUTH_FAILED_MESSAGE)
+            )
+            # Don't record exception here - OpenTelemetry already recorded it
+            # automatically in parent spans when exception was raised
+
+    # For the ownership case, return explicit error + message fields with AUTHORIZATION_ERROR
+    # Match NMT/TTS/ASR pattern: simple string matching
+    if "API key does not belong to the authenticated user" in (error_msg or ""):
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": {
+                    "error": "AUTHORIZATION_ERROR",
+                    "message": "API key does not belong to the authenticated user",
+                }
+            },
+        )
+
+    # Check for permission errors that come through as AuthenticationError
+    # These should be returned as AUTHORIZATION_ERROR
+    # Match ASR pattern: simple string matching for "does not have access"
+    if "does not have access" in (error_msg or "").lower() or "insufficient permission" in (error_msg or "").lower():
+        # Handle "asr service error: Insufficient permission: This key does not have access to ASR service"
+        # Remove "service error:" prefix if present
+        clean_error_msg = error_msg
+        if "service error:" in (error_msg or "").lower():
+            parts = error_msg.split(":", 2)
+            if len(parts) >= 3:
+                clean_error_msg = parts[2].strip()
+        
+        # Normalize message based on service name - match ASR pattern
+        clean_error_msg_lower = clean_error_msg.lower()
+        if "does not have access to pipeline service" in clean_error_msg_lower:
+            message = "Insufficient permission: This key does not have access to Pipeline service"
+        elif "does not have access to asr service" in clean_error_msg_lower:
+            message = "Insufficient permission: This key does not have access to ASR service"
+        elif "invalid api key" in clean_error_msg_lower and "does not have access" in clean_error_msg_lower:
+            # Handle "Invalid API key: This key does not have access to [service]"
+            if "pipeline service" in clean_error_msg_lower:
+                message = "Insufficient permission: This key does not have access to Pipeline service"
+            elif "asr service" in clean_error_msg_lower:
+                message = "Insufficient permission: This key does not have access to ASR service"
+            else:
+                message = clean_error_msg
+        else:
+            # Use cleaned message (after removing service error prefix)
+            message = clean_error_msg
+        
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": {
+                    "error": "AUTHORIZATION_ERROR",
+                    "message": message,
+                }
+            },
+        )
+
+    # For invalid API key errors (BOTH mode with bad/missing key), mirror API
+    # Gateway behavior by surfacing AUTHORIZATION_ERROR with the original message
+    # Match NMT/TTS/ASR pattern: simple string matching
+    if "Invalid API key" in (error_msg or ""):
+        clean_message = _strip_status_prefix(error_msg or "Invalid API key")
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": {
+                    "error": "AUTHORIZATION_ERROR",
+                    "message": clean_message,
+                }
+            },
+        )
+
+    # For missing API key, mirror API Gateway "API_KEY_MISSING" behavior
+    # Match NMT/TTS/ASR pattern: simple string matching
+    if "Missing API key" in (error_msg or ""):
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": {
+                    "error": "API_KEY_MISSING",
+                    "message": "API key is required to access this service.",
+                }
+            },
+        )
+
+    # For token-expired / invalid-token and all other authentication failures,
+    # align user-facing message with API Gateway:
+    #   "Authentication failed. Please log in again."
     return JSONResponse(
         status_code=401,
-        content={"detail": detail_dict}
-    )
-
-
-async def authentication_error_handler(request: Request, exc: AuthenticationError):
-    """Handle authentication errors."""
-    # Get message from exc.message or exc.detail (HTTPException uses detail)
-    error_message = getattr(exc, 'message', None) or str(exc.detail) if hasattr(exc, 'detail') else str(exc)
-    
-    if tracer:
-        with tracer.start_as_current_span("request.reject") as reject_span:
-            reject_span.set_attribute("auth.operation", "reject_authentication")
-            reject_span.set_attribute("auth.rejected", True)
-            # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
-            reject_span.set_attribute("http.method", request.method)
-            reject_span.set_attribute("http.path", request.url.path)
-            reject_span.set_attribute("http.status_code", 401)
-            reject_span.set_attribute("error.code", "AUTHENTICATION_ERROR")
-            reject_span.set_attribute("error.message", error_message)
-            
-            # Add correlation ID if available
-            correlation_id = get_correlation_id(request)
-            if correlation_id:
-                reject_span.set_attribute("correlation.id", correlation_id)
-            
-            reject_span.set_status(Status(StatusCode.ERROR, error_message))
-            reject_span.record_exception(exc)
-    
-    # Check if this is a JWT authentication failure (should return AUTH_FAILED)
-    jwt_failure_messages = [
-        "Authentication failed. Please log in again.",
-        "Invalid or expired token",
-        "Missing bearer token",
-        "Invalid token type",
-        "User ID not found in token",
-        "Failed to verify token"
-    ]
-    
-    is_jwt_failure = any(msg in error_message for msg in jwt_failure_messages)
-    error_code = "AUTH_FAILED" if is_jwt_failure else "AUTHENTICATION_ERROR"
-    
-    # Log to OpenSearch
-    _log_error_to_opensearch(request, 401, error_code, error_message)
-    
-    error_detail = ErrorDetail(
-        message=error_message,
-        code=error_code,
-        timestamp=time.time()
-    )
-    # Use model_dump() for Pydantic v2 compatibility, fallback to dict() for v1
-    # Exclude timestamp from response
-    try:
-        detail_dict = error_detail.model_dump(exclude={'timestamp'}) if hasattr(error_detail, 'model_dump') else error_detail.dict(exclude={'timestamp'})
-    except Exception:
-        detail_dict = error_detail.dict(exclude={'timestamp'})
-    
-    response_content = {"detail": detail_dict}
-    logger.info(f"AuthenticationError handler returning structured response: {response_content}")
-    
-    return JSONResponse(
-        status_code=401,
-        content=response_content
+        content={
+            "detail": {
+                "error": "AUTHENTICATION_ERROR",
+                "message": AUTH_FAILED_MESSAGE,
+            }
+        },
     )
 
 
@@ -231,53 +270,103 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthenticationError)
     async def authentication_error_handler_wrapper(request: Request, exc: AuthenticationError):
         """Wrapper to call the authentication error handler."""
-        logger.error(f"🔴 AuthenticationError handler wrapper CALLED for path: {request.url.path}, detail: {exc.detail}, message: {getattr(exc, 'message', None)}")
-        try:
-            response = await authentication_error_handler(request, exc)
-            logger.error(f"🔴 AuthenticationError handler returning response: {response.body.decode() if hasattr(response, 'body') else 'no body'}")
-            return response
-        except Exception as e:
-            logger.error(f"🔴 ERROR in authentication_error_handler: {e}", exc_info=True)
-            raise
+        return await authentication_error_handler(request, exc)
     
     @app.exception_handler(AuthorizationError)
     async def authorization_error_handler(request: Request, exc: AuthorizationError):
         """Handle authorization errors."""
+        # Preserve detailed API key permission messages from auth-service (e.g.,
+        # "Invalid API key: This key does not have access to Pipeline service") so they
+        # are not prefixed with a generic authorization message.
+        # Match ASR pattern: simple string extraction
+        message_raw = getattr(exc, "message", None) or getattr(exc, "detail", None) or str(exc)
+        message = _strip_status_prefix(message_raw)
+
+        # If we see an "Invalid API key" authorization error and there is no explicit
+        # X-API-Key header, treat this like API_KEY_MISSING to match API Gateway.
+        if "invalid api key" in message.lower() and not request.headers.get("x-api-key"):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "API_KEY_MISSING",
+                        "message": "API key is required to access this service.",
+                    }
+                },
+            )
+
+        # For simple "Invalid API key" errors (without permission details), return as AUTHORIZATION_ERROR
+        # This matches API Gateway behavior for invalid API keys
+        # Match ASR pattern: simple string matching
+        if "invalid api key" in message.lower() and "does not have access" not in message.lower():
+            clean_message = _strip_status_prefix(message)
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "AUTHORIZATION_ERROR",
+                        "message": clean_message,
+                    }
+                },
+            )
+
+        # For permission/ownership issues, keep or normalize the message to a clear
+        # "Insufficient permission" format instead of prefixing with "Authorization error".
+        # Match ASR pattern: simple string matching
+        if (
+            "permission" in message.lower()
+            or "does not have" in message.lower()
+            or "pipeline.inference" in message
+            or "pipeline service" in message.lower()
+        ):
+            # Normalize to the desired format if this is the standard Pipeline access message
+            # Match ASR pattern: simple string matching
+            if "does not have access to pipeline service" in message.lower():
+                message = "Insufficient permission: This key does not have access to Pipeline service"
+            # Also handle cases where the message might be "Invalid API key: This key does not have access to Pipeline service"
+            elif "invalid api key" in message.lower() and "does not have access to pipeline service" in message.lower():
+                message = "Insufficient permission: This key does not have access to Pipeline service"
+            # Handle "asr service error: Insufficient permission: This key does not have access to ASR service"
+            elif "asr service" in message.lower() and ("does not have access" in message.lower() or "insufficient permission" in message.lower()):
+                # Remove "service error:" prefix if present
+                if "service error:" in message.lower():
+                    parts = message.split(":", 2)
+                    if len(parts) >= 3:
+                        message = parts[2].strip()
+                # Normalize to standard format
+                if "does not have access to asr service" in message.lower():
+                    message = "Insufficient permission: This key does not have access to ASR service"
+            # Else leave the permission-related message as-is
+        else:
+            # For non-permission/ownership-related authorization errors, we can keep or
+            # lightly prefix the message if needed.
+            if "Authorization error" not in message:
+                message = f"Authorization error: {message}"
+
         if tracer:
             with tracer.start_as_current_span("request.reject") as reject_span:
                 reject_span.set_attribute("auth.operation", "reject_authorization")
                 reject_span.set_attribute("auth.rejected", True)
                 # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
-                reject_span.set_attribute("http.method", request.method)
-                reject_span.set_attribute("http.path", request.url.path)
-                reject_span.set_attribute("http.status_code", 403)
+                reject_span.set_attribute("error.type", "AuthorizationError")
+                reject_span.set_attribute("error.reason", "authorization_failed")
+                reject_span.set_attribute("error.message", message)
                 reject_span.set_attribute("error.code", "AUTHORIZATION_ERROR")
-                reject_span.set_attribute("error.message", exc.message)
-                
-                # Add correlation ID if available
-                correlation_id = get_correlation_id(request)
-                if correlation_id:
-                    reject_span.set_attribute("correlation.id", correlation_id)
-                
-                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
-                reject_span.record_exception(exc)
+                reject_span.set_attribute("http.status_code", 401)
+                reject_span.set_status(Status(StatusCode.ERROR, message))
+                # Don't record exception here - OpenTelemetry already recorded it
+                # automatically in parent spans when exception was raised
         
-        # Log to OpenSearch
-        _log_error_to_opensearch(request, 403, "AUTHORIZATION_ERROR", exc.message)
-        
-        error_detail = ErrorDetail(
-            message=exc.message,
-            code="AUTHORIZATION_ERROR",
-            timestamp=time.time()
-        )
-        # Exclude timestamp from response
-        try:
-            detail_dict = error_detail.model_dump(exclude={'timestamp'}) if hasattr(error_detail, 'model_dump') else error_detail.dict(exclude={'timestamp'})
-        except Exception:
-            detail_dict = error_detail.dict(exclude={'timestamp'})
+        # Return with status 401 for API key related errors, 403 for other authorization errors
+        status_code = 401 if ("invalid api key" in message.lower() or "does not have access" in message.lower()) else 403
         return JSONResponse(
-            status_code=403,
-            content={"detail": detail_dict}
+            status_code=status_code,
+            content={
+                "detail": {
+                    "error": "AUTHORIZATION_ERROR",
+                    "message": message,
+                }
+            },
         )
     
     @app.exception_handler(RateLimitExceededError)
@@ -376,6 +465,37 @@ def add_error_handlers(app: FastAPI) -> None:
             elif "code" in exc.detail:
                 error_code = exc.detail.get("code", "HTTP_ERROR")
                 error_message = exc.detail.get("message", str(exc.detail))
+        
+        # Check for permission errors in HTTPException (e.g., from gateway)
+        # Gateway format: "pipeline service error: Invalid API key: This key does not have access to Pipeline service"
+        error_message_lower = error_message.lower()
+        if "does not have access" in error_message_lower:
+            # Normalize to AUTHORIZATION_ERROR format
+            if "pipeline service" in error_message_lower or "pipeline.inference" in error_message_lower:
+                message = "Insufficient permission: This key does not have access to Pipeline service"
+            elif "invalid api key" in error_message_lower:
+                # Extract the core message
+                if "pipeline" in error_message_lower:
+                    message = "Insufficient permission: This key does not have access to Pipeline service"
+                else:
+                    # Remove "service error:" prefix if present
+                    if "service error:" in error_message_lower:
+                        parts = error_message.split(":", 2)
+                        message = parts[2].strip() if len(parts) >= 3 else error_message
+                    else:
+                        message = error_message
+            else:
+                message = error_message
+            
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "AUTHORIZATION_ERROR",
+                        "message": message,
+                    }
+                },
+            )
         
         # Build log context matching RequestLoggingMiddleware format
         log_context = {
