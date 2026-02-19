@@ -1,15 +1,20 @@
 """
 Router for notification receivers endpoints
 """
-from fastapi import APIRouter, Request, Query
+from fastapi import APIRouter, Request, Query, Depends
 from typing import Optional, List
-from fastapi.security import HTTPAuthorizationCredentials
 
 from alert_management import (
     NotificationReceiverCreate, NotificationReceiverUpdate, NotificationReceiverResponse,
     extract_organization, validate_organization, get_organization_for_audit_from_request,
     create_notification_receiver, get_notification_receiver_by_id, list_notification_receivers,
     update_notification_receiver, delete_notification_receiver
+)
+from utils.auth_deps import (
+    require_alerts_create,
+    require_alerts_read,
+    require_alerts_update,
+    require_alerts_delete,
 )
 
 router = APIRouter(
@@ -30,7 +35,9 @@ def get_username_from_request(request: Request) -> str:
 
 
 def is_admin_user(request: Request) -> bool:
-    """Check if user is admin based on headers"""
+    """Check if user is admin from request.state (set by auth) or headers (when behind gateway)."""
+    if getattr(request.state, "is_admin", None) is True:
+        return True
     if request.headers.get("X-Admin", "").lower() == "true":
         return True
     roles = request.headers.get("X-User-Roles", "")
@@ -46,7 +53,8 @@ def is_admin_user(request: Request) -> bool:
 async def create_notification_receiver_endpoint(
     payload: NotificationReceiverCreate,
     request: Request,
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
+    _: None = Depends(require_alerts_create),
 ):
     """
     Create a new notification receiver
@@ -70,7 +78,8 @@ async def create_notification_receiver_endpoint(
 @router.get("", response_model=List[NotificationReceiverResponse])
 async def list_notification_receivers_endpoint(
     request: Request,
-    enabled_only: bool = Query(False, description="Only return enabled receivers")
+    enabled_only: bool = Query(False, description="Only return enabled receivers"),
+    _: None = Depends(require_alerts_read),
 ):
     """
     List notification receivers
@@ -93,7 +102,8 @@ async def list_notification_receivers_endpoint(
 async def get_notification_receiver_endpoint(
     receiver_id: int,
     request: Request,
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
+    _: None = Depends(require_alerts_read),
 ):
     """
     Get a specific notification receiver by ID
@@ -120,7 +130,8 @@ async def update_notification_receiver_endpoint(
     receiver_id: int,
     payload: NotificationReceiverUpdate,
     request: Request,
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
+    _: None = Depends(require_alerts_update),
 ):
     """
     Update a notification receiver
@@ -147,7 +158,8 @@ async def update_notification_receiver_endpoint(
 async def delete_notification_receiver_endpoint(
     receiver_id: int,
     request: Request,
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
+    _: None = Depends(require_alerts_delete),
 ):
     """
     Delete a notification receiver

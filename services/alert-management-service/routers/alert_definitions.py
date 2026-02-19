@@ -1,9 +1,8 @@
 """
 Router for alert definitions endpoints
 """
-from fastapi import APIRouter, Request, Query, Body, HTTPException, Security
+from fastapi import APIRouter, Request, Query, Body, Depends
 from typing import Optional, List
-from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from alert_management import (
@@ -11,6 +10,12 @@ from alert_management import (
     extract_organization, validate_organization, get_organization_for_audit_from_request,
     create_alert_definition, get_alert_definition_by_id, list_alert_definitions,
     update_alert_definition, delete_alert_definition, toggle_alert_definition
+)
+from utils.auth_deps import (
+    require_alerts_create,
+    require_alerts_read,
+    require_alerts_update,
+    require_alerts_delete,
 )
 
 router = APIRouter(
@@ -34,22 +39,18 @@ def get_username_from_request(request: Request) -> str:
     return "system"
 
 
-def is_admin_user(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = None) -> bool:
-    """Check if user is admin based on headers or token"""
-    # Check X-Admin header (set by gateway)
+def is_admin_user(request: Request) -> bool:
+    """Check if user is admin from request.state (set by auth) or headers (when behind gateway)."""
+    if getattr(request.state, "is_admin", None) is True:
+        return True
     if request.headers.get("X-Admin", "").lower() == "true":
         return True
-    
-    # Check X-User-Roles header (set by gateway)
     roles = request.headers.get("X-User-Roles", "")
     if "ADMIN" in roles.upper():
         return True
-    
-    # Check X-User-Permissions header (set by gateway)
     permissions = request.headers.get("X-User-Permissions", "")
     if "alerts.admin" in permissions:
         return True
-    
     return False
 
 
@@ -57,7 +58,8 @@ def is_admin_user(request: Request, credentials: Optional[HTTPAuthorizationCrede
 async def create_alert_definition_endpoint(
     payload: AlertDefinitionCreate,
     request: Request,
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
+    _: None = Depends(require_alerts_create),
 ):
     """
     Create a new alert definition
@@ -83,7 +85,8 @@ async def create_alert_definition_endpoint(
 @router.get("", response_model=List[AlertDefinitionResponse])
 async def list_alert_definitions_endpoint(
     request: Request,
-    enabled_only: bool = Query(False, description="Only return enabled alerts")
+    enabled_only: bool = Query(False, description="Only return enabled alerts"),
+    _: None = Depends(require_alerts_read),
 ):
     """
     List alert definitions.
@@ -107,7 +110,8 @@ async def list_alert_definitions_endpoint(
 async def get_alert_definition_endpoint(
     alert_id: int,
     request: Request,
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
+    _: None = Depends(require_alerts_read),
 ):
     """
     Get a specific alert definition by ID
@@ -137,7 +141,8 @@ async def update_alert_definition_endpoint(
     alert_id: int,
     payload: AlertDefinitionUpdate,
     request: Request,
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
+    _: None = Depends(require_alerts_update),
 ):
     """
     Update an alert definition
@@ -167,7 +172,8 @@ async def update_alert_definition_endpoint(
 async def delete_alert_definition_endpoint(
     alert_id: int,
     request: Request,
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
+    _: None = Depends(require_alerts_delete),
 ):
     """
     Delete an alert definition
@@ -199,7 +205,8 @@ async def toggle_alert_definition_endpoint(
     alert_id: int,
     request: Request,
     enabled: bool = Body(..., embed=True, description="Enable or disable the alert"),
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
+    _: None = Depends(require_alerts_update),
 ):
     """
     Enable or disable an alert definition

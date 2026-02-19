@@ -29,7 +29,7 @@ groups:
       summary: HighMedianLatencyPerService for beml
       description: High median latency for specific inference endpoints
   - alert: HighMedianLatencyPerService_irctc
-    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="irctc"}[5m]))) > 0.17
+    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="irctc"}[5m]))) > 0.15
     for: 2m
     labels:
       organization: irctc
