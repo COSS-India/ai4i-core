@@ -4,7 +4,7 @@ This guide explains how to develop with instant code changes without rebuilding 
 
 ## Overview
 
-The `docker-compose-local.yml` is configured with volume mounts that sync your local code into running containers. This enables hot-reload functionality where code changes are immediately reflected without rebuilding.
+The `docker-compose-local.yml` is configured with volume mounts that sync your local code into running containers. All Python (uvicorn) services are started with `--reload` via a `command` override in the compose file, and the frontend uses `Dockerfile.dev` to run the Next.js dev server (`next dev`). Code changes are detected and the process restarts (or the dev server hot-reloads) automatically without rebuilding.
 
 ## Quick Start
 
@@ -22,7 +22,36 @@ docker-compose -f docker-compose-local.yml up
 - **Auto-Reload**: The service automatically detects changes and reloads
 - **No Rebuild Needed**: Changes are instant!
 
-### 3. Working with Specific Services
+### 3. How to Test Hot Reload
+
+1. **Start one service** (or all) and note its health URL:
+   ```bash
+   docker compose -f docker-compose-local.yml up -d docs-manager
+   ```
+
+2. **Call the health endpoint** and note the response:
+   ```bash
+   curl -s http://localhost:8103/health
+   # e.g. {"status":"ok","service":"docs-manager"}
+   ```
+
+3. **Change code** (e.g. in `services/docs-manager/main.py`): temporarily change the health response string (e.g. add `"hot-reload": true` or change the message).
+
+4. **Save the file.** Within a few seconds uvicorn should reload (watch logs if you want):
+   ```bash
+   docker compose -f docker-compose-local.yml logs -f docs-manager
+   # Look for: "Watching for file changes" or "Detected file change, reloading"
+   ```
+
+5. **Call the health endpoint again** (no rebuild, no restart):
+   ```bash
+   curl -s http://localhost:8103/health
+   ```
+   You should see your updated response. Revert the test change when done.
+
+**Frontend:** For `simple-ui-frontend`, edit a page under `frontend/simple-ui/`, save, and refresh the browser — the Next.js dev server will hot-reload.
+
+### 4. Working with Specific Services
 ```bash
 # View logs for a specific service
 docker-compose -f docker-compose-local.yml logs -f <service-name>
@@ -62,6 +91,8 @@ volumes:
 ```
 
 ### Frontend (Next.js)
+The frontend uses `Dockerfile.dev` (not the production Dockerfile) so the container runs the Next.js **dev server** (`next dev`) instead of the standalone `server.js`. That way the volume mount does not hide the entry point and hot reload works.
+
 ```yaml
 volumes:
   - ./frontend/simple-ui:/app

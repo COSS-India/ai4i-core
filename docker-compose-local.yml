@@ -195,6 +195,13 @@ services:
       - TRY_IT_TTL_SECONDS=3600
     env_file:
       - ./services/api-gateway-service/.env
+    volumes:
+      - ./services/api-gateway-service:/app
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -221,6 +228,14 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/auth-service/.env
+    volumes:
+      - ./services/auth-service:/app
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./services/constants:/app/services/constants
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -249,6 +264,11 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/config-service/.env
+    volumes:
+      - ./services/config-service:/app
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -284,7 +304,8 @@ services:
       - SPECS_ROOT=/app/specs
       - SERVICE_DOCS_REGISTRY_PATH=/app/specs/service-docs-registry.yaml
     volumes:
-      - ./services/docs-manager/specs:/app/specs
+      - ./services/docs-manager:/app
+    command: ["--reload"]
     networks:
       - microservices-network
     restart: unless-stopped
@@ -300,6 +321,9 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/metrics-service/.env
+    volumes:
+      - ./services/metrics-service:/app
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -328,6 +352,12 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/telemetry-service/.env
+    volumes:
+      - ./services/telemetry-service:/app
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8084", "--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -358,6 +388,11 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/alerting-service/.env
+    volumes:
+      - ./services/alerting-service:/app
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -387,6 +422,9 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/dashboard-service/.env
+    volumes:
+      - ./services/dashboard-service:/app
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -420,6 +458,17 @@ services:
       - TRITON_TIMEOUT=120
     env_file:
       - ./services/asr-service/.env
+    volumes:
+      - ./services/asr-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./services/constants:/app/services/constants
+      - ./services/multi-tenant-feature:/app/services/multi-tenant-feature
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -451,6 +500,16 @@ services:
       - TRITON_ENDPOINT=http://13.200.133.97:9000
     env_file:
       - ./services/tts-service/.env
+    volumes:
+      - ./services/tts-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./services/constants:/app/services/constants
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -481,6 +540,16 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/nmt-service/.env
+    volumes:
+      - ./services/nmt-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./services/constants:/app/services/constants
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -511,6 +580,15 @@ services:
       - ./services/ocr-service/.env
     environment:
       - ENV_FILE=.env
+    volumes:
+      - ./services/ocr-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -544,6 +622,15 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/ner-service/.env
+    volumes:
+      - ./services/ner-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -576,6 +663,15 @@ services:
       - TRITON_TIMEOUT=300
     env_file:
       - ./services/llm-service/.env
+    volumes:
+      - ./services/llm-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -608,6 +704,14 @@ services:
       - TTS_SERVICE_URL=http://tts-service:8088
     env_file:
       - ./services/pipeline-service/.env
+    volumes:
+      - ./services/pipeline-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -663,6 +767,9 @@ services:
       - ALLOW_ANONYMOUS_ACCESS=${MODEL_MANAGEMENT_ALLOW_ANONYMOUS_ACCESS:-false}
       - MAX_ACTIVE_VERSIONS_PER_MODEL=${MAX_ACTIVE_VERSIONS_PER_MODEL:-5}
       - ALLOW_DEPRECATED_MODEL_CHANGES=${ALLOW_DEPRECATED_MODEL_CHANGES:-true}
+    volumes:
+      - ./services/model-management-service:/app
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -686,6 +793,9 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/multi-tenant-feature/.env
+    volumes:
+      - ./services/multi-tenant-feature:/app
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -708,6 +818,16 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/transliteration-service/.env
+    volumes:
+      - ./services/transliteration-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./services/constants:/app/services/constants
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -736,6 +856,15 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/language-detection-service/.env
+    volumes:
+      - ./services/language-detection-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -763,6 +892,15 @@ services:
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=http://65.1.35.3:8700
+    volumes:
+      - ./services/speaker-diarization-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -792,6 +930,15 @@ services:
       - TRITON_ENDPOINT=65.1.35.3:8600
     env_file:
       - ./services/language-diarization-service/.env
+    volumes:
+      - ./services/language-diarization-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -821,6 +968,15 @@ services:
       - TRITON_ENDPOINT=65.1.35.3:8100
     env_file:
       - ./services/audio-lang-detection-service/.env
+    volumes:
+      - ./services/audio-lang-detection-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -842,7 +998,7 @@ services:
   simple-ui-frontend:
     build:
       context: ./frontend/simple-ui
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
       args:
         # Browser talks directly to the API Gateway on host port 8080
         # NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
@@ -880,6 +1036,10 @@ services:
       # - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://core-v1.ai4inclusion.org
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
       - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
+    volumes:
+      - ./frontend/simple-ui:/app
+      - /app/node_modules
+      - /app/.next
     depends_on:
       api-gateway-service:
         condition: service_healthy
@@ -967,6 +1127,8 @@ services:
       - SYNC_INTERVAL=60
       - PORT=8097
     volumes:
+      - ./services/alert-config-sync-service:/app/services/alert-config-sync-service
+      - ./infrastructure:/app/infrastructure
       # Mount Prometheus rules directory (writable so sync service can write YAML files)
       - ./infrastructure/prometheus/rules:/etc/prometheus/rules
       # Mount Alertmanager config file (writable so sync service can write YAML file)
