@@ -1,15 +1,20 @@
 """
 Router for routing rules endpoints
 """
-from fastapi import APIRouter, Request, Query, Body
+from fastapi import APIRouter, Request, Query, Body, Depends
 from typing import Optional, List, Dict, Any
-from fastapi.security import HTTPAuthorizationCredentials
 
 from alert_management import (
     RoutingRuleCreate, RoutingRuleUpdate, RoutingRuleResponse, RoutingRuleTimingUpdate,
     extract_organization, validate_organization, get_organization_for_audit_from_request,
     create_routing_rule, get_routing_rule_by_id, list_routing_rules,
     update_routing_rule, delete_routing_rule, update_routing_rule_timing
+)
+from utils.auth_deps import (
+    require_alerts_create,
+    require_alerts_read,
+    require_alerts_update,
+    require_alerts_delete,
 )
 
 router = APIRouter(
@@ -30,7 +35,9 @@ def get_username_from_request(request: Request) -> str:
 
 
 def is_admin_user(request: Request) -> bool:
-    """Check if user is admin based on headers"""
+    """Check if user is admin from request.state (set by auth) or headers (when behind gateway)."""
+    if getattr(request.state, "is_admin", None) is True:
+        return True
     if request.headers.get("X-Admin", "").lower() == "true":
         return True
     roles = request.headers.get("X-User-Roles", "")
@@ -46,7 +53,8 @@ def is_admin_user(request: Request) -> bool:
 async def create_routing_rule_endpoint(
     payload: RoutingRuleCreate,
     request: Request,
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
+    _: None = Depends(require_alerts_create),
 ):
     """
     Create a new routing rule
@@ -70,7 +78,8 @@ async def create_routing_rule_endpoint(
 @router.get("", response_model=List[RoutingRuleResponse])
 async def list_routing_rules_endpoint(
     request: Request,
-    enabled_only: bool = Query(False, description="Only return enabled rules")
+    enabled_only: bool = Query(False, description="Only return enabled rules"),
+    _: None = Depends(require_alerts_read),
 ):
     """
     List routing rules
@@ -93,7 +102,8 @@ async def list_routing_rules_endpoint(
 async def get_routing_rule_endpoint(
     rule_id: int,
     request: Request,
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
+    _: None = Depends(require_alerts_read),
 ):
     """
     Get a specific routing rule by ID
@@ -120,7 +130,8 @@ async def update_routing_rule_endpoint(
     rule_id: int,
     payload: RoutingRuleUpdate,
     request: Request,
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
+    _: None = Depends(require_alerts_update),
 ):
     """
     Update a routing rule
@@ -147,7 +158,8 @@ async def update_routing_rule_endpoint(
 async def delete_routing_rule_endpoint(
     rule_id: int,
     request: Request,
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
+    _: None = Depends(require_alerts_delete),
 ):
     """
     Delete a routing rule
@@ -175,7 +187,8 @@ async def delete_routing_rule_endpoint(
 async def update_routing_rule_timing_endpoint(
     payload: RoutingRuleTimingUpdate,
     request: Request,
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
+    _: None = Depends(require_alerts_update),
 ):
     """
     Update timing parameters (group_wait, group_interval, repeat_interval) for routing rules
