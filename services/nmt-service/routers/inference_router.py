@@ -891,7 +891,7 @@ async def _enforce_tenant_and_service_checks(http_request: Request, service_name
                 services = svc_resp.json().get("services", [])
                 svc_entry = next((s for s in services if str(s.get("service_name")).lower() == service_name.lower()), None)
                 if not svc_entry or not svc_entry.get("is_active", False):
-                    raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message="Nmt service is not active at the moment.Please contact your administrator").dict())
+                    raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message="NMT service is not active at the moment.Please contact your administrator").dict())
             else:
                 raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message="Cannot detect service availability. Please contact your administrator").dict())
     except httpx.TimeoutException:
