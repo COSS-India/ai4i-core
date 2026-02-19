@@ -363,19 +363,22 @@ def add_error_handlers(app: FastAPI) -> None:
             except Exception:
                 pass
         
-        # Extract error information from detail (handle API Gateway format)
-        error_code = "HTTP_ERROR"
-        error_message = str(exc.detail)
-        
-        if isinstance(exc.detail, dict):
+        # Extract error information from the exception object first (PipelineError subclasses set attributes)
+        error_code = getattr(exc, "error_code", None) or getattr(exc, "error_code", None) or "HTTP_ERROR"
+        # Prefer the explicit message attribute if present, otherwise fall back to exc.detail/stringify
+        error_message = getattr(exc, "message", None) or (str(exc.detail) if hasattr(exc, "detail") else str(exc))
+
+        # If exc.detail is a dict, prefer structured values inside it
+        if isinstance(getattr(exc, "detail", None), dict):
+            detail = exc.detail
             # Handle API Gateway format: {"error": "AUTHENTICATION_REQUIRED", "message": "..."}
-            if "error" in exc.detail:
-                error_code = exc.detail.get("error", "HTTP_ERROR")
-                error_message = exc.detail.get("message", str(exc.detail))
+            if "error" in detail:
+                error_code = detail.get("error", error_code)
+                error_message = detail.get("message", error_message)
             # Handle ErrorDetail format: {"code": "...", "message": "..."}
-            elif "code" in exc.detail:
-                error_code = exc.detail.get("code", "HTTP_ERROR")
-                error_message = exc.detail.get("message", str(exc.detail))
+            elif "code" in detail:
+                error_code = detail.get("code", error_code)
+                error_message = detail.get("message", error_message)
         
         # Build log context matching RequestLoggingMiddleware format
         log_context = {
