@@ -966,7 +966,7 @@ async def _enforce_tenant_and_service_checks(http_request: Request, service_name
 
 async def enforce_asr_checks(request: Request):
     """FastAPI dependency that enforces tenant and service checks for ASR before other dependencies run."""
-    # the service name is coming from multitenant SubscriptionType
+    # the service name is coming from multitenant SubscriptionType enum
     await _enforce_tenant_and_service_checks(request, service_name="asr")
 
 # Add as a router-level dependency so it runs before path-operation dependencies like get_asr_service
