@@ -102,6 +102,25 @@ def add_error_handlers(app: FastAPI) -> None:
                 content={"detail": {"error": "AUTHENTICATION_ERROR", "message": error_msg or "Authentication failed"}}
             )
         
+        # If exc.detail is already structured (dict with code/message) preserve it
+        if isinstance(exc.detail, dict):
+            msg = exc.detail.get("message") or str(exc.detail)
+            code = exc.detail.get("code") or "HTTP_ERROR"
+            error_detail = ErrorDetail(message=msg, code=code, timestamp=time.time())
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": error_detail.dict()}
+            )
+
+        # If exc.detail is an ErrorDetail-like object, attempt to use its dict()
+        try:
+            if hasattr(exc.detail, "dict"):
+                detail_dict = exc.detail.dict()
+                return JSONResponse(status_code=exc.status_code, content={"detail": detail_dict})
+        except Exception:
+            pass
+
+        # Fallback: stringify the detail
         error_detail = ErrorDetail(
             message=str(exc.detail),
             code="HTTP_ERROR",
