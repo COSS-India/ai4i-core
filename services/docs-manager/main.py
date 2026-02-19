@@ -34,6 +34,7 @@ _here = Path(__file__).resolve().parent
 _specs_dir = _here / "specs"
 REGISTRY_ENV = "SERVICE_DOCS_REGISTRY_PATH"
 GATEWAY_URL_ENV = "API_GATEWAY_URL"
+DEFAULT_GATEWAY_URL = "http://localhost:8080"
 DEFAULT_REGISTRY = _specs_dir / "service-docs-registry.yaml"
 SPECS_ROOT_ENV = "SPECS_ROOT"
 
@@ -53,14 +54,16 @@ def _specs_root_path() -> Path:
     return _specs_dir
 
 
-def _gateway_url() -> str:
-    return os.getenv(GATEWAY_URL_ENV, "http://localhost:8080").rstrip("/")
+def _gateway_url() -> str | None:
+    """Return API_GATEWAY_URL from env if set, else None (caller can fall back to registry)."""
+    val = os.getenv(GATEWAY_URL_ENV)
+    return val.rstrip("/") if val else None
 
 
 def _load_registry() -> dict[str, Any]:
     path = _registry_path()
     if not path.exists():
-        return {"api_gateway_url": _gateway_url(), "services": {}}
+        return {"api_gateway_url": _gateway_url() or DEFAULT_GATEWAY_URL, "services": {}}
     with open(path, "r") as f:
         return yaml.safe_load(f) or {"services": {}}
 
@@ -192,7 +195,8 @@ def _add_service_spec(
 def _build_merged_spec() -> dict[str, Any]:
     """Build a single OpenAPI 3.0 spec from all service spec files in the registry."""
     registry = _load_registry()
-    gateway_url = (registry.get("api_gateway_url") or _gateway_url()).rstrip("/")
+    # Env API_GATEWAY_URL overrides registry so deployment/docker can set the server URL
+    gateway_url = (_gateway_url() or registry.get("api_gateway_url") or DEFAULT_GATEWAY_URL).rstrip("/")
     services = registry.get("services") or {}
 
     merged: dict[str, Any] = {
@@ -337,6 +341,6 @@ def service_openapi(service_name: str):
     spec = _load_spec_file(spec_file)
     if not spec:
         return JSONResponse({"detail": "Spec file not found"}, status_code=404)
-    gateway_url = (registry.get("api_gateway_url") or _gateway_url()).rstrip("/")
+    gateway_url = (_gateway_url() or registry.get("api_gateway_url") or DEFAULT_GATEWAY_URL).rstrip("/")
     spec["servers"] = [{"url": gateway_url, "description": "API Gateway"}]
     return JSONResponse(spec)

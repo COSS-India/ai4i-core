@@ -260,7 +260,8 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 if endpoint and model_name:
                     return endpoint, model_name
         except Exception as e:
-            logger.warning(f"Redis read failed for service {service_id}: {e}")
+            # Cache failures are non-critical - log at debug level to avoid noise
+            logger.debug(f"Redis read failed for service {service_id}: {e}")
         return None
 
     async def _set_registry_in_redis(self, service_id: str, endpoint: str, model_name: str):
@@ -272,7 +273,8 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             payload = json.dumps({"endpoint": endpoint, "model_name": model_name})
             await self.redis_client.setex(cache_key, self.cache_ttl_seconds, payload)
         except Exception as e:
-            logger.warning(f"Redis write failed for service {service_id}: {e}")
+            # Cache failures are non-critical - log at debug level to avoid noise
+            logger.debug(f"Redis write failed for service {service_id}: {e}")
     
     async def _resolve_service(self, service_id: str, auth_headers: Dict[str, str]) -> Tuple[Optional[str], Optional[str], Optional[TritonClient]]:
         """Resolve serviceId to endpoint, model_name, and Triton client"""

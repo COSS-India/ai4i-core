@@ -9,6 +9,7 @@ class TenantViewResponse(BaseModel):
     user_id: int | None = None
     organization_name: str
     email: EmailStr
+    phone_number: Optional[str] = None
     domain: str
     schema_name: str = Field(..., alias="schema")
     subscriptions: list[str]

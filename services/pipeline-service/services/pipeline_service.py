@@ -18,7 +18,8 @@ from middleware.exceptions import (
     PipelineTaskError, 
     ServiceUnavailableError, 
     ModelNotFoundError,
-    PipelineError
+    PipelineError,
+    AuthenticationError
 )
 
 # Import OpenTelemetry for manual span creation
@@ -170,6 +171,9 @@ class PipelineService:
                 
                 logger.info(f"✅ Task {task_idx} completed successfully")
                 
+            except AuthenticationError:
+                # Re-raise authentication errors as-is so they're handled by the error handler
+                raise
             except Exception as e:
                 # Parse structured error if available
                 error_info = self._parse_error(e, task_idx, pipeline_task.taskType)
@@ -414,6 +418,9 @@ class PipelineService:
                     process_span.add_event("asr.response.processed")
                     return result
                     
+            except AuthenticationError:
+                # Re-raise authentication errors as-is so they're handled by the error handler
+                raise
             except Exception as e:
                 logger.error(f"❌ ASR service call failed: {e}")
                 if TRACING_AVAILABLE:
