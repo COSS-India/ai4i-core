@@ -98,13 +98,7 @@ async def resolve_service_id_if_needed(
     
     Returns SMR response data if SMR was called, None otherwise.
     """
-    logger.info(
-        "resolve_service_id_if_needed dependency called",
-        extra={
-            "has_service_id": bool(request.config.serviceId),
-            "service_id": request.config.serviceId,
-        }
-    )
+    # Log removed - middleware handles request/response logging
     
     # Check if serviceId is missing
     if not request.config.serviceId:
@@ -714,15 +708,7 @@ async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_tenan
     triton_endpoint = getattr(request.state, "triton_endpoint", None)
     triton_api_key = getattr(request.state, "triton_api_key", None)
     
-    logger.info(
-        "get_nmt_service dependency called",
-        extra={
-            "has_triton_endpoint": bool(triton_endpoint),
-            "triton_endpoint": triton_endpoint,
-            "service_id": getattr(request.state, "service_id", None),
-            "model_management_error": getattr(request.state, "model_management_error", None),
-        }
-    )
+    # Log removed - middleware handles request/response logging
     
     if not triton_endpoint:
         service_id = getattr(request.state, "service_id", None)
@@ -791,12 +777,7 @@ async def get_nmt_service(request: Request, db: AsyncSession = Depends(get_tenan
             detail=error_detail,
         )
     
-    logger.info(
-        "Using Triton endpoint=%s model_name=%s for serviceId=%s from Model Management",
-        triton_endpoint,
-        model_name,
-        getattr(request.state, "service_id", "unknown"),
-    )
+    # Log removed - middleware handles request/response logging
     
     # Factory function to create Triton clients for different endpoints
     def get_triton_client_for_endpoint(endpoint: str) -> TritonClient:
@@ -999,27 +980,7 @@ async def run_inference(
                 "target_language": request.config.language.targetLanguage
             })
 
-            logger.info(
-                "Processing NMT inference request with %d text input(s), input_characters=%d, input_words=%d, user_id=%s api_key_id=%s session_id=%s",
-                len(request.input),
-                total_input_characters,
-                total_input_words,
-                user_id,
-                api_key_id,
-                session_id,
-                extra={
-                    # Common input/output details structure (general fields for all services)
-                    "input_details": {
-                        "character_length": total_input_characters,
-                        "word_count": total_input_words,
-                        "input_count": len(request.input)
-                    },
-                    # Service metadata (for filtering)
-                    "service_id": request.config.serviceId,
-                    "source_language": request.config.language.sourceLanguage,
-                    "target_language": request.config.language.targetLanguage,
-                }
-            )
+            # Log removed - middleware handles request/response logging
 
             # Run inference with fallback support
             fallback_service_id = getattr(http_request.state, "fallback_service_id", None)
@@ -1337,33 +1298,7 @@ async def run_inference(
             # Create new response object with SMR data
             response = NMTInferenceResponse(**response_dict)
             
-            logger.info(
-                "NMT inference completed successfully, output_characters=%d, output_words=%d, fallback_used=%s",
-                total_output_characters,
-                total_output_words,
-                using_fallback,
-                extra={
-                    # Common input/output details structure (general fields for all services)
-                    "input_details": {
-                        "character_length": total_input_characters,
-                        "word_count": total_input_words,
-                        "input_count": len(request.input)
-                    },
-                    "output_details": {
-                        "character_length": total_output_characters,
-                        "word_count": total_output_words,
-                        "output_count": len(response.output)
-                    },
-                    # Service metadata (for filtering)
-                    "service_id": request.config.serviceId,
-                    "fallback_used": using_fallback,
-                    "fallback_service_id": fallback_service_id if using_fallback else None,
-                    "source_language": request.config.language.sourceLanguage,
-                    "target_language": request.config.language.targetLanguage,
-                    "http_status_code": 200,
-                    "smr_used": smr_response_data is not None,
-                }
-            )
+            # Log removed - middleware handles request/response logging
             
             return response
 
@@ -1489,13 +1424,7 @@ async def _run_nmt_inference_impl(
     )
     validate_batch_size(len(request.input))
 
-    logger.info(
-        "Processing NMT inference request with %d text input(s), user_id=%s api_key_id=%s session_id=%s",
-        len(request.input),
-        user_id,
-        api_key_id,
-        session_id,
-    )
+    # Log removed - middleware handles request/response logging
 
     response = await nmt_service.run_inference(
         request=request,
@@ -1518,6 +1447,6 @@ async def _run_nmt_inference_impl(
         response_dict["smr_response"] = None
     response = NMTInferenceResponse(**response_dict)
     
-    logger.info("NMT inference completed successfully")
+    # Log removed - middleware handles request/response logging
     return response
  
