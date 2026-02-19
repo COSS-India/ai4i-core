@@ -457,4 +457,3 @@ class ModelManagementClient:
         
         if redis_client:
             logger.info("Redis cache should be cleared manually if needed")
-
