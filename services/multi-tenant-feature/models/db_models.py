@@ -20,7 +20,8 @@ class Tenant(TenantDBBase):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
     tenant_id = Column(String(255), unique=True, nullable=False)  # user/provided id
     organization_name = Column(String(255), nullable=False)
-    contact_email = Column(String(320), nullable=False, index=True)
+    contact_email = Column(String(500), nullable=False, index=True)  # encrypted email can be longer
+    phone_number = Column(String(500), nullable=True)  # encrypted phone number can be longer
     domain = Column(String(255), unique=True, nullable=False)  # user-provided domain e.g. acme.com
     # subdomain = Column(String(255), unique=True, nullable=False)  # generated: acme.ai4i.com
 
@@ -132,7 +133,8 @@ class TenantUser(TenantDBBase):
     tenant_uuid = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     tenant_id = Column(String(255),ForeignKey("tenants.tenant_id", ondelete="CASCADE"),nullable=False,index=True)
     username = Column(String(255), nullable=False)
-    email = Column(String(320), nullable=False, index=True)
+    email = Column(String(500), nullable=False, index=True)  # encrypted email can be longer
+    phone_number = Column(String(500), nullable=True)  # encrypted phone number can be longer
     subscriptions = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     is_approved = Column(Boolean, nullable=False, default=False)
     status = Column(Enum(TenantUserStatus, native_enum=False, create_type=False), nullable=False, default=TenantStatus.PENDING)
