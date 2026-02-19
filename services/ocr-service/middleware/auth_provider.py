@@ -743,10 +743,11 @@ async def AuthProvider(
                         # passing jwt_user_id so auth-service can enforce ownership.
                         auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
                         
-                        # CRITICAL: Always check valid field - auth-service may return valid=false for ownership mismatch
+                        # CRITICAL: Always check valid field - auth-service may return valid=false
                         if not auth_result.get("valid", False):
+                            # Preserve detailed message from auth-service, e.g.:
+                            # "Invalid API key: This key does not have access to OCR service"
                             error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
-                            # Raise AuthenticationError - the error handler will format it with error + message
                             raise AuthenticationError(error_msg)
                         
                         # 4) Populate request.state – keep JWT as primary identity
@@ -761,21 +762,21 @@ async def AuthProvider(
                         auth_span.set_status(Status(StatusCode.OK))
                         return bearer_result
                     except (AuthenticationError, AuthorizationError) as e:
-                        # For ANY auth/key error in BOTH mode, surface a single, consistent message
+                        # For ANY auth/key error in BOTH mode, surface the underlying message when available
                         logger.error(f"OCR BOTH mode (tracing): Authentication/Authorization error: {e}")
                         auth_span.set_attribute("auth.authorized", False)
                         auth_span.set_attribute("error", True)
                         auth_span.set_attribute("error.type", type(e).__name__)
-                        auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
-                        raise AuthenticationError("API key does not belong to the authenticated user")
+                        auth_span.set_status(Status(StatusCode.ERROR, str(e)))
+                        raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
                     except Exception as e:
                         logger.error(f"OCR BOTH mode (tracing): Unexpected error: {e}", exc_info=True)
                         auth_span.set_attribute("auth.authorized", False)
                         auth_span.set_attribute("error", True)
                         auth_span.set_attribute("error.type", type(e).__name__)
-                        auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
-                        # Even on unexpected errors we normalize the external message
-                        raise AuthenticationError("API key does not belong to the authenticated user")
+                        auth_span.set_status(Status(StatusCode.ERROR, str(e)))
+                        # Even on unexpected errors we surface a useful message
+                        raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
 
                 # Default: API_KEY
                 method_span.set_attribute("auth.decision.result", "api_key")
@@ -811,7 +812,7 @@ async def AuthProvider(
                     auth_span.set_attribute("error", True)
                     auth_span.set_attribute("error.type", "AuthenticationError")
                     auth_span.set_status(Status(StatusCode.ERROR, str(e)))
-                    raise AuthenticationError("API key does not belong to the authenticated user")
+                    raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
                 
                 # Explicitly check if auth-service returned valid=false
                 if not auth_result.get("valid", False):
@@ -821,7 +822,8 @@ async def AuthProvider(
                     auth_span.set_attribute("error", True)
                     auth_span.set_attribute("error.type", "AuthenticationError")
                     auth_span.set_status(Status(StatusCode.ERROR, error_msg))
-                    raise AuthenticationError("API key does not belong to the authenticated user")
+                    # Surface the detailed message from auth-service
+                    raise AuthenticationError(error_msg)
                 
                 # Look up API key in database to get actual IDs
                 # Get DB session only when needed (for API_KEY mode)
@@ -903,7 +905,7 @@ async def _auth_provider_impl(
         try:
             bearer_result = await _authenticate_bearer_token_impl(request, authorization)
             jwt_user_id = bearer_result.get("user_id")
-            
+
             # Extract tenant schema from JWT payload (already decoded by _authenticate_bearer_token_impl)
             jwt_payload = getattr(request.state, "jwt_payload", None)
             if jwt_payload:
@@ -914,36 +916,67 @@ async def _auth_provider_impl(
                     request.state.tenant_schema = schema_name
                     request.state.tenant_id = tenant_id
                     request.state.tenant_uuid = jwt_payload.get("tenant_uuid")
-                    logger.info(f"AuthProvider BOTH mode (non-tracing): Extracted tenant schema from JWT: schema_name={schema_name}, tenant_id={tenant_id}")
+                    logger.info(
+                        "AuthProvider BOTH mode (non-tracing): "
+                        f"Extracted tenant schema from JWT: schema_name={schema_name}, tenant_id={tenant_id}"
+                    )
                 else:
-                    logger.warning(f"AuthProvider BOTH mode (non-tracing): JWT decoded but no schema_name found. JWT keys: {list(jwt_payload.keys())}, tenant_id={tenant_id}")
+                    logger.warning(
+                        "AuthProvider BOTH mode (non-tracing): JWT decoded but no schema_name found. "
+                        f"JWT keys: {list(jwt_payload.keys())}, tenant_id={tenant_id}"
+                    )
             else:
-                logger.warning(f"AuthProvider BOTH mode (non-tracing): JWT payload not found in request.state after authenticate_bearer_token")
-            
+                logger.warning(
+                    "AuthProvider BOTH mode (non-tracing): JWT payload not found in "
+                    "request.state after authenticate_bearer_token"
+                )
+
             if not api_key:
                 raise AuthenticationError("Missing API key")
-            
+
             service, action = determine_service_and_action(request)
-            logger.info(f"BOTH mode: Validating API key for user_id={jwt_user_id}, service={service}, action={action}")
+            logger.info(
+                f"BOTH mode: Validating API key for user_id={jwt_user_id}, "
+                f"service={service}, action={action}"
+            )
             try:
-                auth_result = await _validate_api_key_permissions_impl(api_key, service, action, user_id=jwt_user_id)
-                logger.info(f"BOTH mode: Auth-service response: valid={auth_result.get('valid')}, message={auth_result.get('message')}, user_id={auth_result.get('user_id')}")
+                auth_result = await _validate_api_key_permissions_impl(
+                    api_key, service, action, user_id=jwt_user_id
+                )
+                logger.info(
+                    "BOTH mode: Auth-service response: "
+                    f"valid={auth_result.get('valid')}, "
+                    f"message={auth_result.get('message')}, "
+                    f"user_id={auth_result.get('user_id')}"
+                )
             except (AuthorizationError, AuthenticationError) as e:
                 logger.error(f"API key validation failed in BOTH mode: {e}")
-                raise AuthenticationError("API key does not belong to the authenticated user")
-            
+                raise AuthenticationError(
+                    str(e) or "API key does not belong to the authenticated user"
+                )
+
             # Explicitly check if auth-service returned valid=false
             if not auth_result.get("valid", False):
-                error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
-                logger.error(f"Auth-service returned valid=false: {error_msg}, jwt_user_id={jwt_user_id}, api_key_user_id={auth_result.get('user_id')}")
-                raise AuthenticationError("API key does not belong to the authenticated user")
-            
+                error_msg = auth_result.get(
+                    "message", "API key does not belong to the authenticated user"
+                )
+                logger.error(
+                    "Auth-service returned valid=false: "
+                    f"{error_msg}, jwt_user_id={jwt_user_id}, "
+                    f"api_key_user_id={auth_result.get('user_id')}"
+                )
+                raise AuthenticationError(error_msg)
+
             return bearer_result
         except AuthenticationError:
             raise
         except Exception as e:
-            logger.error(f"Unexpected error in BOTH authentication mode: {e}", exc_info=True)
-            raise AuthenticationError("API key does not belong to the authenticated user")
+            logger.error(
+                f"Unexpected error in BOTH authentication mode: {e}", exc_info=True
+            )
+            raise AuthenticationError(
+                "API key does not belong to the authenticated user"
+            )
 
     # Default: API_KEY
     if not api_key:
@@ -954,13 +987,13 @@ async def _auth_provider_impl(
         auth_result = await _validate_api_key_permissions_impl(api_key, service, action)
     except (AuthorizationError, AuthenticationError) as e:
         logger.error(f"API key permission validation failed: {e}")
-        raise AuthenticationError("API key does not belong to the authenticated user")
+        raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
     
     # Explicitly check if auth-service returned valid=false
     if not auth_result.get("valid", False):
         error_msg = auth_result.get("message", "Permission denied")
         logger.error(f"Auth-service returned valid=false: {error_msg}")
-        raise AuthenticationError("API key does not belong to the authenticated user")
+        raise AuthenticationError(error_msg)
 
     # Look up API key in database to get actual IDs
     # Note: This fallback function doesn't have db access, so we can't look up here
