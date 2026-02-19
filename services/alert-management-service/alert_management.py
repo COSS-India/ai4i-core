@@ -1024,8 +1024,9 @@ async def toggle_alert_definition(alert_id: int, organization: Optional[str], en
 # Similar functions for notification_receivers and routing_rules would follow the same pattern
 # For brevity, I'll create simplified versions - full implementations would mirror the alert_definitions pattern
 
-# Default email templates for notification receivers
-DEFAULT_EMAIL_SUBJECT_TEMPLATE = "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.organization }}"
+# Default email templates for notification receivers (Alertmanager Go template syntax)
+# Include inference endpoint when present (e.g. application latency alerts); .Alerts[0].Labels.endpoint
+DEFAULT_EMAIL_SUBJECT_TEMPLATE = "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.organization }}{{ with (index .Alerts 0).Labels.endpoint }} - {{ . }}{{ end }}"
 DEFAULT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{ if eq .GroupLabels.severity \"critical\" }}#d32f2f{{ else if eq .GroupLabels.severity \"warning\" }}#f57c00{{ else }}#1976d2{{ end }};">
   {{ if eq .GroupLabels.severity "critical" }}🚨 CRITICAL{{ else if eq .GroupLabels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
 </h2>
@@ -1033,6 +1034,7 @@ DEFAULT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{ if eq .GroupLabels.severit
 <p><strong>Organization:</strong> {{ .GroupLabels.organization }}</p>
 <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
 <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
+<p><strong>Inference endpoint(s):</strong> {{ range $i, $a := .Alerts }}{{ if index $a.Labels "endpoint" }}{{ if $i }}, {{ end }}{{ $a.Labels.endpoint }}{{ end }}{{ end }}</p>
 """
 
 async def create_notification_receiver(

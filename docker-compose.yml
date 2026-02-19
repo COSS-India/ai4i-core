@@ -1033,6 +1033,7 @@ services:
       - "8104:8098"
     environment:
       - SERVICE_NAME=alert-management-service
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER}
