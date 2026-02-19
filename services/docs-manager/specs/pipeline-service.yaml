@@ -1,0 +1,50 @@
+# Pipeline Service - Public API (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: Pipeline Service
+  description: Multi-step AI processing pipelines (e.g. Speech-to-Speech).
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: Pipeline
+paths:
+  /api/v1/pipeline/inference:
+    post:
+      tags: [Pipeline]
+      summary: Pipeline Inference
+      description: Execute multi-step AI pipeline (e.g. ASR → Translation → TTS).
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Pipeline request with tasks and input data
+      responses:
+        "200": { description: Pipeline result }
+        "400": { description: Bad request or pipeline error }
+        "401": { description: Unauthorized }
+  /api/v1/pipeline/info:
+    get:
+      tags: [Pipeline]
+      summary: Get Pipeline Info
+      description: Pipeline service capabilities and supported task types.
+      responses:
+        "200": { description: Service info and example pipelines }
+  /api/v1/pipeline/health:
+    get:
+      tags: [Pipeline]
+      summary: Pipeline Health
+      responses:
+        "200": { description: Service health }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+security:
+  - BearerAuth: []

@@ -176,7 +176,8 @@ class ModelManagementClient:
                     data = json.loads(cached)
                     return [ServiceInfo(**item) for item in data]
             except Exception as e:
-                logger.warning(f"Redis cache read failed: {e}")
+                # Cache failures are non-critical - log at debug level to avoid noise
+                logger.debug(f"Redis cache read failed: {e}")
         
         # Try in-memory cache
         if use_cache:
@@ -253,7 +254,8 @@ class ModelManagementClient:
                             json.dumps(cache_data)
                         )
                     except Exception as e:
-                        logger.warning(f"Redis cache write failed: {e}")
+                        # Cache failures are non-critical - log at debug level to avoid noise
+                        logger.debug(f"Redis cache write failed: {e}")
                 
                 # Cache in memory
                 self._set_cache(cache_key, services)
@@ -304,7 +306,8 @@ class ModelManagementClient:
                     data = json.loads(cached)
                     return ServiceInfo(**data)
             except Exception as e:
-                logger.warning(f"Redis cache read failed: {e}")
+                # Cache failures are non-critical - log at debug level to avoid noise
+                logger.debug(f"Redis cache read failed: {e}")
         
         # Try in-memory cache
         if use_cache:
@@ -367,7 +370,8 @@ class ModelManagementClient:
                             json.dumps(service_info.model_dump())
                         )
                     except Exception as e:
-                        logger.warning(f"Redis cache write failed: {e}")
+                        # Cache failures are non-critical - log at debug level to avoid noise
+                        logger.debug(f"Redis cache write failed: {e}")
                 
                 # Cache in memory
                 self._set_cache(cache_key, service_info)
