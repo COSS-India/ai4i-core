@@ -34,6 +34,7 @@ import {
   IoChevronDownOutline,
   IoAnalyticsOutline,
   IoPulseOutline,
+  IoNotificationsOutline,
 } from "react-icons/io5";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
@@ -137,6 +138,12 @@ const safeColorMap = {
     400: "#AB47BC",
     600: "#8E24AA",
   },
+  "alerts-management": { // Amber/Yellow → Pastel Amber
+    50:  "#FFF8E1",
+    300: "#FFD54F",
+    400: "#FFCA28",
+    600: "#F9A825",
+  },
 };
 
 const getColor = (serviceId: string, shade: 50 | 300 | 400 | 600) => {
@@ -207,6 +214,15 @@ const topNavItems: NavItem[] = [
     label: "Traces Dashboard",
     path: "/traces",
     icon: IoPulseOutline,
+    iconSize: 10,
+    iconColor: "", // Will be computed from safeColorMap
+    requiresAuth: true,
+  },
+  {
+    id: "alerts-management",
+    label: "Alerts Management",
+    path: "/alerts-management",
+    icon: IoNotificationsOutline,
     iconSize: 10,
     iconColor: "", // Will be computed from safeColorMap
     requiresAuth: true,
@@ -393,8 +409,8 @@ const Sidebar: React.FC = () => {
     if ((isGuest || isUser) && (item.id === "model-management" || item.id === "services-management")) {
       return false;
     }
-    // Hide Logs Dashboard and Traces Dashboard for non-ADMIN users
-    if ((item.id === "logs" || item.id === "traces") && !isAdmin) {
+    // Hide admin-only items for non-ADMIN users
+    if ((item.id === "logs" || item.id === "traces" || item.id === "alerts-management") && !isAdmin) {
       return false;
     }
     if (item.featureFlag) {
