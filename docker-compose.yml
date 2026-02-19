@@ -277,24 +277,6 @@ services:
       - microservices-network
     restart: unless-stopped
 
-  # Swagger UI for Kong-facing API documentation
-  swagger-kong-ui:
-    image: swaggerapi/swagger-ui
-    container_name: ai4v-swagger-kong-ui
-    ports:
-      - "8086:8080"
-    volumes:
-      # Generated OpenAPI spec that points to Kong and includes all endpoints.
-      # Mount it at a custom path; the swagger-ui entrypoint will copy it into
-      # /usr/share/nginx/html/openapi.json on startup.
-      - ./docs/kong-openapi.json:/kong-openapi.json:ro
-    environment:
-      SWAGGER_JSON: /kong-openapi.json
-    networks:
-      - microservices-network
-    depends_on:
-      - kong
-
   # Microservices
   api-gateway-service:
     build:
@@ -1221,8 +1203,8 @@ services:
     environment:
       - OPENSEARCH_HOSTS=http://opensearch:9200
       - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
-      - SERVER_BASEPATH=/opensearch
-      - SERVER_REWRITEBASEPATH=true
+      # - SERVER_BASEPATH=/opensearch
+      # - SERVER_REWRITEBASEPATH=true
     networks:
       - microservices-network
     depends_on:
@@ -1242,7 +1224,7 @@ services:
       - "4318:4318"  # OTLP HTTP
     environment:
       - COLLECTOR_OTLP_ENABLED=true
-      - QUERY_BASE_PATH=/jaeger
+      # - QUERY_BASE_PATH=/jaeger
     networks:
       - microservices-network
     restart: unless-stopped
@@ -1255,8 +1237,8 @@ services:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
       - ./infrastructure/fluent-bit/extract_context.lua:/fluent-bit/scripts/extract_context.lua:ro
-      # - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
+      # - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - microservices-network

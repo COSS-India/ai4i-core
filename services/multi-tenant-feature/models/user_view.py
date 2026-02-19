@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field
 from uuid import UUID
-from typing import List
+from typing import List, Optional
 
 
 class TenantUserViewResponse(BaseModel):
@@ -9,6 +9,7 @@ class TenantUserViewResponse(BaseModel):
     tenant_id: str
     username: str
     email: EmailStr
+    phone_number: Optional[str] = None
     subscriptions: list[str]
     status: str
     created_at: str
