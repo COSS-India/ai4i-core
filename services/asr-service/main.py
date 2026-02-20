@@ -409,7 +409,7 @@ async def root() -> Dict[str, Any]:
         "name": "ASR Service",
         "version": "1.0.0",
         "status": "running",
-        "description": "Supriya"
+        "description": "Automatic Speech Recognition service"
     }
 
 
