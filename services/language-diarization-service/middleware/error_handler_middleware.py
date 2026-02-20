@@ -74,9 +74,31 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle generic HTTP exceptions."""
+        # Preserve structured details from upstream services when possible
+        detail_val = getattr(exc, "detail", None)
+        if isinstance(detail_val, dict):
+            # API Gateway style: {"error": "...", "message": "..."}
+            if "error" in detail_val and "message" in detail_val:
+                return JSONResponse(status_code=exc.status_code, content={"detail": {"error": detail_val.get("error"), "message": detail_val.get("message")}})
+            # ErrorDetail style: {"code": "...", "message": "..."}
+            if "code" in detail_val and "message" in detail_val:
+                return JSONResponse(status_code=exc.status_code, content={"detail": {"code": detail_val.get("code"), "message": detail_val.get("message")}})
+
+        # If it's a Pydantic model, convert to dict
+        try:
+            if hasattr(detail_val, "dict"):
+                detail_dict = detail_val.dict()
+                return JSONResponse(status_code=exc.status_code, content={"detail": detail_dict})
+        except Exception:
+            pass
+
+        # Fall back to using attributes if present
+        error_code = getattr(exc, "error_code", None) or getattr(exc, "code", None) or "HTTP_ERROR"
+        error_message = getattr(exc, "message", None) or (str(detail_val) if detail_val is not None else str(exc))
+
         error_detail = ErrorDetail(
-            message=str(exc.detail),
-            code="HTTP_ERROR",
+            message=error_message,
+            code=error_code,
             timestamp=time.time()
         )
         return JSONResponse(

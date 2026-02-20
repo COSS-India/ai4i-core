@@ -385,9 +385,28 @@ def add_error_handlers(app: FastAPI) -> None:
                 content={"detail": {"error": "AUTHENTICATION_ERROR", "message": error_msg or "Authentication failed"}}
             )
         
+        # Prefer explicit exception attributes if present (some custom exceptions set these)
+        error_code = getattr(exc, "error_code", None) or getattr(exc, "error_code", None) or "HTTP_ERROR"
+        error_message = getattr(exc, "message", None) or (str(exc.detail) if hasattr(exc, "detail") else str(exc))
+
+        # If exc.detail is a dict, prefer structured values inside it (API Gateway or ErrorDetail formats)
+        if isinstance(getattr(exc, "detail", None), dict):
+            detail = exc.detail
+            # API Gateway style: {"error": "...", "message": "..."}
+            if "error" in detail:
+                error_code = detail.get("error", error_code)
+                error_message = detail.get("message", error_message)
+                return JSONResponse(status_code=exc.status_code, content={"detail": {"error": error_code, "message": error_message}})
+            # ErrorDetail style: {"code": "...", "message": "..."}
+            if "code" in detail:
+                error_code = detail.get("code", error_code)
+                error_message = detail.get("message", error_message)
+                return JSONResponse(status_code=exc.status_code, content={"detail": {"code": error_code, "message": error_message}})
+
+        # Fallback: wrap in ErrorDetail
         error_detail = ErrorDetail(
-            message=str(exc.detail),
-            code="HTTP_ERROR",
+            message=error_message,
+            code=error_code,
             timestamp=time.time()
         )
         return JSONResponse(

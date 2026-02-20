@@ -939,7 +939,7 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     plain_password = generate_random_password(length = 8)
 
     # TODO: Add logging for password generation , Remove once done testing
-    logger.info(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+    # logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
 
     # Store temp credentials on tenant for email / audit purposes
     hashed_password = hash_password(plain_password)
@@ -1295,7 +1295,7 @@ async def list_service(db: AsyncSession) -> ListServicesResponse:
     """
 
     result = await db.execute(
-        select(ServiceConfig).where(ServiceConfig.is_active.is_(True))
+        select(ServiceConfig)
     )
 
     services = result.scalars().all()
@@ -1632,7 +1632,7 @@ async def register_user(
             logger.warning(f"Could not assign role {role_name} to user_id={user_id}; auth may use default.")
     
     # TODO: Add logging for password generation , Remove once done testing
-    logger.info(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+    # logger.debug(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
     
     if payload.is_approved:
         #Create TenantUser entry only if user is approved
