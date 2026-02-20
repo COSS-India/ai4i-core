@@ -312,15 +312,23 @@ async def AuthProvider(
             try:
                 auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
             except (AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
-                # Auth-service returned an error - convert to ownership error for consistency
+                # Distinguish between permission/ownership vs generic key problems:
+                # - AuthorizationError: permission/ownership -> propagate as AuthorizationError
+                # - Invalid/Expired key: treat as authentication problem
                 logger.error(f"API key validation failed in BOTH mode: {e}")
+                if isinstance(e, AuthorizationError):
+                    # Preserve the detailed permission message from auth-service
+                    raise AuthorizationError(str(e))
                 raise AuthenticationError("API key does not belong to the authenticated user")
             
             # Explicitly check if auth-service returned valid=false (shouldn't happen if exception was raised)
             if not auth_result.get("valid", False):
                 error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
                 logger.error(f"Auth-service returned valid=false: {error_msg}")
-                raise AuthenticationError("API key does not belong to the authenticated user")
+                # Ownership vs permission: keep ownership as AuthenticationError, others as AuthorizationError
+                if "does not belong" in error_msg.lower() or "ownership" in error_msg.lower():
+                    raise AuthenticationError("API key does not belong to the authenticated user")
+                raise AuthorizationError(error_msg)
             
             # 4) Populate request state – keep JWT as primary identity
             request.state.user_id = jwt_user_id
@@ -361,13 +369,18 @@ async def AuthProvider(
             auth_result = await validate_api_key_permissions(api_key, service, action)
         except (AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
             logger.error(f"API key permission validation failed: {e}")
+            if isinstance(e, AuthorizationError):
+                # Permission/ownership errors should be surfaced as AuthorizationError
+                raise AuthorizationError(str(e))
             raise AuthenticationError("API key does not belong to the authenticated user")
         
         # Explicitly check if auth-service returned valid=false
         if not auth_result.get("valid", False):
             error_msg = auth_result.get("message", "Permission denied")
             logger.error(f"Auth-service returned valid=false: {error_msg}")
-            raise AuthenticationError("API key does not belong to the authenticated user")
+            if "does not belong" in error_msg.lower() or "ownership" in error_msg.lower():
+                raise AuthenticationError("API key does not belong to the authenticated user")
+            raise AuthorizationError(error_msg)
         
         # For API_KEY-only mode, we may not have a JWT; use auth-service user_id if present
         user_id = auth_result.get("user_id") or user_db.id
