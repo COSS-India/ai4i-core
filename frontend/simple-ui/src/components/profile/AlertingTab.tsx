@@ -181,6 +181,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       default: return "gray";
     }
   };
+  const categoryColor = (c: string | null | undefined) => {
+    if (c === "application") return "orange";
+    if (c === "infrastructure") return "purple";
+    return "gray";
+  };
 
   const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 
@@ -202,7 +207,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         <CardBody>
           <VStack spacing={5} align="stretch">
             {/* Search + Filters + Actions — single row */}
-            <HStack spacing={3} align="flex-end" flexWrap="wrap">
+            <HStack spacing={3} align="center" flexWrap="wrap">
               <InputGroup maxW="260px" size="sm">
                 <InputLeftElement pointerEvents="none">
                   <SearchIcon color="gray.400" />
@@ -233,6 +238,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 variant="link"
                 colorScheme="gray"
                 textDecoration="underline"
+                alignSelf="center"
                 onClick={defs.resetFilters}
                 isDisabled={
                   !defs.searchQuery &&
@@ -283,7 +289,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                         transition="background 0.15s"
                       >
                         <Td fontWeight="semibold">{d.name}</Td>
-                        <Td><Badge colorScheme="purple" textTransform="capitalize">{d.category}</Badge></Td>
+                        <Td><Badge colorScheme={categoryColor(d.category)} textTransform="capitalize">{d.category}</Badge></Td>
                         <Td><Text fontSize="sm">{alertTypeLabel(d.alert_type)}</Text></Td>
                         <Td><Badge colorScheme={severityColor(d.severity)} textTransform="capitalize">{d.severity}</Badge></Td>
                     <Td>
@@ -1095,7 +1101,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       transition="background 0.15s"
                     >
                       <Td fontWeight="semibold">{linkedRule?.rule_name ?? <Text as="span" color="gray.400" fontStyle="italic">—</Text>}</Td>
-                      <Td><Badge colorScheme="purple" textTransform="capitalize">{rowCategory ?? "All"}</Badge></Td>
+                      <Td><Badge colorScheme={categoryColor(rowCategory)} textTransform="capitalize">{rowCategory ?? "All"}</Badge></Td>
                       <Td>{rowSeverity ? <Badge colorScheme={severityColor(rowSeverity)} textTransform="capitalize">{rowSeverity}</Badge> : <Text fontSize="sm" color="gray.500">All</Text>}</Td>
                       <Td>
                         {matchingDefs.length > 0 ? (
