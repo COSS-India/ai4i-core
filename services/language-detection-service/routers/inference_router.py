@@ -136,7 +136,7 @@ async def _enforce_tenant_and_service_checks(http_request: Request, service_name
     if tenant_id:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/view/tenant", params={"tenant_id": tenant_id}, headers=headers)
+                resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/admin/view/tenant", params={"tenant_id": tenant_id}, headers=headers)
                 if resp.status_code == 200:
                     tenant_data = resp.json()
                     subscriptions = [str(s).lower() for s in (tenant_data.get("subscriptions") or [])]
@@ -176,7 +176,7 @@ async def _enforce_tenant_and_service_checks(http_request: Request, service_name
         try:
             if not tenant_data:
                 async with httpx.AsyncClient(timeout=5.0) as client:
-                    resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/view/tenant", params={"tenant_id": tenant_id}, headers=headers)
+                    resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/admin/view/tenant", params={"tenant_id": tenant_id}, headers=headers)
                     if resp.status_code == 200:
                         tenant_data = resp.json()
                     elif resp.status_code == 404:
