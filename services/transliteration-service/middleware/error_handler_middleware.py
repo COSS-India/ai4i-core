@@ -292,6 +292,31 @@ def add_error_handlers(app: FastAPI) -> None:
             status_code=403,
             content={"detail": error_detail.dict()}
         )
+
+    """
+
+    	# Prefer explicit exception attributes if present
+        error_code = getattr(exc, "error_code", None) or "HTTP_ERROR"
+        error_message = getattr(exc, "message", None) or (str(exc.detail) if hasattr(exc, "detail") else str(exc))
+
+        # If exc.detail is a dict, preserve structured formats (API Gateway or ErrorDetail)
+        if isinstance(getattr(exc, "detail", None), dict):
+            detail = exc.detail
+            # API Gateway style: {"error": "...", "message": "..."}
+            if "error" in detail:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"detail": {"error": detail.get("error"), "message": detail.get("message")}}
+                )
+            # ErrorDetail style: {"code": "...", "message": "..."}
+            if "code" in detail:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"detail": {"code": detail.get("code"), "message": detail.get("message")}}
+                )
+
+        # Fallback: wrap in ErrorDetail
+    """
     
     @app.exception_handler(RateLimitExceededError)
     async def rate_limit_error_handler(request: Request, exc: RateLimitExceededError):
