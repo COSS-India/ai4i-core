@@ -267,6 +267,38 @@ def add_error_handlers(app: FastAPI) -> None:
             status_code=exc.status_code,
             content={"detail": error_detail.dict()}
         )
+
+    """
+    # If the exception detail is already a structured dict (from upstream services),
+        # preserve its structure instead of stringifying it.
+        detail_val = getattr(exc, "detail", None)
+        if isinstance(detail_val, dict):
+            # API Gateway style: {"error": "...", "message": "..."}
+            if "error" in detail_val and "message" in detail_val:
+                return JSONResponse(status_code=exc.status_code, content={"detail": {"error": detail_val.get("error"), "message": detail_val.get("message")}})
+            # ErrorDetail style: {"code": "...", "message": "..."}
+            if "code" in detail_val and "message" in detail_val:
+                return JSONResponse(status_code=exc.status_code, content={"detail": {"code": detail_val.get("code"), "message": detail_val.get("message")}})
+
+        # If detail is a Pydantic model, convert to dict and return
+        try:
+            if hasattr(detail_val, "dict"):
+                detail_dict = detail_val.dict()
+                return JSONResponse(status_code=exc.status_code, content={"detail": detail_dict})
+        except Exception:
+            pass
+
+        # If the exception object itself exposes message/code attributes, use them
+        error_code = getattr(exc, "error_code", None) or getattr(exc, "code", None) or "HTTP_ERROR"
+        error_message = getattr(exc, "message", None) or (str(detail_val) if detail_val is not None else str(exc))
+        """
+    	   	    	    
+
+
+        
+
+
+        
     
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
