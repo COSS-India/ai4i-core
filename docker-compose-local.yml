@@ -300,7 +300,7 @@ services:
     ports:
       - "8103:8103"
     environment:
-      - API_GATEWAY_URL=http://localhost:8080
+      - API_GATEWAY_URL=http://api-gateway-service:8080
       - SPECS_ROOT=/app/specs
       - SERVICE_DOCS_REGISTRY_PATH=/app/specs/service-docs-registry.yaml
     volumes:

@@ -3517,15 +3517,28 @@ class ErrorMarkingMiddleware(BaseHTTPMiddleware):
 # Add this FIRST so it runs LAST (after all other middleware)
 app.add_middleware(ErrorMarkingMiddleware)
 
-# Add CORS middleware
+# Add CORS middleware. Explicit origins allow credentials (e.g. Swagger UI on docs-manager port).
+# Set CORS_ORIGINS env to comma-separated list (e.g. "https://app.example.com") or "*" for allow-all (no credentials).
+_cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
+if _cors_origins_env == "*":
+    _cors_origins = ["*"]
+    _cors_credentials = False
+elif _cors_origins_env:
+    _cors_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()]
+    _cors_credentials = True
+else:
+    _cors_origins = [
+        "http://localhost:8080", "http://127.0.0.1:8080",
+        "http://localhost:8103", "http://127.0.0.1:8103",
+        "http://localhost:3000", "http://127.0.0.1:3000",
+    ]
+    _cors_credentials = True
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
-    # Expose all response headers so browser-based tools (like smr_ui.html)
-    # can read and display them via the Fetch API.
     expose_headers=["*"],
 )
 
