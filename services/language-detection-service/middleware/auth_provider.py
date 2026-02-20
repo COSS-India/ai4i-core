@@ -22,13 +22,17 @@ AUTH_HTTP_TIMEOUT = float(os.getenv("AUTH_HTTP_TIMEOUT", "5.0"))
 
 
 def get_api_key_from_header(authorization: Optional[str]) -> Optional[str]:
+    """Extract API key from Authorization header."""
     if not authorization:
         return None
+    
+    # Support formats: "Bearer <key>", "<key>", "ApiKey <key>"
     if authorization.startswith("Bearer "):
+        return None  # Bearer is JWT, not API key
+    elif authorization.startswith("ApiKey "):
         return authorization[7:]
-    if authorization.startswith("ApiKey "):
-        return authorization[7:]
-    return authorization
+    else:
+        return authorization
 
 
 def determine_service_and_action(request: Request) -> Tuple[str, str]:
@@ -72,6 +76,8 @@ async def validate_api_key_permissions(
             result = response.json()
             # Enforce auth-service 'valid' flag
             if not result.get("valid", False):
+                # Preserve detailed message from auth-service, e.g.:
+                # "Invalid API key: This key does not have access to language-detection service"
                 error_msg = result.get("message", "Permission denied")
                 raise AuthorizationError(error_msg)
 
@@ -164,7 +170,7 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
     except JWTError as e:
         logger.warning(f"JWT verification failed: {e}")
         if "expired" in str(e).lower() or "exp" in str(e).lower():
-            raise AuthenticationError("Authentication failed. Please log in again.")
+            raise AuthenticationError("Invalid or expired token")
         raise AuthenticationError("Invalid or expired token")
     except Exception as e:
         logger.error(f"Unexpected error during JWT verification: {e}")
@@ -200,10 +206,34 @@ async def AuthProvider(
             service, action = determine_service_and_action(request)
             auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
             
-            # CRITICAL: Always check valid field - auth-service may return valid=false for ownership mismatch
+            # CRITICAL: Always check valid field - auth-service may return valid=false
             if not auth_result.get("valid", False):
                 error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
-                raise AuthenticationError("API key does not belong to the authenticated user")
+                logger.error(f"Auth-service returned valid=false in BOTH mode: {error_msg}, jwt_user_id={jwt_user_id}, api_key_user_id={auth_result.get('user_id')}")
+                
+                # In BOTH mode, if we provided user_id and auth-service returned valid=false,
+                # it's ALWAYS an ownership issue (API key doesn't belong to the authenticated user)
+                # This matches OCR/NMT behavior: when user_id is provided in BOTH mode and valid=false,
+                # it means the API key doesn't belong to that user, regardless of the error message
+                if jwt_user_id is not None:
+                    # Check if user_id was provided and auth-service returned a different user_id
+                    if auth_result.get("user_id") is not None:
+                        try:
+                            api_key_user_id = int(auth_result.get("user_id"))
+                            requested_user_id = int(jwt_user_id)
+                            if api_key_user_id != requested_user_id:
+                                logger.error(f"API key ownership mismatch: requested_user_id={requested_user_id}, api_key_user_id={api_key_user_id}")
+                                raise AuthenticationError("API key does not belong to the authenticated user")
+                        except (TypeError, ValueError):
+                            pass  # If conversion fails, fall through
+                    
+                    # In BOTH mode with user_id provided, valid=false ALWAYS means ownership issue
+                    # regardless of what the error message says (e.g., "Invalid API key: This key does not have access...")
+                    logger.error(f"BOTH mode: valid=false with user_id={jwt_user_id} provided, treating as ownership issue")
+                    raise AuthenticationError("API key does not belong to the authenticated user")
+                
+                # For other errors (when user_id not provided), preserve the message
+                raise AuthenticationError(error_msg)
 
             # 3) Populate request.state – keep JWT as primary identity (matching ASR/TTS/NMT)
             request.state.user_id = jwt_user_id
@@ -214,12 +244,11 @@ async def AuthProvider(
 
             return bearer_result
         except (AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
-            # For ANY auth/key error in BOTH mode, surface a single, consistent message
+            # For ANY auth/key error in BOTH mode, surface the underlying message when available
             logger.error(f"Language-detection BOTH mode: Authentication/Authorization error: {e}")
-            raise AuthenticationError("API key does not belong to the authenticated user")
+            raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
         except Exception as e:
             logger.error(f"Language-detection BOTH mode: Unexpected error: {e}", exc_info=True)
-            # Even on unexpected errors we normalize the external message
             raise AuthenticationError("API key does not belong to the authenticated user")
 
     # API_KEY-only mode
