@@ -1,1 +1,56 @@
-groups: []
+groups:
+- name: application-alerts
+  interval: 30s
+  rules:
+  - alert: HighMedianLatencyPerService_bashadaan
+    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="bashadaan"}[5m]))) > 0.15
+    for: 2m
+    labels:
+      organization: bashadaan
+      severity: warning
+      urgency: medium
+      category: application
+      alert_type: Latency
+      scope: per_endpoint
+    annotations:
+      summary: HighMedianLatencyPerService for bashadaan
+      description: High median latency for specific inference endpoints
+  - alert: HighMedianLatencyPerService_beml
+    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="beml"}[5m]))) > 0.15
+    for: 2m
+    labels:
+      organization: beml
+      severity: warning
+      urgency: medium
+      category: application
+      alert_type: Latency
+      scope: per_endpoint
+    annotations:
+      summary: HighMedianLatencyPerService for beml
+      description: High median latency for specific inference endpoints
+  - alert: HighMedianLatencyPerService_irctc
+    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="irctc"}[5m]))) > 0.15
+    for: 2m
+    labels:
+      organization: irctc
+      severity: warning
+      urgency: medium
+      category: application
+      alert_type: Latency
+      scope: per_endpoint
+    annotations:
+      summary: HighMedianLatencyPerService for irctc
+      description: High median latency for specific inference endpoints
+  - alert: HighMedianLatencyPerService_kisanmitra
+    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="kisanmitra"}[5m]))) > 0.15
+    for: 2m
+    labels:
+      organization: kisanmitra
+      severity: warning
+      urgency: medium
+      category: application
+      alert_type: Latency
+      scope: per_endpoint
+    annotations:
+      summary: HighMedianLatencyPerService for kisanmitra
+      description: High median latency for specific inference endpoints

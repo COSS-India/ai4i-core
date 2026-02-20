@@ -3,7 +3,7 @@
 openapi: 3.0.3
 info:
   title: ASR Service
-  description: Automatic Speech Recognition. Convert speech to text (batch and streaming). 22+ Indic languages.
+  description: Automatic Speech Recognition. Convert speech to text. 22+ Indic languages.
   version: 1.0.0
   contact:
     name: Dhruva Platform Team
@@ -21,7 +21,7 @@ paths:
   /api/v1/asr/inference:
     post:
       tags: [ASR]
-      summary: Batch ASR inference
+      summary: ASR inference
       description: Convert speech to text for one or more audio inputs.
       operationId: asrInference
       security:
@@ -49,103 +49,6 @@ paths:
           $ref: "#/components/responses/RateLimitExceeded"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-
-  /api/v1/asr/transcribe:
-    post:
-      tags: [ASR]
-      summary: Transcribe audio (alias)
-      description: Alias for POST /api/v1/asr/inference. Same request/response.
-      operationId: asrTranscribe
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ASRInferenceRequest"
-      responses:
-        "200":
-          description: Transcription result
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ASRInferenceResponse"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-        "429":
-          $ref: "#/components/responses/RateLimitExceeded"
-        "503":
-          $ref: "#/components/responses/ServiceUnavailable"
-
-  /api/v1/asr/streaming/info:
-    get:
-      tags: [ASR]
-      summary: Streaming info
-      description: Get WebSocket URL and parameters for real-time ASR streaming.
-      operationId: asrStreamingInfo
-      security:
-        - BearerAuth: []
-      responses:
-        "200":
-          description: Streaming endpoint info
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  url:
-                    type: string
-                    description: WebSocket base URL
-                  params:
-                    type: array
-                    items:
-                      type: string
-                    description: Required query parameters (e.g. serviceId, language, samplingRate)
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/asr/models:
-    get:
-      tags: [ASR]
-      summary: List ASR models
-      description: Get list of supported ASR models and languages.
-      operationId: asrModels
-      security:
-        - BearerAuth: []
-      responses:
-        "200":
-          description: List of models
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  models:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        model_id:
-                          type: string
-                        languages:
-                          type: array
-                          items:
-                            type: string
-                        description:
-                          type: string
-                  supported_languages:
-                    type: array
-                    items:
-                      type: string
-                  supported_formats:
-                    type: array
-                    items:
-                      type: string
-        "401":
-          $ref: "#/components/responses/Unauthorized"
 
   /api/v1/asr/health:
     get:

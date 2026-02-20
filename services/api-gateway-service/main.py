@@ -2278,10 +2278,6 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str, 
         if data.get("valid") is False:
             # Extract the actual error message from auth-service
             error_message = data.get("message", "Invalid API key or insufficient permissions")
-            # Format error message to be consistent with "insufficient permission" format
-            if "does not have" in error_message.lower() or "permission" in error_message.lower():
-                if "insufficient permission" not in error_message.lower():
-                    error_message = f"Authorization error: Insufficient permission. {error_message}"
             raise HTTPException(
                 status_code=403,
                 detail={
@@ -2393,14 +2389,15 @@ class AlertAnnotation(BaseModel):
     value: str = Field(..., description="Annotation value")
 
 class AlertDefinitionCreate(BaseModel):
-    """Request model for creating an alert definition"""
+    """Request model for creating an alert definition. PromQL is built from alert_type and threshold."""
     name: str = Field(..., description="Alert name (e.g., 'HighLatency')")
     description: Optional[str] = Field(None, description="Alert description")
-    promql_expr: str = Field(..., description="PromQL expression (organization will be automatically injected by the API for application alerts only, not for infrastructure alerts)")
+    threshold_value: float = Field(..., description="Threshold value (e.g. seconds for latency, percent for error_rate/CPU/Memory/Disk)")
+    threshold_unit: str = Field(..., description="Threshold unit: 'seconds' (latency), 'percent' or 'ratio' (error_rate), 'percent' (CPU/Memory/Disk)")
     category: str = Field(default="application", description="Category: 'application' or 'infrastructure'")
     severity: str = Field(..., description="Severity: 'critical', 'warning', or 'info'")
     urgency: str = Field(default="medium", description="Urgency: 'high', 'medium', or 'low'")
-    alert_type: Optional[str] = Field(None, description="Alert type (e.g., 'latency', 'error_rate')")
+    alert_type: str = Field(..., description="Application: 'Latency' or 'Error Rate'. Infrastructure: 'CPU', 'Memory', or 'Disk'")
     scope: Optional[str] = Field(None, description="Scope (e.g., 'all_services', 'per_service')")
     evaluation_interval: str = Field(default="30s", description="Prometheus evaluation interval")
     for_duration: str = Field(default="5m", description="Duration before alert fires")
@@ -2409,7 +2406,8 @@ class AlertDefinitionCreate(BaseModel):
 class AlertDefinitionUpdate(BaseModel):
     """Request model for updating an alert definition"""
     description: Optional[str] = None
-    promql_expr: Optional[str] = None
+    threshold_value: Optional[float] = None
+    threshold_unit: Optional[str] = None
     category: Optional[str] = None
     severity: Optional[str] = None
     urgency: Optional[str] = None
@@ -3521,15 +3519,28 @@ class ErrorMarkingMiddleware(BaseHTTPMiddleware):
 # Add this FIRST so it runs LAST (after all other middleware)
 app.add_middleware(ErrorMarkingMiddleware)
 
-# Add CORS middleware
+# Add CORS middleware. Explicit origins allow credentials (e.g. Swagger UI on docs-manager port).
+# Set CORS_ORIGINS env to comma-separated list (e.g. "https://app.example.com") or "*" for allow-all (no credentials).
+_cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
+if _cors_origins_env == "*":
+    _cors_origins = ["*"]
+    _cors_credentials = False
+elif _cors_origins_env:
+    _cors_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()]
+    _cors_credentials = True
+else:
+    _cors_origins = [
+        "http://localhost:8080", "http://127.0.0.1:8080",
+        "http://localhost:8103", "http://127.0.0.1:8103",
+        "http://localhost:3000", "http://127.0.0.1:3000",
+    ]
+    _cors_credentials = True
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
-    # Expose all response headers so browser-based tools (like smr_ui.html)
-    # can read and display them via the Fetch API.
     expose_headers=["*"],
 )
 
