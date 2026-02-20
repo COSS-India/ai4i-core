@@ -197,7 +197,7 @@ class LanguageDetectionService:
                 
                 # Get Triton client (already resolved via Model Management)
                 triton_client = self.get_triton_client(service_id)
-                logger.info(f"Using Triton model: {model_name} for service: {service_id} (resolved via Model Management)")
+                # Log removed - middleware handles request/response logging
                 
                 # Prepare Triton inputs/outputs
                 with tracer.start_as_current_span("language-detection.prepare_triton_io") as io_span:
@@ -322,7 +322,7 @@ class LanguageDetectionService:
                 span.set_attribute("language-detection.output_count", len(results))
                 span.set_attribute("language-detection.processing_time", processing_time)
                 
-                logger.info(f"Language detection completed for request {request_id} in {processing_time:.2f}s")
+                # Log removed - middleware handles request/response logging
                 return response_model
                 
             except Exception as e:

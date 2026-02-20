@@ -39,7 +39,7 @@ class LanguageDetectionRepository:
             self.db.add(request)
             await self.db.commit()
             await self.db.refresh(request)
-            logger.info(f"Created language detection request {request.id}")
+            # Log removed - middleware handles request/response logging
             return request
         except Exception as e:
             await self.db.rollback()
@@ -69,7 +69,7 @@ class LanguageDetectionRepository:
             request = result.scalar_one_or_none()
             if not request:
                 raise DatabaseError(f"Language detection request {request_id} not found")
-            logger.info(f"Updated language detection request {request_id} status to {status}")
+            # Log removed - middleware handles request/response logging
             return request
         except Exception as e:
             await self.db.rollback()
@@ -97,7 +97,7 @@ class LanguageDetectionRepository:
             self.db.add(result)
             await self.db.commit()
             await self.db.refresh(result)
-            logger.info(f"Created language detection result {result.id} for request {request_id}")
+            # Log removed - middleware handles request/response logging
             return result
         except Exception as e:
             await self.db.rollback()

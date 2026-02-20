@@ -85,12 +85,7 @@ async def get_language_detection_service(
             ),
         )
     
-    logger.info(
-        "Using Triton endpoint=%s model_name=%s for serviceId=%s from Model Management",
-        triton_endpoint,
-        model_name,
-        getattr(request.state, "service_id", "unknown"),
-    )
+    # Log removed - middleware handles request/response logging
 
     triton_client = TritonClient(triton_endpoint, triton_api_key or None)
 
@@ -168,13 +163,7 @@ async def run_inference(
                 "service_id": request_body.config.serviceId if request_body.config else "unknown"
             })
 
-            logger.info(
-                "Processing language detection request with %d text input(s), user_id=%s api_key_id=%s session_id=%s",
-                len(request_body.input),
-                user_id,
-                api_key_id,
-                session_id,
-            )
+            # Log removed - middleware handles request/response logging
 
             # Run inference
             response = await language_detection_service.run_inference(
@@ -200,7 +189,7 @@ async def run_inference(
                 "output_count": len(response.output)
             })
             
-            logger.info("Language detection completed successfully")
+            # Log removed - middleware handles request/response logging
             return response
             
         except ValueError as exc:
@@ -267,7 +256,7 @@ async def _run_inference_impl(
         user_id = getattr(http_request.state, 'user_id', None)
         api_key_name = getattr(http_request.state, 'api_key_name', None)
         
-        logger.info(f"Processing language detection request for user_id={user_id}")
+        # Log removed - middleware handles request/response logging
         
         response = await language_detection_service.run_inference(
             request=request_body,
@@ -275,7 +264,7 @@ async def _run_inference_impl(
             user_id=user_id
         )
         
-        logger.info("Language detection completed successfully")
+        # Log removed - middleware handles request/response logging
         return response
         
     except ValueError as exc:
