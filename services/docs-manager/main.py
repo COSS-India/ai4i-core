@@ -144,9 +144,14 @@ def _rewrite_refs(obj: Any, schema_prefix: str, response_prefix: str) -> Any:
 
 
 def _apply_tag(op: dict[str, Any], tag: str) -> dict[str, Any]:
-    """Set the operation's tags to the single registry tag for this service."""
+    """Set the operation's tags to the single registry tag for this service.
+    Remove operation-level security so the merged doc's global security
+    (BearerAuth + ApiKeyAuth) applies to every operation; otherwise Swagger UI
+    would only send the auth method(s) listed per-operation (e.g. only Bearer).
+    """
     op = dict(op)
     op["tags"] = [tag]
+    op.pop("security", None)
     return op
 
 
@@ -176,31 +181,6 @@ def _tag_for_service(service_name: str, meta: dict[str, Any]) -> str:
     """Tag used for this service in the merged OpenAPI document."""
     tag = (meta.get("description") or service_name).strip()
     return tag or service_name.replace("-", " ").title()
-
-
-X_AUTH_SOURCE_PARAM = {
-    "name": "x-auth-source",
-    "in": "header",
-    "required": False,
-    "schema": {"type": "string", "enum": ["API_KEY", "AUTH_TOKEN"]},
-    "description": "Select auth source",
-}
-
-
-def _inject_x_auth_source_param(merged: dict[str, Any]) -> None:
-    """Add x-auth-source header to each operation unless already defined."""
-    methods = ("get", "post", "put", "patch", "delete", "head", "options")
-    for path_item in (merged.get("paths") or {}).values():
-        if not isinstance(path_item, dict):
-            continue
-        for method in methods:
-            op = path_item.get(method)
-            if not isinstance(op, dict):
-                continue
-            params = op.setdefault("parameters", [])
-            if any((isinstance(p, dict) and p.get("name") == "x-auth-source") for p in params):
-                continue
-            params.insert(0, dict(X_AUTH_SOURCE_PARAM))
 
 
 def _add_service_spec(
@@ -239,7 +219,7 @@ def _build_merged_spec() -> dict[str, Any]:
             "version": "1.0.0",
         },
         "servers": [
-            {"url": "/api-proxy", "description": "API Gateway (via docs-manager proxy)"}
+            {"url": "/api-proxy", "description": "API Gateway"}
         ],
         "paths": {},
         "components": {"schemas": {}, "responses": {}, "securitySchemes": {}},
@@ -273,7 +253,6 @@ def _build_merged_spec() -> dict[str, Any]:
         }
         merged["tags"].insert(0, {"name": "Status", "description": "Service status"})
 
-    _inject_x_auth_source_param(merged)
     return merged
 
 
