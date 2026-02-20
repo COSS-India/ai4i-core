@@ -50,7 +50,7 @@ class TritonClient:
     def client(self):
         """Lazy initialization of Triton client"""
         if self._client is None:
-            logger.info(f"Initializing Triton client with URL: {self.triton_url}")
+            # Log removed - middleware handles request/response logging
             try:
                 self._client = http_client.InferenceServerClient(
                     url=self.triton_url,

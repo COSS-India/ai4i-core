@@ -132,12 +132,7 @@ async def get_transliteration_service(
             ),
         )
     
-    logger.info(
-        "Using Triton endpoint=%s model_name=%s for serviceId=%s from Model Management",
-        triton_endpoint,
-        model_name,
-        getattr(request.state, "service_id", "unknown"),
-    )
+    # Log removed - middleware handles request/response logging
     
     # Factory function to create Triton clients for different endpoints
     def get_triton_client_for_endpoint(endpoint: str) -> TritonClient:
@@ -244,13 +239,7 @@ async def run_inference(
                 "is_sentence": request.config.isSentence
             })
 
-            logger.info(
-                "Processing Transliteration inference request with %d text input(s), user_id=%s api_key_id=%s session_id=%s",
-                len(request.input),
-                user_id,
-                api_key_id,
-                session_id,
-            )
+            # Log removed - middleware handles request/response logging
 
             # Run inference
             response = await transliteration_service.run_inference(
@@ -279,7 +268,7 @@ async def run_inference(
                 "status": "success"
             })
             span.set_status(Status(StatusCode.OK))
-            logger.info("Transliteration inference completed successfully")
+            # Log removed - middleware handles request/response logging
             return response
 
         except (InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError) as exc:
@@ -376,13 +365,7 @@ async def _run_transliteration_inference_impl(
     api_key_id = getattr(http_request.state, "api_key_id", None)
     session_id = getattr(http_request.state, "session_id", None)
 
-    logger.info(
-        "Processing Transliteration inference request with %d text input(s), user_id=%s api_key_id=%s session_id=%s",
-        len(request.input),
-        user_id,
-        api_key_id,
-        session_id,
-    )
+    # Log removed - middleware handles request/response logging
 
     response = await transliteration_service.run_inference(
         request=request,
@@ -391,7 +374,7 @@ async def _run_transliteration_inference_impl(
         session_id=session_id,
         auth_headers=extract_auth_headers(http_request)
     )
-    logger.info("Transliteration inference completed successfully")
+    # Log removed - middleware handles request/response logging
     return response
 
 
