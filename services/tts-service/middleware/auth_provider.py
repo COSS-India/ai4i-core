@@ -462,7 +462,8 @@ async def AuthProvider(
                 try:
                     auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
                     auth_duration = time_module.time() - auth_start
-                    logger.info(f"API key validation completed in {auth_duration:.3f}s for user_id={jwt_user_id}")
+                    # Log removed - middleware handles request/response logging
+                    logger.debug(f"API key validation completed in {auth_duration:.3f}s for user_id={jwt_user_id}")
                     
                     # CRITICAL: Always check valid field - auth-service may return valid=false
                     if not auth_result.get("valid", False):
@@ -562,7 +563,8 @@ async def AuthProvider(
                 try:
                     auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
                     auth_duration = time_module.time() - auth_start
-                    logger.info(f"API key validation completed in {auth_duration:.3f}s for user_id={jwt_user_id}")
+                    # Log removed - middleware handles request/response logging
+                    logger.debug(f"API key validation completed in {auth_duration:.3f}s for user_id={jwt_user_id}")
                     
                     # CRITICAL: Always check valid field - auth-service may return valid=false
                     if not auth_result.get("valid", False):
