@@ -842,32 +842,12 @@ async def login(
         
         logger.info(f"✅ User logged in successfully: email={user.email}, user_id={user.id}, ip={client_ip}")
         
-        # 🔍 Step 8: Build response (include tenant_id for tenant admins/users)
-        user_dict = {
-            "id": user.id,
-            "email": user.email,
-            "username": user.username,
-            "full_name": user.full_name,
-            "phone_number": user.phone_number,
-            "timezone": user.timezone,
-            "language": user.language,
-            "is_active": user.is_active,
-            "is_verified": user.is_verified,
-            "is_superuser": user.is_superuser,
-            "created_at": user.created_at,
-            "updated_at": user.updated_at,
-            "last_login": user.last_login,
-            "avatar_url": user.avatar_url,
-            "roles": user_roles,
-            "tenant_id": tenant_info["tenant_id"] if tenant_info else None,
-        }
-        
+        # 🔍 Step 8: Build response (only tokens, no user details)
         return LoginResponse(
             access_token=access_token,
             refresh_token=refresh_token,
             token_type="bearer",
             expires_in=int(access_token_expires.total_seconds()),
-            user=user_dict,
         )
         
     except HTTPException:
