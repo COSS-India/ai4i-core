@@ -37,6 +37,7 @@ _here = Path(__file__).resolve().parent
 _specs_dir = _here / "specs"
 REGISTRY_ENV = "SERVICE_DOCS_REGISTRY_PATH"
 GATEWAY_URL_ENV = "API_GATEWAY_URL"
+USE_API_PROXY_ENV = "USE_API_PROXY"
 DEFAULT_GATEWAY_URL = "http://localhost:8080"
 DEFAULT_REGISTRY = _specs_dir / "service-docs-registry.yaml"
 SPECS_ROOT_ENV = "SPECS_ROOT"
@@ -67,6 +68,20 @@ def _gateway_base_url() -> str:
     """Base URL for the API Gateway used by the proxy."""
     registry = _load_registry()
     return (_gateway_url() or registry.get("api_gateway_url") or DEFAULT_GATEWAY_URL).rstrip("/")
+
+
+def _use_api_proxy() -> bool:
+    """True if Swagger UI should use /api-proxy (same-origin proxy). False when deployed
+    behind a gateway (e.g. APISIX) with no /api-proxy route — then Try it out calls API_GATEWAY_URL directly."""
+    val = os.getenv(USE_API_PROXY_ENV, "true").strip().lower()
+    return val in ("true", "1", "yes")
+
+
+def _openapi_server_url() -> str:
+    """Server URL shown in OpenAPI spec (for Try it out)."""
+    if _use_api_proxy():
+        return "/api-proxy"
+    return _gateway_base_url()
 
 
 def _load_registry() -> dict[str, Any]:
@@ -219,7 +234,7 @@ def _build_merged_spec() -> dict[str, Any]:
             "version": "1.0.0",
         },
         "servers": [
-            {"url": "/api-proxy", "description": "API Gateway"}
+            {"url": _openapi_server_url(), "description": "API Gateway"}
         ],
         "paths": {},
         "components": {"schemas": {}, "responses": {}, "securitySchemes": {}},
@@ -384,6 +399,5 @@ def service_openapi(service_name: str):
     spec = _load_spec_file(spec_file)
     if not spec:
         return JSONResponse({"detail": "Spec file not found or unreadable."}, status_code=404)
-    gateway_url = (_gateway_url() or registry.get("api_gateway_url") or DEFAULT_GATEWAY_URL).rstrip("/")
-    spec["servers"] = [{"url": gateway_url, "description": "API Gateway"}]
+    spec["servers"] = [{"url": _openapi_server_url(), "description": "API Gateway"}]
     return JSONResponse(spec)

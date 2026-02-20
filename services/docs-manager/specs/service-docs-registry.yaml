@@ -2,8 +2,9 @@
 # Each service has one OpenAPI spec file (YAML or JSON) in this specs/ folder.
 # The Docs Manager merges them into a single Swagger UI.
 #
-# api_gateway_url: base URL (e.g. http://localhost:8080)
-# spec_file: path relative to this specs/ directory
+# api_gateway_url: base URL for proxy (e.g. http://localhost:8080)
+# For deployed envs where the gateway has no /api-proxy route, set USE_API_PROXY=false
+# so "Try it out" calls API_GATEWAY_URL directly.
 
 services:
   asr-service:
