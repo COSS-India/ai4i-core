@@ -2200,26 +2200,26 @@ async def view_tenant_details(
     decrypted_phone = decrypt_sensitive_data(tenant.phone_number) if tenant.phone_number else None
     
     # Check if decryption actually succeeded
-    # If the original data was encrypted (starts with 'gAAAAA') but decryption returned the same value,
-    # it means decryption failed (likely due to encryption key mismatch)
-    if tenant.contact_email and tenant.contact_email.startswith('gAAAAA'):
-        if decrypted_email == tenant.contact_email:
-            # Decryption failed - encrypted data couldn't be decrypted (key mismatch or corruption)
-            logger.error(
-                f"CRITICAL: Failed to decrypt email for tenant {tenant.tenant_id}. "
-                f"This usually means the encryption key changed. "
-                f"Original encrypted value starts with: {tenant.contact_email[:20]}..."
-            )
-            # Use placeholder to prevent validation error, but log the issue
-            decrypted_email = "encrypted@example.com"
-        # If decrypted_email != tenant.contact_email, decryption succeeded, use it
+    # If decrypted_email still looks encrypted (starts with 'gAAAAA'), decryption failed
+    if decrypted_email and decrypted_email.startswith('gAAAAA'):
+        # Decryption failed - encrypted data couldn't be decrypted (key mismatch or corruption)
+        logger.error(
+            f"CRITICAL: Failed to decrypt email for tenant {tenant.tenant_id}. "
+            f"This usually means the encryption key changed. "
+            f"Encrypted value starts with: {decrypted_email[:20]}..."
+        )
+        # Use placeholder to prevent validation error
+        decrypted_email = "encrypted@example.com"
+    elif not decrypted_email:
+        # No email or decryption returned None
+        decrypted_email = "unknown@example.com"
     
     response = TenantViewResponse(
         id=tenant.id,
         tenant_id=tenant.tenant_id,
         user_id=tenant.user_id or None,
         organization_name=tenant.organization_name,
-        email=decrypted_email or "unknown@example.com",  # Use placeholder if decryption fails
+        email=decrypted_email,  # Already handled above
         phone_number=decrypted_phone,
         domain=tenant.domain,
         schema=tenant.schema_name,
@@ -2396,26 +2396,26 @@ async def view_tenant_user_details(
     decrypted_phone = decrypt_sensitive_data(tenant_user.phone_number) if tenant_user.phone_number else None
     
     # Check if decryption actually succeeded
-    # If the original data was encrypted (starts with 'gAAAAA') but decryption returned the same value,
-    # it means decryption failed (likely due to encryption key mismatch)
-    if tenant_user.email and tenant_user.email.startswith('gAAAAA'):
-        if decrypted_email == tenant_user.email:
-            # Decryption failed - encrypted data couldn't be decrypted (key mismatch or corruption)
-            logger.error(
-                f"CRITICAL: Failed to decrypt email for tenant user {tenant_user.user_id}. "
-                f"This usually means the encryption key changed. "
-                f"Original encrypted value starts with: {tenant_user.email[:20]}..."
-            )
-            # Use placeholder to prevent validation error, but log the issue
-            decrypted_email = "encrypted@example.com"
-        # If decrypted_email != tenant_user.email, decryption succeeded, use it
+    # If decrypted_email still looks encrypted (starts with 'gAAAAA'), decryption failed
+    if decrypted_email and decrypted_email.startswith('gAAAAA'):
+        # Decryption failed - encrypted data couldn't be decrypted (key mismatch or corruption)
+        logger.error(
+            f"CRITICAL: Failed to decrypt email for tenant user {tenant_user.user_id}. "
+            f"This usually means the encryption key changed. "
+            f"Encrypted value starts with: {decrypted_email[:20]}..."
+        )
+        # Use placeholder to prevent validation error
+        decrypted_email = "encrypted@example.com"
+    elif not decrypted_email:
+        # No email or decryption returned None
+        decrypted_email = "unknown@example.com"
     
     response = TenantUserViewResponse(
         id=tenant_user.id,
         tenant_id=tenant_user.tenant_id,
         user_id=tenant_user.user_id,
         username=tenant_user.username,
-        email=decrypted_email or "unknown@example.com",  # Use placeholder if decryption fails
+        email=decrypted_email,  # Already handled above
         phone_number=decrypted_phone,
         subscriptions=tenant_user.subscriptions or [],
         status=tenant_user.status.value if hasattr(tenant_user.status, "value") else str(tenant_user.status),
@@ -2451,19 +2451,19 @@ async def list_all_tenants(
         decrypted_phone = decrypt_sensitive_data(tenant.phone_number) if tenant.phone_number else None
         
         # Check if decryption actually succeeded
-        # If the original data was encrypted (starts with 'gAAAAA') but decryption returned the same value,
-        # it means decryption failed (likely due to encryption key mismatch)
-        if tenant.contact_email and tenant.contact_email.startswith('gAAAAA'):
-            if decrypted_email == tenant.contact_email:
-                # Decryption failed - encrypted data couldn't be decrypted (key mismatch or corruption)
-                logger.error(
-                    f"CRITICAL: Failed to decrypt email for tenant {tenant.tenant_id}. "
-                    f"This usually means the encryption key changed. "
-                    f"Original encrypted value starts with: {tenant.contact_email[:20]}..."
-                )
-                # Use placeholder to prevent validation error, but log the issue
-                decrypted_email = "encrypted@example.com"
-            # If decrypted_email != tenant.contact_email, decryption succeeded, use it
+        # If decrypted_email still looks encrypted (starts with 'gAAAAA'), decryption failed
+        if decrypted_email and decrypted_email.startswith('gAAAAA'):
+            # Decryption failed - encrypted data couldn't be decrypted (key mismatch or corruption)
+            logger.error(
+                f"CRITICAL: Failed to decrypt email for tenant {tenant.tenant_id}. "
+                f"This usually means the encryption key changed. "
+                f"Encrypted value starts with: {decrypted_email[:20]}..."
+            )
+            # Use placeholder to prevent validation error
+            decrypted_email = "encrypted@example.com"
+        elif not decrypted_email:
+            # No email or decryption returned None
+            decrypted_email = "unknown@example.com"
         
         tenant_list.append(
             TenantViewResponse(
@@ -2471,7 +2471,7 @@ async def list_all_tenants(
                 tenant_id=tenant.tenant_id,
                 user_id=tenant.user_id or 0,
                 organization_name=tenant.organization_name,
-                email=decrypted_email or "unknown@example.com",  # Use placeholder if decryption fails
+                email=decrypted_email,  # Already handled above
                 phone_number=decrypted_phone,
                 domain=tenant.domain,
                 schema=tenant.schema_name,
@@ -2518,19 +2518,19 @@ async def list_all_users(
         decrypted_phone = decrypt_sensitive_data(user.phone_number) if user.phone_number else None
         
         # Check if decryption actually succeeded
-        # If the original data was encrypted (starts with 'gAAAAA') but decryption returned the same value,
-        # it means decryption failed (likely due to encryption key mismatch)
-        if user.email and user.email.startswith('gAAAAA'):
-            if decrypted_email == user.email:
-                # Decryption failed - encrypted data couldn't be decrypted (key mismatch or corruption)
-                logger.error(
-                    f"CRITICAL: Failed to decrypt email for tenant user {user.user_id}. "
-                    f"This usually means the encryption key changed. "
-                    f"Original encrypted value starts with: {user.email[:20]}..."
-                )
-                # Use placeholder to prevent validation error, but log the issue
-                decrypted_email = "encrypted@example.com"
-            # If decrypted_email != user.email, decryption succeeded, use it
+        # If decrypted_email still looks encrypted (starts with 'gAAAAA'), decryption failed
+        if decrypted_email and decrypted_email.startswith('gAAAAA'):
+            # Decryption failed - encrypted data couldn't be decrypted (key mismatch or corruption)
+            logger.error(
+                f"CRITICAL: Failed to decrypt email for tenant user {user.user_id}. "
+                f"This usually means the encryption key changed. "
+                f"Encrypted value starts with: {decrypted_email[:20]}..."
+            )
+            # Use placeholder to prevent validation error
+            decrypted_email = "encrypted@example.com"
+        elif not decrypted_email:
+            # No email or decryption returned None
+            decrypted_email = "unknown@example.com"
         
         user_list.append(
             TenantUserViewResponse(
@@ -2538,7 +2538,7 @@ async def list_all_users(
                 tenant_id=user.tenant_id,
                 user_id=user.user_id,
                 username=user.username,
-                email=decrypted_email or "unknown@example.com",  # Use placeholder if decryption fails
+                email=decrypted_email,  # Already handled above
                 phone_number=decrypted_phone,
                 subscriptions=user.subscriptions or [],
                 status=user.status.value if hasattr(user.status, "value") else str(user.status),
