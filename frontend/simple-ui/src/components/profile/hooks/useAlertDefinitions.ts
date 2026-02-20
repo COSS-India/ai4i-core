@@ -97,10 +97,11 @@ export function useAlertDefinitions() {
     setCreateAnnotations([]);
   };
   const handleCreate = async () => {
-    if (!createForm.name.trim() || !createForm.promql_expr.trim()) {
+    const thresholdValue = Number(createForm.promql_expr);
+    if (!createForm.name.trim() || Number.isNaN(thresholdValue)) {
       toast({
         title: "Validation Error",
-        description: "Name and PromQL expression are required",
+        description: "Name and threshold value are required",
         status: "warning",
         duration: 3000,
         isClosable: true,
@@ -109,12 +110,19 @@ export function useAlertDefinitions() {
     }
     setIsCreating(true);
     try {
-      const payload: AlertDefinitionCreate = {
-        ...createForm,
-        annotations:
-          createAnnotations.length > 0 ? createAnnotations : undefined,
+      const payload = {
+        name: createForm.name,
+        description: createForm.description,
+        category: createForm.category,
+        severity: createForm.severity,
+        urgency: createForm.urgency,
+        alert_type: createForm.alert_type,
+        evaluation_interval: createForm.evaluation_interval,
+        for_duration: createForm.for_duration,
+        threshold_value: thresholdValue,
+        threshold_unit: createForm.scope,
       };
-      await alertingService.createDefinition(payload);
+      await alertingService.createDefinition(payload as any);
       toast({
         title: "Alert Definition Created",
         status: "success",
@@ -175,12 +183,27 @@ export function useAlertDefinitions() {
     if (!updateItem) return;
     setIsUpdating(true);
     try {
-      const payload: AlertDefinitionUpdate = {
-        ...updateForm,
-        annotations:
-          updateAnnotations.length > 0 ? updateAnnotations : undefined,
-      };
-      await alertingService.updateDefinition(updateItem.id, payload);
+      const payload: Record<string, unknown> = {};
+      if (updateForm.description !== undefined) payload.description = updateForm.description;
+      if (updateForm.category !== undefined) payload.category = updateForm.category;
+      if (updateForm.severity !== undefined) payload.severity = updateForm.severity;
+      if (updateForm.urgency !== undefined) payload.urgency = updateForm.urgency;
+      if (updateForm.alert_type !== undefined) payload.alert_type = updateForm.alert_type;
+      if (updateForm.evaluation_interval !== undefined) payload.evaluation_interval = updateForm.evaluation_interval;
+      if (updateForm.for_duration !== undefined) payload.for_duration = updateForm.for_duration;
+      if (updateForm.enabled !== undefined) payload.enabled = updateForm.enabled;
+
+      if (updateForm.promql_expr !== undefined) {
+        const thresholdValue = Number(updateForm.promql_expr);
+        if (!Number.isNaN(thresholdValue)) {
+          payload.threshold_value = thresholdValue;
+        }
+      }
+      if (updateForm.scope !== undefined) {
+        payload.threshold_unit = updateForm.scope;
+      }
+
+      await alertingService.updateDefinition(updateItem.id, payload as any);
       toast({
         title: "Alert Definition Updated",
         status: "success",

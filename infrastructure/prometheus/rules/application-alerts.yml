@@ -1,15 +1,1 @@
-groups:
-- name: application-alerts
-  interval: 30s
-  rules:
-  - alert: HighLatency_bashadaan
-    expr: histogram_quantile(0.95, rate(asr_request_duration_seconds_bucket[5m])) > 5
-    for: 5m
-    labels:
-      organization: bashadaan
-      severity: warning
-      urgency: medium
-      category: application
-    annotations:
-      summary: HighLatency for bashadaan
-      description: ''
+groups: []

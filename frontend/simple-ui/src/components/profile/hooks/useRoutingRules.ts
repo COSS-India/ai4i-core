@@ -12,8 +12,8 @@ import { DEFAULT_GROUP_BY } from "../../../types/alerting";
 const EMPTY_CREATE_FORM: RoutingRuleCreate = {
   rule_name: "",
   receiver_id: 0,
-  match_severity: null,
-  match_category: null,
+  match_severity: "critical",
+  match_category: "application",
   match_alert_type: null,
   group_by: [...DEFAULT_GROUP_BY],
   group_wait: "10s",
@@ -30,6 +30,8 @@ export function useRoutingRules() {
   const [receivers, setReceivers] = useState<NotificationReceiver[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [filterEnabled, setFilterEnabled] = useState("all");
+  const [filterRole, setFilterRole] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Create modal
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -94,7 +96,7 @@ export function useRoutingRules() {
     setIsCreateOpen(false);
     setCreateForm(EMPTY_CREATE_FORM);
   };
-  const handleCreate = async () => {
+  const handleCreate = async (selectedRole?: string) => {
     if (!createForm.rule_name.trim()) {
       toast({
         title: "Validation Error",
@@ -105,20 +107,26 @@ export function useRoutingRules() {
       });
       return;
     }
-    if (!createForm.receiver_id) {
-      toast({
-        title: "Validation Error",
-        description: "Please select a receiver",
-        status: "warning",
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
     setIsCreating(true);
     try {
+      let receiverId = createForm.receiver_id;
+
+      if (selectedRole) {
+        const receiverPayload: Record<string, unknown> = {
+          category: createForm.match_category || "application",
+          severity: createForm.match_severity || "critical",
+          rbac_role: selectedRole,
+        };
+        if (createForm.match_alert_type) {
+          receiverPayload.alert_type = createForm.match_alert_type;
+        }
+        const newReceiver = await alertingService.createReceiver(receiverPayload as any);
+        receiverId = newReceiver.id;
+      }
+
       const payload: RoutingRuleCreate = {
         ...createForm,
+        receiver_id: receiverId,
         match_severity: createForm.match_severity || undefined,
         match_category: createForm.match_category || undefined,
         match_alert_type: createForm.match_alert_type || undefined,
@@ -256,21 +264,60 @@ export function useRoutingRules() {
         .filter((r) => {
           if (filterEnabled === "enabled" && !r.enabled) return false;
           if (filterEnabled === "disabled" && r.enabled) return false;
+          if (searchQuery) {
+            const q = searchQuery.toLowerCase();
+            if (
+              !r.rule_name.toLowerCase().includes(q) &&
+              !(r.match_category ?? "").toLowerCase().includes(q) &&
+              !(r.match_severity ?? "").toLowerCase().includes(q)
+            ) return false;
+          }
           return true;
         })
         .sort((a, b) => a.priority - b.priority),
-    [rules, filterEnabled]
+    [rules, filterEnabled, searchQuery]
+  );
+
+  const getRuleForReceiver = useCallback(
+    (receiverId: number) => rules.find((r) => r.receiver_id === receiverId),
+    [rules]
+  );
+
+  const filteredReceivers = useMemo(
+    () =>
+      [...receivers].filter((rv) => {
+        if (filterRole !== "all" && (rv.rbac_role ?? "") !== filterRole) return false;
+        if (filterEnabled === "enabled" && !rv.enabled) return false;
+        if (filterEnabled === "disabled" && rv.enabled) return false;
+        if (searchQuery) {
+          const q = searchQuery.toLowerCase();
+          const linkedRule = rules.find((r) => r.receiver_id === rv.id);
+          if (
+            !rv.receiver_name.toLowerCase().includes(q) &&
+            !(rv.rbac_role ?? "").toLowerCase().includes(q) &&
+            !(linkedRule?.rule_name ?? "").toLowerCase().includes(q)
+          ) return false;
+        }
+        return true;
+      }),
+    [receivers, rules, filterRole, filterEnabled, searchQuery]
   );
 
   return {
     rules,
     filteredRules,
     receivers,
+    filteredReceivers,
+    getRuleForReceiver,
     isLoading,
     fetchRules,
     getReceiverName,
     filterEnabled,
     setFilterEnabled,
+    filterRole,
+    setFilterRole,
+    searchQuery,
+    setSearchQuery,
     // Create
     isCreateOpen,
     isCreating,

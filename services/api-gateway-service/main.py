@@ -2389,14 +2389,15 @@ class AlertAnnotation(BaseModel):
     value: str = Field(..., description="Annotation value")
 
 class AlertDefinitionCreate(BaseModel):
-    """Request model for creating an alert definition"""
+    """Request model for creating an alert definition. PromQL is built from alert_type and threshold."""
     name: str = Field(..., description="Alert name (e.g., 'HighLatency')")
     description: Optional[str] = Field(None, description="Alert description")
-    promql_expr: str = Field(..., description="PromQL expression (organization will be automatically injected by the API for application alerts only, not for infrastructure alerts)")
+    threshold_value: float = Field(..., description="Threshold value (e.g. seconds for latency, percent for error_rate/CPU/Memory/Disk)")
+    threshold_unit: str = Field(..., description="Threshold unit: 'seconds' (latency), 'percent' or 'ratio' (error_rate), 'percent' (CPU/Memory/Disk)")
     category: str = Field(default="application", description="Category: 'application' or 'infrastructure'")
     severity: str = Field(..., description="Severity: 'critical', 'warning', or 'info'")
     urgency: str = Field(default="medium", description="Urgency: 'high', 'medium', or 'low'")
-    alert_type: Optional[str] = Field(None, description="Alert type (e.g., 'latency', 'error_rate')")
+    alert_type: str = Field(..., description="Application: 'Latency' or 'Error Rate'. Infrastructure: 'CPU', 'Memory', or 'Disk'")
     scope: Optional[str] = Field(None, description="Scope (e.g., 'all_services', 'per_service')")
     evaluation_interval: str = Field(default="30s", description="Prometheus evaluation interval")
     for_duration: str = Field(default="5m", description="Duration before alert fires")
@@ -2405,7 +2406,8 @@ class AlertDefinitionCreate(BaseModel):
 class AlertDefinitionUpdate(BaseModel):
     """Request model for updating an alert definition"""
     description: Optional[str] = None
-    promql_expr: Optional[str] = None
+    threshold_value: Optional[float] = None
+    threshold_unit: Optional[str] = None
     category: Optional[str] = None
     severity: Optional[str] = None
     urgency: Optional[str] = None
@@ -6953,7 +6955,7 @@ async def get_user_profile(request: Request):
 
 # Multi-Tenant Endpoints (Proxy to Multi-Tenant Service)
 
-@app.post("/api/v1/multi-tenant/register/tenant", response_model=TenantRegisterResponse, tags=["Multi-Tenant"], status_code=201)
+@app.post("/api/v1/multi-tenant/admin/register/tenant", response_model=TenantRegisterResponse, tags=["Multi-Tenant"], status_code=201)
 async def register_tenant(
     payload: TenantRegisterRequest,
     request: Request,
@@ -6974,7 +6976,7 @@ async def register_tenant(
         headers=headers
     )
 
-@app.post("/api/v1/multi-tenant/register/users", response_model=UserRegisterResponse, tags=["Multi-Tenant"], status_code=201)
+@app.post("/api/v1/multi-tenant/admin/register/users", response_model=UserRegisterResponse, tags=["Multi-Tenant"], status_code=201)
 async def register_user_for_multi_tenant(
     payload: UserRegisterRequest,
     request: Request,
@@ -6996,7 +6998,7 @@ async def register_user_for_multi_tenant(
         headers=headers
     )
 
-@app.patch("/api/v1/multi-tenant/update/tenants/status", response_model=TenantStatusUpdateResponse, tags=["Multi-Tenant"])
+@app.patch("/api/v1/multi-tenant/admin/update/tenants/status", response_model=TenantStatusUpdateResponse, tags=["Multi-Tenant"])
 async def update_tenant_status(
     payload: TenantStatusUpdateRequest,
     request: Request,
@@ -7018,7 +7020,7 @@ async def update_tenant_status(
         headers=headers
     )
 
-@app.patch("/api/v1/multi-tenant/update/tenant", response_model=TenantUpdateResponse, tags=["Multi-Tenant"])
+@app.patch("/api/v1/multi-tenant/admin/update/tenant", response_model=TenantUpdateResponse, tags=["Multi-Tenant"])
 async def update_tenant(
     payload: TenantUpdateRequest,
     request: Request,
@@ -7043,7 +7045,7 @@ async def update_tenant(
         headers=headers
     )
 
-@app.delete("/api/v1/multi-tenant/delete/user", response_model=TenantUserDeleteResponse, tags=["Multi-Tenant"])
+@app.delete("/api/v1/multi-tenant/admin/delete/user", response_model=TenantUserDeleteResponse, tags=["Multi-Tenant"])
 async def delete_tenant_user(
     payload: TenantUserDeleteRequest,
     request: Request,
@@ -7064,7 +7066,7 @@ async def delete_tenant_user(
         headers=headers
     )
 
-@app.patch("/api/v1/multi-tenant/update/users/status", response_model=TenantUserStatusUpdateResponse, tags=["Multi-Tenant"])
+@app.patch("/api/v1/multi-tenant/admin/update/users/status", response_model=TenantUserStatusUpdateResponse, tags=["Multi-Tenant"])
 async def update_tenant_user_status(
     payload: TenantUserStatusUpdateRequest,
     request: Request,
@@ -7087,7 +7089,7 @@ async def update_tenant_user_status(
     )
 
 
-@app.patch("/api/v1/multi-tenant/update/user", response_model=TenantUserUpdateResponse, tags=["Multi-Tenant"])
+@app.patch("/api/v1/multi-tenant/admin/update/user", response_model=TenantUserUpdateResponse, tags=["Multi-Tenant"])
 async def update_tenant_user_for_multi_tenant(
     payload: TenantUserUpdateRequest,
     request: Request,
@@ -7132,7 +7134,7 @@ async def verify_email(
     )
 
 
-@app.get("/api/v1/multi-tenant/view/tenant",response_model=TenantViewResponse, tags=["Multi-Tenant"])
+@app.get("/api/v1/multi-tenant/admin/view/tenant",response_model=TenantViewResponse, tags=["Multi-Tenant"])
 async def view_tenant(
     tenant_id: str = Query(..., description="Tenant identifier (tenant_id)"),
     request: Request = None,
@@ -7155,7 +7157,7 @@ async def view_tenant(
     )
 
 
-@app.get("/api/v1/multi-tenant/view/user",response_model=TenantUserViewResponse, tags=["Multi-Tenant"])
+@app.get("/api/v1/multi-tenant/admin/view/user",response_model=TenantUserViewResponse, tags=["Multi-Tenant"])
 async def view_tenant_user(
     user_id: int = Query(..., description="Auth user id for tenant user"),
     request: Request = None,
@@ -7177,7 +7179,7 @@ async def view_tenant_user(
         headers=headers,
     )
 
-@app.get("/api/v1/multi-tenant/list/tenants", response_model=ListTenantsResponse, tags=["Multi-Tenant"])
+@app.get("/api/v1/multi-tenant/admin/list/tenants", response_model=ListTenantsResponse, tags=["Multi-Tenant"])
 async def list_tenants(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
@@ -7198,7 +7200,7 @@ async def list_tenants(
         headers=headers,
     )
 
-@app.get("/api/v1/multi-tenant/list/users", response_model=ListUsersResponse, tags=["Multi-Tenant"])
+@app.get("/api/v1/multi-tenant/admin/list/users", response_model=ListUsersResponse, tags=["Multi-Tenant"])
 async def list_users(
     request: Request,
     tenant_id: Optional[str] = Query(None, description="Filter users by tenant_id"),
@@ -7249,7 +7251,7 @@ async def resend_verification_email(
     )
 
 
-@app.post("/api/v1/multi-tenant/email/send-verification", response_model=TenantSendEmailVerificationResponse, tags=["Multi-Tenant"], status_code=201)
+@app.post("/api/v1/multi-tenant/admin/email/send/verification", response_model=TenantSendEmailVerificationResponse, tags=["Multi-Tenant"], status_code=201)
 async def send_verification_email(
     payload: TenantSendEmailVerificationRequest,
     request: Request,
@@ -7273,7 +7275,7 @@ async def send_verification_email(
         headers=headers,
     )
 
-@app.post("/api/v1/multi-tenant/subscriptions/add", response_model=TenantSubscriptionResponse, tags=["Multi-Tenant"], status_code=201)
+@app.post("/api/v1/multi-tenant/tenant/subscriptions/add", response_model=TenantSubscriptionResponse, tags=["Multi-Tenant"], status_code=201)
 async def add_tenant_subscriptions(
     payload: TenantSubscriptionAddRequest,
     request: Request,
@@ -7294,7 +7296,7 @@ async def add_tenant_subscriptions(
         headers=headers
     )
 
-@app.post("/api/v1/multi-tenant/subscriptions/remove", response_model=TenantSubscriptionResponse, tags=["Multi-Tenant"])
+@app.post("/api/v1/multi-tenant/tenant/subscriptions/remove", response_model=TenantSubscriptionResponse, tags=["Multi-Tenant"])
 async def remove_tenant_subscriptions(
     payload: TenantSubscriptionRemoveRequest,
     request: Request,
@@ -7429,7 +7431,7 @@ async def list_services(
         headers=headers
     )
 
-@app.get("/api/v1/multi-tenant/resolve-tenant-from-user/{user_id}", tags=["Multi-Tenant"])
+@app.get("/api/v1/multi-tenant/resolve/tenant/from/user/{user_id}", tags=["Multi-Tenant"])
 async def resolve_tenant_from_user(
     user_id: int,
     request: Request,
