@@ -12,8 +12,10 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import text
 from middleware.exceptions import ErrorDetail
 from services.constants.error_messages import SERVICE_UNAVAILABLE, SERVICE_UNAVAILABLE_MESSAGE
+from fastapi import Request
 
-from main import redis_client, db_engine
+# Don't import from main at module level to avoid circular imports
+# Instead, access redis_client and db_engine through app state in the route handlers
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +36,12 @@ health_router = APIRouter(prefix="/api/v1/asr", tags=["Health"])
     summary="Health check endpoint",
     description="Check service health and dependencies"
 )
-async def health_check() -> Dict[str, Any]:
+async def health_check(request: Request) -> Dict[str, Any]:
     """Comprehensive health check for service and dependencies."""
+    # Access redis_client and db_engine from app state to avoid circular imports
+    redis_client = getattr(request.app.state, 'redis_client', None)
+    db_engine = getattr(request.app.state, 'db_engine', None)
+    
     health_status = {
         "status": "healthy",
         "service": "asr-service",
@@ -122,8 +128,12 @@ async def health_check() -> Dict[str, Any]:
     summary="Readiness check endpoint",
     description="Check if service is ready to accept requests"
 )
-async def readiness_check() -> Dict[str, Any]:
+async def readiness_check(request: Request) -> Dict[str, Any]:
     """Check if service is ready to accept requests."""
+    # Access redis_client and db_engine from app state to avoid circular imports
+    redis_client = getattr(request.app.state, 'redis_client', None)
+    db_engine = getattr(request.app.state, 'db_engine', None)
+    
     readiness_status = {
         "status": "ready",
         "service": "asr-service",

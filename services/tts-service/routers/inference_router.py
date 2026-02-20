@@ -1273,26 +1273,7 @@ async def run_inference(
                 "input_count": len(request.input)
             }
             
-            logger.info(
-                "Processing TTS inference request with %d text input(s), input_characters=%d, input_words=%d, user_id=%s api_key_id=%s session_id=%s",
-                len(request.input),
-                total_input_characters,
-                total_input_words,
-                user_id,
-                api_key_id,
-                session_id,
-                extra={
-                    # Common input/output details structure (general fields for all services)
-                    "input_details": {
-                        "character_length": total_input_characters,
-                        "word_count": total_input_words,
-                        "input_count": len(request.input)
-                    },
-                    # Service metadata (for filtering)
-                    "service_id": request.config.serviceId,
-                    "source_language": request.config.language.sourceLanguage,
-                }
-            )
+            # Log removed - middleware handles request/response logging
 
             # Get fallback service ID from request state
             fallback_service_id = getattr(http_request.state, "fallback_service_id", None)
@@ -1512,27 +1493,7 @@ async def run_inference(
                 "status": "success"
             })
             span.set_status(Status(StatusCode.OK))
-            logger.info(
-                "TTS inference completed successfully, output_audio_duration=%.2fs",
-                total_output_audio_duration,
-                extra={
-                    # Common input/output details structure (general fields for all services)
-                    "input_details": {
-                        "character_length": total_input_characters,
-                        "word_count": total_input_words,
-                        "input_count": len(request.input)
-                    },
-                    "output_details": {
-                        "audio_length_seconds": total_output_audio_duration,
-                        "audio_length_ms": total_output_audio_duration * 1000.0,
-                        "output_count": len(response.audio)
-                    },
-                    # Service metadata (for filtering)
-                    "service_id": request.config.serviceId,
-                    "source_language": request.config.language.sourceLanguage,
-                    "http_status_code": 200,
-                }
-            )
+            # Log removed - middleware handles request/response logging
             
             # Include SMR response in the final response (null if SMR was not called)
             smr_response_data = getattr(http_request.state, "smr_response_data", None)
@@ -1713,13 +1674,7 @@ async def _run_tts_inference_impl(
     api_key_id = getattr(http_request.state, 'api_key_id', None)
     session_id = getattr(http_request.state, 'session_id', None)
     
-    logger.info(
-        "Processing TTS inference request with %d text input(s), user_id=%s api_key_id=%s session_id=%s",
-        len(request.input),
-        user_id,
-        api_key_id,
-        session_id,
-    )
+    # Log removed - middleware handles request/response logging
 
     response = await tts_service.run_inference(
         request=request,
@@ -1728,7 +1683,7 @@ async def _run_tts_inference_impl(
         session_id=session_id
     )
     
-    logger.info("TTS inference completed successfully")
+    # Log removed - middleware handles request/response logging
     return response
 
 
