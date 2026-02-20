@@ -1,24 +1,28 @@
 """
-Docs Manager – single Swagger UI for all public APIs.
+Docs Manager: unified API documentation service.
 
-Loads one OpenAPI YAML/JSON per service from this service's specs/ folder (as listed in
-specs/service-docs-registry.yaml). Merges them into one OpenAPI 3.0 spec and
-serves a single Swagger UI. APIs are accurate to what is implemented in each
-microservice and exposed via the API Gateway.
+Loads per-service OpenAPI specs from the registry (specs/service-docs-registry.yaml),
+merges them into a single OpenAPI 3.0 document and serves Swagger UI. All specs
+reflect APIs exposed via the API Gateway.
 
-- GET /openapi.json  – merged OpenAPI spec (server URL = API Gateway for Try it out)
-- GET /docs          – Swagger UI (single document)
-- GET /specs/{service_name}/openapi.json – per-service spec (optional)
-- GET /health        – health check
+Endpoints:
+  GET /openapi.json  – Merged OpenAPI 3.0 spec
+  GET /docs          – Swagger UI
+  GET /specs/{service_name}/openapi.json – Per-service spec
+  GET /health        – Health check
 """
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
+import httpx
 import yaml
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 app = FastAPI(
     title="API Documentation",
@@ -30,7 +34,6 @@ app = FastAPI(
 )
 
 _here = Path(__file__).resolve().parent
-# Specs live in this service's specs/ folder (registry + per-service YAMLs)
 _specs_dir = _here / "specs"
 REGISTRY_ENV = "SERVICE_DOCS_REGISTRY_PATH"
 GATEWAY_URL_ENV = "API_GATEWAY_URL"
@@ -47,7 +50,7 @@ def _registry_path() -> Path:
 
 
 def _specs_root_path() -> Path:
-    """Root for resolving spec_file paths (this service's specs/ dir, or SPECS_ROOT env)."""
+    """Directory used to resolve spec_file paths from the registry."""
     root = os.getenv(SPECS_ROOT_ENV)
     if root:
         return Path(root)
@@ -55,9 +58,15 @@ def _specs_root_path() -> Path:
 
 
 def _gateway_url() -> str | None:
-    """Return API_GATEWAY_URL from env if set, else None (caller can fall back to registry)."""
+    """API_GATEWAY_URL from environment, or None to use registry default."""
     val = os.getenv(GATEWAY_URL_ENV)
     return val.rstrip("/") if val else None
+
+
+def _gateway_base_url() -> str:
+    """Base URL for the API Gateway used by the proxy."""
+    registry = _load_registry()
+    return (_gateway_url() or registry.get("api_gateway_url") or DEFAULT_GATEWAY_URL).rstrip("/")
 
 
 def _load_registry() -> dict[str, Any]:
@@ -69,7 +78,7 @@ def _load_registry() -> dict[str, Any]:
 
 
 def _load_spec_file(rel_path: str) -> dict[str, Any] | None:
-    """Load a single OpenAPI spec (YAML or JSON). Path relative to specs root (e.g. asr-service.yaml)."""
+    """Load one OpenAPI spec (YAML or JSON) by path relative to specs root."""
     root = _specs_root_path()
     path = (root / rel_path).resolve()
     if not path.exists():
@@ -87,7 +96,7 @@ def _merge_schemas(
     incoming: dict[str, Any],
     prefix: str,
 ) -> None:
-    """Merge components/schemas from incoming into base with prefix to avoid clashes. Rewrite $refs inside schemas so they point to prefixed names."""
+    """Merge components/schemas from incoming into base with a prefix; rewrite $refs accordingly."""
     inc_schemas = (incoming.get("components") or {}).get("schemas") or {}
     if not inc_schemas:
         return
@@ -102,7 +111,7 @@ def _merge_responses(
     incoming: dict[str, Any],
     prefix: str,
 ) -> None:
-    """Merge components/responses from incoming into base with prefix. Rewrite $refs inside responses."""
+    """Merge components/responses from incoming into base with a prefix; rewrite $refs accordingly."""
     inc_resp = (incoming.get("components") or {}).get("responses") or {}
     if not inc_resp:
         return
@@ -113,7 +122,7 @@ def _merge_responses(
 
 
 def _rewrite_refs(obj: Any, schema_prefix: str, response_prefix: str) -> Any:
-    """Rewrite $ref in a copy of obj to use prefixed component names."""
+    """Return a copy of obj with $ref values updated to use prefixed component names."""
     if isinstance(obj, dict):
         out = {}
         for k, v in obj.items():
@@ -135,7 +144,7 @@ def _rewrite_refs(obj: Any, schema_prefix: str, response_prefix: str) -> Any:
 
 
 def _apply_tag(op: dict[str, Any], tag: str) -> dict[str, Any]:
-    """Use only the registry tag so the merged doc has one section per service."""
+    """Set the operation's tags to the single registry tag for this service."""
     op = dict(op)
     op["tags"] = [tag]
     return op
@@ -148,7 +157,7 @@ def _merge_paths(
     schema_prefix: str,
     response_prefix: str,
 ) -> None:
-    """Merge paths from incoming into base. Ensure operations have tag. Rewrite $refs to prefixed components."""
+    """Merge paths from incoming into base; tag operations and rewrite $refs."""
     inc_paths = incoming.get("paths") or {}
     base_paths = base.setdefault("paths", {})
     methods = ("get", "post", "put", "patch", "delete", "head", "options")
@@ -164,12 +173,11 @@ def _merge_paths(
 
 
 def _tag_for_service(service_name: str, meta: dict[str, Any]) -> str:
-    """Display tag for a service in the merged spec."""
+    """Tag used for this service in the merged OpenAPI document."""
     tag = (meta.get("description") or service_name).strip()
     return tag or service_name.replace("-", " ").title()
 
 
-# x-auth-source header added to every operation for Swagger "Try it out"
 X_AUTH_SOURCE_PARAM = {
     "name": "x-auth-source",
     "in": "header",
@@ -180,7 +188,7 @@ X_AUTH_SOURCE_PARAM = {
 
 
 def _inject_x_auth_source_param(merged: dict[str, Any]) -> None:
-    """Add x-auth-source header parameter to every operation in merged paths."""
+    """Add x-auth-source header to each operation unless already defined."""
     methods = ("get", "post", "put", "patch", "delete", "head", "options")
     for path_item in (merged.get("paths") or {}).values():
         if not isinstance(path_item, dict):
@@ -190,7 +198,6 @@ def _inject_x_auth_source_param(merged: dict[str, Any]) -> None:
             if not isinstance(op, dict):
                 continue
             params = op.setdefault("parameters", [])
-            # Avoid duplicate if already present (e.g. from a service spec)
             if any((isinstance(p, dict) and p.get("name") == "x-auth-source") for p in params):
                 continue
             params.insert(0, dict(X_AUTH_SOURCE_PARAM))
@@ -202,7 +209,7 @@ def _add_service_spec(
     meta: dict[str, Any],
     seen_tags: set[str],
 ) -> None:
-    """Load one service spec and merge into merged; update seen_tags."""
+    """Load and merge one service spec into the combined document."""
     spec_file = meta.get("spec_file")
     if not spec_file:
         return
@@ -220,10 +227,8 @@ def _add_service_spec(
 
 
 def _build_merged_spec() -> dict[str, Any]:
-    """Build a single OpenAPI 3.0 spec from all service spec files in the registry."""
+    """Build the merged OpenAPI 3.0 spec from the registry."""
     registry = _load_registry()
-    # Env API_GATEWAY_URL overrides registry so deployment/docker can set the server URL
-    gateway_url = (_gateway_url() or registry.get("api_gateway_url") or DEFAULT_GATEWAY_URL).rstrip("/")
     services = registry.get("services") or {}
 
     merged: dict[str, Any] = {
@@ -234,7 +239,7 @@ def _build_merged_spec() -> dict[str, Any]:
             "version": "1.0.0",
         },
         "servers": [
-            {"url": gateway_url, "description": ""}
+            {"url": "/api-proxy", "description": "API Gateway (via docs-manager proxy)"}
         ],
         "paths": {},
         "components": {"schemas": {}, "responses": {}, "securitySchemes": {}},
@@ -262,17 +267,16 @@ def _build_merged_spec() -> dict[str, Any]:
         merged["paths"]["/"] = {
             "get": {
                 "tags": ["Status"],
-                "summary": "Placeholder",
-                "responses": {"200": {"description": "No service specs loaded."}},
+                "summary": "Service status",
+                "responses": {"200": {"description": "No service specifications registered."}},
             }
         }
-        merged["tags"].insert(0, {"name": "Status", "description": "Status"})
+        merged["tags"].insert(0, {"name": "Status", "description": "Service status"})
 
     _inject_x_auth_source_param(merged)
     return merged
 
 
-# Cache merged spec (reload on first request or when env changes; optional TTL could be added)
 _merged_spec: dict[str, Any] | None = None
 
 
@@ -283,29 +287,74 @@ def _get_merged_spec() -> dict[str, Any]:
     return _merged_spec
 
 
+_PROXY_SKIP_REQUEST_HEADERS = frozenset(
+    {"connection", "host", "transfer-encoding", "keep-alive", "te", "trailer", "upgrade"}
+)
+_PROXY_SKIP_RESPONSE_HEADERS = frozenset(
+    {"connection", "transfer-encoding", "keep-alive", "te", "trailer", "upgrade"}
+)
+
+
+@app.api_route("/api-proxy/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
+async def api_proxy(request: Request, path: str):
+    """Proxy requests to the API Gateway for same-origin Try it out in Swagger UI."""
+    base = _gateway_base_url()
+    url = f"{base}/{path}" if path else base
+    if request.url.query:
+        url = f"{url}?{request.url.query}"
+    headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in _PROXY_SKIP_REQUEST_HEADERS
+    }
+    body = await request.body()
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.request(
+                request.method,
+                url,
+                headers=headers,
+                content=body if body else None,
+            )
+    except httpx.ConnectError as e:
+        logger.warning("API Gateway unreachable at %s: %s", base, e)
+        return JSONResponse(
+            {"detail": "Upstream API Gateway is unavailable."},
+            status_code=502,
+        )
+    response_headers = [
+        (k, v) for k, v in resp.headers.items()
+        if k.lower() not in _PROXY_SKIP_RESPONSE_HEADERS
+    ]
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        headers=dict(response_headers),
+    )
+
+
 @app.get("/health")
 def health():
+    """Health check endpoint."""
     return {"status": "ok", "service": "docs-manager"}
 
 
 @app.get("/openapi.json")
 def openapi_json():
-    """Single merged OpenAPI spec for all public APIs."""
+    """Return the merged OpenAPI 3.0 spec for all registered services."""
     return JSONResponse(_get_merged_spec())
 
 
 @app.get("/docs", response_class=HTMLResponse)
 def swagger_ui():
-    """Single Swagger UI showing all public APIs in one document."""
+    """Serve Swagger UI for the merged API documentation."""
     spec_url = "/openapi.json"
     html = f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Public API Documentation</title>
+  <title>API Documentation</title>
   <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui.css">
   <style>
-    /* Hide the spec URL input and Explore button */
     .swagger-ui .topbar {{ display: none; }}
   </style>
 </head>
@@ -334,47 +383,28 @@ def swagger_ui():
 
 @app.get("/")
 def index():
-    """Landing with link to single Swagger UI."""
-    docs_url = "/docs"
-    spec_url = "/openapi.json"
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>API Documentation</title>
-  <style>
-    body {{ font-family: system-ui, sans-serif; margin: 2rem; background: #0f172a; color: #e2e8f0; }}
-    h1 {{ color: #f8fafc; }}
-    a {{ color: #38bdf8; }}
-    a:hover {{ text-decoration: underline; }}
-    .muted {{ color: #64748b; font-size: 0.9rem; margin-top: 1rem; }}
-  </style>
-</head>
-<body>
-  <h1>Public API Documentation</h1>
-  <p>Single Swagger UI for all public microservice APIs (as exposed via API Gateway). Specs live in this service's <code>specs/</code> folder (registry + per-service YAMLs).</p>
-  <p><a href="{docs_url}">Open Swagger UI</a></p>
-  <p class="muted">OpenAPI spec: <a href="{spec_url}">{spec_url}</a></p>
-</body>
-</html>
-"""
-    return HTMLResponse(html)
+    """Service info and links to documentation."""
+    return {
+        "service": "docs-manager",
+        "openapi": "/openapi.json",
+        "docs": "/docs",
+        "health": "/health",
+    }
 
 
 @app.get("/specs/{service_name}/openapi.json")
 def service_openapi(service_name: str):
-    """Per-service OpenAPI spec (from file)."""
+    """Return the OpenAPI spec for the given service."""
     registry = _load_registry()
     services = registry.get("services") or {}
     if service_name not in services:
-        return JSONResponse({"detail": f"Unknown service: {service_name}"}, status_code=404)
+        return JSONResponse({"detail": "Service not found."}, status_code=404)
     spec_file = services[service_name].get("spec_file")
     if not spec_file:
-        return JSONResponse({"detail": "No spec_file for service"}, status_code=404)
+        return JSONResponse({"detail": "Spec not configured for this service."}, status_code=404)
     spec = _load_spec_file(spec_file)
     if not spec:
-        return JSONResponse({"detail": "Spec file not found"}, status_code=404)
+        return JSONResponse({"detail": "Spec file not found or unreadable."}, status_code=404)
     gateway_url = (_gateway_url() or registry.get("api_gateway_url") or DEFAULT_GATEWAY_URL).rstrip("/")
     spec["servers"] = [{"url": gateway_url, "description": "API Gateway"}]
     return JSONResponse(spec)
