@@ -328,7 +328,8 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 service_id = extract_service_id_from_body(body)
                 
                 if service_id:
-                    logger.info(f"Extracted serviceId from request: {service_id}")
+                    # Log removed - middleware handles request/response logging
+                    logger.debug(f"Extracted serviceId from request: {service_id}")
                 else:
                     logger.warning(f"No serviceId found in request body for {request.url.path}")
             
@@ -383,20 +384,23 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             
             # If we found a serviceId, resolve it (normal path or variant service_id)
             if service_id:
-                logger.info(f"Resolving serviceId: {service_id} via Model Management")
+                # Log removed - middleware handles request/response logging
+                logger.debug(f"Resolving serviceId: {service_id} via Model Management")
                 auth_headers = extract_auth_headers(request)
                 endpoint, model_name, triton_client = await self._resolve_service(service_id, auth_headers)
                 
                 request.state.service_id = service_id
                 if endpoint:
                     request.state.triton_endpoint = endpoint
-                    logger.info(f"Resolved endpoint: {endpoint} for serviceId: {service_id}")
+                    # Log removed - middleware handles request/response logging
+                    logger.debug(f"Resolved endpoint: {endpoint} for serviceId: {service_id}")
                 else:
                     logger.error(f"Failed to resolve endpoint for serviceId: {service_id}")
                     request.state.model_management_error = "Endpoint not found"
                 if model_name:
                     request.state.triton_model_name = model_name
-                    logger.info(f"Resolved model_name: {model_name} for serviceId: {service_id}")
+                    # Log removed - middleware handles request/response logging
+                    logger.debug(f"Resolved model_name: {model_name} for serviceId: {service_id}")
                 else:
                     logger.error(f"Failed to resolve model_name for serviceId: {service_id}")
                     request.state.model_management_error = "Model name not found"
