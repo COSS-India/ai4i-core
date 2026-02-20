@@ -17,24 +17,24 @@ class CreateAlertAuditTriggers(BaseMigration):
         """)
         print("    ✓ Created update_alert_config_updated_at function")
 
-        # Create triggers for updated_at columns
-        adapter.execute("""
-            CREATE TRIGGER update_alert_definitions_updated_at 
-                BEFORE UPDATE ON alert_definitions
-                FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
-
-            CREATE TRIGGER update_alert_annotations_updated_at 
-                BEFORE UPDATE ON alert_annotations
-                FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
-
-            CREATE TRIGGER update_notification_receivers_updated_at 
-                BEFORE UPDATE ON notification_receivers
-                FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
-
-            CREATE TRIGGER update_routing_rules_updated_at 
-                BEFORE UPDATE ON routing_rules
-                FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
-        """)
+        # Create triggers for updated_at columns (idempotent: skip if already exist)
+        for trigger_name, table_name in [
+            ("update_alert_definitions_updated_at", "alert_definitions"),
+            ("update_alert_annotations_updated_at", "alert_annotations"),
+            ("update_notification_receivers_updated_at", "notification_receivers"),
+            ("update_routing_rules_updated_at", "routing_rules"),
+        ]:
+            adapter.execute(f"""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = '{trigger_name}')
+                    THEN
+                        CREATE TRIGGER {trigger_name}
+                            BEFORE UPDATE ON {table_name}
+                            FOR EACH ROW EXECUTE FUNCTION update_alert_config_updated_at();
+                    END IF;
+                END $$;
+            """)
         print("    ✓ Created updated_at triggers for dynamic alert config")
 
         # Create audit log trigger function (complex)
@@ -139,20 +139,23 @@ class CreateAlertAuditTriggers(BaseMigration):
         """)
         print("    ✓ Created log_alert_config_changes function")
 
-        # Create audit triggers
-        adapter.execute("""
-            CREATE TRIGGER audit_alert_definitions_changes
-                AFTER INSERT OR UPDATE OR DELETE ON alert_definitions
-                FOR EACH ROW EXECUTE FUNCTION log_alert_config_changes();
-
-            CREATE TRIGGER audit_notification_receivers_changes
-                AFTER INSERT OR UPDATE OR DELETE ON notification_receivers
-                FOR EACH ROW EXECUTE FUNCTION log_alert_config_changes();
-
-            CREATE TRIGGER audit_routing_rules_changes
-                AFTER INSERT OR UPDATE OR DELETE ON routing_rules
-                FOR EACH ROW EXECUTE FUNCTION log_alert_config_changes();
-        """)
+        # Create audit triggers (idempotent: skip if already exist)
+        for trigger_name, table_name in [
+            ("audit_alert_definitions_changes", "alert_definitions"),
+            ("audit_notification_receivers_changes", "notification_receivers"),
+            ("audit_routing_rules_changes", "routing_rules"),
+        ]:
+            adapter.execute(f"""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = '{trigger_name}')
+                    THEN
+                        CREATE TRIGGER {trigger_name}
+                            AFTER INSERT OR UPDATE OR DELETE ON {table_name}
+                            FOR EACH ROW EXECUTE FUNCTION log_alert_config_changes();
+                    END IF;
+                END $$;
+            """)
         print("    ✓ Created audit triggers for alert configuration changes")
 
     def down(self, adapter):
