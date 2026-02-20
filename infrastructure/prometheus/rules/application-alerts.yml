@@ -10,20 +10,20 @@ groups:
       severity: warning
       urgency: medium
       category: application
-      alert_type: latency
+      alert_type: Latency
       scope: per_endpoint
     annotations:
       summary: HighMedianLatencyPerService for bashadaan
       description: High median latency for specific inference endpoints
   - alert: HighMedianLatencyPerService_beml
-    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="beml"}[5m]))) > 0.18
+    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="beml"}[5m]))) > 0.15
     for: 2m
     labels:
       organization: beml
       severity: warning
       urgency: medium
       category: application
-      alert_type: latency
+      alert_type: Latency
       scope: per_endpoint
     annotations:
       summary: HighMedianLatencyPerService for beml
@@ -36,21 +36,21 @@ groups:
       severity: warning
       urgency: medium
       category: application
-      alert_type: latency
+      alert_type: Latency
       scope: per_endpoint
     annotations:
       summary: HighMedianLatencyPerService for irctc
       description: High median latency for specific inference endpoints
   - alert: HighMedianLatencyPerService_kisanmitra
-    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="kisanmitra"}[5m]))) > 0.1
-    for: 1m
+    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="kisanmitra"}[5m]))) > 0.15
+    for: 2m
     labels:
       organization: kisanmitra
-      severity: critical
-      urgency: high
+      severity: warning
+      urgency: medium
       category: application
-      alert_type: latency
+      alert_type: Latency
       scope: per_endpoint
     annotations:
       summary: HighMedianLatencyPerService for kisanmitra
-      description: High median latency for specific inference endpoints - requires immediate attention
+      description: High median latency for specific inference endpoints

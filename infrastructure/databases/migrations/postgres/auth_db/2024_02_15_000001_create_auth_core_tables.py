@@ -91,10 +91,18 @@ class CreateAuthCoreTables(BaseMigration):
             $$ language 'plpgsql'
         """)
         
-        # Create trigger for users
+        # Create trigger for users (idempotent: skip if already exists)
         adapter.execute("""
-            CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
-                FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_trigger
+                    WHERE tgname = 'update_users_updated_at'
+                ) THEN
+                    CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
+                        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+                END IF;
+            END $$;
         """)
         print("    ✓ Created triggers")
     

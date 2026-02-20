@@ -2393,14 +2393,15 @@ class AlertAnnotation(BaseModel):
     value: str = Field(..., description="Annotation value")
 
 class AlertDefinitionCreate(BaseModel):
-    """Request model for creating an alert definition"""
+    """Request model for creating an alert definition. PromQL is built from alert_type and threshold."""
     name: str = Field(..., description="Alert name (e.g., 'HighLatency')")
     description: Optional[str] = Field(None, description="Alert description")
-    promql_expr: str = Field(..., description="PromQL expression (organization will be automatically injected by the API for application alerts only, not for infrastructure alerts)")
+    threshold_value: float = Field(..., description="Threshold value (e.g. seconds for latency, percent for error_rate/CPU/Memory/Disk)")
+    threshold_unit: str = Field(..., description="Threshold unit: 'seconds' (latency), 'percent' or 'ratio' (error_rate), 'percent' (CPU/Memory/Disk)")
     category: str = Field(default="application", description="Category: 'application' or 'infrastructure'")
     severity: str = Field(..., description="Severity: 'critical', 'warning', or 'info'")
     urgency: str = Field(default="medium", description="Urgency: 'high', 'medium', or 'low'")
-    alert_type: Optional[str] = Field(None, description="Alert type (e.g., 'latency', 'error_rate')")
+    alert_type: str = Field(..., description="Application: 'Latency' or 'Error Rate'. Infrastructure: 'CPU', 'Memory', or 'Disk'")
     scope: Optional[str] = Field(None, description="Scope (e.g., 'all_services', 'per_service')")
     evaluation_interval: str = Field(default="30s", description="Prometheus evaluation interval")
     for_duration: str = Field(default="5m", description="Duration before alert fires")
@@ -2409,7 +2410,8 @@ class AlertDefinitionCreate(BaseModel):
 class AlertDefinitionUpdate(BaseModel):
     """Request model for updating an alert definition"""
     description: Optional[str] = None
-    promql_expr: Optional[str] = None
+    threshold_value: Optional[float] = None
+    threshold_unit: Optional[str] = None
     category: Optional[str] = None
     severity: Optional[str] = None
     urgency: Optional[str] = None

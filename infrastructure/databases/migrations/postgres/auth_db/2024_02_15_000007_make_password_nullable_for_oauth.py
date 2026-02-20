@@ -5,6 +5,18 @@ class MakePasswordNullableForOauth(BaseMigration):
 
     def up(self, adapter):
         """Run the migration."""
+        # Ensure password_hash column exists (e.g. if users table was created without it)
+        adapter.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'password_hash'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) NULL;
+                END IF;
+            END $$;
+        """)
         # Alter users table to allow NULL passwords (for OAuth users)
         adapter.execute("""
             ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;

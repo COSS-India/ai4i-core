@@ -69,10 +69,17 @@ class CreateAiServicesIndexes(BaseMigration):
         
         for table, trigger_name in triggers:
             adapter.execute(f"""
-                CREATE TRIGGER {trigger_name}
-                    BEFORE UPDATE ON {table}
-                    FOR EACH ROW
-                    EXECUTE FUNCTION update_updated_at_column()
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_trigger WHERE tgname = '{trigger_name}'
+                    ) THEN
+                        CREATE TRIGGER {trigger_name}
+                            BEFORE UPDATE ON {table}
+                            FOR EACH ROW
+                            EXECUTE FUNCTION update_updated_at_column();
+                    END IF;
+                END $$;
             """)
         
         print("    ✓ Created all triggers for AI services")
