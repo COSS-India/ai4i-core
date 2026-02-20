@@ -10,49 +10,49 @@ servers:
 tags:
   - name: Multi-Tenant
 paths:
-  /api/v1/multi-tenant/register/tenant:
+  /api/v1/multi-tenant/admin/register/tenant:
     post:
       tags: [Multi-Tenant]
       summary: Register Tenant
       security: [{ BearerAuth: [] }]
       responses:
         "201": { description: Tenant registered }
-  /api/v1/multi-tenant/register/users:
+  /api/v1/multi-tenant/admin/register/users:
     post:
       tags: [Multi-Tenant]
       summary: Register User For Multi Tenant
       security: [{ BearerAuth: [] }]
       responses:
         "201": { description: User registered }
-  /api/v1/multi-tenant/update/tenants/status:
+  /api/v1/multi-tenant/admin/update/tenants/status:
     patch:
       tags: [Multi-Tenant]
       summary: Update Tenant Status
       security: [{ BearerAuth: [] }]
       responses:
         "200": { description: Updated }
-  /api/v1/multi-tenant/update/tenant:
+  /api/v1/multi-tenant/admin/update/tenant:
     patch:
       tags: [Multi-Tenant]
       summary: Update Tenant
       security: [{ BearerAuth: [] }]
       responses:
         "200": { description: Updated }
-  /api/v1/multi-tenant/delete/user:
+  /api/v1/multi-tenant/admin/delete/user:
     delete:
       tags: [Multi-Tenant]
       summary: Delete Tenant User
       security: [{ BearerAuth: [] }]
       responses:
         "200": { description: Deleted }
-  /api/v1/multi-tenant/update/users/status:
+  /api/v1/multi-tenant/admin/update/users/status:
     patch:
       tags: [Multi-Tenant]
       summary: Update Tenant User Status
       security: [{ BearerAuth: [] }]
       responses:
         "200": { description: Updated }
-  /api/v1/multi-tenant/update/user:
+  /api/v1/multi-tenant/admin/update/user:
     patch:
       tags: [Multi-Tenant]
       summary: Update Tenant User For Multi Tenant
@@ -69,34 +69,41 @@ paths:
           schema: { type: string }
       responses:
         "200": { description: Verification result }
-  /api/v1/multi-tenant/view/tenant:
+  /api/v1/multi-tenant/admin/view/tenant:
     get:
       tags: [Multi-Tenant]
       summary: View Tenant
       security: [{ BearerAuth: [] }]
       responses:
         "200": { description: Tenant details }
-  /api/v1/multi-tenant/view/user:
+  /api/v1/multi-tenant/admin/view/user:
     get:
       tags: [Multi-Tenant]
       summary: View Tenant User
       security: [{ BearerAuth: [] }]
       responses:
         "200": { description: User details }
-  /api/v1/multi-tenant/list/tenants:
+  /api/v1/multi-tenant/admin/list/tenants:
     get:
       tags: [Multi-Tenant]
       summary: List Tenants
       security: [{ BearerAuth: [] }]
       responses:
         "200": { description: List of tenants }
-  /api/v1/multi-tenant/list/users:
+  /api/v1/multi-tenant/admin/list/users:
     get:
       tags: [Multi-Tenant]
       summary: List Users
       security: [{ BearerAuth: [] }]
       responses:
         "200": { description: List of users }
+  /api/v1/multi-tenant/admin/email/send/verification:
+    post:
+      tags: [Multi-Tenant]
+      summary: Send Verification Email
+      security: [{ BearerAuth: [] }]
+      responses:
+        "201": { description: Email sent }
   /api/v1/multi-tenant/email/resend:
     post:
       tags: [Multi-Tenant]
@@ -104,14 +111,14 @@ paths:
       security: [{ BearerAuth: [] }]
       responses:
         "201": { description: Email sent }
-  /api/v1/multi-tenant/subscriptions/add:
+  /api/v1/multi-tenant/tenant/subscriptions/add:
     post:
       tags: [Multi-Tenant]
       summary: Add Tenant Subscriptions
       security: [{ BearerAuth: [] }]
       responses:
         "201": { description: Subscriptions added }
-  /api/v1/multi-tenant/subscriptions/remove:
+  /api/v1/multi-tenant/tenant/subscriptions/remove:
     post:
       tags: [Multi-Tenant]
       summary: Remove Tenant Subscriptions
@@ -153,7 +160,7 @@ paths:
       security: [{ BearerAuth: [] }]
       responses:
         "200": { description: List of services }
-  /api/v1/multi-tenant/resolve-tenant-from-user/{user_id}:
+  /api/v1/multi-tenant/resolve/tenant/from/user/{user_id}:
     get:
       tags: [Multi-Tenant]
       summary: Resolve Tenant From User
