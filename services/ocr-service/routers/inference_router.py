@@ -119,9 +119,11 @@ async def get_ocr_service(
 
 async def _enforce_tenant_and_service_checks(http_request: Request, service_name: str = "ocr"):
     """
-    Enforce tenant status (ACTIVE only), subscription check, and global service active flag.
-    - If tenant context exists (http_request.state.tenant_id), ensure tenant.subscriptions includes service_name.
-    - Ensure the service (e.g., 'ocr') is active in multi-tenant service list.
+    Enforce tenant subscription, tenant status (ACTIVE) and global service active flag.
+    Execution order:
+      1) If tenant context exists, ensure tenant subscribes to this service
+      2) Ensure the service is globally active via /list/services
+      3) If tenant context exists, ensure tenant.status == ACTIVE
     """
     auth_header = http_request.headers.get("Authorization") or http_request.headers.get("authorization")
 
