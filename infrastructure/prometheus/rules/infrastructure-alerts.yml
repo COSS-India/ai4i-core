@@ -1,1 +1,16 @@
-groups: []
+groups:
+- name: infrastructure-alerts
+  interval: 30s
+  rules:
+  - alert: ErrorRate_NMT_beml
+    expr: 100 * (1 - (sum(rate(node_cpu_seconds_total{mode="idle"}[5m])) / sum(rate(node_cpu_seconds_total[5m])))) > 50.0
+    for: 5m
+    labels:
+      organization: beml
+      severity: critical
+      urgency: medium
+      category: infrastructure
+      alert_type: CPU
+    annotations:
+      summary: ErrorRate_NMT for beml
+      description: null
