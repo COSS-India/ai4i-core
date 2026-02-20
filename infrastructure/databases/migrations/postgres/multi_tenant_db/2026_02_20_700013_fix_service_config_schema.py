@@ -114,7 +114,7 @@ class FixServiceConfigSchema(BaseMigration):
                         
                         -- Set sequence to use the new column and make it default
                         EXECUTE format('ALTER SEQUENCE %I OWNED BY service_config.id', seq_name);
-                        ALTER TABLE service_config ALTER COLUMN id SET DEFAULT nextval(seq_name::regclass);
+                        EXECUTE format('ALTER TABLE service_config ALTER COLUMN id SET DEFAULT nextval(%L::regclass)', seq_name);
                     ELSE
                         -- Table is empty, simpler conversion
                         ALTER TABLE service_config DROP CONSTRAINT IF EXISTS service_config_pkey;
