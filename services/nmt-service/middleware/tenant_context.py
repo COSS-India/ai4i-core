@@ -60,7 +60,8 @@ async def resolve_tenant_from_user_id(
             if response.status_code == 200:
                 return response.json()
             elif response.status_code == 404:
-                logger.warning(f"Tenant not found for user_id {user_id}")
+                # Normal case for non-tenant users - log at debug level to avoid noise
+                logger.debug(f"Tenant not found for user_id {user_id}")
                 return None
             else:
                 logger.error(f"Failed to resolve tenant for user_id {user_id}: {response.status_code} - {response.text}")

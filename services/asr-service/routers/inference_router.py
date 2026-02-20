@@ -12,13 +12,16 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# Import utils first to ensure they're initialized before services
+import utils
+from utils.triton_client import TritonClient
+from utils.audio_utils import get_audio_duration
+
 from models.asr_request import ASRInferenceRequest
 from models.asr_response import ASRInferenceResponse
 from repositories.asr_repository import ASRRepository
 from services.asr_service import ASRService
 from services.audio_service import AudioService
-from utils.triton_client import TritonClient
-from utils.audio_utils import get_audio_duration
 from utils.validation_utils import (
     validate_language_code,
     validate_service_id,
