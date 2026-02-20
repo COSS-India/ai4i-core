@@ -20,7 +20,7 @@ paths:
   /api/v1/tts/inference:
     post:
       tags: [TTS]
-      summary: Batch TTS inference
+      summary: TTS inference
       description: Convert text to speech for one or more text inputs.
       operationId: ttsInference
       security:
@@ -46,61 +46,6 @@ paths:
           $ref: "#/components/responses/RateLimitExceeded"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-
-  /api/v1/tts/streaming/info:
-    get:
-      tags: [TTS]
-      summary: Streaming info
-      description: Get WebSocket URL and parameters for real-time TTS streaming.
-      operationId: ttsStreamingInfo
-      security:
-        - BearerAuth: []
-      responses:
-        "200":
-          description: Streaming endpoint info
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/tts/models:
-    get:
-      tags: [TTS]
-      summary: List TTS models
-      operationId: ttsModels
-      security:
-        - BearerAuth: []
-      responses:
-        "200":
-          description: List of models
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/tts/voices:
-    get:
-      tags: [TTS]
-      summary: List TTS voices
-      description: List available voices. Optional query params language, gender.
-      operationId: ttsVoices
-      security:
-        - BearerAuth: []
-      parameters:
-        - name: language
-          in: query
-          schema:
-            type: string
-        - name: gender
-          in: query
-          schema:
-            type: string
-            enum: [male, female]
-      responses:
-        "200":
-          description: List of voices
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/VoiceListResponse" }
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
   /api/v1/tts/health:
     get:
       tags: [TTS]
