@@ -1295,7 +1295,7 @@ async def list_service(db: AsyncSession) -> ListServicesResponse:
     """
 
     result = await db.execute(
-        select(ServiceConfig).where(ServiceConfig.is_active.is_(True))
+        select(ServiceConfig)
     )
 
     services = result.scalars().all()
