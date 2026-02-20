@@ -301,6 +301,7 @@ services:
       - "8103:8103"
     environment:
       - API_GATEWAY_URL=http://api-gateway-service:8080
+      - USE_API_PROXY=true
       - SPECS_ROOT=/app/specs
       - SERVICE_DOCS_REGISTRY_PATH=/app/specs/service-docs-registry.yaml
     volumes:
