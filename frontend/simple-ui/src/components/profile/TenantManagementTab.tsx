@@ -702,8 +702,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   <FormLabel>Description (optional)</FormLabel>
                   <Input placeholder="Brief description of the tenant organization" value={tm.tenantForm.description} onChange={(e) => tm.setTenantForm((f) => ({ ...f, description: e.target.value }))} bg="white" />
                 </FormControl>
-                <FormControl>
-                  <FormLabel>Requested subscriptions (optional)</FormLabel>
+                <FormControl isRequired>
+                  <FormLabel>Requested subscriptions</FormLabel>
                   {tm.availableServicesForCreate && tm.availableServicesForCreate.length > 0 ? (
                     <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="200px" overflowY="auto">
                       <Text fontSize="xs" color="gray.500" mb={2}>Select from loaded services:</Text>
@@ -768,7 +768,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             {tm.tenantModalStep === 1 && (
               <>
                 <Button variant="ghost" mr={3} onClick={tm.closeTenantModal}>Cancel</Button>
-                <Button colorScheme="blue" onClick={tm.handleTenantStepNext} isDisabled={!tm.tenantForm.organization_name.trim() || !tm.tenantForm.domain.trim() || !tm.tenantForm.contact_email.trim()}>
+                <Button colorScheme="blue" onClick={tm.handleTenantStepNext} isDisabled={!tm.tenantForm.organization_name.trim() || !tm.tenantForm.domain.trim() || !tm.tenantForm.contact_email.trim() || !tm.tenantForm.requested_subscriptions?.length}>
                   Next &rarr;
                 </Button>
               </>

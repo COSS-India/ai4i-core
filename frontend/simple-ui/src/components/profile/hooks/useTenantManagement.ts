@@ -255,13 +255,17 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       toast({ title: "Validation", description: "Organization name, domain, and contact email are required.", status: "error", isClosable: true });
       return;
     }
+    if (!tenantForm.requested_subscriptions?.length) {
+      toast({ title: "Validation", description: "At least one requested subscription is required.", status: "error", isClosable: true });
+      return;
+    }
     setIsSubmittingTenant(true);
     try {
       await multiTenantService.registerTenant({
         organization_name: tenantForm.organization_name.trim(),
         domain: tenantForm.domain.trim(),
         contact_email: tenantForm.contact_email.trim(),
-        requested_subscriptions: tenantForm.requested_subscriptions?.length ? tenantForm.requested_subscriptions : [],
+        requested_subscriptions: tenantForm.requested_subscriptions,
       });
       toast({ title: "Tenant created", description: "Verification email will be sent to the contact email. Tenant remains pending until verified.", status: "success", duration: 5000, isClosable: true });
       closeTenantModal();
