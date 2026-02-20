@@ -2,7 +2,7 @@
 # Each service has one OpenAPI spec file (YAML or JSON) in this specs/ folder.
 # The Docs Manager merges them into a single Swagger UI.
 #
-# api_gateway_url: base URL for "Try it out" (e.g. http://localhost:8080)
+# api_gateway_url: base URL (e.g. http://localhost:8080)
 # spec_file: path relative to this specs/ directory
 
 services:
