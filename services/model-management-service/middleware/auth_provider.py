@@ -246,6 +246,12 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
         request.state.api_key_name = None
         request.state.user_email = email
         request.state.is_authenticated = True
+        # Store user info with roles for permission checking
+        request.state.user = {
+            "username": username,
+            "email": email,
+            "roles": roles,
+        }
 
         return {
             "user_id": int(user_id) if isinstance(user_id, (str, int)) else user_id,
