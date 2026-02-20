@@ -327,14 +327,15 @@ class AlertAnnotation(BaseModel):
     value: str = Field(..., description="Annotation value")
 
 class AlertDefinitionCreate(BaseModel):
-    """Request model for creating an alert definition"""
+    """Request model for creating an alert definition. PromQL is built from alert_type and threshold."""
     name: str = Field(..., description="Alert name (e.g., 'HighLatency')")
     description: Optional[str] = Field(None, description="Alert description")
-    promql_expr: str = Field(..., description="PromQL expression (organization will be automatically injected by the API for application alerts only, not for infrastructure alerts)")
+    threshold_value: float = Field(..., description="Threshold value (e.g. seconds for latency, percent for error_rate/CPU/Memory/Disk)")
+    threshold_unit: str = Field(..., description="Threshold unit: 'seconds' (latency), 'percent' or 'ratio' (error_rate), 'percent' (CPU/Memory/Disk)")
     category: str = Field(default="application", description="Category: 'application' or 'infrastructure'")
     severity: str = Field(..., description="Severity: 'critical', 'warning', or 'info'")
     urgency: str = Field(default="medium", description="Urgency: 'high', 'medium', or 'low'")
-    alert_type: Optional[str] = Field(None, description="Alert type (e.g., 'latency', 'error_rate')")
+    alert_type: str = Field(..., description="Application: 'Latency' or 'Error Rate'. Infrastructure: 'CPU', 'Memory', or 'Disk'")
     scope: Optional[str] = Field(None, description="Scope (e.g., 'all_services', 'per_service')")
     evaluation_interval: str = Field(default="30s", description="Prometheus evaluation interval")
     for_duration: str = Field(default="5m", description="Duration before alert fires")
@@ -343,7 +344,8 @@ class AlertDefinitionCreate(BaseModel):
 class AlertDefinitionUpdate(BaseModel):
     """Request model for updating an alert definition"""
     description: Optional[str] = None
-    promql_expr: Optional[str] = None
+    threshold_value: Optional[float] = None
+    threshold_unit: Optional[str] = None
     category: Optional[str] = None
     severity: Optional[str] = None
     urgency: Optional[str] = None
@@ -361,6 +363,8 @@ class AlertDefinitionResponse(BaseModel):
     name: str
     description: Optional[str]
     promql_expr: str
+    threshold_value: Optional[float] = None
+    threshold_unit: Optional[str] = None
     category: str
     severity: str
     urgency: str
@@ -502,6 +506,96 @@ class RoutingRuleResponse(BaseModel):
 
 # Database Operations
 
+# Application alert types (display): "Latency", "Error Rate". Infrastructure: "CPU", "Memory", "Disk".
+APPLICATION_ALERT_TYPES_DISPLAY = ("Latency", "Error Rate")
+INFRASTRUCTURE_ALERT_TYPES_DISPLAY = ("CPU", "Memory", "Disk")
+
+
+def _normalize_alert_type(category: str, alert_type: str) -> str:
+    """Normalize alert_type to internal form for PromQL builder: latency, error_rate, cpu, memory, disk."""
+    if not alert_type:
+        return alert_type
+    t = alert_type.strip().lower().replace(" ", "_")
+    if t in ("latency", "error_rate", "errorrate"):
+        return "error_rate" if t == "errorrate" else t
+    if t in ("cpu", "memory", "disk"):
+        return t
+    return alert_type.strip()
+
+
+def _alert_type_to_display(alert_type: str, category: str) -> str:
+    """Return display/storage form: 'Latency', 'Error Rate', 'CPU', 'Memory', 'Disk'."""
+    if not alert_type:
+        return alert_type
+    at = _normalize_alert_type(category, alert_type)
+    if at == "latency":
+        return "Latency"
+    if at == "error_rate":
+        return "Error Rate"
+    if at == "cpu":
+        return "CPU"
+    if at == "memory":
+        return "Memory"
+    if at == "disk":
+        return "Disk"
+    return alert_type.strip()
+
+
+def build_promql_from_threshold(
+    category: str,
+    alert_type: str,
+    threshold_value: float,
+    threshold_unit: str,
+    organization: Optional[str] = None,
+) -> str:
+    """
+    Build PromQL expression from alert type and threshold.
+    Application alerts get organization injected when provided.
+    """
+    category = (category or "application").lower()
+    at = _normalize_alert_type(category, alert_type or "")
+
+    if category == "application":
+        org_filter = f', organization="{organization}"' if organization else ""
+        if at == "latency":
+            # Latency: threshold_value in seconds
+            return (
+                f'histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{{endpoint=~"/.*inference.*"{org_filter}}}[5m]))) > {threshold_value}'
+            )
+        if at == "error_rate":
+            # Error rate: ratio of 5xx to total. threshold_unit "percent" -> use threshold_value/100
+            thresh = (threshold_value / 100.0) if (threshold_unit or "").lower() == "percent" else threshold_value
+            return (
+                f'sum by (endpoint)(rate(telemetry_obsv_http_requests_total{{status=~"[45]..", endpoint=~"/.*inference.*"{org_filter}}}[5m])) '
+                f'/ sum by (endpoint)(rate(telemetry_obsv_http_requests_total{{endpoint=~"/.*inference.*"{org_filter}}}[5m])) > {thresh}'
+            )
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid application alert_type. Must be one of: Latency, Error Rate",
+        )
+
+    if category == "infrastructure":
+        if at == "cpu":
+            return (
+                f'100 * (1 - (sum(rate(node_cpu_seconds_total{{mode="idle"}}[5m])) / sum(rate(node_cpu_seconds_total[5m])))) > {threshold_value}'
+            )
+        if at == "memory":
+            return (
+                f'100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > {threshold_value}'
+            )
+        if at == "disk":
+            return (
+                f'100 * (1 - (node_filesystem_avail_bytes{{fstype!~"tmpfs|ramfs|overlay", mountpoint="/"}} '
+                f'/ node_filesystem_size_bytes{{fstype!~"tmpfs|ramfs|overlay", mountpoint="/"}})) > {threshold_value}'
+            )
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid infrastructure alert_type. Must be one of: CPU, Memory, Disk",
+        )
+
+    raise HTTPException(status_code=400, detail="category must be 'application' or 'infrastructure'")
+
+
 def inject_organization_into_promql(promql_expr: str, organization: str) -> str:
     """
     Automatically inject organization filter into PromQL expression.
@@ -565,29 +659,33 @@ async def create_alert_definition(
     request: Optional[Request] = None,
     organization_for_audit: Optional[str] = None,
 ) -> AlertDefinitionResponse:
-    """Create a new alert definition"""
+    """Create a new alert definition. PromQL is built from alert_type and threshold_value/unit."""
     validate_organization(organization)
     
-    # Automatically inject organization into PromQL expression only for application alerts
-    # Infrastructure alerts (CPU, memory, disk) don't have organization labels
-    if data.category == "application":
-        promql_expr_with_org = inject_organization_into_promql(data.promql_expr, organization)
-    else:
-        promql_expr_with_org = data.promql_expr
+    # Build PromQL from threshold and alert_type (organization injected for application alerts inside builder)
+    promql_expr_with_org = build_promql_from_threshold(
+        category=data.category,
+        alert_type=data.alert_type,
+        threshold_value=data.threshold_value,
+        threshold_unit=data.threshold_unit,
+        organization=organization if data.category == "application" else None,
+    )
+    alert_type_display = _alert_type_to_display(data.alert_type, data.category)
     
     async with db_pool.acquire() as conn:
-        # Insert alert definition
+        # Insert alert definition (threshold_value, threshold_unit stored for display and update; alert_type stored as "Latency", "Error Rate", "CPU", "Memory", "Disk")
         row = await conn.fetchrow(
             """
             INSERT INTO alert_definitions (
-                organization, name, description, promql_expr, category, severity,
-                urgency, alert_type, scope, evaluation_interval, for_duration,
+                organization, name, description, promql_expr, threshold_value, threshold_unit,
+                category, severity, urgency, alert_type, scope, evaluation_interval, for_duration,
                 created_by
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             RETURNING *
             """,
-            organization, data.name, data.description, promql_expr_with_org, data.category,
-            data.severity, data.urgency, data.alert_type, data.scope,
+            organization, data.name, data.description, promql_expr_with_org,
+            data.threshold_value, data.threshold_unit,
+            data.category, data.severity, data.urgency, alert_type_display, data.scope,
             data.evaluation_interval, data.for_duration, created_by
         )
         
@@ -661,6 +759,8 @@ async def get_alert_definition_by_id(alert_id: int, organization: Optional[str] 
             name=row['name'],
             description=row['description'],
             promql_expr=row['promql_expr'],
+            threshold_value=row.get('threshold_value'),
+            threshold_unit=row.get('threshold_unit'),
             category=row['category'],
             severity=row['severity'],
             urgency=row['urgency'],
@@ -722,6 +822,8 @@ async def list_alert_definitions(organization: Optional[str] = None, enabled_onl
                 name=row['name'],
                 description=row['description'],
                 promql_expr=row['promql_expr'],
+                threshold_value=row.get('threshold_value'),
+                threshold_unit=row.get('threshold_unit'),
                 category=row['category'],
                 severity=row['severity'],
                 urgency=row['urgency'],
@@ -780,19 +882,30 @@ async def update_alert_definition(alert_id: int, organization: Optional[str], da
             updates.append(f"description = ${param_idx}")
             params.append(data.description)
             param_idx += 1
-        if data.promql_expr is not None:
-            # Determine the category to check (use new category if being updated, otherwise existing)
-            category_to_check = data.category if data.category is not None else existing['category']
-            
-            # Automatically inject organization into PromQL expression only for application alerts
-            # Infrastructure alerts (CPU, memory, disk) don't have organization labels
-            if category_to_check == "application":
-                promql_expr_with_org = inject_organization_into_promql(data.promql_expr, actual_organization)
-            else:
-                promql_expr_with_org = data.promql_expr
-            
-            updates.append(f"promql_expr = ${param_idx}")
-            params.append(promql_expr_with_org)
+        # Rebuild promql when threshold or type/category change (threshold-based alerts)
+        if data.threshold_value is not None or data.threshold_unit is not None or data.alert_type is not None or data.category is not None:
+            category_to_use = data.category if data.category is not None else existing['category']
+            alert_type_to_use = data.alert_type if data.alert_type is not None else existing['alert_type']
+            thresh_val = data.threshold_value if data.threshold_value is not None else existing.get('threshold_value')
+            thresh_unit = data.threshold_unit if data.threshold_unit is not None else existing.get('threshold_unit')
+            if thresh_val is not None and thresh_unit is not None and alert_type_to_use:
+                promql_expr_with_org = build_promql_from_threshold(
+                    category=category_to_use,
+                    alert_type=alert_type_to_use,
+                    threshold_value=float(thresh_val),
+                    threshold_unit=thresh_unit,
+                    organization=actual_organization if category_to_use == "application" else None,
+                )
+                updates.append(f"promql_expr = ${param_idx}")
+                params.append(promql_expr_with_org)
+                param_idx += 1
+        if data.threshold_value is not None:
+            updates.append(f"threshold_value = ${param_idx}")
+            params.append(data.threshold_value)
+            param_idx += 1
+        if data.threshold_unit is not None:
+            updates.append(f"threshold_unit = ${param_idx}")
+            params.append(data.threshold_unit)
             param_idx += 1
         if data.category is not None:
             updates.append(f"category = ${param_idx}")
@@ -808,7 +921,7 @@ async def update_alert_definition(alert_id: int, organization: Optional[str], da
             param_idx += 1
         if data.alert_type is not None:
             updates.append(f"alert_type = ${param_idx}")
-            params.append(data.alert_type)
+            params.append(_alert_type_to_display(data.alert_type, existing['category']))
             param_idx += 1
         if data.scope is not None:
             updates.append(f"scope = ${param_idx}")
@@ -874,7 +987,7 @@ async def update_alert_definition(alert_id: int, organization: Optional[str], da
             )
         
         # Trigger configuration sync to update YAML files and reload Prometheus/Alertmanager
-        await trigger_config_sync(actor=created_by, request=request)
+        await trigger_config_sync(actor=updated_by, request=request)
         
         return result
 
