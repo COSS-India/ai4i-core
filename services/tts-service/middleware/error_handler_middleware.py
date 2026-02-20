@@ -116,7 +116,12 @@ def add_error_handlers(app: FastAPI) -> None:
     
     @app.exception_handler(AuthenticationError)
     async def authentication_error_handler(request: Request, exc: AuthenticationError):
-        """Handle authentication errors."""
+        """Handle authentication errors.
+
+        For expired/invalid tokens we want to mirror API Gateway behavior and return
+        the same user-facing message (`AUTH_FAILED_TTS_MESSAGE`), while still keeping
+        the more specific details in tracing/logging.
+        """
         # Capture original message for tracing and ownership checks
         error_msg = (
             getattr(exc, "message", None)
@@ -139,19 +144,11 @@ def add_error_handlers(app: FastAPI) -> None:
                 },
             )
 
-        # Extract request info for logging
-        method = request.method
-        path = request.url.path
-        client_ip = request.client.host if request.client else "unknown"
-        user_agent = request.headers.get("user-agent", "unknown")
-        
-        # Get correlation ID if available
-        correlation_id = get_correlation_id(request)
-
         if tracer:
             with tracer.start_as_current_span("request.reject") as reject_span:
                 reject_span.set_attribute("auth.operation", "reject_authentication")
                 reject_span.set_attribute("auth.rejected", True)
+                # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
                 reject_span.set_attribute("error.type", "AuthenticationError")
                 reject_span.set_attribute("error.reason", "authentication_failed")
                 # Record the low-level message for debugging
@@ -161,58 +158,25 @@ def add_error_handlers(app: FastAPI) -> None:
                 reject_span.set_status(
                     Status(StatusCode.ERROR, error_msg or exc.message or AUTH_FAILED_TTS_MESSAGE)
                 )
+                # Don't record exception here - OpenTelemetry already recorded it
+                # automatically in parent spans when exception was raised
 
-        # Extract auth context from request.state if available
-        user_id = getattr(request.state, "user_id", None)
-        api_key_id = getattr(request.state, "api_key_id", None)
-        
-        # Get organization from request.state or context
-        organization = getattr(request.state, "organization", None)
-        if not organization:
-            try:
-                organization = get_organization()
-            except Exception:
-                pass
-        
-        # Calculate processing time (approximate, since we don't have start_time)
-        processing_time = 0.001  # Minimal time for auth errors
-        
-        # Build context matching RequestLoggingMiddleware format EXACTLY
-        # This ensures 401 errors appear in OpenSearch with the same structure as 200
-        log_context = {
-            "method": method,
-            "path": path,
-            "status_code": 401,
-            "duration_ms": round(processing_time * 1000, 2),
-            "client_ip": client_ip,
-            "user_agent": user_agent,
-            "error_code": AUTH_FAILED,
-            "error_message": error_msg or exc.message,
-        }
-        
-        if user_id:
-            log_context["user_id"] = user_id
-        if api_key_id:
-            log_context["api_key_id"] = api_key_id
-        if correlation_id:
-            log_context["correlation_id"] = correlation_id
-        if organization:
-            log_context["organization"] = organization
-        
-        # Don't log 401 errors here - they are logged at API Gateway level to avoid duplicates
-        # The response will still go through RequestLoggingMiddleware, but it will skip 400-series errors
-        
-        # For invalid API key errors (BOTH mode with bad/missing key), mirror API
-        # Gateway behavior by surfacing AUTHORIZATION_ERROR with the original message
-        # Check this FIRST before ownership errors to ensure "Invalid API key" is caught correctly
-        if "Invalid API key" in (error_msg or ""):
-            clean_message = _strip_status_prefix(error_msg or "Invalid API key")
+        # For expired/invalid token errors, check FIRST before API key ownership errors
+        # This ensures expired tokens return AUTH_FAILED, not AUTHORIZATION_ERROR
+        if (
+            "expired" in (error_msg or "").lower()
+            or "invalid or expired token" in (error_msg or "").lower()
+            or "authentication failed. please log in again" in (error_msg or "").lower()
+            or "failed to verify token" in (error_msg or "").lower()
+            or "invalid token type" in (error_msg or "").lower()
+            or "missing bearer token" in (error_msg or "").lower()
+        ):
             return JSONResponse(
                 status_code=401,
                 content={
                     "detail": {
-                        "error": "AUTHORIZATION_ERROR",
-                        "message": clean_message,
+                        "code": AUTH_FAILED,
+                        "message": AUTH_FAILED_TTS_MESSAGE,
                     }
                 },
             )
@@ -225,6 +189,20 @@ def add_error_handlers(app: FastAPI) -> None:
                     "detail": {
                         "error": "AUTHORIZATION_ERROR",
                         "message": "API key does not belong to the authenticated user",
+                    }
+                },
+            )
+
+        # For invalid API key errors (BOTH mode with bad/missing key), mirror API
+        # Gateway behavior by surfacing AUTHORIZATION_ERROR with the original message
+        if "Invalid API key" in (error_msg or ""):
+            clean_message = _strip_status_prefix(error_msg or "Invalid API key")
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "AUTHORIZATION_ERROR",
+                        "message": clean_message,
                     }
                 },
             )
@@ -244,7 +222,6 @@ def add_error_handlers(app: FastAPI) -> None:
         # For token-expired / invalid-token and all other authentication failures,
         # align user-facing message with API Gateway:
         #   "Authentication failed. Please log in again."
-        # This matches the API Gateway format which uses "code" and "message" fields
         return JSONResponse(
             status_code=401,
             content={
@@ -258,22 +235,28 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthorizationError)
     async def authorization_error_handler(request: Request, exc: AuthorizationError):
         """Handle authorization errors."""
-        # Extract request info for logging
-        method = request.method
-        path = request.url.path
-        client_ip = request.client.host if request.client else "unknown"
-        user_agent = request.headers.get("user-agent", "unknown")
-        
-        # Get correlation ID if available
-        correlation_id = get_correlation_id(request)
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("auth.operation", "reject_authorization")
+                reject_span.set_attribute("auth.rejected", True)
+                # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
+                reject_span.set_attribute("error.type", "AuthorizationError")
+                reject_span.set_attribute("error.reason", "authorization_failed")
+                reject_span.set_attribute("error.message", exc.message)
+                reject_span.set_attribute("error.code", "AUTHORIZATION_ERROR")
+                reject_span.set_attribute("http.status_code", 403)
+                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+                # Don't record exception here - OpenTelemetry already recorded it
+                # automatically in parent spans when exception was raised
         
         # Preserve detailed API key permission messages from auth-service (e.g.,
         # "Invalid API key: This key does not have access to TTS service") so they
-        # are not prefixed with a generic authorization message.
-        message_raw = getattr(exc, "message", None) or getattr(exc, "detail", None) or str(exc)
-        message = _strip_status_prefix(message_raw)
-
-        # If "Invalid API key" and no explicit X-API-Key header, treat as API_KEY_MISSING
+        # are not prefixed with "Authorization error: Insufficient permission."
+        # Also strip any leading HTTP status codes like "403: " from the message.
+        message = _strip_status_prefix(exc.message)
+        
+        # If we see an "Invalid API key" authorization error and there is no explicit
+        # X-API-Key header, treat this like API_KEY_MISSING to match API Gateway.
         if "invalid api key" in message.lower() and not request.headers.get("x-api-key"):
             return JSONResponse(
                 status_code=401,
@@ -285,20 +268,6 @@ def add_error_handlers(app: FastAPI) -> None:
                 },
             )
 
-        # For simple "Invalid API key" errors (without permission details), return as-is
-        # This matches API Gateway behavior for invalid API keys
-        if "invalid api key" in message.lower() and "does not have access" not in message.lower():
-            clean_message = _strip_status_prefix(message)
-            return JSONResponse(
-                status_code=401,
-                content={
-                    "detail": {
-                        "error": "AUTHORIZATION_ERROR",
-                        "message": clean_message,
-                    }
-                },
-            )
-
         # For permission/ownership issues, keep or normalize the message to a clear
         # "Insufficient permission" format instead of prefixing with "Authorization error".
         if (
@@ -306,87 +275,28 @@ def add_error_handlers(app: FastAPI) -> None:
             or "does not have" in message.lower()
             or "tts.inference" in message
             or "tts service" in message.lower()
+            or "api key does not belong to the authenticated user" in message.lower()
         ):
             # Normalize to the desired format if this is the standard TTS access message
             if "does not have access to tts service" in message.lower():
-                message = "Insufficient permission. This key does not have access to TTS service"
+                message = "Insufficient permission: This key does not have access to TTS service"
             # Also handle cases where the message might be "Invalid API key: This key does not have access to TTS service"
             elif "invalid api key" in message.lower() and "does not have access to tts service" in message.lower():
-                message = "Insufficient permission. This key does not have access to TTS service"
+                message = "Insufficient permission: This key does not have access to TTS service"
             # Else leave the permission-related message as-is
         else:
-            # For non-permission/ownership-related authorization errors, we can keep or
-            # lightly prefix the message if needed.
-            if "Authorization error" not in message:
+            # For non-permission-related authorization errors, keep a clear prefix
+            if not message.startswith("Authorization error"):
                 message = f"Authorization error: {message}"
-        
-        clean_message = message
 
-        # Create span for authorization error if tracer is available
-        if tracer:
-            with tracer.start_as_current_span("request.reject") as reject_span:
-                reject_span.set_attribute("auth.operation", "reject_authorization")
-                reject_span.set_attribute("auth.rejected", True)
-                reject_span.set_attribute("error.type", "AuthorizationError")
-                reject_span.set_attribute("error.reason", "authorization_failed")
-                reject_span.set_attribute("error.message", clean_message)
-                reject_span.set_attribute("error.code", "AUTHORIZATION_ERROR")
-                reject_span.set_attribute("http.status_code", 403)
-                reject_span.set_attribute("http.method", method)
-                reject_span.set_attribute("http.route", path)
-                if correlation_id:
-                    reject_span.set_attribute("correlation.id", correlation_id)
-                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
-        
-        # Extract auth context from request.state if available
-        user_id = getattr(request.state, "user_id", None)
-        api_key_id = getattr(request.state, "api_key_id", None)
-        
-        # Get organization from request.state or context
-        organization = getattr(request.state, "organization", None)
-        if not organization:
-            try:
-                organization = get_organization()
-            except Exception:
-                pass
-        
-        # Calculate processing time (approximate)
-        processing_time = 0.001
-        
-        # Build context matching RequestLoggingMiddleware format
-        log_context = {
-            "method": method,
-            "path": path,
-            "status_code": 403,
-            "duration_ms": round(processing_time * 1000, 2),
-            "client_ip": client_ip,
-            "user_agent": user_agent,
-            "error_code": "AUTHORIZATION_ERROR",
-            "error_message": clean_message,
-        }
-        
-        if user_id:
-            log_context["user_id"] = user_id
-        if api_key_id:
-            log_context["api_key_id"] = api_key_id
-        if correlation_id:
-            log_context["correlation_id"] = correlation_id
-        if organization:
-            log_context["organization"] = organization
-        
-        # Log with WARNING level
-        # IMPORTANT: This explicit logging ensures errors are logged even if RequestLoggingMiddleware
-        # doesn't catch the response (which can happen with exception handlers)
-        logger.warning(
-            f"{method} {path} - 403 - {processing_time:.3f}s",
-            extra={"context": log_context}
+        error_detail = ErrorDetail(
+            message=message,
+            code="AUTHORIZATION_ERROR",
+            timestamp=time.time()
         )
-        
-        # Return error response matching the format seen in API Gateway
-        # Format: {"detail": {"error": "ERROR_CODE", "message": "..."}}
         return JSONResponse(
             status_code=403,
-            content={"detail": {"error": "AUTHORIZATION_ERROR", "message": clean_message}}
+            content={"detail": error_detail.dict()}
         )
     
     @app.exception_handler(RateLimitExceededError)
