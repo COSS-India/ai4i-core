@@ -28,7 +28,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 # Load environment variables from .env file if it exists
 load_dotenv()
 
-from routers import health_router, inference_router
+from routers import health_router, inference_router, try_it_router
 from utils.service_registry_client import ServiceRegistryHttpClient
 from utils.triton_client import TritonClient
 from utils.model_management_client import ModelManagementClient
@@ -460,6 +460,7 @@ add_error_handlers(app)
 
 # Include routers
 app.include_router(inference_router)
+app.include_router(try_it_router)
 app.include_router(health_router)
 
 

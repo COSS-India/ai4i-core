@@ -6,7 +6,8 @@ from models.nmt_request import (
     NMTInferenceRequest,
     NMTInferenceConfig,
     TextInput,
-    LanguagePair
+    LanguagePair,
+    TryItRequest
 )
 from models.nmt_response import (
     NMTInferenceResponse,
@@ -27,6 +28,7 @@ __all__ = [
     "NMTInferenceConfig", 
     "TextInput",
     "LanguagePair",
+    "TryItRequest",
     "NMTInferenceResponse",
     "TranslationOutput",
     "NMTRequestDB",
