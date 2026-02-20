@@ -36,7 +36,7 @@ export interface AudioLanguageDetectionInferenceResponse {
  */
 export const listAudioLanguageDetectionServices = async (): Promise<AudioLanguageDetectionServiceDetailsResponse[]> => {
   try {
-    const services = await listServices('audio-lang-detection');
+    const services = await listServices('audio-lang-detection', true);
     
     // Transform to AudioLanguageDetectionServiceDetailsResponse format
     const transformedServices = services.map((service: any) => {
