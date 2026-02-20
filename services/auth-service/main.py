@@ -2157,15 +2157,15 @@ async def get_permission_list(
     """
     Get list of all available permissions that can be assigned to API keys.
     
-    Returns all permissions from the permissions table, sorted alphabetically.
-    This allows API keys to have any permission (inference, model management, etc.)
+    Returns only inference permissions from the permissions table, sorted alphabetically.
+    This limits API keys to use-only (.inference) permissions.
     """
     # Fetch all permissions from database
     result = await db.execute(select(Permission).order_by(Permission.name))
     permissions = result.scalars().all()
     
-    # Return list of permission names
-    return [perm.name for perm in permissions]
+    # Return list of inference permission names (those ending with ".inference")
+    return [perm.name for perm in permissions if perm.name.endswith(".inference")]
 
 
 @app.get("/api/v1/auth/users", response_model=List[UserListResponse], tags=["Admin"])

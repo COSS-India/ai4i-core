@@ -1,19 +1,31 @@
 """
 Global error handler middleware for consistent error responses.
+
+
 """
 import os
+import time
+import logging
+import traceback
+import re
+
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+from ai4icore_logging import get_correlation_id, get_logger
+
 from middleware.exceptions import (
-    AuthenticationError, 
-    AuthorizationError, 
+    AuthenticationError,
+    AuthorizationError,
     RateLimitExceededError,
     ErrorDetail,
     ServiceError,
     TritonInferenceError,
     ModelNotFoundError,
     ServiceUnavailableError,
-    AudioProcessingError
+    AudioProcessingError,
 )
 from services.constants.error_messages import (
     AUTH_FAILED,
@@ -23,21 +35,25 @@ from services.constants.error_messages import (
     SERVICE_UNAVAILABLE,
     SERVICE_UNAVAILABLE_MESSAGE,
     INVALID_REQUEST,
-    INVALID_REQUEST_MESSAGE
+    INVALID_REQUEST_MESSAGE,
 )
-import logging
-import time
-import traceback
 
-# Import OpenTelemetry for tracing
-try:
-    from opentelemetry import trace
-    from opentelemetry.trace import Status, StatusCode
-    TRACING_AVAILABLE = True
-except ImportError:
-    TRACING_AVAILABLE = False
+logger = get_logger(__name__)
+tracer = trace.get_tracer("asr-service")
 
-logger = logging.getLogger(__name__)
+
+def _strip_status_prefix(message: str) -> str:
+    """
+    Remove leading HTTP status codes like '403: ' from error messages so that
+    user-facing messages match API Gateway (which does not include status
+    codes in the message text).
+    """
+    if not isinstance(message, str):
+        return message
+    match = re.match(r"^\s*(\d{3})\s*:\s*(.+)$", message)
+    if match:
+        return match.group(2)
+    return message
 
 
 def add_error_handlers(app: FastAPI) -> None:
@@ -46,14 +62,47 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthenticationError)
     async def authentication_error_handler(request: Request, exc: AuthenticationError):
         """Handle authentication errors."""
-        # Check both message attribute and detail for the ownership error message
-        error_msg = getattr(exc, "message", None) or str(exc.detail) if exc.detail else ""
-        
-        logger.info(f"ASR AuthenticationError handler called: message={error_msg}, detail={exc.detail}")
-        
+        # Capture original message for tracing and ownership checks
+        error_msg = (
+            getattr(exc, "message", None)
+            or (str(exc.detail) if hasattr(exc, "detail") and exc.detail else "")
+        )
+        error_msg = _strip_status_prefix(error_msg) if error_msg else ""
+
+        # Check if no API key header is provided first - return API_KEY_MISSING
+        # This handles cases where the error message might not be extracted correctly
+        x_auth_source = (request.headers.get("x-auth-source") or "API_KEY").upper()
+        x_api_key = request.headers.get("x-api-key")
+        if not x_api_key and x_auth_source == "API_KEY":
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "API_KEY_MISSING",
+                        "message": "API key is required to access this service.",
+                    }
+                },
+            )
+
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("auth.operation", "reject_authentication")
+                reject_span.set_attribute("auth.rejected", True)
+                # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
+                reject_span.set_attribute("error.type", "AuthenticationError")
+                reject_span.set_attribute("error.reason", "authentication_failed")
+                # Record the low-level message for debugging
+                reject_span.set_attribute("error.message", error_msg or exc.message)
+                reject_span.set_attribute("error.code", "AUTHENTICATION_ERROR")
+                reject_span.set_attribute("http.status_code", 401)
+                reject_span.set_status(
+                    Status(StatusCode.ERROR, error_msg or exc.message or AUTH_FAILED_MESSAGE)
+                )
+                # Don't record exception here - OpenTelemetry already recorded it
+                # automatically in parent spans when exception was raised
+
         # For the ownership case, return explicit error + message fields with AUTHORIZATION_ERROR
-        if "API key does not belong to the authenticated user" in error_msg:
-            logger.info("Returning AUTHORIZATION_ERROR for ownership mismatch")
+        if "API key does not belong to the authenticated user" in (error_msg or ""):
             return JSONResponse(
                 status_code=401,
                 content={
@@ -64,32 +113,157 @@ def add_error_handlers(app: FastAPI) -> None:
                 },
             )
 
-        # For other authentication errors, return structured format like TTS
-        logger.info(f"Returning AUTHENTICATION_ERROR: {error_msg or AUTH_FAILED_MESSAGE}")
+        # For invalid API key errors (BOTH mode with bad/missing key), mirror API
+        # Gateway behavior by surfacing AUTHORIZATION_ERROR with the original message
+        if "Invalid API key" in (error_msg or ""):
+            clean_message = _strip_status_prefix(error_msg or "Invalid API key")
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "AUTHORIZATION_ERROR",
+                        "message": clean_message,
+                    }
+                },
+            )
+
+        # For missing API key, mirror API Gateway "API_KEY_MISSING" behavior
+        if "Missing API key" in (error_msg or ""):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "API_KEY_MISSING",
+                        "message": "API key is required to access this service.",
+                    }
+                },
+            )
+
+        # For token-expired / invalid-token errors, return AUTHENTICATION_ERROR
+        # Check for common token error messages
+        error_msg_lower = (error_msg or "").lower()
+        if (
+            "expired" in error_msg_lower 
+            or ("invalid" in error_msg_lower and "token" in error_msg_lower)
+            or "Invalid or expired token" in (error_msg or "")
+        ):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "AUTHENTICATION_ERROR",
+                        "message": AUTH_FAILED_MESSAGE,
+                    }
+                },
+            )
+
+        # For all other authentication failures,
+        # align user-facing message with API Gateway:
+        #   "Authentication failed. Please log in again."
         return JSONResponse(
             status_code=401,
-            content={"detail": {"error": "AUTHENTICATION_ERROR", "message": error_msg or AUTH_FAILED_MESSAGE}}
+            content={
+                "detail": {
+                    "error": "AUTHENTICATION_ERROR",
+                    "message": AUTH_FAILED_MESSAGE,
+                }
+            },
         )
+    
     
     @app.exception_handler(AuthorizationError)
     async def authorization_error_handler(request: Request, exc: AuthorizationError):
         """Handle authorization errors."""
+        # Preserve detailed API key permission messages from auth-service (e.g.,
+        # "Invalid API key: This key does not have access to ASR service") so they
+        # are not prefixed with a generic authorization message.
+        message_raw = getattr(exc, "message", None) or getattr(exc, "detail", None) or str(exc)
+        message = _strip_status_prefix(message_raw)
+
+        # If we see an "Invalid API key" authorization error and there is no explicit
+        # X-API-Key header, treat this like API_KEY_MISSING to match API Gateway.
+        if "invalid api key" in message.lower() and not request.headers.get("x-api-key"):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "API_KEY_MISSING",
+                        "message": "API key is required to access this service.",
+                    }
+                },
+            )
+
+        # For permission/ownership issues, keep or normalize the message to a clear
+        # "Insufficient permission" format instead of prefixing with "Authorization error".
+        if (
+            "permission" in message.lower()
+            or "does not have" in message.lower()
+            or "asr.inference" in message
+            or "asr service" in message.lower()
+            or "pipeline service" in message.lower()
+        ):
+            # Normalize to the desired format if this is the standard ASR access message
+            if "does not have access to asr service" in message.lower():
+                message = "Insufficient permission: This key does not have access to ASR service"
+            # Handle pipeline service permission errors
+            elif "does not have access to pipeline service" in message.lower():
+                message = "Insufficient permission: This key does not have access to pipeline service"
+            # Also handle cases where the message might be "Invalid API key: This key does not have access to ASR service"
+            elif "invalid api key" in message.lower() and "does not have access to asr service" in message.lower():
+                message = "Insufficient permission: This key does not have access to ASR service"
+            # Handle pipeline service with invalid API key prefix
+            elif "invalid api key" in message.lower() and "does not have access to pipeline service" in message.lower():
+                message = "Insufficient permission: This key does not have access to pipeline service"
+            # Else leave the permission-related message as-is
+        else:
+            # For non-permission/ownership-related authorization errors, we can keep or
+            # lightly prefix the message if needed.
+            if "Authorization error" not in message:
+                message = f"Authorization error: {message}"
+
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("auth.operation", "reject_authorization")
+                reject_span.set_attribute("auth.rejected", True)
+                # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
+                reject_span.set_attribute("error.type", "AuthorizationError")
+                reject_span.set_attribute("error.reason", "authorization_failed")
+                reject_span.set_attribute("error.message", message)
+                reject_span.set_attribute("error.code", "AUTHORIZATION_ERROR")
+                reject_span.set_attribute("http.status_code", 403)
+                reject_span.set_status(Status(StatusCode.ERROR, message))
+                # Don't record exception here - OpenTelemetry already recorded it
+                # automatically in parent spans when exception was raised
+        
         error_detail = ErrorDetail(
-            message=exc.message,
-            code="AUTHORIZATION_ERROR"
+            message=message,
+            code="AUTHORIZATION_ERROR",
         )
         return JSONResponse(
             status_code=403,
-            content={"detail": error_detail.dict()}
+            content={"detail": error_detail.dict()},
         )
     
     @app.exception_handler(RateLimitExceededError)
     async def rate_limit_error_handler(request: Request, exc: RateLimitExceededError):
         """Handle rate limit exceeded errors."""
-        # Format message with retry_after value
-        message = RATE_LIMIT_EXCEEDED_MESSAGE.format(x=exc.retry_after)
+        if tracer:
+            with tracer.start_as_current_span("request.reject") as reject_span:
+                reject_span.set_attribute("rate_limit.operation", "reject_rate_limit")
+                reject_span.set_attribute("rate_limit.rejected", True)
+                # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
+                reject_span.set_attribute("error.type", "RateLimitExceededError")
+                reject_span.set_attribute("error.reason", "rate_limit_exceeded")
+                reject_span.set_attribute("error.message", exc.message)
+                reject_span.set_attribute("error.code", "RATE_LIMIT_EXCEEDED")
+                reject_span.set_attribute("rate_limit.retry_after", exc.retry_after)
+                reject_span.set_attribute("http.status_code", 429)
+                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+                # Don't record exception here - OpenTelemetry already recorded it
+                # automatically in parent spans when exception was raised
+        
         error_detail = ErrorDetail(
-            message=message,
+            message=RATE_LIMIT_EXCEEDED_MESSAGE.format(x=exc.retry_after),
             code=RATE_LIMIT_EXCEEDED
         )
         return JSONResponse(
@@ -101,8 +275,7 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ServiceError)
     async def service_error_handler(request: Request, exc: ServiceError):
         """Handle service-specific errors with Jaeger tracing."""
-        # Record error in Jaeger span
-        if TRACING_AVAILABLE:
+        if tracer:
             try:
                 current_span = trace.get_current_span()
                 if current_span:
@@ -125,7 +298,8 @@ def add_error_handlers(app: FastAPI) -> None:
         
         error_detail = ErrorDetail(
             message=exc.message,
-            code=exc.error_code
+            code=exc.error_code,
+            timestamp=time.time()
         )
         return JSONResponse(
             status_code=exc.status_code,
@@ -135,43 +309,8 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle generic HTTP exceptions."""
-        # Handle AuthenticationError here if it wasn't caught by the specific handler
-        from middleware.exceptions import AuthenticationError
-        if isinstance(exc, AuthenticationError):
-            # Check for ownership error message
-            error_msg = getattr(exc, "message", None) or str(exc.detail) if exc.detail else ""
-            logger.info(f"ASR HTTPException handler processing AuthenticationError: message={error_msg}, detail={exc.detail}, type={type(exc.detail)}")
-            if "API key does not belong to the authenticated user" in error_msg:
-                logger.info("HTTPException handler returning AUTHORIZATION_ERROR")
-                return JSONResponse(
-                    status_code=401,
-                    content={
-                        "detail": {
-                            "error": "AUTHORIZATION_ERROR",
-                            "message": "API key does not belong to the authenticated user",
-                        }
-                    },
-                )
-            # For other AuthenticationErrors, use default auth failure response
-            logger.info(f"HTTPException handler returning default AUTH_FAILED for: {error_msg}")
-            error_detail = ErrorDetail(
-                message=AUTH_FAILED_MESSAGE,
-                code=AUTH_FAILED
-            )
-            return JSONResponse(
-                status_code=401,
-                content={"detail": error_detail.dict()}
-            )
-        
-        # Extract context for logging
-        from ai4icore_logging import get_correlation_id
-        correlation_id = get_correlation_id(request)
-        user_id = getattr(request.state, "user_id", None)
-        api_key_id = getattr(request.state, "api_key_id", None)
-        service_id = getattr(request.state, "service_id", None)
-        
-        # Record error in Jaeger span (dev code)
-        if TRACING_AVAILABLE:
+        # Record error in Jaeger span
+        if tracer:
             try:
                 current_span = trace.get_current_span()
                 if current_span:
@@ -179,129 +318,95 @@ def add_error_handlers(app: FastAPI) -> None:
                     current_span.set_attribute("error.code", "HTTP_ERROR")
                     current_span.set_attribute("error.message", str(exc.detail))
                     current_span.set_attribute("http.status_code", exc.status_code)
-                    if service_id:
-                        current_span.set_attribute("asr.service_id", service_id)
-                    if correlation_id:
-                        current_span.set_attribute("correlation.id", correlation_id)
                     current_span.set_status(Status(StatusCode.ERROR, str(exc.detail)))
             except Exception:
-                pass  # Don't fail if tracing fails
-        
-        # Log 500 errors with full context
-        if exc.status_code == 500:
-            logger.error(
-                f"HTTP 500 error in ASR service: {exc.detail}",
-                extra={
-                    "context": {
-                        "error_type": "HTTPException",
-                        "error_message": str(exc.detail),
-                        "status_code": 500,
-                        "service_id": service_id,
-                        "user_id": user_id,
-                        "api_key_id": api_key_id,
-                        "correlation_id": correlation_id,
-                        "path": request.url.path,
-                        "method": request.method,
-                    }
-                },
-                exc_info=True
-            )
-        
-        # Map status codes to error constants (our changes)
-        status_code = exc.status_code
-        error_code = None
-        error_message = str(exc.detail)
-        
-        # Check if detail is already a structured error dict (from routers or auth middleware)
-        detail_dict = None
-        if isinstance(exc.detail, dict):
-            detail_dict = exc.detail
-        elif isinstance(exc.detail, str):
-            # FastAPI might convert dict to string, try to parse it
-            import json
-            try:
-                # Check if it looks like a dict string representation
-                if exc.detail.startswith("{") and exc.detail.endswith("}"):
-                    detail_dict = json.loads(exc.detail)
-            except (json.JSONDecodeError, ValueError):
                 pass
         
-        if detail_dict:
-            # Check for ErrorDetail format (code + message)
-            if "code" in detail_dict and "message" in detail_dict:
-                return JSONResponse(
-                    status_code=status_code,
-                    content={"detail": detail_dict}
-                )
-            # Check for error + message format (from auth middleware)
-            if "error" in detail_dict and "message" in detail_dict:
-                return JSONResponse(
-                    status_code=status_code,
-                    content={"detail": detail_dict}
-                )
+        # Check if detail is already an ErrorDetail dict
+        if isinstance(exc.detail, dict) and "code" in exc.detail:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail}
+            )
         
-        # Map common status codes to error constants
-        if status_code == 503:
-            error_code = SERVICE_UNAVAILABLE
-            error_message = SERVICE_UNAVAILABLE_MESSAGE
-        elif status_code == 400:
-            error_code = INVALID_REQUEST
-            error_message = INVALID_REQUEST_MESSAGE
-        elif status_code == 401:
-            error_code = AUTH_FAILED
-            error_message = AUTH_FAILED_MESSAGE
-        elif status_code == 500:
-            # For 500 errors, preserve the actual error message from logs
-            error_code = "INTERNAL_SERVER_ERROR"
-            # Keep the actual error message from exc.detail
-            error_message = error_message
+        # Safely convert detail to string if it's not already a string or dict
+        # This handles cases where an exception object might be passed as detail
+        detail_message = exc.detail
+        if not isinstance(detail_message, (str, dict)):
+            detail_message = str(detail_message) if detail_message else ""
+
+        # Map specific status codes to error constants
+        if exc.status_code == 503:
+            error_detail = ErrorDetail(
+                message=SERVICE_UNAVAILABLE_MESSAGE,
+                code=SERVICE_UNAVAILABLE
+            )
+        elif exc.status_code == 400:
+            error_detail = ErrorDetail(
+                message=detail_message if detail_message else INVALID_REQUEST_MESSAGE,
+                code=INVALID_REQUEST
+            )
+        elif exc.status_code == 401:
+            # Check if this is a token-related error (AuthenticationError might be caught here)
+            detail_str = str(detail_message) if detail_message else ""
+            detail_str_lower = detail_str.lower()
+            if (
+                "expired" in detail_str_lower 
+                or ("invalid" in detail_str_lower and "token" in detail_str_lower)
+                or "Invalid or expired token" in detail_str
+            ):
+                # Return structured format for token errors
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "detail": {
+                            "error": "AUTHENTICATION_ERROR",
+                            "message": AUTH_FAILED_MESSAGE,
+                        }
+                    },
+                )
+            error_detail = ErrorDetail(
+                message=AUTH_FAILED_MESSAGE,
+                code=AUTH_FAILED
+            )
+        elif exc.status_code == 500:
+            # For 500 errors, use the actual error message
+            error_detail = ErrorDetail(
+                message=detail_message if detail_message else "Internal server error",
+                code="INTERNAL_SERVER_ERROR"
+            )
         else:
-            # For unmapped errors, use the detail as message and generate a code
-            error_code = f"HTTP_{status_code}_ERROR"
+            error_detail = ErrorDetail(
+                message=detail_message if detail_message else "An error occurred",
+                code="HTTP_ERROR"
+            )
         
-        error_detail = ErrorDetail(
-            message=error_message,
-            code=error_code
-        )
         return JSONResponse(
-            status_code=status_code,
+            status_code=exc.status_code,
             content={"detail": error_detail.dict()}
         )
+    
     
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
         """Handle unexpected exceptions."""
-        # Extract context for logging
-        from ai4icore_logging import get_correlation_id
-        correlation_id = get_correlation_id(request)
-        user_id = getattr(request.state, "user_id", None)
-        api_key_id = getattr(request.state, "api_key_id", None)
-        service_id = getattr(request.state, "service_id", None)
-        triton_endpoint = getattr(request.state, "triton_endpoint", None)
-        model_name = getattr(request.state, "triton_model_name", None)
+        # Extract exception from ExceptionGroup if present (Python 3.11+)
+        actual_exc = exc
+        try:
+            if hasattr(exc, 'exceptions') and exc.exceptions:
+                actual_exc = exc.exceptions[0]
+        except (AttributeError, IndexError):
+            pass
         
-        # Record error in Jaeger span (dev code)
-        if TRACING_AVAILABLE:
-            try:
-                current_span = trace.get_current_span()
-                if current_span:
-                    current_span.set_attribute("error", True)
-                    current_span.set_attribute("error.code", "INTERNAL_ERROR")
-                    current_span.set_attribute("error.message", str(exc))
-                    current_span.set_attribute("error.type", type(exc).__name__)
-                    current_span.set_attribute("http.status_code", 500)
-                    if service_id:
-                        current_span.set_attribute("asr.service_id", service_id)
-                    if triton_endpoint:
-                        current_span.set_attribute("triton.endpoint", triton_endpoint)
-                    if model_name:
-                        current_span.set_attribute("triton.model_name", model_name)
-                    if correlation_id:
-                        current_span.set_attribute("correlation.id", correlation_id)
-                    current_span.record_exception(exc)
-                    current_span.set_status(Status(StatusCode.ERROR, str(exc)))
-            except Exception:
-                pass  # Don't fail if tracing fails
+        # Check if it's one of our custom exceptions that wasn't caught
+        if isinstance(actual_exc, RateLimitExceededError):
+            return await rate_limit_error_handler(request, actual_exc)
+        elif isinstance(actual_exc, AuthenticationError):
+            return await authentication_error_handler(request, actual_exc)
+        elif isinstance(actual_exc, AuthorizationError):
+            return await authorization_error_handler(request, actual_exc)
+        elif isinstance(actual_exc, HTTPException):
+            return await http_exception_handler(request, actual_exc)
         
         # Check if health/metrics logs should be excluded
         exclude_health_logs = os.getenv("EXCLUDE_HEALTH_LOGS", "false").lower() == "true"
@@ -314,33 +419,13 @@ def add_error_handlers(app: FastAPI) -> None:
         if exclude_metrics_logs and ('/metrics' in path or path.endswith('/metrics')):
             should_skip = True
         
-        # Log the full error with traceback and context (skip if health/metrics)
         if not should_skip:
-            error_message = str(exc)
-            logger.error(
-                f"Unexpected error in ASR service: {exc}",
-                extra={
-                    "context": {
-                        "error_type": type(exc).__name__,
-                        "error_message": error_message,
-                        "status_code": 500,
-                    "service_id": service_id,
-                    "triton_endpoint": triton_endpoint,
-                    "model_name": model_name,
-                    "user_id": user_id,
-                    "api_key_id": api_key_id,
-                    "correlation_id": correlation_id,
-                    "path": request.url.path,
-                    "method": request.method,
-                }
-            },
-            exc_info=True
-        )
+            logger.error(f"Unexpected error: {exc}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
         
-        # Preserve the actual error message from the exception (our changes)
         error_detail = ErrorDetail(
-            message=error_message,  # Use actual error message from exception
-            code="INTERNAL_SERVER_ERROR"
+            message=str(exc) if str(exc) else "Internal server error",
+            code="INTERNAL_ERROR"
         )
         return JSONResponse(
             status_code=500,
