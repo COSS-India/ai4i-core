@@ -180,13 +180,7 @@ async def run_inference(
                 "service_id": request_body.config.serviceId if request_body.config else "unknown"
             })
 
-            logger.info(
-                "Processing OCR inference request with %d image(s), user_id=%s api_key_id=%s session_id=%s",
-                len(request_body.image),
-                user_id,
-                api_key_id,
-                session_id,
-            )
+            # Log removed - middleware handles request/response logging
 
             # Run inference (Triton + Surya OCR)
             response = await ocr_service.run_inference(
@@ -214,7 +208,7 @@ async def run_inference(
                 "status": "success"
             })
             span.set_status(Status(StatusCode.OK))
-            logger.info("OCR inference completed successfully")
+            # Log removed - middleware handles request/response logging
             return response
 
         except ValueError as exc:
@@ -314,13 +308,7 @@ async def _run_inference_impl(
     api_key_id = getattr(http_request.state, "api_key_id", None)
     session_id = getattr(http_request.state, "session_id", None)
 
-    logger.info(
-        "Processing OCR inference request with %d image(s), user_id=%s api_key_id=%s session_id=%s",
-        len(request_body.image),
-        user_id,
-        api_key_id,
-        session_id,
-    )
+    # Log removed - middleware handles request/response logging
 
     response = await ocr_service.run_inference(
         request_body,
@@ -328,7 +316,7 @@ async def _run_inference_impl(
         api_key_id=api_key_id,
         session_id=session_id
     )
-    logger.info("OCR inference completed successfully")
+    # Log removed - middleware handles request/response logging
     return response
 
 
