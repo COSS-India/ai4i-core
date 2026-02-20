@@ -26,6 +26,7 @@ from utils.validation_utils import (
 )
 from middleware.auth_provider import AuthProvider
 from middleware.tenant_db_dependency import get_tenant_db_session
+from middleware.tenant_context import try_get_tenant_context
 from middleware.exceptions import (
     AuthenticationError, 
     AuthorizationError,
@@ -200,9 +201,28 @@ async def _enforce_tenant_and_service_checks(http_request: Request, service_name
     if x_auth_source:
         headers["X-Auth-Source"] = x_auth_source
 
-    # If tenant context exists, ensure tenant is subscribed to the service FIRST
-    tenant_id = getattr(http_request.state, "tenant_id", None)
-    tenant_data = None
+    # Determine tenant context in a best-effort way.
+    tenant_context = getattr(http_request.state, "tenant_context", None)
+    jwt_payload = getattr(http_request.state, "jwt_payload", None)
+    tenant_id_from_jwt = jwt_payload.get("tenant_id") if jwt_payload else None
+
+    tenant_data = tenant_context if tenant_context else None
+    tenant_id = tenant_context.get("tenant_id") if tenant_context else (tenant_id_from_jwt or None)
+
+    # If still no tenant info, attempt best-effort resolution (returns None for normal users)
+    if not tenant_id:
+        try:
+            resolved = await try_get_tenant_context(http_request)
+            if resolved:
+                tenant_context = resolved
+                tenant_id = tenant_context.get("tenant_id")
+                tenant_data = tenant_context
+            else:
+                tenant_id = None
+        except Exception as e:
+            logger.debug(f"try_get_tenant_context discovery failed: {e}")
+
+    # tenant_data may already be populated from tenant_context; only call API gateway if we still need tenant info
     if tenant_id:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -270,7 +290,7 @@ async def enforce_transliteration_checks(request: Request):
     await _enforce_tenant_and_service_checks(request, service_name="transliteration")
 
 # Add as a router-level dependency so it runs before path-operation dependencies like get_transliteration_service
-inference_router.dependencies.insert(0, Depends(enforce_transliteration_checks))
+inference_router.dependencies.append(Depends(enforce_transliteration_checks))
 
 @inference_router.post(
     "/inference",
