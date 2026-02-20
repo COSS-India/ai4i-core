@@ -23,7 +23,7 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from enum import Enum
 from uuid import UUID
 from urllib.parse import urlencode, urlparse, parse_qs, quote
-from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security, status
+from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security, Depends, status
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -2335,7 +2335,7 @@ async def check_permission(
             status_code=403,
             detail={
                 "error": "PERMISSION_DENIED",
-                "message": f"Permission '{permission}' required"
+                "message": "Only ADMIN or MODERATOR roles can perform this operation."
             }
         )
 
@@ -6358,14 +6358,22 @@ async def get_model(
     )
 
 
-@app.post("/api/v1/model-management/models", response_model=str, tags=["Model Management"])
+def require_model_permission(permission: str):
+    """Dependency factory to check permission before body validation."""
+    async def _check(
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+    ) -> None:
+        await check_permission(permission, request, credentials)
+    return _check
+
+@app.post("/api/v1/model-management/models", response_model=str, tags=["Model Management"], dependencies=[Depends(require_model_permission("model.create"))])
 async def create_model(
     payload: ModelCreateRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Register a new model. Requires Bearer token authentication with 'model.create' permission."""
-    await check_permission("model.create", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
@@ -6380,14 +6388,13 @@ async def create_model(
     )
 
 
-@app.patch("/api/v1/model-management/models", response_model=str, tags=["Model Management"])
+@app.patch("/api/v1/model-management/models", response_model=str, tags=["Model Management"], dependencies=[Depends(require_model_permission("model.update"))])
 async def update_model(
     payload: ModelUpdateRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Update an existing model. Requires Bearer token authentication with 'model.update' permission."""
-    await check_permission("model.update", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
@@ -6402,14 +6409,13 @@ async def update_model(
     )
 
 
-@app.delete("/api/v1/model-management/models/{uuid}", tags=["Model Management"])
+@app.delete("/api/v1/model-management/models/{uuid}", tags=["Model Management"], dependencies=[Depends(require_model_permission("model.delete"))])
 async def delete_model(
     uuid: str,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Delete a model by ID. Requires Bearer token authentication with 'model.delete' permission."""
-    await check_permission("model.delete", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     return await proxy_to_service(
         None,
@@ -6486,14 +6492,13 @@ async def get_service_details(
     )
 
 
-@app.post("/api/v1/model-management/services", response_model=str, tags=["Model Management"])
+@app.post("/api/v1/model-management/services", response_model=str, tags=["Model Management"], dependencies=[Depends(require_model_permission("service.create"))])
 async def create_service_entry(
     payload: ModelManagementServiceCreateRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Register a new service entry. Requires Bearer token authentication with 'service.create' permission."""
-    await check_permission("service.create", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
@@ -6508,19 +6513,17 @@ async def create_service_entry(
     )
 
 
-@app.patch("/api/v1/model-management/services", response_model=str, tags=["Model Management"])
+@app.patch("/api/v1/model-management/services", response_model=str, tags=["Model Management"], dependencies=[Depends(require_model_permission("service.update"))])
 async def update_service_entry(
     payload: ModelManagementServiceUpdateRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Update a service entry. Requires Bearer token authentication with appropriate permission."""
-    # Check if this is a publish/unpublish operation
+    # Check if this is a publish/unpublish operation (additional check after basic service.update permission)
     if hasattr(payload, 'isPublished') and payload.isPublished is not None:
         permission = "model.publish" if payload.isPublished else "model.unpublish"
         await check_permission(permission, request, credentials)
-    else:
-        await check_permission("service.update", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
@@ -6535,14 +6538,13 @@ async def update_service_entry(
     )
 
 
-@app.delete("/api/v1/model-management/services/{uuid}", tags=["Model Management"])
+@app.delete("/api/v1/model-management/services/{uuid}", tags=["Model Management"], dependencies=[Depends(require_model_permission("service.delete"))])
 async def delete_service_entry(
     uuid: str,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Delete a service entry. Requires Bearer token authentication with 'service.delete' permission."""
-    await check_permission("service.delete", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     return await proxy_to_service(
         None,
