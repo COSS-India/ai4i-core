@@ -169,6 +169,33 @@ def _tag_for_service(service_name: str, meta: dict[str, Any]) -> str:
     return tag or service_name.replace("-", " ").title()
 
 
+# x-auth-source header added to every operation for Swagger "Try it out"
+X_AUTH_SOURCE_PARAM = {
+    "name": "x-auth-source",
+    "in": "header",
+    "required": False,
+    "schema": {"type": "string", "enum": ["API_KEY", "AUTH_TOKEN"]},
+    "description": "Select auth source",
+}
+
+
+def _inject_x_auth_source_param(merged: dict[str, Any]) -> None:
+    """Add x-auth-source header parameter to every operation in merged paths."""
+    methods = ("get", "post", "put", "patch", "delete", "head", "options")
+    for path_item in (merged.get("paths") or {}).values():
+        if not isinstance(path_item, dict):
+            continue
+        for method in methods:
+            op = path_item.get(method)
+            if not isinstance(op, dict):
+                continue
+            params = op.setdefault("parameters", [])
+            # Avoid duplicate if already present (e.g. from a service spec)
+            if any((isinstance(p, dict) and p.get("name") == "x-auth-source") for p in params):
+                continue
+            params.insert(0, dict(X_AUTH_SOURCE_PARAM))
+
+
 def _add_service_spec(
     merged: dict[str, Any],
     service_name: str,
@@ -212,13 +239,19 @@ def _build_merged_spec() -> dict[str, Any]:
         "paths": {},
         "components": {"schemas": {}, "responses": {}, "securitySchemes": {}},
         "tags": [],
-        "security": [{"BearerAuth": []}],
+        "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
     }
     merged["components"]["securitySchemes"]["BearerAuth"] = {
         "type": "http",
         "scheme": "bearer",
-        "bearerFormat": "API Key",
-        "description": "API key in Authorization header (Bearer <key>)",
+        "bearerFormat": "JWT or API Key",
+        "description": "Bearer token in Authorization header (Bearer <token>)",
+    }
+    merged["components"]["securitySchemes"]["ApiKeyAuth"] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "API key in X-API-Key header",
     }
 
     seen_tags: set[str] = set()
@@ -235,6 +268,7 @@ def _build_merged_spec() -> dict[str, Any]:
         }
         merged["tags"].insert(0, {"name": "Status", "description": "Status"})
 
+    _inject_x_auth_source_param(merged)
     return merged
 
 
