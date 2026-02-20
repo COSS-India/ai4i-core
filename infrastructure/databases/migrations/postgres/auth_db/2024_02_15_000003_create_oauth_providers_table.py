@@ -30,10 +30,18 @@ class CreateOauthProvidersTable(BaseMigration):
         adapter.execute("CREATE INDEX IF NOT EXISTS idx_oauth_providers_provider ON oauth_providers(provider_name, provider_user_id)")
         print("    ✓ Created indexes")
         
-        # Create trigger
+        # Create trigger (idempotent: skip if already exists)
         adapter.execute("""
-            CREATE TRIGGER update_oauth_providers_updated_at BEFORE UPDATE ON oauth_providers
-                FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_trigger
+                    WHERE tgname = 'update_oauth_providers_updated_at'
+                ) THEN
+                    CREATE TRIGGER update_oauth_providers_updated_at BEFORE UPDATE ON oauth_providers
+                        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+                END IF;
+            END $$;
         """)
         print("    ✓ Created trigger")
     
