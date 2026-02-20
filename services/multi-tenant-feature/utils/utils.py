@@ -130,10 +130,25 @@ def _get_encryption_key() -> bytes:
 
 # Initialize Fernet cipher
 try:
-    _fernet = Fernet(_get_encryption_key())
+    encryption_key = _get_encryption_key()
+    _fernet = Fernet(encryption_key)
+    
+    # Warn if using generated key (will cause decryption failures if data was encrypted with different key)
+    if not ENCRYPTION_KEY:
+        logger.warning(
+            "⚠️  API_KEY_ENCRYPTION_KEY environment variable is not set! "
+            "Using generated encryption key which will change on restart. "
+            "This will cause decryption failures for existing encrypted data. "
+            "Set API_KEY_ENCRYPTION_KEY to a consistent value to fix this issue."
+        )
 except Exception as e:
     logger.error(f"Failed to initialize Fernet cipher: {e}")
     _fernet = Fernet(Fernet.generate_key())
+    logger.error(
+        "⚠️  Using fallback generated encryption key. "
+        "Decryption of existing encrypted data will fail. "
+        "Set API_KEY_ENCRYPTION_KEY environment variable to fix this."
+    )
 
 
 def encrypt_sensitive_data(data: str) -> str:
