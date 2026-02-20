@@ -716,11 +716,14 @@ async def AuthProvider(
                                     request.state.tenant_schema = schema_name
                                     request.state.tenant_id = tenant_id
                                     request.state.tenant_uuid = jwt_payload.get("tenant_uuid")
-                                    logger.info(f"AuthProvider BOTH mode: Extracted tenant schema from JWT: schema_name={schema_name}, tenant_id={tenant_id}")
+                                    # Log removed - middleware handles request/response logging
+                                    logger.debug(f"AuthProvider BOTH mode: Extracted tenant schema from JWT: schema_name={schema_name}, tenant_id={tenant_id}")
                                 else:
-                                    logger.warning(f"AuthProvider BOTH mode: JWT decoded but no schema_name found. JWT keys: {list(jwt_payload.keys())}, tenant_id={tenant_id}")
+                                    # Normal case for non-tenant users - log at debug level to avoid noise
+                                    logger.debug(f"AuthProvider BOTH mode: JWT decoded but no schema_name found. JWT keys: {list(jwt_payload.keys())}, tenant_id={tenant_id}")
                             else:
-                                logger.warning(f"AuthProvider BOTH mode: JWT payload not found in request.state after authenticate_bearer_token")
+                                # Log removed - middleware handles request/response logging
+                                logger.debug(f"AuthProvider BOTH mode: JWT payload not found in request.state after authenticate_bearer_token")
                             
                             if not api_key:
                                 both_span.set_attribute("auth.decision.result", "rejected")
@@ -916,12 +919,14 @@ async def _auth_provider_impl(
                     request.state.tenant_schema = schema_name
                     request.state.tenant_id = tenant_id
                     request.state.tenant_uuid = jwt_payload.get("tenant_uuid")
-                    logger.info(
+                    # Log removed - middleware handles request/response logging
+                    logger.debug(
                         "AuthProvider BOTH mode (non-tracing): "
                         f"Extracted tenant schema from JWT: schema_name={schema_name}, tenant_id={tenant_id}"
                     )
                 else:
-                    logger.warning(
+                    # Normal case for non-tenant users - log at debug level to avoid noise
+                    logger.debug(
                         "AuthProvider BOTH mode (non-tracing): JWT decoded but no schema_name found. "
                         f"JWT keys: {list(jwt_payload.keys())}, tenant_id={tenant_id}"
                     )
