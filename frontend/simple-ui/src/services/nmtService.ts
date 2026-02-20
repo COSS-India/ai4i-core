@@ -126,6 +126,8 @@ export const getIndicTransAnonymousService = (): NMTServiceDetailsResponse => {
 /**
  * Get list of available NMT services from model management service
  * For anonymous users returns hardcoded IndicTrans service only.
+ * For logged-in users returns only published services from Service Management
+ * (if IndicTrans is in Service Management and published, it will appear here too).
  * @returns Promise with NMT services response
  */
 export const listNMTServices = async (): Promise<NMTServiceDetailsResponse[]> => {
@@ -133,8 +135,8 @@ export const listNMTServices = async (): Promise<NMTServiceDetailsResponse[]> =>
     return [getIndicTransAnonymousService()];
   }
   try {
-    // Fetch services from model management service filtered by task_type='nmt'
-    const services = await listServices('nmt');
+    // Logged-in users: only published services from Service Management
+    const services = await listServices('nmt', true);
     const seen = new Set<string>();
 
     // Transform model management service response to NMTServiceDetailsResponse format
@@ -146,11 +148,15 @@ export const listNMTServices = async (): Promise<NMTServiceDetailsResponse[]> =>
           if (typeof lang === 'string') {
             supportedLanguages.push(lang);
           } else if (lang && typeof lang === 'object') {
-            // Handle different language object formats
-            const langCode = lang.code || lang.sourceLanguage || lang.targetLanguage || lang.language;
-            if (langCode) {
-              supportedLanguages.push(langCode);
-            }
+            // Collect all codes from this entry (e.g. sourceLanguage + targetLanguage)
+            const codes: string[] = [];
+            if (lang.code) codes.push(lang.code);
+            if (lang.sourceLanguage && !codes.includes(lang.sourceLanguage))
+              codes.push(lang.sourceLanguage);
+            if (lang.targetLanguage && !codes.includes(lang.targetLanguage))
+              codes.push(lang.targetLanguage);
+            if (lang.language && !codes.includes(lang.language)) codes.push(lang.language);
+            codes.forEach((c) => supportedLanguages.push(c));
           }
         });
       }
@@ -199,9 +205,9 @@ export const listNMTServices = async (): Promise<NMTServiceDetailsResponse[]> =>
  */
 export const getNMTLanguages = async (modelId?: string): Promise<NMTLanguagesResponse> => {
   try {
-    // Fetch all NMT services from model management service
-    const services = await listServices('nmt');
-    
+    // Fetch published NMT services from model management service
+    const services = await listServices('nmt', true);
+
     // If modelId is provided, find a service with that modelId
     // Otherwise, use the first service
     let service: any;
@@ -293,8 +299,8 @@ export const getNMTLanguagesForService = async (
     };
   }
   try {
-    // Fetch all NMT services from model management service
-    const services = await listServices('nmt');
+    // Fetch published NMT services from model management service
+    const services = await listServices('nmt', true);
 
     // Find the service by serviceId
     const service = services.find((s: any) =>
@@ -316,13 +322,19 @@ export const getNMTLanguagesForService = async (
           supportedLanguages.push(lang);
           languageDetails.push({ code: lang, name: lang });
         } else if (lang && typeof lang === 'object') {
-          const langCode =
-            lang.code || lang.sourceLanguage || lang.targetLanguage || lang.language;
-          const langName = lang.name || langCode;
-          if (langCode) {
+          // Collect all language codes from this entry (e.g. sourceLanguage + targetLanguage)
+          const codes: string[] = [];
+          if (lang.code) codes.push(lang.code);
+          if (lang.sourceLanguage && !codes.includes(lang.sourceLanguage))
+            codes.push(lang.sourceLanguage);
+          if (lang.targetLanguage && !codes.includes(lang.targetLanguage))
+            codes.push(lang.targetLanguage);
+          if (lang.language && !codes.includes(lang.language)) codes.push(lang.language);
+          codes.forEach((langCode) => {
             supportedLanguages.push(langCode);
+            const langName = lang.name || LANG_CODE_TO_LABEL[langCode] || langCode;
             languageDetails.push({ code: langCode, name: langName });
-          }
+          });
         }
       });
     }

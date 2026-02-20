@@ -45,7 +45,7 @@ export interface OCRServiceDetailsResponse {
 export const listOCRServices = async (): Promise<OCRServiceDetailsResponse[]> => {
   try {
     // Fetch services from model management service filtered by task_type='ocr'
-    const services = await listServices('ocr');
+    const services = await listServices('ocr', true);
     const seen = new Set<string>();
 
     // Transform model management service response to OCRServiceDetailsResponse format

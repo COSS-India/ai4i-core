@@ -26,7 +26,7 @@ export interface LLMServiceDetailsResponse {
 export const listLLMServices = async (): Promise<LLMServiceDetailsResponse[]> => {
   try {
     // Fetch services from model management service filtered by task_type='llm'
-    const services = await listServices('llm');
+    const services = await listServices('llm', true);
     const seen = new Set<string>();
 
     // Transform model management service response to LLMServiceDetailsResponse format
