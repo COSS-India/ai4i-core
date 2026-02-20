@@ -85,6 +85,11 @@ def determine_service_and_action(request: Request) -> Tuple[str, str]:
 
 def is_try_it_request(request: Request) -> bool:
     """Allow anonymous Try-It access for NMT inference only."""
+    # Check if this is the try-it endpoint
+    if request.url.path.endswith("/api/v1/try-it"):
+        return True
+    
+    # Check for X-Try-It header (legacy support for API gateway proxied requests)
     try_it = request.headers.get("X-Try-It") or request.headers.get("x-try-it")
     if not try_it or str(try_it).lower() != "true":
         return False
