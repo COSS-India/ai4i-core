@@ -564,15 +564,20 @@ async def get_trace_by_id(
             tenant_id_fallback=query_tenant_id_from_db
         )
         
+        logger.info(f"Getting trace {trace_id} with tenant_id filter: {org_filter}")
+        
         # Get trace
         trace = await jaeger.get_trace_by_id(trace_id, organization_filter=org_filter)
         
         if trace is None:
+            # Log debug info to help diagnose
+            logger.warning(f"Trace {trace_id} not found or not accessible for tenant_id: {org_filter}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Trace {trace_id} not found or not accessible"
             )
         
+        logger.info(f"Successfully retrieved trace {trace_id} for tenant_id: {org_filter}")
         return trace
         
     except HTTPException:
