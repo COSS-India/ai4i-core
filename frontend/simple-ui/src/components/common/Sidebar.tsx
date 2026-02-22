@@ -409,8 +409,8 @@ const Sidebar: React.FC = () => {
     if ((isGuest || isUser) && (item.id === "model-management" || item.id === "services-management")) {
       return false;
     }
-    // Hide admin-only items for non-ADMIN users
-    if ((item.id === "logs" || item.id === "traces" || item.id === "alerts-management") && !isAdmin) {
+    // Hide admin-only items for non-ADMIN users (only alerts-management is admin-only now)
+    if (item.id === "alerts-management" && !isAdmin) {
       return false;
     }
     if (item.featureFlag) {

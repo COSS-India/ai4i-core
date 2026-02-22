@@ -71,39 +71,25 @@ const LogsPage: React.FC = () => {
   const theadBg = useColorModeValue("gray.50", "gray.700");
   const rowHoverBg = useColorModeValue("gray.50", "gray.800");
 
-  // Check if user is ADMIN
-  const isAdmin = user?.roles?.includes('ADMIN') || false;
-
-  // Redirect to login if not authenticated or not ADMIN
+  // Redirect to login if not authenticated
   useEffect(() => {
-    if (!authLoading) {
-      if (!isAuthenticated) {
-        toast({
-          title: "Authentication Required",
-          description: "Please log in to view logs.",
-          status: "warning",
-          duration: 3000,
-          isClosable: true,
-        });
-        router.push("/auth");
-      } else if (!isAdmin) {
-        toast({
-          title: "Access Denied",
-          description: "Only administrators can access the logs dashboard.",
-          status: "error",
-          duration: 3000,
-          isClosable: true,
-        });
-        router.push("/");
-      }
+    if (!authLoading && !isAuthenticated) {
+      toast({
+        title: "Authentication Required",
+        description: "Please log in to view logs.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      router.push("/auth");
     }
-  }, [isAuthenticated, authLoading, isAdmin, router, toast]);
+  }, [isAuthenticated, authLoading, router, toast]);
 
-  // Fetch services list (only if authenticated and ADMIN)
+  // Fetch services list (only if authenticated)
   const { data: services, isLoading: servicesLoading, error: servicesError } = useQuery({
     queryKey: ["logs-services"],
     queryFn: getServicesWithLogs,
-    enabled: isAuthenticated && isAdmin,
+    enabled: isAuthenticated,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
@@ -182,7 +168,7 @@ const LogsPage: React.FC = () => {
         start_time: startTime || undefined,
         end_time: endTime || undefined,
       }),
-    enabled: isAuthenticated && isAdmin,
+    enabled: isAuthenticated,
     staleTime: 1 * 60 * 1000, // 1 minute
   });
 
@@ -306,7 +292,7 @@ const LogsPage: React.FC = () => {
         total_pages: Math.ceil(allLogs.length / fetchSize),
       };
     },
-    enabled: isAuthenticated && isAdmin,
+    enabled: isAuthenticated,
     staleTime: 30 * 1000, // 30 seconds
   });
 

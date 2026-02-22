@@ -311,7 +311,7 @@ apiClient.interceptors.request.use(
     const isSpeakerDiarizationEndpoint = url.includes('/api/v1/speaker-diarization');
     const isLanguageDiarizationEndpoint = url.includes('/api/v1/language-diarization');
     const isAudioLangDetectionEndpoint = url.includes('/api/v1/audio-lang-detection');
-    const isObservabilityEndpoint = url.includes('/api/v1/observability');
+    const isObservabilityEndpoint = url.includes('/api/v1/telemetry');
     const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
@@ -478,7 +478,7 @@ apiClient.interceptors.response.use(
                                      url.includes('/api/v1/speaker-diarization') ||
                                      url.includes('/api/v1/language-diarization') ||
                                      url.includes('/api/v1/audio-lang-detection') ||
-                                     url.includes('/api/v1/observability') ||
+                                     url.includes('/api/v1/telemetry') ||
                                      isModelManagementEndpoint ||
                                      isMultiTenantEndpoint;
             
