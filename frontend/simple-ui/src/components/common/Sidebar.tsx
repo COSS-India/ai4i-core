@@ -39,6 +39,7 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { useFeatureFlag } from "../../hooks/useFeatureFlag";
+import { getTenantIdFromToken } from "../../utils/helpers";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
 const safeColorMap = {
@@ -402,6 +403,9 @@ const Sidebar: React.FC = () => {
     "ner-enabled": nerEnabled.isEnabled,
   };
 
+  // Get tenant_id from JWT token
+  const tenantId = getTenantIdFromToken();
+
   // Filter top nav items (Home and Model Management)
   const topItems = topNavItems.filter((item) => {
     if (item.id === "home") return true;
@@ -411,6 +415,10 @@ const Sidebar: React.FC = () => {
     }
     // Hide admin-only items for non-ADMIN users (only alerts-management is admin-only now)
     if (item.id === "alerts-management" && !isAdmin) {
+      return false;
+    }
+    // Hide logs for users without tenant_id (but allow admins to see it)
+    if (item.id === "logs" && !tenantId && !isAdmin) {
       return false;
     }
     if (item.featureFlag) {
