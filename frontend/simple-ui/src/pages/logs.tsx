@@ -43,6 +43,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
 import { useRouter } from "next/router";
 import { getJwtToken } from "../services/api";
+import { getTenantIdFromToken } from "../utils/helpers";
 import {
   searchLogs,
   getLogAggregations,
@@ -84,6 +85,24 @@ const LogsPage: React.FC = () => {
       router.push("/auth");
     }
   }, [isAuthenticated, authLoading, router, toast]);
+
+  // Redirect if user doesn't have tenant_id (but allow admins)
+  useEffect(() => {
+    if (!authLoading && isAuthenticated) {
+      const tenantId = getTenantIdFromToken();
+      const isAdmin = user?.roles?.includes('ADMIN') || false;
+      if (!tenantId && !isAdmin) {
+        toast({
+          title: "Access Denied",
+          description: "You need to be assigned to a tenant to view logs.",
+          status: "error",
+          duration: 5000,
+          isClosable: true,
+        });
+        router.push("/");
+      }
+    }
+  }, [isAuthenticated, authLoading, user, router, toast]);
 
   // Fetch services list (only if authenticated)
   const { data: services, isLoading: servicesLoading, error: servicesError } = useQuery({
