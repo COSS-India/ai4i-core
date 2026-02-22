@@ -129,6 +129,7 @@ export const searchLogs = async (
     end_time?: string;
     page?: number;
     size?: number;
+    tenant_id?: string; // Admin-only: filter by tenant_id
   }
 ): Promise<LogSearchResponse> => {
   try {
@@ -146,6 +147,7 @@ export const searchLogs = async (
     if (params.search_text) queryParams.append('search_text', params.search_text);
     if (params.start_time) queryParams.append('start_time', params.start_time);
     if (params.end_time) queryParams.append('end_time', params.end_time);
+    if (params.tenant_id) queryParams.append('tenant_id', params.tenant_id);
     queryParams.append('page', String(params.page || 1));
     queryParams.append('size', String(params.size || 50));
 
