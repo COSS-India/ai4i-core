@@ -47,8 +47,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         # Extract organization and app (including from JWT token)
         organization, app = self._extract_customer_app(request)
         
-        # Extract tenant_id from JWT token
-        tenant_id = self._extract_tenant_id_from_jwt(request)
+        # Extract tenant_id from JWT token or database
+        tenant_id = await self._extract_tenant_id(request)
         
         # Store organization and tenant_id in request.state for other middlewares to access
         # IMPORTANT: Set this BEFORE await call_next() so it's available to inner middlewares
@@ -258,32 +258,101 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         
         return None
     
-    def _extract_tenant_id_from_jwt(self, request: Request) -> str:
+    async def _extract_tenant_id(self, request: Request) -> str:
         """
-        Extract tenant_id from JWT token in authorization header.
-        If tenant_id is not found in JWT, returns a temporary default value.
+        Extract tenant_id from JWT token or resolve from user_id via API.
+        If tenant_id is not found, attempts to resolve it from user_id in the JWT.
+        Only uses default value as last resort if user_id cannot be resolved.
         
         Returns:
-            tenant_id from JWT if present, otherwise "new-organization-487578" (temporary fix)
+            tenant_id from JWT if present, otherwise resolved from user_id, 
+            or default value only if resolution fails
         """
         auth_header = request.headers.get("authorization", "")
         
         if auth_header:
             decoded_token = self._decode_jwt_token(auth_header)
             if decoded_token:
-                # Extract tenant_id from JWT token
+                # Extract tenant_id from JWT token (highest priority)
                 tenant_id = decoded_token.get("tenant_id")
                 if tenant_id:
                     if self.config.debug:
                         logger.debug(f"Extracted tenant_id from JWT: {tenant_id}")
                     return tenant_id
+                
+                # If tenant_id not in JWT, try to resolve from user_id
+                user_id = decoded_token.get("sub")
+                if user_id and str(user_id).isdigit():
+                    resolved_tenant_id = await self._resolve_tenant_from_user_id(int(user_id), request)
+                    if resolved_tenant_id:
+                        if self.config.debug:
+                            logger.debug(f"Resolved tenant_id from user_id {user_id}: {resolved_tenant_id}")
+                        return resolved_tenant_id
+                    else:
+                        logger.warning(f"Could not resolve tenant_id for user_id {user_id}, using default")
         
-        # Temporary fix: if tenant_id is missing, use default value
-        # TODO: Remove this temporary fix once all users are registered to tenants
-        default_tenant_id = "new-organization-487578"
-        if self.config.debug:
-            logger.debug(f"tenant_id not found in JWT, using temporary default: {default_tenant_id}")
+        # Last resort: use default value only if we truly can't determine tenant
+        # This prevents logs without tenant_id, but logs a warning
+        default_tenant_id = getattr(self.config, 'default_tenant_id', "new-organization-487578")
+        logger.warning(f"tenant_id not found in JWT and could not be resolved, using default: {default_tenant_id}")
         return default_tenant_id
+    
+    async def _resolve_tenant_from_user_id(self, user_id: int, request: Request) -> Optional[str]:
+        """
+        Resolve tenant_id from user_id by calling the multi-tenant service API.
+        
+        Args:
+            user_id: The user ID from JWT token
+            request: The request object to forward auth headers
+            
+        Returns:
+            tenant_id if found, None otherwise
+        """
+        try:
+            # Get API Gateway URL from config or environment
+            api_gateway_url = getattr(self.config, 'api_gateway_url', None)
+            if not api_gateway_url:
+                # Try to get from environment or use default
+                import os
+                api_gateway_url = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
+            
+            # Use the correct API endpoint path
+            resolve_url = f"{api_gateway_url}/api/v1/multi-tenant/resolve/tenant/from/user/{user_id}"
+            
+            # Forward auth headers from original request
+            headers = {}
+            auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+            if auth_header:
+                headers["Authorization"] = auth_header
+            
+            api_key = request.headers.get("X-API-Key")
+            if api_key:
+                headers["X-API-Key"] = api_key
+            
+            # Call API with short timeout to avoid blocking
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                response = await client.get(resolve_url, headers=headers)
+                
+                if response.status_code == 200:
+                    tenant_data = response.json()
+                    tenant_id = tenant_data.get("tenant_id")
+                    if tenant_id:
+                        return tenant_id
+                elif response.status_code == 404:
+                    # User not assigned to any tenant - this is expected for some users
+                    if self.config.debug:
+                        logger.debug(f"Tenant not found for user_id {user_id} (404)")
+                    return None
+                else:
+                    logger.warning(f"Failed to resolve tenant for user_id {user_id}: {response.status_code}")
+                    return None
+                    
+        except httpx.TimeoutException:
+            logger.warning(f"Timeout resolving tenant for user_id {user_id}")
+            return None
+        except Exception as e:
+            logger.warning(f"Error resolving tenant from user_id {user_id}: {e}")
+            return None
     
     def _extract_customer_app(self, request: Request) -> tuple:
         """Extract organization and app from request headers and JWT token.

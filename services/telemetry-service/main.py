@@ -346,20 +346,11 @@ async def ingest_trace():
     """Ingest trace data"""
     return {"message": "Trace ingestion - to be implemented"}
 
-@app.get("/api/v1/telemetry/logs/search")
-async def search_logs():
-    """Search logs"""
-    return {"message": "Log search - to be implemented"}
-
-@app.get("/api/v1/telemetry/traces/search")
-async def search_traces():
-    """Search traces"""
-    return {"message": "Trace search - to be implemented"}
-
-# Register observability router
+# Register observability router with /api/v1/telemetry prefix for direct service access
+# This allows direct calls like: http://telemetry-service:8084/api/v1/telemetry/logs/search
 app.include_router(
     observability_router,
-    prefix="/api/v1/observability",
+    prefix="/api/v1/telemetry",
     tags=["Observability"]
 )
 

@@ -137,7 +137,7 @@ class OpenSearchQueryClient:
             # Tenant ID filter (RBAC) - filters by tenant_id field
             if organization_filter:
                 must_clauses.append({
-                    "term": {"tenant_id.keyword": organization_filter}
+                    "term": {"tenant_id": organization_filter}
                 })
             
             # Time range filter
@@ -254,7 +254,7 @@ class OpenSearchQueryClient:
             # Tenant ID filter (RBAC) - filters by tenant_id field
             if organization_filter:
                 must_clauses.append({
-                    "term": {"tenant_id.keyword": organization_filter}
+                    "term": {"tenant_id": organization_filter}
                 })
             
             if time_range:
@@ -373,7 +373,7 @@ class OpenSearchQueryClient:
             # Tenant ID filter (RBAC) - filters by tenant_id field
             if organization_filter:
                 must_clauses.append({
-                    "term": {"tenant_id.keyword": organization_filter}
+                    "term": {"tenant_id": organization_filter}
                 })
             
             if time_range:
