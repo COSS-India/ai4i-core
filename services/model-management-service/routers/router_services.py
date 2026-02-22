@@ -44,7 +44,7 @@ router_services = APIRouter(
 # Routes without auth: list_services, list_services_policies (used by SMR, nmt, transliteration)
 
 
-@router_services.get("", response_model=List[ServiceListResponse])
+@router_services.get("", response_model=List[ServiceListResponse], dependencies=[Depends(AuthProvider)])
 async def list_services(
     request: Request,
     task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
