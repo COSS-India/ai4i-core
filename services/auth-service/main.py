@@ -717,6 +717,15 @@ async def login(
         logger.debug(f"Fetching tenant info for user_id={user.id}")
         tenant_info = await get_tenant_info(user.id, multi_tenant_db, user.is_tenant)
 
+        # Set tenant_id in logging context so it appears in all logs for this request
+        if tenant_info:
+            try:
+                from ai4icore_logging.context import set_tenant_id
+                set_tenant_id(tenant_info["tenant_id"])
+                logger.debug(f"Set tenant_id in logging context: {tenant_info['tenant_id']}")
+            except Exception as e:
+                logger.debug(f"Failed to set tenant_id in logging context: {e}")
+
         token_data = {
             "sub": str(user.id),
             "email": user.email,
