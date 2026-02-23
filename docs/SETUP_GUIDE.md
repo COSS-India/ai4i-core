@@ -6,6 +6,7 @@ This guide provides step-by-step instructions for setting up and running the AI4
 
 - **[Docker](https://docs.docker.com/get-started/get-docker/)** and **[Docker Compose](https://docs.docker.com/compose/install/)** installed
 - **[Git](https://git-scm.com/install/)** installed
+- **Python 3** and **pip3** installed
 - At least **8GB RAM** and **20GB disk space**
 
 ## Important Note
@@ -101,6 +102,11 @@ docker compose -f docker-compose-local.yml ps
 
 You should see `postgres`, `redis`, `kafka`, `zookeeper`, `influxdb`, and `unleash` all showing as "healthy" or "Up".
 
+If any service is not running, start the specific service using: 
+```bash
+docker compose -f docker-compose-local.yml up -d <service-name>
+```
+
 ## Step 5: Initialize Databases
 
 The platform uses a custom Laravel-like migration framework for database management.
@@ -117,6 +123,12 @@ cd ../..
 
 External services (like Unleash) manage their own schemas. Create their databases first:
 
+**Windows:**
+```bash
+python infrastructure/databases/cli.py init:external
+```
+
+**MacOS/Linux:**
 ```bash
 python3 infrastructure/databases/cli.py init:external
 ```
