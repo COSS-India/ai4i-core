@@ -243,7 +243,6 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
                     t.status
                 FROM tenants t
                 WHERE t.user_id = :user_id
-                AND t.status = 'ACTIVE'
                 LIMIT 1
             """)
 
@@ -251,13 +250,13 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
             row = result.fetchone()
 
             if row:
-                # User is a tenant admin
+                # User is a tenant admin — return tenant info regardless of tenant status
                 return {
                     "tenant_id": row[0],
                     "tenant_uuid": str(row[1]),
                     "schema_name": row[2],
                     "subscriptions": row[3] if row[3] else [],
-                    "user_subscriptions": row[4] if row[4] else [],
+                    "user_subscriptions": [],  # tenant admin has no per-user subscriptions
                 }
         else:
             tenant_user_query = text("""
@@ -271,8 +270,6 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
                 FROM tenant_users tu
                 JOIN tenants t ON tu.tenant_uuid = t.id
                 WHERE tu.user_id = :user_id
-                AND t.status = 'ACTIVE'
-                AND tu.status = 'ACTIVE'
                 LIMIT 1
             """)
 
@@ -280,7 +277,7 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
             row = result.fetchone()
 
             if row:
-                # User is a tenant user
+                # User is a tenant user — return tenant info regardless of tenant/user status
                 return {
                     "tenant_id": row[0],
                     "tenant_uuid": str(row[1]),
@@ -606,7 +603,7 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     db_user = User(
         email=user_data.email,
         username=user_data.username,
-        hashed_password=hashed_password,
+        password_hash=hashed_password,
         full_name=user_data.full_name,
         phone_number=user_data.phone_number,
         timezone=user_data.timezone,
@@ -695,7 +692,7 @@ async def login(
         logger.debug(f"Fetching user from database: {login_data.email}")
         user = await AuthUtils.get_user_by_email(db, login_data.email)
         
-        if not user or not AuthUtils.verify_password(login_data.password, user.hashed_password):
+        if not user or not AuthUtils.verify_password(login_data.password, user.password_hash):
             logger.warning(f"❌ Login failed - invalid credentials: email={login_data.email}, ip={client_ip}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -719,6 +716,15 @@ async def login(
         # 🔍 Step 4: Get tenant information
         logger.debug(f"Fetching tenant info for user_id={user.id}")
         tenant_info = await get_tenant_info(user.id, multi_tenant_db, user.is_tenant)
+
+        # Set tenant_id in logging context so it appears in all logs for this request
+        if tenant_info:
+            try:
+                from ai4icore_logging.context import set_tenant_id
+                set_tenant_id(tenant_info["tenant_id"])
+                logger.debug(f"Set tenant_id in logging context: {tenant_info['tenant_id']}")
+            except Exception as e:
+                logger.debug(f"Failed to set tenant_id in logging context: {e}")
 
         token_data = {
             "sub": str(user.id),
@@ -845,32 +851,12 @@ async def login(
         
         logger.info(f"✅ User logged in successfully: email={user.email}, user_id={user.id}, ip={client_ip}")
         
-        # 🔍 Step 8: Build response (include tenant_id for tenant admins/users)
-        user_dict = {
-            "id": user.id,
-            "email": user.email,
-            "username": user.username,
-            "full_name": user.full_name,
-            "phone_number": user.phone_number,
-            "timezone": user.timezone,
-            "language": user.language,
-            "is_active": user.is_active,
-            "is_verified": user.is_verified,
-            "is_superuser": user.is_superuser,
-            "created_at": user.created_at,
-            "updated_at": user.updated_at,
-            "last_login": user.last_login,
-            "avatar_url": user.avatar_url,
-            "roles": user_roles,
-            "tenant_id": tenant_info["tenant_id"] if tenant_info else None,
-        }
-        
+        # 🔍 Step 8: Build response (only tokens, no user details)
         return LoginResponse(
             access_token=access_token,
             refresh_token=refresh_token,
             token_type="bearer",
             expires_in=int(access_token_expires.total_seconds()),
-            user=user_dict,
         )
         
     except HTTPException:
@@ -1071,24 +1057,10 @@ async def validate_api_key(
         )
     
     # Map service names to permission resource names (for compatibility)
-    # Permissions use resource names like "audio-lang" but services may send "audio-lang-detection"
-    service_to_resource = {
-        'audio-lang-detection': 'audio-lang',
-        'language-detection': 'language-detection',
-        'language-diarization': 'language-diarization',
-        'ner': 'ner',
-        'ocr': 'ocr',
-        'speaker-diarization': 'speaker-diarization',
-        'transliteration': 'transliteration',
-        'asr': 'asr',
-        'tts': 'tts',
-        'nmt': 'nmt',
-        'pipeline': 'pipeline',
-        'model-management': 'model-management',
-        'llm': 'llm'
-    }
-    # Use mapped resource name for permission checking
-    resource_name = service_to_resource.get(service, service)
+    # Permissions use resource names with underscores (e.g., "audio_lang_detection") 
+    # but services may send names with hyphens (e.g., "audio-lang-detection")
+    from services.constants import get_resource_name
+    resource_name = get_resource_name(service)
     
     # Validate API key
     is_valid, api_key_obj, error_message = await AuthUtils.validate_api_key(
@@ -1205,7 +1177,7 @@ async def change_password(
 ):
     """Change user password"""
     # Validate current password
-    if not AuthUtils.verify_password(password_data.current_password, current_user.hashed_password):
+    if not AuthUtils.verify_password(password_data.current_password, current_user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Current password is incorrect"
@@ -1227,7 +1199,7 @@ async def change_password(
         )
     
     # Update password
-    current_user.hashed_password = AuthUtils.get_password_hash(password_data.new_password)
+    current_user.password_hash = AuthUtils.get_password_hash(password_data.new_password)
     current_user.updated_at = datetime.utcnow()
     await db.commit()
     
@@ -2157,39 +2129,17 @@ async def get_permission_list(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get list of inference permissions only (for API keys).
+    Get list of all available permissions that can be assigned to API keys.
     
-    Returns only inference permissions that can be assigned to API keys:
-    - asr.inference
-    - tts.inference
-    - nmt.inference
-    - audio-lang.inference
-    - language-detection.inference
-    - language-diarization.inference
-    - ner.inference
-    - ocr.inference
-    - speaker-diarization.inference
-    - transliteration.inference
-    - pipeline.inference
-    - llm.inference
+    Returns only inference permissions from the permissions table, sorted alphabetically.
+    This limits API keys to use-only (.inference) permissions.
     """
-    # Define allowed inference permissions for API keys
-    allowed_permissions = [
-        "asr.inference",
-        "tts.inference",
-        "nmt.inference",
-        "audio-lang.inference",
-        "language-detection.inference",
-        "language-diarization.inference",
-        "ner.inference",
-        "ocr.inference",
-        "speaker-diarization.inference",
-        "transliteration.inference",
-        "pipeline.inference",
-        "llm.inference"
-    ]
+    # Fetch all permissions from database
+    result = await db.execute(select(Permission).order_by(Permission.name))
+    permissions = result.scalars().all()
     
-    return allowed_permissions
+    # Return list of inference permission names (those ending with ".inference")
+    return [perm.name for perm in permissions if perm.name.endswith(".inference")]
 
 
 @app.get("/api/v1/auth/users", response_model=List[UserListResponse], tags=["Admin"])

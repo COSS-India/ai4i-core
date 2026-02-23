@@ -33,10 +33,24 @@ const BASE = '/api/v1/multi-tenant';
 
 /**
  * List all tenants in the system (admin).
+ * Note: The admin router has prefix "/admin", so the endpoint is "/admin/list/tenants"
  */
 export async function listTenants(): Promise<ListTenantsResponse> {
-  const { data } = await apiClient.get<ListTenantsResponse>(`${BASE}/list/tenants`);
-  return data;
+  try {
+    // The admin router has prefix "/admin", so we need "/admin/list/tenants"
+    // If BASE is "/api/v1/multi-tenant", the full path becomes "/api/v1/multi-tenant/admin/list/tenants"
+    const { data } = await apiClient.get<ListTenantsResponse>(`${BASE}/admin/list/tenants`);
+    return data;
+  } catch (error: any) {
+    console.error('Error in listTenants service call:', {
+      error,
+      message: error?.message,
+      response: error?.response?.data,
+      status: error?.response?.status,
+      url: error?.config?.url,
+    });
+    throw error;
+  }
 }
 
 /**
@@ -156,5 +170,14 @@ export async function addUserSubscriptions(payload: UserSubscriptionAddRequest):
  */
 export async function removeUserSubscriptions(payload: UserSubscriptionRemoveRequest): Promise<UserSubscriptionResponse> {
   const { data } = await apiClient.post<UserSubscriptionResponse>(`${BASE}/user/subscriptions/remove`, payload);
+  return data;
+}
+
+/**
+ * Send verification email to a tenant. POST /admin/email/send/verification.
+ * Used for tenants in PENDING status to re-send verification.
+ */
+export async function sendVerificationEmail(tenant_id: string): Promise<{ message: string }> {
+  const { data } = await apiClient.post<{ message: string }>(`${BASE}/email/send-verification`, { tenant_id });
   return data;
 }

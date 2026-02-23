@@ -9,14 +9,37 @@ from opentelemetry.trace import Status, StatusCode
 from ai4icore_logging import get_correlation_id, get_logger
 
 from middleware.exceptions import (
-    AuthenticationError, 
-    AuthorizationError, 
+    AuthenticationError,
+    AuthorizationError,
     RateLimitExceededError,
-    ErrorDetail
+    ErrorDetail,
 )
 import logging
 import time
 import traceback
+import re
+
+# NOTE:
+# Unlike ASR/API Gateway containers, OCR's Docker image only copies this
+# service directory into /app, so the shared `services.constants` package
+# is not available at runtime. To keep the same user-facing message for
+# expired/invalid tokens, we duplicate the constant value here.
+AUTH_FAILED_MESSAGE = "Authentication failed. Please log in again."
+
+
+def _strip_status_prefix(message: str) -> str:
+    """
+    Remove leading HTTP status codes like '403: ' from error messages so that
+    user-facing messages match API Gateway (which does not include status
+    codes in the message text).
+    """
+    if not isinstance(message, str):
+        return message
+    # Match patterns like "403: something" or "401 : something"
+    m = re.match(r"^\s*(\d{3})\s*:\s*(.+)$", message)
+    if m:
+        return m.group(2)
+    return message
 
 logger = get_logger(__name__)
 tracer = trace.get_tracer("ocr-service")
@@ -28,10 +51,18 @@ def add_error_handlers(app: FastAPI) -> None:
     
     @app.exception_handler(AuthenticationError)
     async def authentication_error_handler(request: Request, exc: AuthenticationError):
-        """Handle authentication errors."""
-        # Check both message attribute and detail for the ownership error message
-        error_msg = getattr(exc, "message", None) or str(exc.detail) if hasattr(exc, "detail") and exc.detail else ""
-        
+        """Handle authentication errors.
+
+        For expired/invalid tokens we want to mirror API Gateway behavior and return
+        the same user-facing message (`AUTH_FAILED_MESSAGE`), while still keeping
+        the more specific details in tracing/logging.
+        """
+        # Capture original message for tracing and ownership checks
+        error_msg = (
+            getattr(exc, "message", None)
+            or (str(exc.detail) if hasattr(exc, "detail") and exc.detail else "")
+        )
+
         if tracer:
             with tracer.start_as_current_span("request.reject") as reject_span:
                 reject_span.set_attribute("auth.operation", "reject_authentication")
@@ -39,15 +70,18 @@ def add_error_handlers(app: FastAPI) -> None:
                 # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
                 reject_span.set_attribute("error.type", "AuthenticationError")
                 reject_span.set_attribute("error.reason", "authentication_failed")
+                # Record the low-level message for debugging
                 reject_span.set_attribute("error.message", error_msg or exc.message)
                 reject_span.set_attribute("error.code", "AUTHENTICATION_ERROR")
                 reject_span.set_attribute("http.status_code", 401)
-                reject_span.set_status(Status(StatusCode.ERROR, error_msg or exc.message))
+                reject_span.set_status(
+                    Status(StatusCode.ERROR, error_msg or exc.message or AUTH_FAILED_MESSAGE)
+                )
                 # Don't record exception here - OpenTelemetry already recorded it
                 # automatically in parent spans when exception was raised
-        
+
         # For the ownership case, return explicit error + message fields with AUTHORIZATION_ERROR
-        if "API key does not belong to the authenticated user" in error_msg:
+        if "API key does not belong to the authenticated user" in (error_msg or ""):
             return JSONResponse(
                 status_code=401,
                 content={
@@ -58,10 +92,43 @@ def add_error_handlers(app: FastAPI) -> None:
                 },
             )
 
-        # For other authentication errors, return structured format
+        # For invalid API key errors (BOTH mode with bad/missing key), mirror API
+        # Gateway behavior by surfacing AUTHORIZATION_ERROR with the original message
+        if "Invalid API key" in (error_msg or ""):
+            clean_message = _strip_status_prefix(error_msg or "Invalid API key")
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "AUTHORIZATION_ERROR",
+                        "message": clean_message,
+                    }
+                },
+            )
+
+        # For missing API key, mirror API Gateway "API_KEY_MISSING" behavior
+        if "Missing API key" in (error_msg or ""):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "API_KEY_MISSING",
+                        "message": "API key is required to access this service.",
+                    }
+                },
+            )
+
+        # For token-expired / invalid-token and all other authentication failures,
+        # align user-facing message with API Gateway:
+        #   "Authentication failed. Please log in again."
         return JSONResponse(
             status_code=401,
-            content={"detail": {"error": "AUTHENTICATION_ERROR", "message": error_msg or exc.message or "Authentication failed"}}
+            content={
+                "detail": {
+                    "error": "AUTHENTICATION_ERROR",
+                    "message": AUTH_FAILED_MESSAGE,
+                }
+            },
         )
     
     
@@ -82,8 +149,23 @@ def add_error_handlers(app: FastAPI) -> None:
                 # Don't record exception here - OpenTelemetry already recorded it
                 # automatically in parent spans when exception was raised
         
+        # Preserve detailed API key permission messages from auth-service (e.g.,
+        # "Invalid API key: This key does not have access to OCR service") so they
+        # are not prefixed with "Authorization error: Insufficient permission."
+        # Also strip any leading HTTP status codes like "403: " from the message.
+        message = _strip_status_prefix(exc.message)
+        if not (
+            "permission" in message.lower()
+            or "does not have" in message.lower()
+            or "ocr.inference" in message
+            or "OCR service" in message
+        ):
+            # For non-permission-related authorization errors, keep a clear prefix
+            if not message.startswith("Authorization error"):
+                message = f"Authorization error: {message}"
+
         error_detail = ErrorDetail(
-            message=exc.message,
+            message=message,
             code="AUTHORIZATION_ERROR",
             timestamp=time.time()
         )
@@ -303,9 +385,28 @@ def add_error_handlers(app: FastAPI) -> None:
                 content={"detail": {"error": "AUTHENTICATION_ERROR", "message": error_msg or "Authentication failed"}}
             )
         
+        # Prefer explicit exception attributes if present (some custom exceptions set these)
+        error_code = getattr(exc, "error_code", None) or getattr(exc, "error_code", None) or "HTTP_ERROR"
+        error_message = getattr(exc, "message", None) or (str(exc.detail) if hasattr(exc, "detail") else str(exc))
+
+        # If exc.detail is a dict, prefer structured values inside it (API Gateway or ErrorDetail formats)
+        if isinstance(getattr(exc, "detail", None), dict):
+            detail = exc.detail
+            # API Gateway style: {"error": "...", "message": "..."}
+            if "error" in detail:
+                error_code = detail.get("error", error_code)
+                error_message = detail.get("message", error_message)
+                return JSONResponse(status_code=exc.status_code, content={"detail": {"error": error_code, "message": error_message}})
+            # ErrorDetail style: {"code": "...", "message": "..."}
+            if "code" in detail:
+                error_code = detail.get("code", error_code)
+                error_message = detail.get("message", error_message)
+                return JSONResponse(status_code=exc.status_code, content={"detail": {"code": error_code, "message": error_message}})
+
+        # Fallback: wrap in ErrorDetail
         error_detail = ErrorDetail(
-            message=str(exc.detail),
-            code="HTTP_ERROR",
+            message=error_message,
+            code=error_code,
             timestamp=time.time()
         )
         return JSONResponse(

@@ -1,0 +1,245 @@
+# ASR Service - Public API (as exposed via API Gateway)
+# OpenAPI 3.0.3 - only paths that are public and implemented in asr-service
+openapi: 3.0.3
+info:
+  title: ASR Service
+  description: Automatic Speech Recognition. Convert speech to text. 22+ Indic languages.
+  version: 1.0.0
+  contact:
+    name: Dhruva Platform Team
+    url: https://github.com/AI4Bharat/Dhruva
+
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway (use for Try it out)
+
+tags:
+  - name: ASR
+    description: Speech-to-text endpoints
+
+paths:
+  /api/v1/asr/inference:
+    post:
+      tags: [ASR]
+      summary: ASR inference
+      description: Convert speech to text for one or more audio inputs.
+      operationId: asrInference
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ASRInferenceRequest"
+      responses:
+        "200":
+          description: Transcription result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ASRInferenceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/RateLimitExceeded"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/asr/health:
+    get:
+      tags: [ASR]
+      summary: Health check
+      description: Service and dependency health status.
+      operationId: asrHealth
+      responses:
+        "200":
+          description: Health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, unhealthy]
+                  service:
+                    type: string
+                    example: asr-service
+                  redis:
+                    type: string
+                  postgres:
+                    type: string
+                  triton:
+                    type: string
+                  timestamp:
+                    type: number
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+      description: API key in Authorization header (Bearer &lt;key&gt;)
+
+  schemas:
+    ASRInferenceRequest:
+      type: object
+      required: [audio, config]
+      properties:
+        audio:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/AudioInput"
+        config:
+          $ref: "#/components/schemas/ASRInferenceConfig"
+        controlConfig:
+          type: object
+          description: Additional control parameters
+
+    AudioInput:
+      type: object
+      oneOf:
+        - required: [audioContent]
+        - required: [audioUri]
+      properties:
+        audioContent:
+          type: string
+          format: byte
+          description: Base64-encoded audio
+        audioUri:
+          type: string
+          format: uri
+          description: URL to audio file
+
+    LanguageConfig:
+      type: object
+      required: [sourceLanguage]
+      properties:
+        sourceLanguage:
+          type: string
+          description: Language code (e.g. en, hi, ta)
+        sourceScriptCode:
+          type: string
+
+    ASRInferenceConfig:
+      type: object
+      required: [serviceId, language]
+      properties:
+        serviceId:
+          type: string
+          description: ASR model/service identifier
+        language:
+          $ref: "#/components/schemas/LanguageConfig"
+        audioFormat:
+          type: string
+          enum: [wav, mp3, flac, ogg, pcm]
+        samplingRate:
+          type: integer
+          description: Sample rate in Hz
+        encoding:
+          type: string
+          default: base64
+        preProcessors:
+          type: array
+          items:
+            type: string
+          description: e.g. vad, denoiser
+        postProcessors:
+          type: array
+          items:
+            type: string
+          description: e.g. itn, punctuation, lm
+        transcriptionFormat:
+          type: string
+          enum: [transcript, srt, webvtt]
+          default: transcript
+        bestTokenCount:
+          type: integer
+          minimum: 0
+          maximum: 10
+          default: 0
+
+    ASRInferenceResponse:
+      type: object
+      required: [output]
+      properties:
+        output:
+          type: array
+          items:
+            $ref: "#/components/schemas/TranscriptOutput"
+        config:
+          type: object
+          description: Optional response metadata
+
+    TranscriptOutput:
+      type: object
+      properties:
+        source:
+          type: string
+          description: Transcribed text
+        nBestTokens:
+          type: array
+          items:
+            type: object
+            properties:
+              word:
+                type: string
+              tokens:
+                type: array
+                items:
+                  type: object
+
+    ErrorDetail:
+      type: object
+      properties:
+        detail:
+          type: object
+          properties:
+            message:
+              type: string
+            code:
+              type: string
+            timestamp:
+              type: number
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorDetail"
+    Unauthorized:
+      description: Invalid or missing API key
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorDetail"
+    ValidationError:
+      description: Validation error (e.g. invalid audio/config)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorDetail"
+    RateLimitExceeded:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorDetail"
+    ServiceUnavailable:
+      description: Service unavailable
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorDetail"
+
+security:
+  - BearerAuth: []

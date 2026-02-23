@@ -133,16 +133,20 @@ async def get_experiment_endpoint(experiment_id: str):
 
 
 @router_experiments.get("/{experiment_id}/metrics", response_model=ExperimentMetricsResponse)
-async def get_experiment_metrics_endpoint(experiment_id: str):
+async def get_experiment_metrics_endpoint(
+    experiment_id: str,
+    aggregate: bool = Query(False, description="If true, return one row per variant with totals combined across all dates; if false, return per variant per day."),
+):
     """
     Get metrics for an A/B experiment by ID.
 
-    Returns experiment_id once and a metrics array (per variant per day).
+    By default returns experiment_id once and a metrics array (per variant per day).
+    Use ?aggregate=true to get one row per variant with all dates combined (metric_date null).
     Returns 404 if the experiment does not exist; returns metrics: [] if the
     experiment has no metrics yet.
     """
     try:
-        data = await get_experiment_metrics(experiment_id)
+        data = await get_experiment_metrics(experiment_id, aggregate=aggregate)
 
         if data is None:
             raise HTTPException(

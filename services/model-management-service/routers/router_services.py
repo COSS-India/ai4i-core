@@ -4,6 +4,7 @@ Routes: /services (GET, POST, PATCH, DELETE), /services/{service_id} (POST for v
 /services/{service_id}/health (PATCH), /services/policies (GET for SMR)
 """
 from fastapi import HTTPException, status, APIRouter, Depends, Query, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 from middleware.auth_provider import AuthProvider
 from models.service_list import ServiceListResponse
 from models.service_policy import ServicePolicyUpdateRequest, ServicePolicyResponse, ServicePolicyListResponse
@@ -21,6 +22,8 @@ from db_operations import (
     update_service_health,
     add_or_update_service_policy,
 )
+from db_connection import get_auth_db_session
+from utils.permission_checker import require_permission, require_permission_dependency
 from logger import logger
 from typing import List, Union, Optional
 from models.type_enum import TaskTypeEnum
@@ -41,13 +44,17 @@ router_services = APIRouter(
 # Routes without auth: list_services, list_services_policies (used by SMR, nmt, transliteration)
 
 
-@router_services.get("", response_model=List[ServiceListResponse])
+@router_services.get("", response_model=List[ServiceListResponse], dependencies=[Depends(AuthProvider)])
 async def list_services(
+    request: Request,
     task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
     is_published: Optional[bool] = Query(None, description="Filter by publish status. True = published only, False = unpublished only, None = all services"),
-    created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the service.")
+    created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the service."),
+    db: AsyncSession = Depends(get_auth_db_session)
 ):
-    """List all services - GET /services"""
+    """List all services - GET /services. Requires 'service.read' permission (ADMIN or MODERATOR only)."""
+    # Check permission - only ADMIN and MODERATOR can read services
+    await require_permission("service.read", request, db)
     try:
         if not task_type or task_type.lower() == "none":
             task_type_enum = None
@@ -76,9 +83,13 @@ async def list_services(
 
 @router_services.get("/policies", response_model=ServicePolicyListResponse, include_in_schema=False)
 async def list_services_policies(
-    task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.). Returns all services with their policies.")
+    request: Request,
+    task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.). Returns all services with their policies."),
+    db: AsyncSession = Depends(get_auth_db_session)
 ):
-    """List all services with their policies - GET /services/policies (used by SMR)"""
+    """List all services with their policies - GET /services/policies. Requires 'service.read' permission (ADMIN or MODERATOR only)."""
+    # Check permission - only ADMIN and MODERATOR can read services
+    await require_permission("service.read", request, db)
     try:
         if not task_type or task_type.lower() == "none":
             task_type_enum = None
@@ -102,8 +113,14 @@ async def list_services_policies(
 
 
 @router_services.post("/{service_id:path}", dependencies=[Depends(AuthProvider)])
-async def view_service(service_id: str):
-    """View service details by ID - POST /services/{service_id} (service_id may contain slashes, e.g. ai4bharat/surya-ocr-v1--gpu--t4)"""
+async def view_service(
+    service_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_auth_db_session)
+):
+    """View service details by ID - POST /services/{service_id}. Requires 'service.read' permission (ADMIN or MODERATOR only)."""
+    # Check permission - only ADMIN and MODERATOR can read services
+    await require_permission("service.read", request, db)
     try:
         data = await get_service_details(service_id)
         if not data:
@@ -119,9 +136,14 @@ async def view_service(service_id: str):
         )
 
 
-@router_services.post("", response_model=str, dependencies=[Depends(AuthProvider)])
-async def create_service(payload: ServiceCreateRequest, request: Request):
-    """Create a new service - POST /services"""
+@router_services.post("", response_model=str, dependencies=[Depends(AuthProvider), Depends(require_permission_dependency("service.create"))])
+async def create_service(
+    payload: ServiceCreateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_auth_db_session)
+):
+    """Create a new service - POST /services. Requires 'service.create' permission (ADMIN or MODERATOR only)."""
+    
     try:
         user_id = get_user_id_from_request(request)
         service_id = await save_service_to_db(payload, created_by=user_id)
@@ -137,9 +159,20 @@ async def create_service(payload: ServiceCreateRequest, request: Request):
         )
 
 
-@router_services.patch("", response_model=str, dependencies=[Depends(AuthProvider)])
-async def update_service_endpoint(payload: ServiceUpdateRequest, request: Request):
-    """Update a service - PATCH /services"""
+@router_services.patch("", response_model=str, dependencies=[Depends(AuthProvider), Depends(require_permission_dependency("service.update"))])
+async def update_service_endpoint(
+    payload: ServiceUpdateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_auth_db_session)
+):
+    """Update a service - PATCH /services. Requires appropriate permission (ADMIN or MODERATOR only).
+    For publish/unpublish operations, requires 'model.publish' or 'model.unpublish'.
+    For other updates, requires 'service.update'."""
+    # Check if this is a publish/unpublish operation (additional check after basic service.update permission)
+    if payload.isPublished is not None:
+        permission = "model.publish" if payload.isPublished else "model.unpublish"
+        await require_permission(permission, request, db)
+    
     try:
         user_id = get_user_id_from_request(request)
         result = await update_service(payload, updated_by=user_id)
@@ -170,9 +203,13 @@ async def update_service_endpoint(payload: ServiceUpdateRequest, request: Reques
         )
 
 
-@router_services.delete("/{service_id:path}", response_model=str, dependencies=[Depends(AuthProvider)])
-async def delete_service(service_id: str):
-    """Delete a service - DELETE /services/{service_id} (service_id may contain slashes)"""
+@router_services.delete("/{service_id:path}", response_model=str, dependencies=[Depends(AuthProvider), Depends(require_permission_dependency("service.delete"))])
+async def delete_service(
+    service_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_auth_db_session)
+):
+    """Delete a service - DELETE /services/{service_id}. Requires 'service.delete' permission (ADMIN or MODERATOR only)."""
     try:
         result = await delete_service_by_uuid(service_id)
 

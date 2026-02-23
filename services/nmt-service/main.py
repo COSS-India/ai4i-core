@@ -28,11 +28,11 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 # Load environment variables from .env file if it exists
 load_dotenv()
 
-from routers import health_router, inference_router
+from routers import health_router, inference_router, try_it_router
 from utils.service_registry_client import ServiceRegistryHttpClient
 from utils.triton_client import TritonClient
 from utils.model_management_client import ModelManagementClient
-from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig, AuthContextMiddleware
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
@@ -427,6 +427,7 @@ model_mgmt_config = ModelManagementConfig(
 )
 model_mgmt_plugin = ModelManagementPlugin(model_mgmt_config)
 model_mgmt_plugin.register_plugin(app, redis_client=redis_client_sync)
+app.add_middleware(AuthContextMiddleware, path_prefixes=model_mgmt_config.middleware_paths or ["/api/v1"])
 logger.info("✅ Model Management Plugin initialized for NMT service")
 
 # Distributed Tracing (Jaeger)
@@ -459,6 +460,7 @@ add_error_handlers(app)
 
 # Include routers
 app.include_router(inference_router)
+app.include_router(try_it_router)
 app.include_router(health_router)
 
 

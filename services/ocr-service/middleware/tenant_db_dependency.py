@@ -61,7 +61,8 @@ async def get_tenant_db_session(request: Request) -> AsyncSession:
             else:
                 # No tenant association → use shared auth_db
                 user_id = getattr(request.state, "user_id", None)
-                logger.warning(f"No tenant context found for user_id={user_id}, falling back to shared auth_db")
+                # Normal case for non-tenant users - log at debug level to avoid noise
+                logger.debug(f"No tenant context found for user_id={user_id}, falling back to shared auth_db")
                 return await _get_shared_db_session(request)
         except Exception as e:
             logger.error("Failed to extract tenant context: %s", e, exc_info=True)

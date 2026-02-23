@@ -303,11 +303,11 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const handleRegisterUser = async () => {
-    if (!userForm.tenant_id || !userForm.email.trim() || !userForm.username.trim()) {
-      toast({ title: "Validation", description: "Tenant, email, and username are required.", status: "error", isClosable: true });
+    if (!userForm.tenant_id || !userForm.full_name?.trim() || !userForm.email.trim() || !userForm.username.trim()) {
+      toast({ title: "Validation", description: "Tenant, full name, email, and username are required.", status: "error", isClosable: true });
       return;
     }
-    if (userForm.username.length < 3) {
+    if (userForm.username.trim().length < 3) {
       toast({ title: "Validation", description: "Username must be at least 3 characters.", status: "error", isClosable: true });
       return;
     }
@@ -395,6 +395,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const handleSaveEditTenant = async () => {
     if (!editTenantForm.tenant_id) return;
+    if (!editTenantForm.organization_name?.trim() || !editTenantForm.contact_email?.trim() || !editTenantForm.domain?.trim()) {
+      toast({ title: "Validation", description: "Organization name, contact email, and domain are required.", status: "error", isClosable: true });
+      return;
+    }
     setIsSubmittingEditTenant(true);
     try {
       await multiTenantService.updateTenant({
@@ -487,6 +491,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const handleSaveEditUser = async () => {
     if (!editUserForm.tenant_id || !editUserForm.user_id) return;
+    if (!editUserForm.username?.trim() || editUserForm.username.trim().length < 3 || !editUserForm.email?.trim()) {
+      toast({ title: "Validation", description: "Username (min 3 characters) and email are required.", status: "error", isClosable: true });
+      return;
+    }
     setIsSubmittingEditUser(true);
     try {
       await multiTenantService.updateUser({
@@ -553,6 +561,31 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     if (!isDeletingUser) {
       setIsDeleteUserDialogOpen(false);
       setDeleteUserTarget(null);
+    }
+  };
+
+  // ----- Send Verification Email -----
+  const [sendingVerificationTenantId, setSendingVerificationTenantId] = useState<string | null>(null);
+
+  /** Validate email format */
+  const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+  /** Send verification email to a PENDING tenant. Validates email first. */
+  const handleSendVerificationEmail = async (tenantId: string, email: string | undefined) => {
+    if (!email || !isValidEmail(email)) {
+      toast({ title: "Invalid Email", description: "Cannot send verification email. The tenant's contact email is invalid or missing.", status: "error", isClosable: true, duration: 5000 });
+      return;
+    }
+    setSendingVerificationTenantId(tenantId);
+    try {
+      await multiTenantService.sendVerificationEmail(tenantId);
+      toast({ title: "Verification Email Sent", description: `Verification email sent to ${email}.`, status: "success", isClosable: true, duration: 5000 });
+    } catch (err) {
+      console.error("Failed to send verification email:", err);
+      const { title: errorTitle, message: errorMessage } = extractErrorInfo(err);
+      toast({ title: errorTitle, description: errorMessage, status: "error", isClosable: true, duration: 6000 });
+    } finally {
+      setSendingVerificationTenantId(null);
     }
   };
 
@@ -864,6 +897,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleOpenDeleteUser,
     handleConfirmDeleteUser,
     closeDeleteUserDialog,
+    // Send verification email
+    sendingVerificationTenantId,
+    handleSendVerificationEmail,
     // Fetch
     handleFetchTenants,
     handleFetchTenantUsers,

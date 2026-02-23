@@ -23,7 +23,7 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from enum import Enum
 from uuid import UUID
 from urllib.parse import urlencode, urlparse, parse_qs, quote
-from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security, status
+from fastapi import FastAPI, Request, HTTPException, Response, Query, Header, Path, Body, Security, Depends, status
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -1603,6 +1603,7 @@ class TenantRegisterRequest(BaseModel):
     organization_name: str = Field(..., min_length=2, max_length=255)
     domain: str = Field(..., min_length=3, max_length=255)
     contact_email: EmailStr = Field(..., description="Contact email for the tenant")
+    phone_number: Optional[str] = Field(None, max_length=20, description="Contact phone number")
     requested_subscriptions: Optional[List[SubscriptionType]] = Field(default=[], description="List of requested service subscriptions, e.g. ['tts', 'asr']")
     requested_quotas: Optional[QuotaStructure] = Field(None, description="Requested quota limits for the tenant")
     usage_quota: Optional[QuotaStructure] = Field(None, description="Initial usage quota values")
@@ -1625,6 +1626,7 @@ class UserRegisterRequest(BaseModel):
     email: EmailStr = Field(..., description="User email address")
     username: str = Field(..., min_length=3, max_length=100, description="Username")
     full_name: Optional[str] = Field(None, description="Full name of the user")
+    phone_number: Optional[str] = Field(None, max_length=20, description="User phone number")
     services: List[str] = Field(..., description="List of services the user has access to", example=["tts", "asr"])
     is_approved: bool = Field(False, description="Indicates if the user is approved by tenant admin")
     role: Optional[str] = Field(
@@ -1802,6 +1804,7 @@ class TenantViewResponse(BaseModel):
     user_id: int = Field(..., description="User ID of the tenant owner")
     organization_name: str = Field(..., description="Organization name")
     email: EmailStr = Field(..., description="Contact email")
+    phone_number: Optional[str] = Field(None, description="Contact phone number")
     domain: str = Field(..., description="Tenant domain")
     schema_name: str = Field(..., alias="schema")
     subscriptions: list[str] = Field(..., description="List of subscriptions")
@@ -1820,6 +1823,7 @@ class TenantUserViewResponse(BaseModel):
     tenant_id: str = Field(..., description="Tenant identifier")
     username: str = Field(..., description="Username")
     email: EmailStr = Field(..., description="User email")
+    phone_number: Optional[str] = Field(None, description="User phone number")
     subscriptions: list[str] = Field(..., description="List of subscriptions")
     status: str = Field(..., description="User status")
     created_at: str = Field(..., description="Creation timestamp")
@@ -2274,10 +2278,6 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str, 
         if data.get("valid") is False:
             # Extract the actual error message from auth-service
             error_message = data.get("message", "Invalid API key or insufficient permissions")
-            # Format error message to be consistent with "insufficient permission" format
-            if "does not have" in error_message.lower() or "permission" in error_message.lower():
-                if "insufficient permission" not in error_message.lower():
-                    error_message = f"Authorization error: Insufficient permission. {error_message}"
             raise HTTPException(
                 status_code=403,
                 detail={
@@ -2335,7 +2335,7 @@ async def check_permission(
             status_code=403,
             detail={
                 "error": "PERMISSION_DENIED",
-                "message": f"Permission '{permission}' required"
+                "message": "Only ADMIN or MODERATOR roles can perform this operation."
             }
         )
 
@@ -2379,6 +2379,137 @@ def build_auth_headers(request: Request, credentials: Optional[HTTPAuthorization
             headers['X-Auth-Source'] = 'API_KEY'
         elif credentials and credentials.credentials:
             headers['X-Auth-Source'] = 'AUTH_TOKEN'
+    
+    return headers
+
+# Alert Management Models (for Swagger documentation)
+class AlertAnnotation(BaseModel):
+    """Alert annotation model"""
+    key: str = Field(..., description="Annotation key (summary, description, impact, action)")
+    value: str = Field(..., description="Annotation value")
+
+class AlertDefinitionCreate(BaseModel):
+    """Request model for creating an alert definition. PromQL is built from alert_type and threshold."""
+    name: str = Field(..., description="Alert name (e.g., 'HighLatency')")
+    description: Optional[str] = Field(None, description="Alert description")
+    threshold_value: float = Field(..., description="Threshold value (e.g. seconds for latency, percent for error_rate/CPU/Memory/Disk)")
+    threshold_unit: str = Field(..., description="Threshold unit: 'seconds' (latency), 'percent' or 'ratio' (error_rate), 'percent' (CPU/Memory/Disk)")
+    category: str = Field(default="application", description="Category: 'application' or 'infrastructure'")
+    severity: str = Field(..., description="Severity: 'critical', 'warning', or 'info'")
+    urgency: str = Field(default="medium", description="Urgency: 'high', 'medium', or 'low'")
+    alert_type: str = Field(..., description="Application: 'Latency' or 'Error Rate'. Infrastructure: 'CPU', 'Memory', or 'Disk'")
+    scope: Optional[str] = Field(None, description="Scope (e.g., 'all_services', 'per_service')")
+    evaluation_interval: str = Field(default="30s", description="Prometheus evaluation interval")
+    for_duration: str = Field(default="5m", description="Duration before alert fires")
+    annotations: Optional[List[AlertAnnotation]] = Field(default_factory=list, description="Alert annotations")
+
+class AlertDefinitionUpdate(BaseModel):
+    """Request model for updating an alert definition"""
+    description: Optional[str] = None
+    threshold_value: Optional[float] = None
+    threshold_unit: Optional[str] = None
+    category: Optional[str] = None
+    severity: Optional[str] = None
+    urgency: Optional[str] = None
+    alert_type: Optional[str] = None
+    scope: Optional[str] = None
+    evaluation_interval: Optional[str] = None
+    for_duration: Optional[str] = None
+    enabled: Optional[bool] = None
+    annotations: Optional[List[AlertAnnotation]] = None
+
+class NotificationReceiverCreate(BaseModel):
+    """Request model for creating a notification receiver"""
+    category: str = Field(..., description="Category: 'application' or 'infrastructure'")
+    severity: str = Field(..., description="Severity: 'critical', 'warning', or 'info'")
+    alert_type: Optional[str] = Field(None, description="Optional alert type filter (e.g., 'latency', 'error_rate')")
+    email_to: Optional[List[str]] = Field(None, description="Email addresses (required if rbac_role not provided)", min_items=1)
+    rbac_role: Optional[str] = Field(None, description="RBAC role name (ADMIN, MODERATOR, USER, GUEST) - if provided, emails will be resolved from users with this role")
+    email_subject_template: Optional[str] = Field(None, description="Email subject template")
+    email_body_template: Optional[str] = Field(None, description="Email body template (HTML)")
+
+class NotificationReceiverUpdate(BaseModel):
+    """Request model for updating a notification receiver"""
+    receiver_name: Optional[str] = None
+    email_to: Optional[List[str]] = Field(None, description="Email addresses (required if rbac_role not provided)", min_items=1)
+    rbac_role: Optional[str] = Field(None, description="RBAC role name (ADMIN, MODERATOR, USER, GUEST) - if provided, emails will be resolved from users with this role")
+    email_subject_template: Optional[str] = None
+    email_body_template: Optional[str] = None
+    enabled: Optional[bool] = None
+
+class RoutingRuleCreate(BaseModel):
+    """Request model for creating a routing rule"""
+    rule_name: str = Field(..., description="Rule name")
+    receiver_id: int = Field(..., description="Notification receiver ID")
+    match_severity: Optional[str] = Field(None, description="Match severity (critical, warning, info)")
+    match_category: Optional[str] = Field(None, description="Match category (application, infrastructure)")
+    match_alert_type: Optional[str] = Field(None, description="Match alert type")
+    group_by: Optional[List[str]] = Field(None, description="Group by labels")
+    group_wait: Optional[str] = Field(None, description="Group wait time")
+    group_interval: Optional[str] = Field(None, description="Group interval")
+    repeat_interval: Optional[str] = Field(None, description="Repeat interval")
+    continue_routing: Optional[bool] = Field(None, description="Continue routing")
+    priority: Optional[int] = Field(None, description="Priority")
+
+class RoutingRuleUpdate(BaseModel):
+    """Request model for updating a routing rule"""
+    rule_name: Optional[str] = None
+    receiver_id: Optional[int] = None
+    match_severity: Optional[str] = None
+    match_category: Optional[str] = None
+    match_alert_type: Optional[str] = None
+    group_by: Optional[List[str]] = None
+    group_wait: Optional[str] = None
+    group_interval: Optional[str] = None
+    repeat_interval: Optional[str] = None
+    continue_routing: Optional[bool] = None
+    priority: Optional[int] = None
+    enabled: Optional[bool] = None
+
+class RoutingRuleTimingUpdate(BaseModel):
+    """Request model for updating routing rule timing parameters"""
+    severity: str = Field(..., description="Severity to match (critical, warning, info)")
+    category: str = Field(..., description="Category to match (application, infrastructure)")
+    alert_type: Optional[str] = Field(None, description="Alert type to match")
+    priority: Optional[int] = Field(None, description="Priority to match")
+    group_wait: Optional[str] = Field(None, description="Group wait time")
+    group_interval: Optional[str] = Field(None, description="Group interval")
+    repeat_interval: Optional[str] = Field(None, description="Repeat interval")
+
+async def build_alert_headers(request: Request, credentials: Optional[HTTPAuthorizationCredentials], api_key: Optional[str], organization: Optional[str] = None) -> Dict[str, str]:
+    """Build headers for alert management service, including admin/user info"""
+    headers = build_auth_headers(request, credentials, api_key)
+    
+    # Add organization header if provided (admin can specify organization)
+    if organization:
+        headers["X-Organization"] = organization
+    
+    # Add username from request state (set by auth middleware from JWT)
+    username = getattr(request.state, "username", None)
+    # Add admin status, roles, and permissions from token (and ensure X-Username when we have a valid token)
+    if credentials and credentials.credentials:
+        token = credentials.credentials
+        try:
+            payload = await auth_middleware.verify_token(token)
+            if payload:
+                user_permissions = payload.get("permissions", [])
+                user_roles = payload.get("roles", [])
+                # Use username from token payload if request.state.username was not set (e.g. middleware path or auth response missing username)
+                if not username:
+                    username = payload.get("username") or (f"user-{payload.get('sub', 'unknown')}" if payload.get("sub") else None)
+                # Check if admin
+                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
+                if is_admin:
+                    headers["X-Admin"] = "true"
+                # Add roles and permissions
+                if user_roles:
+                    headers["X-User-Roles"] = ",".join(user_roles)
+                if user_permissions:
+                    headers["X-User-Permissions"] = ",".join(user_permissions)
+        except Exception:
+            pass  # If token verification fails, headers won't have admin info
+    if username:
+        headers["X-Username"] = username
     
     return headers
 
@@ -2774,17 +2905,17 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                         # Re-raise with the specific error message from auth-service
                         raise
         else:
-            # For other services: existing logic (either Bearer OR API key)
+            # For other services: existing logic (either Bearer OR API key, or BOTH)
             auth_source = (req.headers.get("x-auth-source") or "").upper()
             if is_multi_tenant_request(req):
                 auth_source = "AUTH_TOKEN"
-            use_api_key = api_key is not None and auth_source == "API_KEY"
+            use_api_key = api_key is not None and auth_source in ("API_KEY", "BOTH")
             if auth_span:
                 auth_span.set_attribute("auth.source", auth_source)
                 auth_span.set_attribute("auth.use_api_key", use_api_key)
 
-            # If x-auth-source is explicitly set to API_KEY, require API key
-            if auth_source == "API_KEY" and not api_key:
+            # If x-auth-source is explicitly set to API_KEY or BOTH, require API key
+            if auth_source in ("API_KEY", "BOTH") and not api_key:
                 if auth_span:
                     auth_span.set_attribute("auth.authenticated", False)
                     auth_span.set_attribute("error.type", "MissingAPIKey")
@@ -2793,11 +2924,86 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                     status_code=401,
                     detail={
                         "error": "API_KEY_MISSING",
-                        "message": "API key is required when X-Auth-Source is set to API_KEY"
+                        "message": f"API key is required when X-Auth-Source is set to {auth_source}"
                     }
+                )
+            
+            # If x-auth-source is BOTH, also require Bearer token
+            if auth_source == "BOTH" and (not credentials or not credentials.credentials):
+                if auth_span:
+                    auth_span.set_attribute("auth.authenticated", False)
+                    auth_span.set_attribute("error.type", "MissingToken")
+                    auth_span.set_status(Status(StatusCode.ERROR, "Bearer token required"))
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "error": "AUTH_TOKEN_MISSING",
+                        "message": "Bearer token is required when X-Auth-Source is set to BOTH"
+                    },
+                    headers={"WWW-Authenticate": "Bearer"}
                 )
 
             if use_api_key:
+                # If auth_source is BOTH, validate JWT token first
+                jwt_user_id = None
+                if auth_source == "BOTH":
+                    token = credentials.credentials
+                    token_span_context = tracer.start_as_current_span("gateway.auth.validate_token") if tracer else nullcontext()
+                    with token_span_context as token_span:
+                        if token_span:
+                            token_span.set_attribute("auth.method", "Bearer")
+                            token_span.set_attribute("auth.token_present", bool(token))
+                        
+                        try:
+                            payload = await auth_middleware.verify_token(token)
+                            if token_span:
+                                token_span.set_attribute("auth.token_valid", payload is not None)
+                                if payload:
+                                    token_span.set_attribute("user.id", str(payload.get("sub", "unknown")))
+                                    token_span.set_attribute("user.username", payload.get("username", "unknown"))
+                                    token_span.set_status(Status(StatusCode.OK))
+                            
+                            if payload is None:
+                                if auth_span:
+                                    auth_span.set_attribute("auth.authenticated", False)
+                                    auth_span.set_attribute("error.type", "InvalidToken")
+                                    auth_span.set_status(Status(StatusCode.ERROR, "Token validation failed"))
+                                raise HTTPException(
+                                    status_code=401,
+                                    detail={
+                                        "code": AUTH_FAILED,
+                                        "message": AUTH_FAILED_MESSAGE
+                                    },
+                                    headers={"WWW-Authenticate": "Bearer"}
+                                )
+                            
+                            # Set user context from JWT
+                            if payload:
+                                req.state.user_id = payload.get("sub") or payload.get("user_id")
+                                req.state.username = payload.get("username")
+                                req.state.permissions = payload.get("permissions", [])
+                                req.state.is_authenticated = True
+                                req.state.jwt_payload = payload
+                                jwt_user_id = req.state.user_id
+                                
+                                # Extract tenant information
+                                tenant_context = resolve_tenant_from_jwt(payload)
+                                if tenant_context:
+                                    req.state.tenant_id = tenant_context.get("tenant_id")
+                                    req.state.tenant_uuid = tenant_context.get("tenant_uuid")
+                                    req.state.schema_name = tenant_context.get("schema_name")
+                                    req.state.subscriptions = tenant_context.get("subscriptions", [])
+                                    req.state.user_subscriptions = tenant_context.get("user_subscriptions", [])
+                        except HTTPException:
+                            raise
+                        except Exception as e:
+                            if token_span:
+                                token_span.set_attribute("error", True)
+                                token_span.set_attribute("error.type", type(e).__name__)
+                                token_span.set_attribute("error.message", str(e))
+                                token_span.set_status(Status(StatusCode.ERROR, str(e)))
+                            raise
+                
                 # Validate API key permissions via auth-service
                 service, action = determine_service_and_action(req)
                 
@@ -2816,11 +3022,11 @@ async def ensure_authenticated_for_request(req: Request, credentials: Optional[H
                             authz_span.set_attribute("gateway.operation", "authorize_request")
                             authz_span.set_attribute("auth.service", service)
                             authz_span.set_attribute("auth.action", action)
-                            authz_span.set_attribute("auth.method", "API_KEY")
+                            authz_span.set_attribute("auth.method", "API_KEY" if auth_source == "API_KEY" else "BOTH")
                         
                         try:
-                            # For API_KEY-only mode, no user_id to check ownership
-                            await validate_api_key_permissions(api_key, service, action, user_id=None)
+                            # For BOTH mode, pass user_id to check ownership; for API_KEY-only, no user_id
+                            await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
                             if authz_span:
                                 authz_span.set_attribute("auth.authorized", True)
                                 authz_span.set_status(Status(StatusCode.OK))
@@ -3313,15 +3519,28 @@ class ErrorMarkingMiddleware(BaseHTTPMiddleware):
 # Add this FIRST so it runs LAST (after all other middleware)
 app.add_middleware(ErrorMarkingMiddleware)
 
-# Add CORS middleware
+# Add CORS middleware. Explicit origins allow credentials (e.g. Swagger UI on docs-manager port).
+# Set CORS_ORIGINS env to comma-separated list (e.g. "https://app.example.com") or "*" for allow-all (no credentials).
+_cors_origins_env = os.getenv("CORS_ORIGINS", "").strip()
+if _cors_origins_env == "*":
+    _cors_origins = ["*"]
+    _cors_credentials = False
+elif _cors_origins_env:
+    _cors_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()]
+    _cors_credentials = True
+else:
+    _cors_origins = [
+        "http://localhost:8080", "http://127.0.0.1:8080",
+        "http://localhost:8103", "http://127.0.0.1:8103",
+        "http://localhost:3000", "http://127.0.0.1:3000",
+    ]
+    _cors_credentials = True
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
-    # Expose all response headers so browser-based tools (like smr_ui.html)
-    # can read and display them via the Fetch API.
     expose_headers=["*"],
 )
 
@@ -3340,26 +3559,7 @@ load_balancer = None
 route_manager = None
 health_monitor_task = None
 
-# Import alert management module
-try:
-    from alert_management import (
-        RoutingRuleTimingUpdate,
-        init_db_pool, close_db_pool,
-        extract_organization, validate_organization,
-        AlertDefinitionCreate, AlertDefinitionUpdate, AlertDefinitionResponse,
-        NotificationReceiverCreate, NotificationReceiverUpdate, NotificationReceiverResponse,
-        RoutingRuleCreate, RoutingRuleUpdate, RoutingRuleResponse,
-        create_alert_definition, get_alert_definition_by_id, list_alert_definitions,
-        update_alert_definition, delete_alert_definition, toggle_alert_definition,
-        create_notification_receiver, get_notification_receiver_by_id, list_notification_receivers,
-        update_notification_receiver, delete_notification_receiver,
-        create_routing_rule, get_routing_rule_by_id, list_routing_rules,
-        update_routing_rule, delete_routing_rule, update_routing_rule_timing
-    )
-    ALERT_MANAGEMENT_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Alert management module not available: {e}")
-    ALERT_MANAGEMENT_AVAILABLE = False
+# Alert management is now handled by alert-management-service
 
 @app.on_event("startup")
 async def startup_event():
@@ -3376,14 +3576,6 @@ async def startup_event():
         await route_manager.load_routes_from_redis()  # Try to load from Redis if available
         logger.info("Route manager initialized")
         
-        # Initialize alert management database pool
-        if ALERT_MANAGEMENT_AVAILABLE:
-            try:
-                await init_db_pool()
-                logger.info("Alert management database pool initialized")
-            except Exception as e:
-                logger.warning(f"Failed to initialize alert management database pool: {e}")
-        
         logger.info("API Gateway initialized successfully (using direct service URLs)")
         
     except Exception as e:
@@ -3399,14 +3591,6 @@ async def shutdown_event():
     if http_client:
         await http_client.aclose()
         logger.info("HTTP client closed")
-    
-    # Close alert management database pool
-    if ALERT_MANAGEMENT_AVAILABLE:
-        try:
-            await close_db_pool()
-            logger.info("Alert management database pool closed")
-        except Exception as e:
-            logger.warning(f"Error closing alert management database pool: {e}")
 
 @app.get("/")
 async def root():
@@ -4261,677 +4445,347 @@ async def get_all_users(
     """
     return await proxy_to_auth_service(request, "/api/v1/auth/users")
 
-# Alert Management Endpoints (Dynamic Alert Configuration)
-if ALERT_MANAGEMENT_AVAILABLE:
-    @app.post("/api/v1/alerts/definitions", response_model=AlertDefinitionResponse, tags=["Alerts"])
-    async def create_alert_definition_endpoint(
-        payload: AlertDefinitionCreate,
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
-    ):
-        """
-        Create a new alert definition
-        
-        - Regular users: organization is automatically extracted from API key or X-Organization header
-        - Admin users: Can specify organization as query parameter to create alerts for any organization
-        
-        Requires: alerts.create permission (alerts.admin for cross-customer operations)
-        """
-        await check_permission("alerts.create", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # Determine organization
-        if is_admin and organization:
-            # Admin explicitly specified organization - use it
-            validate_organization(organization)
-            target_organization = organization
-        else:
-            # Regular user or admin didn't specify - extract from request
-            target_organization = extract_organization(request)
-        
-        username = getattr(request.state, "username", "system")
-        return await create_alert_definition(target_organization, payload, username)
-    
-    @app.get("/api/v1/alerts/definitions", response_model=List[AlertDefinitionResponse], tags=["Alerts"])
-    async def list_alert_definitions_endpoint(
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        enabled_only: bool = Query(False, description="Only return enabled alerts")
-    ):
-        """
-        List alert definitions.
-        
-        - Regular users: See only alerts for their organization (determined by API key or X-Organization header)
-        - Admin users: See all alerts across all organizations (requires "alerts.admin" permission or "ADMIN" role)
-        
-        Requires: alerts.read permission (alerts.admin for viewing all alerts)
-        """
-        await check_permission("alerts.read", request, credentials)
-        
-        # Check if user is admin (has alerts.admin permission or ADMIN role)
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload = await auth_middleware.verify_token(token)
-            if payload:
-                user_permissions = payload.get("permissions", [])
-                user_roles = payload.get("roles", [])
-                # Check for admin permission or role
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # If admin, return all alerts (organization=None)
-        # Otherwise, return only alerts for the user's organization
-        if is_admin:
-            organization = None  # None means return all alerts
-        else:
-            organization = extract_organization(request)
-        
-        return await list_alert_definitions(organization, enabled_only)
-    
-    @app.get("/api/v1/alerts/definitions/{alert_id}", response_model=AlertDefinitionResponse, tags=["Alerts"])
-    async def get_alert_definition_endpoint(
-        alert_id: int,
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
-    ):
-        """
-        Get a specific alert definition by ID
-        
-        - Regular users: Can only get alerts for their organization
-        - Admin users: Can get alerts for any organization by specifying organization, or omit to get any alert
-        
-        Requires: alerts.read permission (alerts.admin for cross-customer operations)
-        """
-        await check_permission("alerts.read", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # Determine organization
-        if is_admin:
-            # Admin can access any alert - pass None to skip organization check
-            if organization:
-                validate_organization(organization)
-                return await get_alert_definition_by_id(alert_id, organization)
-            else:
-                # Admin didn't specify organization - allow access to any alert
-                return await get_alert_definition_by_id(alert_id, None)
-        else:
-            # Regular user - only their organization
-            target_organization = extract_organization(request)
-            return await get_alert_definition_by_id(alert_id, target_organization)
-    
-    @app.put("/api/v1/alerts/definitions/{alert_id}", response_model=AlertDefinitionResponse, tags=["Alerts"])
-    async def update_alert_definition_endpoint(
-        alert_id: int,
-        payload: AlertDefinitionUpdate,
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
-    ):
-        """
-        Update an alert definition
-        
-        - Regular users: Can only update alerts for their organization
-        - Admin users: Can update alerts for any organization by specifying organization
-        
-        Requires: alerts.update permission (alerts.admin for cross-customer operations)
-        """
-        await check_permission("alerts.update", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # Determine organization
-        if is_admin and organization:
-            # Admin explicitly specified organization - use it
-            validate_organization(organization)
-            target_organization = organization
-        elif is_admin:
-            # Admin didn't specify - allow update of any alert (will be checked in update function)
-            target_organization = None
-        else:
-            # Regular user - only their organization
-            target_organization = extract_organization(request)
-        
-        username = getattr(request.state, "username", "system")
-        return await update_alert_definition(alert_id, target_organization, payload, username)
-    
-    @app.delete("/api/v1/alerts/definitions/{alert_id}", tags=["Alerts"])
-    async def delete_alert_definition_endpoint(
-        alert_id: int,
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
-    ):
-        """
-        Delete an alert definition
-        
-        - Regular users: Can only delete alerts for their organization
-        - Admin users: Can delete alerts for any organization by specifying organization
-        
-        Requires: alerts.delete permission (alerts.admin for cross-customer operations)
-        """
-        await check_permission("alerts.delete", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # Determine organization
-        if is_admin and organization:
-            # Admin explicitly specified organization - use it
-            validate_organization(organization)
-            target_organization = organization
-        elif is_admin:
-            # Admin didn't specify - allow delete of any alert
-            target_organization = None
-        else:
-            # Regular user - only their organization
-            target_organization = extract_organization(request)
-        
-        await delete_alert_definition(alert_id, target_organization)
-        return {"message": "Alert definition deleted successfully"}
-    
-    @app.patch("/api/v1/alerts/definitions/{alert_id}/enabled", response_model=AlertDefinitionResponse, tags=["Alerts"])
-    async def toggle_alert_definition_endpoint(
-        alert_id: int,
-        request: Request,
-        enabled: bool = Body(..., description="Enable or disable the alert"),
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
-    ):
-        """
-        Enable or disable an alert definition
-        
-        - Regular users: Can only toggle alerts for their organization (determined by API key or X-Organization header)
-        - Admin users: Can toggle alerts for any organization by specifying organization, or omit to toggle any alert
-        
-        Requires: alerts.update permission (alerts.admin for cross-organization operations)
-        """
-        await check_permission("alerts.update", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload = await auth_middleware.verify_token(token)
-            if payload:
-                user_permissions = payload.get("permissions", [])
-                user_roles = payload.get("roles", [])
-                # Check for admin permission or role
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # Determine target organization
-        if is_admin:
-            if organization:
-                # Admin explicitly specified organization - use it
-                validate_organization(organization)
-                target_organization = organization
-            else:
-                # Admin didn't specify - allow toggling any alert (pass None)
-                target_organization = None
-        else:
-            # Regular user - extract from request
-            target_organization = extract_organization(request)
-        
-        username = getattr(request.state, "username", "system")
-        return await toggle_alert_definition(alert_id, target_organization, enabled, username)
+# Alert Management Endpoints (Proxy to Alert Management Service)
 
-    
-    @app.post("/api/v1/alerts/receivers", response_model=NotificationReceiverResponse, tags=["Alerts"])
-    async def create_notification_receiver_endpoint(
-        payload: NotificationReceiverCreate,
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
-    ):
-        """
-        Create a new notification receiver
-        
-        - Regular users: organization is automatically extracted from API key or X-Organization header
-        - Admin users: Can specify organization as query parameter to create receivers for any organization
-        
-        Requires: alerts.create permission (alerts.admin for cross-customer operations)
-        """
-        await check_permission("alerts.create", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # Determine organization
-        if is_admin and organization:
-            validate_organization(organization)
-            target_organization = organization
-        else:
-            target_organization = extract_organization(request)
-        
-        username = getattr(request.state, "username", "system")
-        return await create_notification_receiver(target_organization, payload, username)
-    
-    @app.get("/api/v1/alerts/receivers", response_model=List[NotificationReceiverResponse], tags=["Alerts"])
-    async def list_notification_receivers_endpoint(
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        enabled_only: bool = Query(False, description="Only return enabled receivers")
-    ):
-        """
-        List notification receivers
-        
-        - Regular users: See only receivers for their organization
-        - Admin users: See all receivers across all organizations
-        
-        Requires: alerts.read permission (alerts.admin for viewing all receivers)
-        """
-        await check_permission("alerts.read", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # If admin, return all receivers (organization=None)
-        if is_admin:
-            organization = None
-        else:
-            organization = extract_organization(request)
-        
-        return await list_notification_receivers(organization, enabled_only)
-    
-    @app.get("/api/v1/alerts/receivers/{receiver_id}", response_model=NotificationReceiverResponse, tags=["Alerts"])
-    async def get_notification_receiver_endpoint(
-        receiver_id: int,
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
-    ):
-        """
-        Get a specific notification receiver by ID
-        
-        - Regular users: Can only get receivers for their organization
-        - Admin users: Can get receivers for any organization by specifying organization, or omit to get any receiver
-        
-        Requires: alerts.read permission (alerts.admin for cross-customer operations)
-        """
-        await check_permission("alerts.read", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # Determine organization
-        if is_admin:
-            if organization:
-                validate_organization(organization)
-                return await get_notification_receiver_by_id(receiver_id, organization)
-            else:
-                return await get_notification_receiver_by_id(receiver_id, None)
-        else:
-            target_organization = extract_organization(request)
-            return await get_notification_receiver_by_id(receiver_id, target_organization)
-    
-    @app.put("/api/v1/alerts/receivers/{receiver_id}", response_model=NotificationReceiverResponse, tags=["Alerts"])
-    async def update_notification_receiver_endpoint(
-        receiver_id: int,
-        payload: NotificationReceiverUpdate,
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
-    ):
-        """
-        Update a notification receiver
-        
-        - Regular users: Can only update receivers for their organization
-        - Admin users: Can update receivers for any organization by specifying organization
-        
-        Requires: alerts.update permission (alerts.admin for cross-customer operations)
-        """
-        await check_permission("alerts.update", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # Determine organization
-        if is_admin and organization:
-            validate_organization(organization)
-            target_organization = organization
-        elif is_admin:
-            target_organization = None
-        else:
-            target_organization = extract_organization(request)
-        
-        username = getattr(request.state, "username", "system")
-        return await update_notification_receiver(receiver_id, target_organization, payload, username)
-    
-    @app.delete("/api/v1/alerts/receivers/{receiver_id}", tags=["Alerts"])
-    async def delete_notification_receiver_endpoint(
-        receiver_id: int,
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
-    ):
-        """
-        Delete a notification receiver
-        
-        - Regular users: Can only delete receivers for their organization
-        - Admin users: Can delete receivers for any organization by specifying organization
-        
-        Requires: alerts.delete permission (alerts.admin for cross-customer operations)
-        """
-        await check_permission("alerts.delete", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # Determine organization
-        if is_admin and organization:
-            validate_organization(organization)
-            target_organization = organization
-        elif is_admin:
-            target_organization = None
-        else:
-            target_organization = extract_organization(request)
-        
-        await delete_notification_receiver(receiver_id, target_organization)
-        return {"message": "Notification receiver deleted successfully"}
-    
-    @app.post("/api/v1/alerts/routing-rules", response_model=RoutingRuleResponse, tags=["Alerts"])
-    async def create_routing_rule_endpoint(
-        payload: RoutingRuleCreate,
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
-    ):
-        """
-        Create a new routing rule
-        
-        - Regular users: organization is automatically extracted from API key or X-Organization header
-        - Admin users: Can specify organization as query parameter to create rules for any organization
-        
-        Requires: alerts.create permission (alerts.admin for cross-customer operations)
-        """
-        await check_permission("alerts.create", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # Determine organization
-        if is_admin and organization:
-            validate_organization(organization)
-            target_organization = organization
-        else:
-            target_organization = extract_organization(request)
-        
-        username = getattr(request.state, "username", "system")
-        return await create_routing_rule(target_organization, payload, username)
-    
-    @app.get("/api/v1/alerts/routing-rules", response_model=List[RoutingRuleResponse], tags=["Alerts"])
-    async def list_routing_rules_endpoint(
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        enabled_only: bool = Query(False, description="Only return enabled rules")
-    ):
-        """
-        List routing rules
-        
-        - Regular users: See only rules for their organization
-        - Admin users: See all rules across all organizations
-        
-        Requires: alerts.read permission (alerts.admin for viewing all rules)
-        """
-        await check_permission("alerts.read", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # If admin, return all rules (organization=None)
-        if is_admin:
-            organization = None
-        else:
-            organization = extract_organization(request)
-        
-        return await list_routing_rules(organization, enabled_only)
-    
-    @app.get("/api/v1/alerts/routing-rules/{rule_id}", response_model=RoutingRuleResponse, tags=["Alerts"])
-    async def get_routing_rule_endpoint(
-        rule_id: int,
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
-    ):
-        """
-        Get a specific routing rule by ID
-        
-        - Regular users: Can only get rules for their organization
-        - Admin users: Can get rules for any organization by specifying organization, or omit to get any rule
-        
-        Requires: alerts.read permission (alerts.admin for cross-customer operations)
-        """
-        await check_permission("alerts.read", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # Determine organization
-        if is_admin:
-            if organization:
-                validate_organization(organization)
-                return await get_routing_rule_by_id(rule_id, organization)
-            else:
-                return await get_routing_rule_by_id(rule_id, None)
-        else:
-            target_organization = extract_organization(request)
-            return await get_routing_rule_by_id(rule_id, target_organization)
-    
-    @app.put("/api/v1/alerts/routing-rules/{rule_id}", response_model=RoutingRuleResponse, tags=["Alerts"])
-    async def update_routing_rule_endpoint(
-        rule_id: int,
-        payload: RoutingRuleUpdate,
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
-    ):
-        """
-        Update a routing rule
-        
-        - Regular users: Can only update rules for their organization
-        - Admin users: Can update rules for any organization by specifying organization
-        
-        Requires: alerts.update permission (alerts.admin for cross-customer operations)
-        """
-        await check_permission("alerts.update", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # Determine organization
-        if is_admin and organization:
-            validate_organization(organization)
-            target_organization = organization
-        elif is_admin:
-            target_organization = None
-        else:
-            target_organization = extract_organization(request)
-        
-        username = getattr(request.state, "username", "system")
-        return await update_routing_rule(rule_id, target_organization, payload, username)
-    
-    @app.delete("/api/v1/alerts/routing-rules/{rule_id}", tags=["Alerts"])
-    async def delete_routing_rule_endpoint(
-        rule_id: int,
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
-    ):
-        """
-        Delete a routing rule
-        
-        - Regular users: Can only delete rules for their organization
-        - Admin users: Can delete rules for any organization by specifying organization
-        
-        Requires: alerts.delete permission (alerts.admin for cross-customer operations)
-        """
-        await check_permission("alerts.delete", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # Determine organization
-        if is_admin and organization:
-            validate_organization(organization)
-            target_organization = organization
-        elif is_admin:
-            target_organization = None
-        else:
-            target_organization = extract_organization(request)
-        
-        await delete_routing_rule(rule_id, target_organization)
-        return {"message": "Routing rule deleted successfully"}
-    
-    @app.patch("/api/v1/alerts/routing-rules/timing", tags=["Alerts"])
-    async def update_routing_rule_timing_endpoint(
-        payload: RoutingRuleTimingUpdate,
-        request: Request,
-        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
-        organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
-    ):
-        """
-        Update timing parameters (group_wait, group_interval, repeat_interval) for routing rules
-        matching the specified criteria.
-        
-        This endpoint updates all routing rules that match:
-        - organization (if specified, or all for admin)
-        - category
-        - severity
-        - alert_type (if specified)
-        - priority (if specified)
-        
-        - Regular users: Can only update rules for their organization
-        - Admin users: Can update rules for any organization by specifying organization, or all organizations if not specified
-        
-        Requires: alerts.update permission (alerts.admin for cross-customer operations)
-        """
-        await check_permission("alerts.update", request, credentials)
-        
-        # Check if user is admin
-        token = credentials.credentials if credentials else None
-        is_admin = False
-        if token:
-            payload_data = await auth_middleware.verify_token(token)
-            if payload_data:
-                user_permissions = payload_data.get("permissions", [])
-                user_roles = payload_data.get("roles", [])
-                is_admin = "alerts.admin" in user_permissions or "ADMIN" in [r.upper() for r in user_roles]
-        
-        # Determine organization
-        if is_admin and organization:
-            validate_organization(organization)
-            target_organization = organization
-        elif is_admin:
-            target_organization = None  # Admin can update across all organizations
-        else:
-            target_organization = extract_organization(request)
-        
-        username = getattr(request.state, "username", "system")
-        return await update_routing_rule_timing(target_organization, payload, username)
+@app.post("/api/v1/alerts/definitions", tags=["Alerts"])
+async def create_alert_definition_endpoint(
+    payload: AlertDefinitionCreate,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+):
+    """Create a new alert definition - proxied to alert-management-service"""
+    await check_permission("alerts.create", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key, organization)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_none=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/alerts/definitions",
+        "alert-management-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.get("/api/v1/alerts/definitions", tags=["Alerts"])
+async def list_alert_definitions_endpoint(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    enabled_only: bool = Query(False, description="Only return enabled alerts")
+):
+    """List alert definitions - proxied to alert-management-service"""
+    await check_permission("alerts.read", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key)
+    return await proxy_to_service(
+        request,
+        "/alerts/definitions",
+        "alert-management-service",
+        headers=headers
+    )
+
+@app.get("/api/v1/alerts/definitions/{alert_id}", tags=["Alerts"])
+async def get_alert_definition_endpoint(
+    alert_id: int,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+):
+    """Get a specific alert definition by ID - proxied to alert-management-service"""
+    await check_permission("alerts.read", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key, organization)
+    return await proxy_to_service(
+        request,
+        f"/alerts/definitions/{alert_id}",
+        "alert-management-service",
+        headers=headers
+    )
+
+@app.put("/api/v1/alerts/definitions/{alert_id}", tags=["Alerts"])
+async def update_alert_definition_endpoint(
+    alert_id: int,
+    payload: AlertDefinitionUpdate,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+):
+    """Update an alert definition - proxied to alert-management-service"""
+    await check_permission("alerts.update", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key, organization)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_none=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        f"/alerts/definitions/{alert_id}",
+        "alert-management-service",
+        method="PUT",
+        body=body,
+        headers=headers
+    )
+
+@app.delete("/api/v1/alerts/definitions/{alert_id}", tags=["Alerts"])
+async def delete_alert_definition_endpoint(
+    alert_id: int,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+):
+    """Delete an alert definition - proxied to alert-management-service"""
+    await check_permission("alerts.delete", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key, organization)
+    return await proxy_to_service(
+        request,
+        f"/alerts/definitions/{alert_id}",
+        "alert-management-service",
+        headers=headers
+    )
+
+@app.patch("/api/v1/alerts/definitions/{alert_id}/enabled", tags=["Alerts"])
+async def toggle_alert_definition_endpoint(
+    alert_id: int,
+    request: Request,
+    enabled: bool = Body(..., embed=True, description="Enable or disable the alert"),
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+):
+    """Enable or disable an alert definition - proxied to alert-management-service"""
+    await check_permission("alerts.update", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key, organization)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps({"enabled": enabled}).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        f"/alerts/definitions/{alert_id}/enabled",
+        "alert-management-service",
+        method="PATCH",
+        body=body,
+        headers=headers
+    )
+
+
+@app.post("/api/v1/alerts/receivers", tags=["Alerts"])
+async def create_notification_receiver_endpoint(
+    payload: NotificationReceiverCreate,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+):
+    """Create a new notification receiver - proxied to alert-management-service"""
+    await check_permission("alerts.create", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key, organization)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_none=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/alerts/receivers",
+        "alert-management-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.get("/api/v1/alerts/receivers", tags=["Alerts"])
+async def list_notification_receivers_endpoint(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    enabled_only: bool = Query(False, description="Only return enabled receivers")
+):
+    """List notification receivers - proxied to alert-management-service"""
+    await check_permission("alerts.read", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key)
+    return await proxy_to_service(
+        request,
+        "/alerts/receivers",
+        "alert-management-service",
+        headers=headers
+    )
+
+@app.get("/api/v1/alerts/receivers/{receiver_id}", tags=["Alerts"])
+async def get_notification_receiver_endpoint(
+    receiver_id: int,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+):
+    """Get a specific notification receiver by ID - proxied to alert-management-service"""
+    await check_permission("alerts.read", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key, organization)
+    return await proxy_to_service(
+        request,
+        f"/alerts/receivers/{receiver_id}",
+        "alert-management-service",
+        headers=headers
+    )
+
+@app.put("/api/v1/alerts/receivers/{receiver_id}", tags=["Alerts"])
+async def update_notification_receiver_endpoint(
+    receiver_id: int,
+    payload: NotificationReceiverUpdate,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+):
+    """Update a notification receiver - proxied to alert-management-service"""
+    await check_permission("alerts.update", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key, organization)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_none=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        f"/alerts/receivers/{receiver_id}",
+        "alert-management-service",
+        method="PUT",
+        body=body,
+        headers=headers
+    )
+
+@app.delete("/api/v1/alerts/receivers/{receiver_id}", tags=["Alerts"])
+async def delete_notification_receiver_endpoint(
+    receiver_id: int,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+):
+    """Delete a notification receiver - proxied to alert-management-service"""
+    await check_permission("alerts.delete", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key, organization)
+    return await proxy_to_service(
+        request,
+        f"/alerts/receivers/{receiver_id}",
+        "alert-management-service",
+        headers=headers
+    )
+
+@app.post("/api/v1/alerts/routing-rules", tags=["Alerts"])
+async def create_routing_rule_endpoint(
+    payload: RoutingRuleCreate,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+):
+    """Create a new routing rule - proxied to alert-management-service"""
+    await check_permission("alerts.create", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key, organization)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_none=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/alerts/routing-rules",
+        "alert-management-service",
+        method="POST",
+        body=body,
+        headers=headers
+    )
+
+@app.get("/api/v1/alerts/routing-rules", tags=["Alerts"])
+async def list_routing_rules_endpoint(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    enabled_only: bool = Query(False, description="Only return enabled rules")
+):
+    """List routing rules - proxied to alert-management-service"""
+    await check_permission("alerts.read", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key)
+    return await proxy_to_service(
+        request,
+        "/alerts/routing-rules",
+        "alert-management-service",
+        headers=headers
+    )
+
+@app.get("/api/v1/alerts/routing-rules/{rule_id}", tags=["Alerts"])
+async def get_routing_rule_endpoint(
+    rule_id: int,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+):
+    """Get a specific routing rule by ID - proxied to alert-management-service"""
+    await check_permission("alerts.read", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key, organization)
+    return await proxy_to_service(
+        request,
+        f"/alerts/routing-rules/{rule_id}",
+        "alert-management-service",
+        headers=headers
+    )
+
+@app.put("/api/v1/alerts/routing-rules/{rule_id}", tags=["Alerts"])
+async def update_routing_rule_endpoint(
+    rule_id: int,
+    payload: RoutingRuleUpdate,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+):
+    """Update a routing rule - proxied to alert-management-service"""
+    await check_permission("alerts.update", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key, organization)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_none=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        f"/alerts/routing-rules/{rule_id}",
+        "alert-management-service",
+        method="PUT",
+        body=body,
+        headers=headers
+    )
+
+@app.delete("/api/v1/alerts/routing-rules/{rule_id}", tags=["Alerts"])
+async def delete_routing_rule_endpoint(
+    rule_id: int,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+):
+    """Delete a routing rule - proxied to alert-management-service"""
+    await check_permission("alerts.delete", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key, organization)
+    return await proxy_to_service(
+        request,
+        f"/alerts/routing-rules/{rule_id}",
+        "alert-management-service",
+        headers=headers
+    )
+
+@app.patch("/api/v1/alerts/routing-rules/timing", tags=["Alerts"])
+async def update_routing_rule_timing_endpoint(
+    payload: RoutingRuleTimingUpdate,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+):
+    """Update timing parameters for routing rules - proxied to alert-management-service"""
+    await check_permission("alerts.update", request, credentials)
+    headers = await build_alert_headers(request, credentials, api_key, organization)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_none=True)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/alerts/routing-rules/timing",
+        "alert-management-service",
+        method="PATCH",
+        body=body,
+        headers=headers
+    )
 
 # ASR Service Endpoints (Proxy to ASR Service)
 
@@ -5171,7 +5025,7 @@ async def speaker_diarization_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Speaker Diarization service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "speaker-diarization-service", method="GET", headers=headers)
 
@@ -5188,7 +5042,7 @@ async def speaker_diarization_inference(
     If config.serviceId is omitted, Smart Model Router will select the best service
     based on Policy Engine + Model Management and inject the chosen serviceId.
     """
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
 
     body_dict = payload.model_dump(mode="json", exclude_none=True)
@@ -5229,7 +5083,7 @@ async def language_diarization_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Language Diarization service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "language-diarization-service", method="GET", headers=headers)
 
@@ -5246,7 +5100,7 @@ async def language_diarization_inference(
     If config.serviceId is omitted, Smart Model Router will select the best service
     based on Policy Engine + Model Management and inject the chosen serviceId.
     """
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
 
     body_dict = payload.model_dump(mode="json", exclude_none=True)
@@ -5798,7 +5652,7 @@ async def batch_translate(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Batch translate multiple texts using NMT service"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/nmt/batch-translate", "nmt-service", headers=headers)
 
@@ -5811,7 +5665,7 @@ async def get_nmt_languages(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get supported languages for NMT service"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers: Dict[str, str] = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
@@ -5839,7 +5693,7 @@ async def get_nmt_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available NMT models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers: Dict[str, str] = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
@@ -5854,7 +5708,7 @@ async def get_nmt_services(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available NMT services"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers: Dict[str, str] = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
@@ -5957,7 +5811,7 @@ async def ner_health(
     api_key: Optional[str] = Security(api_key_scheme),
 ):
     """NER service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/health", "ner-service", headers=headers)
 
@@ -6262,7 +6116,7 @@ async def get_language_detection_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available language detection models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/language-detection/models", "language-detection-service", headers=headers)
 
@@ -6273,7 +6127,7 @@ async def get_language_detection_languages(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get supported languages for language detection"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/language-detection/languages", "language-detection-service", headers=headers)
 
@@ -6284,7 +6138,7 @@ async def language_detection_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Language detection service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/language-detection/health", "language-detection-service", headers=headers)
 
@@ -6301,7 +6155,7 @@ async def transliteration_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Perform transliteration inference"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     headers["Content-Type"] = "application/json"
     body = json.dumps(
@@ -6396,7 +6250,7 @@ async def get_language_detection_models(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get available language detection models"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/language-detection/models", "language-detection-service", headers=headers)
 
@@ -6407,7 +6261,7 @@ async def get_language_detection_languages(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get supported languages for language detection"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/language-detection/languages", "language-detection-service", headers=headers)
 
@@ -6418,7 +6272,7 @@ async def language_detection_health(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Language detection service health check"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     return await proxy_to_service(None, "/api/v1/language-detection/health", "language-detection-service", headers=headers)
 
@@ -6504,14 +6358,22 @@ async def get_model(
     )
 
 
-@app.post("/api/v1/model-management/models", response_model=str, tags=["Model Management"])
+def require_model_permission(permission: str):
+    """Dependency factory to check permission before body validation."""
+    async def _check(
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+    ) -> None:
+        await check_permission(permission, request, credentials)
+    return _check
+
+@app.post("/api/v1/model-management/models", response_model=str, tags=["Model Management"], dependencies=[Depends(require_model_permission("model.create"))])
 async def create_model(
     payload: ModelCreateRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Register a new model. Requires Bearer token authentication with 'model.create' permission."""
-    await check_permission("model.create", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
@@ -6526,14 +6388,13 @@ async def create_model(
     )
 
 
-@app.patch("/api/v1/model-management/models", response_model=str, tags=["Model Management"])
+@app.patch("/api/v1/model-management/models", response_model=str, tags=["Model Management"], dependencies=[Depends(require_model_permission("model.update"))])
 async def update_model(
     payload: ModelUpdateRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Update an existing model. Requires Bearer token authentication with 'model.update' permission."""
-    await check_permission("model.update", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
@@ -6548,14 +6409,13 @@ async def update_model(
     )
 
 
-@app.delete("/api/v1/model-management/models/{uuid}", tags=["Model Management"])
+@app.delete("/api/v1/model-management/models/{uuid}", tags=["Model Management"], dependencies=[Depends(require_model_permission("model.delete"))])
 async def delete_model(
     uuid: str,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Delete a model by ID. Requires Bearer token authentication with 'model.delete' permission."""
-    await check_permission("model.delete", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     return await proxy_to_service(
         None,
@@ -6632,14 +6492,13 @@ async def get_service_details(
     )
 
 
-@app.post("/api/v1/model-management/services", response_model=str, tags=["Model Management"])
+@app.post("/api/v1/model-management/services", response_model=str, tags=["Model Management"], dependencies=[Depends(require_model_permission("service.create"))])
 async def create_service_entry(
     payload: ModelManagementServiceCreateRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Register a new service entry. Requires Bearer token authentication with 'service.create' permission."""
-    await check_permission("service.create", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
@@ -6654,19 +6513,17 @@ async def create_service_entry(
     )
 
 
-@app.patch("/api/v1/model-management/services", response_model=str, tags=["Model Management"])
+@app.patch("/api/v1/model-management/services", response_model=str, tags=["Model Management"], dependencies=[Depends(require_model_permission("service.update"))])
 async def update_service_entry(
     payload: ModelManagementServiceUpdateRequest,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Update a service entry. Requires Bearer token authentication with appropriate permission."""
-    # Check if this is a publish/unpublish operation
+    # Check if this is a publish/unpublish operation (additional check after basic service.update permission)
     if hasattr(payload, 'isPublished') and payload.isPublished is not None:
         permission = "model.publish" if payload.isPublished else "model.unpublish"
         await check_permission(permission, request, credentials)
-    else:
-        await check_permission("service.update", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     headers["Content-Type"] = "application/json"
     # Use model_dump with json mode to properly serialize datetime objects
@@ -6681,14 +6538,13 @@ async def update_service_entry(
     )
 
 
-@app.delete("/api/v1/model-management/services/{uuid}", tags=["Model Management"])
+@app.delete("/api/v1/model-management/services/{uuid}", tags=["Model Management"], dependencies=[Depends(require_model_permission("service.delete"))])
 async def delete_service_entry(
     uuid: str,
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
     """Delete a service entry. Requires Bearer token authentication with 'service.delete' permission."""
-    await check_permission("service.delete", request, credentials)
     headers = build_auth_headers(request, credentials, None)
     return await proxy_to_service(
         None,
@@ -6798,13 +6654,17 @@ async def get_experiment(
 async def get_experiment_metrics(
     experiment_id: str,
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    aggregate: bool = Query(False, description="If true, return one row per variant with totals combined across all dates; if false, return per variant per day."),
 ):
-    """Get metrics for an A/B experiment by ID. Returns aggregated metrics per variant per day."""
+    """Get metrics for an A/B experiment by ID. Default: per variant per day. Use ?aggregate=true for one row per variant (totals)."""
     headers = build_auth_headers(request, credentials, None)
+    path = f"/api/v1/model-management/experiments/{experiment_id}/metrics"
+    if aggregate:
+        path = f"{path}?aggregate=true"
     return await proxy_to_service(
         None,
-        f"/api/v1/model-management/experiments/{experiment_id}/metrics",
+        path,
         "model-management-service",
         method="GET",
         headers=headers,
@@ -6915,7 +6775,7 @@ async def pipeline_inference(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Execute pipeline inference (e.g., Speech-to-Speech translation)"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     # Convert Pydantic model to JSON for proxy
     body = json.dumps(payload.dict()).encode()
@@ -6933,7 +6793,7 @@ async def get_pipeline_info(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get pipeline service information"""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = {}
     if credentials and credentials.credentials:
         headers['Authorization'] = f"Bearer {credentials.credentials}"
@@ -6962,7 +6822,7 @@ async def evaluate_feature_flag(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Evaluate a single feature flag. Supports boolean, string, integer, float, and object (dict) flag types."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     body = json.dumps(payload.dict()).encode()
     headers = build_auth_headers(request, credentials, api_key)
@@ -6976,7 +6836,7 @@ async def evaluate_boolean_feature_flag(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Evaluate a boolean feature flag. Returns a simple boolean value indicating if the flag is enabled."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     body = json.dumps(payload.dict()).encode()
     headers = build_auth_headers(request, credentials, api_key)
@@ -6990,7 +6850,7 @@ async def bulk_evaluate_feature_flags(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Bulk evaluate multiple feature flags. Evaluates all specified flags in parallel and returns results as a dictionary."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     import json
     body = json.dumps(payload.dict()).encode()
     headers = build_auth_headers(request, credentials, api_key)
@@ -7005,7 +6865,7 @@ async def get_feature_flag(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Get feature flag by name from Unleash. Retrieves flag details from Unleash API (cached in Redis)."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     # Use default environment if not provided (config service will also default, but we pass it for consistency)
     env = environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
@@ -7028,7 +6888,7 @@ async def list_feature_flags(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """List feature flags from Unleash. Returns paginated list of feature flags from Unleash (cached in Redis)."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     # Use default environment if not provided (config service will also default, but we pass it for consistency)
     env = environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
@@ -7060,7 +6920,7 @@ async def sync_feature_flags(
     api_key: Optional[str] = Security(api_key_scheme)
 ):
     """Refresh feature flags cache from Unleash (admin). Invalidates Redis cache and fetches fresh data from Unleash API."""
-    ensure_authenticated_for_request(request, credentials, api_key)
+    await ensure_authenticated_for_request(request, credentials, api_key)
     headers = build_auth_headers(request, credentials, api_key)
     # Use default environment if not provided (config service will also default, but we pass it for consistency)
     env = environment or os.getenv("UNLEASH_ENVIRONMENT", "development")
@@ -7097,7 +6957,7 @@ async def get_user_profile(request: Request):
 
 # Multi-Tenant Endpoints (Proxy to Multi-Tenant Service)
 
-@app.post("/api/v1/multi-tenant/register/tenant", response_model=TenantRegisterResponse, tags=["Multi-Tenant"], status_code=201)
+@app.post("/api/v1/multi-tenant/admin/register/tenant", response_model=TenantRegisterResponse, tags=["Multi-Tenant"], status_code=201)
 async def register_tenant(
     payload: TenantRegisterRequest,
     request: Request,
@@ -7118,7 +6978,7 @@ async def register_tenant(
         headers=headers
     )
 
-@app.post("/api/v1/multi-tenant/register/users", response_model=UserRegisterResponse, tags=["Multi-Tenant"], status_code=201)
+@app.post("/api/v1/multi-tenant/admin/register/users", response_model=UserRegisterResponse, tags=["Multi-Tenant"], status_code=201)
 async def register_user_for_multi_tenant(
     payload: UserRegisterRequest,
     request: Request,
@@ -7140,7 +7000,7 @@ async def register_user_for_multi_tenant(
         headers=headers
     )
 
-@app.patch("/api/v1/multi-tenant/update/tenants/status", response_model=TenantStatusUpdateResponse, tags=["Multi-Tenant"])
+@app.patch("/api/v1/multi-tenant/admin/update/tenants/status", response_model=TenantStatusUpdateResponse, tags=["Multi-Tenant"])
 async def update_tenant_status(
     payload: TenantStatusUpdateRequest,
     request: Request,
@@ -7162,7 +7022,7 @@ async def update_tenant_status(
         headers=headers
     )
 
-@app.patch("/api/v1/multi-tenant/update/tenant", response_model=TenantUpdateResponse, tags=["Multi-Tenant"])
+@app.patch("/api/v1/multi-tenant/admin/update/tenant", response_model=TenantUpdateResponse, tags=["Multi-Tenant"])
 async def update_tenant(
     payload: TenantUpdateRequest,
     request: Request,
@@ -7187,7 +7047,7 @@ async def update_tenant(
         headers=headers
     )
 
-@app.delete("/api/v1/multi-tenant/delete/user", response_model=TenantUserDeleteResponse, tags=["Multi-Tenant"])
+@app.delete("/api/v1/multi-tenant/admin/delete/user", response_model=TenantUserDeleteResponse, tags=["Multi-Tenant"])
 async def delete_tenant_user(
     payload: TenantUserDeleteRequest,
     request: Request,
@@ -7208,7 +7068,7 @@ async def delete_tenant_user(
         headers=headers
     )
 
-@app.patch("/api/v1/multi-tenant/update/users/status", response_model=TenantUserStatusUpdateResponse, tags=["Multi-Tenant"])
+@app.patch("/api/v1/multi-tenant/admin/update/users/status", response_model=TenantUserStatusUpdateResponse, tags=["Multi-Tenant"])
 async def update_tenant_user_status(
     payload: TenantUserStatusUpdateRequest,
     request: Request,
@@ -7231,7 +7091,7 @@ async def update_tenant_user_status(
     )
 
 
-@app.patch("/api/v1/multi-tenant/update/user", response_model=TenantUserUpdateResponse, tags=["Multi-Tenant"])
+@app.patch("/api/v1/multi-tenant/admin/update/user", response_model=TenantUserUpdateResponse, tags=["Multi-Tenant"])
 async def update_tenant_user_for_multi_tenant(
     payload: TenantUserUpdateRequest,
     request: Request,
@@ -7276,7 +7136,7 @@ async def verify_email(
     )
 
 
-@app.get("/api/v1/multi-tenant/view/tenant",response_model=TenantViewResponse, tags=["Multi-Tenant"])
+@app.get("/api/v1/multi-tenant/admin/view/tenant",response_model=TenantViewResponse, tags=["Multi-Tenant"])
 async def view_tenant(
     tenant_id: str = Query(..., description="Tenant identifier (tenant_id)"),
     request: Request = None,
@@ -7299,7 +7159,7 @@ async def view_tenant(
     )
 
 
-@app.get("/api/v1/multi-tenant/view/user",response_model=TenantUserViewResponse, tags=["Multi-Tenant"])
+@app.get("/api/v1/multi-tenant/admin/view/user",response_model=TenantUserViewResponse, tags=["Multi-Tenant"])
 async def view_tenant_user(
     user_id: int = Query(..., description="Auth user id for tenant user"),
     request: Request = None,
@@ -7321,7 +7181,7 @@ async def view_tenant_user(
         headers=headers,
     )
 
-@app.get("/api/v1/multi-tenant/list/tenants", response_model=ListTenantsResponse, tags=["Multi-Tenant"])
+@app.get("/api/v1/multi-tenant/admin/list/tenants", response_model=ListTenantsResponse, tags=["Multi-Tenant"])
 async def list_tenants(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
@@ -7342,7 +7202,7 @@ async def list_tenants(
         headers=headers,
     )
 
-@app.get("/api/v1/multi-tenant/list/users", response_model=ListUsersResponse, tags=["Multi-Tenant"])
+@app.get("/api/v1/multi-tenant/admin/list/users", response_model=ListUsersResponse, tags=["Multi-Tenant"])
 async def list_users(
     request: Request,
     tenant_id: Optional[str] = Query(None, description="Filter users by tenant_id"),
@@ -7393,7 +7253,7 @@ async def resend_verification_email(
     )
 
 
-@app.post("/api/v1/multi-tenant/email/send-verification", response_model=TenantSendEmailVerificationResponse, tags=["Multi-Tenant"], status_code=201)
+@app.post("/api/v1/multi-tenant/admin/email/send/verification", response_model=TenantSendEmailVerificationResponse, tags=["Multi-Tenant"], status_code=201)
 async def send_verification_email(
     payload: TenantSendEmailVerificationRequest,
     request: Request,
@@ -7417,7 +7277,7 @@ async def send_verification_email(
         headers=headers,
     )
 
-@app.post("/api/v1/multi-tenant/subscriptions/add", response_model=TenantSubscriptionResponse, tags=["Multi-Tenant"], status_code=201)
+@app.post("/api/v1/multi-tenant/tenant/subscriptions/add", response_model=TenantSubscriptionResponse, tags=["Multi-Tenant"], status_code=201)
 async def add_tenant_subscriptions(
     payload: TenantSubscriptionAddRequest,
     request: Request,
@@ -7438,7 +7298,7 @@ async def add_tenant_subscriptions(
         headers=headers
     )
 
-@app.post("/api/v1/multi-tenant/subscriptions/remove", response_model=TenantSubscriptionResponse, tags=["Multi-Tenant"])
+@app.post("/api/v1/multi-tenant/tenant/subscriptions/remove", response_model=TenantSubscriptionResponse, tags=["Multi-Tenant"])
 async def remove_tenant_subscriptions(
     payload: TenantSubscriptionRemoveRequest,
     request: Request,
@@ -7573,7 +7433,7 @@ async def list_services(
         headers=headers
     )
 
-@app.get("/api/v1/multi-tenant/resolve-tenant-from-user/{user_id}", tags=["Multi-Tenant"])
+@app.get("/api/v1/multi-tenant/resolve/tenant/from/user/{user_id}", tags=["Multi-Tenant"])
 async def resolve_tenant_from_user(
     user_id: int,
     request: Request,
@@ -7601,6 +7461,7 @@ async def resolve_tenant_from_user(
 @app.get("/api/v1/observability/logs/search", tags=["Observability"])
 async def search_logs(
     request: Request,
+    tenant_id: Optional[str] = Query(None, description="Filter by tenant ID (admin only)"),
     service: Optional[str] = Query(None, description="Filter by service name"),
     level: Optional[str] = Query(None, description="Filter by log level (INFO, WARN, ERROR, DEBUG)"),
     search_text: Optional[str] = Query(None, description="Search text in log messages"),
@@ -7616,8 +7477,14 @@ async def search_logs(
     
     Requires 'logs.read' permission.
     Admin users see all logs, normal users see only their tenant's logs.
+    
+    The tenant_id parameter can only be used by admin users to filter logs for a specific tenant.
+    If provided by a non-admin user, it will be rejected with a 403 error.
+    
+    Note: In production with APISIX/Kong, this endpoint may not be used as requests go directly to telemetry-service.
+    This is kept for development/testing environments that still use the API gateway.
     """
-    return await proxy_to_service(request, "/api/v1/observability/logs/search", "telemetry-service")
+    return await proxy_to_service(request, "/api/v1/telemetry/logs/search", "telemetry-service")
 
 
 @app.get("/api/v1/observability/logs/aggregate", tags=["Observability"])
@@ -7634,7 +7501,7 @@ async def get_log_aggregations(
     Requires 'logs.read' permission.
     Returns total logs, error count, warning count, breakdown by level and service.
     """
-    return await proxy_to_service(request, "/api/v1/observability/logs/aggregate", "telemetry-service")
+    return await proxy_to_service(request, "/api/v1/telemetry/logs/aggregate", "telemetry-service")
 
 
 @app.get("/api/v1/observability/logs/services", tags=["Observability"])
@@ -7651,7 +7518,7 @@ async def get_log_services(
     Requires 'logs.read' permission.
     Admin users see all services, normal users see only services registered to their tenant.
     """
-    return await proxy_to_service(request, "/api/v1/observability/logs/services", "telemetry-service")
+    return await proxy_to_service(request, "/api/v1/telemetry/logs/services", "telemetry-service")
 
 
 @app.get("/api/v1/observability/traces/search", tags=["Observability"])
@@ -7671,7 +7538,7 @@ async def search_traces(
     Requires 'traces.read' permission.
     Admin users see all traces, normal users see only their organization's traces.
     """
-    return await proxy_to_service(request, "/api/v1/observability/traces/search", "telemetry-service")
+    return await proxy_to_service(request, "/api/v1/telemetry/traces/search", "telemetry-service")
 
 
 @app.get("/api/v1/observability/traces/{trace_id}", tags=["Observability"])
@@ -7687,7 +7554,7 @@ async def get_trace_by_id(
     Requires 'traces.read' permission.
     Returns 404 if trace not found or not accessible.
     """
-    return await proxy_to_service(request, f"/api/v1/observability/traces/{trace_id}", "telemetry-service")
+    return await proxy_to_service(request, f"/api/v1/telemetry/traces/{trace_id}", "telemetry-service")
 
 
 @app.get("/api/v1/observability/traces/services", tags=["Observability"])
@@ -7701,7 +7568,7 @@ async def get_trace_services(
     
     Requires 'traces.read' permission.
     """
-    return await proxy_to_service(request, "/api/v1/observability/traces/services", "telemetry-service")
+    return await proxy_to_service(request, "/api/v1/telemetry/traces/services", "telemetry-service")
 
 
 @app.get("/api/v1/observability/traces/services/{service}/operations", tags=["Observability"])
@@ -7716,7 +7583,7 @@ async def get_trace_operations(
     
     Requires 'traces.read' permission.
     """
-    return await proxy_to_service(request, f"/api/v1/observability/traces/services/{service}/operations", "telemetry-service")
+    return await proxy_to_service(request, f"/api/v1/telemetry/traces/services/{service}/operations", "telemetry-service")
 
 
 # Helper function to proxy requests to auth service
@@ -7782,7 +7649,8 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
         'model-management-service': os.getenv('MODEL_MANAGEMENT_SERVICE_URL', 'http://model-management-service:8091'),
         'llm-service': os.getenv('LLM_SERVICE_URL', 'http://llm-service:8090'),
         'pipeline-service': os.getenv('PIPELINE_SERVICE_URL', 'http://pipeline-service:8090'),
-        'multi-tenant-service': os.getenv('MULTI_TENANT_SERVICE_URL', 'http://multi-tenant-service:8001')
+        'multi-tenant-service': os.getenv('MULTI_TENANT_SERVICE_URL', 'http://multi-tenant-service:8001'),
+        'alert-management-service': os.getenv('ALERT_MANAGEMENT_SERVICE_URL', 'http://alert-management-service:8098')
     }
     
     try:
@@ -7851,11 +7719,24 @@ async def proxy_to_service(request: Optional[Request], path: str, service_name: 
             
             response_time = time.time() - start_time
             
-            # Only log non-2xx responses here – successful 2xx responses are
-            # already logged at the service level, so logging them again at the
-            # gateway would create duplicate 200 entries in OpenSearch.
+            # Log non-2xx responses so errors appear in OpenSearch.
             if not (200 <= response.status_code < 300):
                 logger.warning(
+                    f"Proxy response from {service_name}: {response.status_code} in {response_time:.3f}s",
+                    extra={
+                        "context": {
+                            "method": method,
+                            "path": path,
+                            "service": service_name,
+                            "status_code": response.status_code,
+                            "response_time_ms": round(response_time * 1000, 2),
+                        }
+                    }
+                )
+            # Log successful 2xx for alert-management so DELETE/POST/PUT to receivers/definitions/rules appear in OpenSearch
+            # (alert-management-service may run locally or with plain-text logs, so gateway is the only source for these.)
+            elif path.startswith("/alerts"):
+                logger.info(
                     f"Proxy response from {service_name}: {response.status_code} in {response_time:.3f}s",
                     extra={
                         "context": {

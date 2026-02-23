@@ -1,0 +1,117 @@
+# NMT Service - Public API (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: NMT Service
+  description: Neural Machine Translation. Translate text between languages (e.g. Indic). Batch and streaming.
+  version: 1.0.0
+  contact:
+    name: Dhruva Platform Team
+    url: https://github.com/AI4Bharat/Dhruva
+
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway (use for Try it out)
+
+tags:
+  - name: NMT
+    description: Translation endpoints
+
+paths:
+  /api/v1/nmt/inference:
+    post:
+      tags: [NMT]
+      summary: NMT inference
+      description: Translate one or more text inputs (max 90). Request body matches ULCA-style config.
+      operationId: nmtInference
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NMTInferenceRequest"
+      responses:
+        "200":
+          description: Translation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NMTInferenceResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/RateLimitExceeded"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/nmt/health:
+    get:
+      tags: [NMT]
+      summary: Health check
+      operationId: nmtHealth
+      responses:
+        "200":
+          description: Health status
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+  schemas:
+    NMTLanguagePair:
+      type: object
+      required: [sourceLanguage, targetLanguage]
+      properties:
+        sourceLanguage: { type: string, description: "Source language code (e.g. 'en', 'hi', 'ta')" }
+        targetLanguage: { type: string, description: Target language code }
+        sourceScriptCode: { type: string, description: "Script code for source (e.g. 'Deva', 'Arab')" }
+        targetScriptCode: { type: string, description: Script code for target }
+    NMTTextInput:
+      type: object
+      required: [source]
+      properties:
+        source: { type: string, description: Input text to translate }
+    NMTInferenceConfig:
+      type: object
+      required: [language]
+      properties:
+        serviceId: { type: string, description: NMT service/model ID (optional; Smart Router will assign if omitted) }
+        language: { $ref: "#/components/schemas/NMTLanguagePair" }
+        context: { type: string, description: Optional context string for context-aware translation }
+    NMTInferenceRequest:
+      type: object
+      required: [input, config]
+      properties:
+        input:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/NMTTextInput" }
+        config: { $ref: "#/components/schemas/NMTInferenceConfig" }
+        controlConfig: { type: object, description: Additional control parameters }
+    NMTTranslationOutput:
+      type: object
+      properties:
+        source: { type: string, description: Source text }
+        target: { type: string, description: Translated text }
+    NMTInferenceResponse:
+      type: object
+      properties:
+        output:
+          type: array
+          items: { $ref: "#/components/schemas/NMTTranslationOutput" }
+  responses:
+    Unauthorized:
+      description: Invalid or missing API key
+    ValidationError:
+      description: Validation error
+    RateLimitExceeded:
+      description: Rate limit exceeded
+    ServiceUnavailable:
+      description: Service unavailable
+
+security:
+  - BearerAuth: []

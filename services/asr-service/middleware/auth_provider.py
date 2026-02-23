@@ -21,6 +21,7 @@ from repositories.user_repository import UserRepository
 from repositories.asr_repository import get_db_session
 from models.auth_models import ApiKeyDB, UserDB
 from middleware.exceptions import AuthenticationError, InvalidAPIKeyError, ExpiredAPIKeyError, AuthorizationError
+from services.constants.error_messages import AUTH_FAILED, AUTH_FAILED_MESSAGE
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("asr-service")
@@ -230,7 +231,8 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str, 
         # Decision point: Check if API key is present
         with tracer.start_as_current_span("auth.decision.check_api_key") as decision_span:
             decision_span.set_attribute("auth.decision", "check_api_key_presence")
-            if not api_key:
+            # Check for None, empty string, or whitespace-only strings
+            if not api_key or (isinstance(api_key, str) and not api_key.strip()):
                 decision_span.set_attribute("auth.decision.result", "rejected")
                 decision_span.set_attribute("error", True)
                 decision_span.set_attribute("error.type", "MissingAPIKey")
@@ -287,46 +289,46 @@ async def validate_api_key_permissions(api_key: str, service: str, action: str, 
                             span.set_status(Status(StatusCode.OK))
                             validate_span.set_attribute("auth.valid", True)
                             validate_span.set_status(Status(StatusCode.OK))
-                            # Return full payload including user_id, permissions, etc.
                             return result
-                    # API key invalid - extract detailed reason
-                    error_msg = result.get("message", "Permission denied")
-                    error_code = result.get("code", "PERMISSION_DENIED")
-                    error_reason = result.get("reason", "unknown")
-                    
-                    validity_span.set_attribute("auth.decision.result", "rejected")
-                    validity_span.set_attribute("error", True)
-                    validity_span.set_attribute("error.type", "AuthorizationError")
-                    validity_span.set_attribute("error.reason", error_reason)
-                    validity_span.set_attribute("error.code", error_code)
-                    validity_span.set_attribute("error.message", error_msg)
-                    validity_span.set_status(Status(StatusCode.ERROR, error_msg))
-                    
-                    span.set_attribute("auth.valid", False)
-                    span.set_attribute("error", True)
-                    span.set_attribute("error.type", "AuthorizationError")
-                    span.set_attribute("error.reason", error_reason)
-                    span.set_attribute("error.code", error_code)
-                    span.set_attribute("error.message", error_msg)
-                    span.add_event("auth.validation.failed", {
-                        "reason": error_reason,
-                        "code": error_code,
-                        "message": error_msg
-                    })
-                    span.set_status(Status(StatusCode.ERROR, error_msg))
-                    
-                    validate_span.set_attribute("auth.valid", False)
-                    validate_span.set_attribute("error", True)
-                    validate_span.set_attribute("error.type", "AuthorizationError")
-                    validate_span.set_attribute("error.reason", error_reason)
-                    validate_span.set_attribute("error.code", error_code)
-                    validate_span.set_status(Status(StatusCode.ERROR, error_msg))
-                    
-                    raise AuthorizationError(error_msg)
+                        # API key invalid - extract detailed reason
+                        error_msg = result.get("message", "Permission denied")
+                        error_code = result.get("code", "PERMISSION_DENIED")
+                        error_reason = result.get("reason", "unknown")
+                        
+                        validity_span.set_attribute("auth.decision.result", "rejected")
+                        validity_span.set_attribute("error", True)
+                        validity_span.set_attribute("error.type", "AuthorizationError")
+                        validity_span.set_attribute("error.reason", error_reason)
+                        validity_span.set_attribute("error.code", error_code)
+                        validity_span.set_attribute("error.message", error_msg)
+                        validity_span.set_status(Status(StatusCode.ERROR, error_msg))
+                        
+                        span.set_attribute("auth.valid", False)
+                        span.set_attribute("error", True)
+                        span.set_attribute("error.type", "AuthorizationError")
+                        span.set_attribute("error.reason", error_reason)
+                        span.set_attribute("error.code", error_code)
+                        span.set_attribute("error.message", error_msg)
+                        span.add_event("auth.validation.failed", {
+                            "reason": error_reason,
+                            "code": error_code,
+                            "message": error_msg
+                        })
+                        span.set_status(Status(StatusCode.ERROR, error_msg))
+                        
+                        validate_span.set_attribute("auth.valid", False)
+                        validate_span.set_attribute("error", True)
+                        validate_span.set_attribute("error.type", "AuthorizationError")
+                        validate_span.set_attribute("error.reason", error_reason)
+                        validate_span.set_attribute("error.code", error_code)
+                        validate_span.set_status(Status(StatusCode.ERROR, error_msg))
+                        
+                        raise AuthorizationError(error_msg)
 
                 # Handle non-200 responses - extract error from detail or message field
                 try:
                     error_data = response.json()
+                    # FastAPI HTTPException uses "detail" field, auth-service uses "message"
                     err_msg = error_data.get("detail") or error_data.get("message") or response.text
                     error_code = error_data.get("code", f"HTTP_{response.status_code}")
                     error_reason = error_data.get("reason", "auth_service_error")
@@ -647,10 +649,20 @@ async def AuthProvider(
                         service, action = determine_service_and_action(request)
                         auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
                         
-                        # CRITICAL: Always check valid field - auth-service may return valid=false for ownership mismatch
+                        # CRITICAL: Always check valid field - auth-service may return valid=false
                         if not auth_result.get("valid", False):
-                            error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
-                            # Raise AuthenticationError - the error handler will format it with error + message
+                            # Preserve detailed message from auth-service, e.g.:
+                            # "Invalid API key: This key does not have access to ASR service"
+                            # Handle multiple response formats: message, detail (string), or detail.message (dict)
+                            error_msg = auth_result.get("message")
+                            if not error_msg:
+                                detail = auth_result.get("detail")
+                                if isinstance(detail, str):
+                                    error_msg = detail
+                                elif isinstance(detail, dict) and "message" in detail:
+                                    error_msg = detail.get("message")
+                            if not error_msg:
+                                error_msg = "API key does not belong to the authenticated user"
                             raise AuthenticationError(error_msg)
 
                         # 4) Populate request.state – keep JWT as primary identity
@@ -673,22 +685,37 @@ async def AuthProvider(
                         auth_span.set_status(Status(StatusCode.OK))
 
                         return bearer_result
-                    except (AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
-                        # For ANY auth/key error in BOTH mode, surface a single, consistent message
-                        logger.error(f"ASR BOTH mode: Authentication/Authorization error: {e}")
+                    except AuthorizationError as e:
+                        # Permission / invalid-key failures: let AuthorizationError handler
+                        # produce AUTHORIZATION_ERROR so it matches API Gateway.
+                        logger.error(f"ASR BOTH mode: Authorization error: {e}")
                         auth_span.set_attribute("auth.authorized", False)
                         auth_span.set_attribute("error", True)
                         auth_span.set_attribute("error.type", type(e).__name__)
-                        auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
-                        raise AuthenticationError("API key does not belong to the authenticated user")
+                        auth_span.set_status(Status(StatusCode.ERROR, str(e)))
+                        raise
+                    except (AuthenticationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
+                        # Ownership / generic auth failures: let AuthenticationError handler
+                        # format them (AUTH_FAILED, API_KEY_MISSING, etc.).
+                        logger.error(f"ASR BOTH mode: Authentication error: {e}")
+                        auth_span.set_attribute("auth.authorized", False)
+                        auth_span.set_attribute("error", True)
+                        auth_span.set_attribute("error.type", type(e).__name__)
+                        auth_span.set_status(Status(StatusCode.ERROR, str(e)))
+                        raise
                     except Exception as e:
                         logger.error(f"ASR BOTH mode: Unexpected error: {e}", exc_info=True)
                         auth_span.set_attribute("auth.authorized", False)
                         auth_span.set_attribute("error", True)
                         auth_span.set_attribute("error.type", type(e).__name__)
-                        auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
-                        # Even on unexpected errors we normalize the external message
-                        raise AuthenticationError("API key does not belong to the authenticated user")
+                        auth_span.set_status(
+                            Status(
+                                StatusCode.ERROR,
+                                f"{AUTH_FAILED}: {AUTH_FAILED_MESSAGE}",
+                            )
+                        )
+                        # Even on unexpected errors we surface a useful message
+                        raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
                 
                 # Default: API_KEY
                 method_span.set_attribute("auth.decision.result", "api_key")
@@ -710,12 +737,26 @@ async def AuthProvider(
                         auth_span.set_attribute("error.type", "MissingAPIKey")
                         auth_span.set_attribute("error.reason", "api_key_missing")
                         auth_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
+                        # Don't record exception here - error handler will do it
                         raise AuthenticationError("Missing API key")
                     key_span.set_attribute("auth.decision.result", "passed")
                     key_span.set_status(Status(StatusCode.OK))
                 
                 service, action = determine_service_and_action(request)
                 auth_result = await validate_api_key_permissions(api_key, service, action)
+                # Check if auth-service returned valid=false (shouldn't happen, but handle edge case)
+                if not auth_result.get("valid", False):
+                    # Handle multiple response formats: message, detail (string), or detail.message (dict)
+                    error_msg = auth_result.get("message")
+                    if not error_msg:
+                        detail = auth_result.get("detail")
+                        if isinstance(detail, str):
+                            error_msg = detail
+                        elif isinstance(detail, dict) and "message" in detail:
+                            error_msg = detail.get("message")
+                    if not error_msg:
+                        error_msg = "Permission denied"
+                    raise AuthorizationError(error_msg)
                 
                 # For API_KEY-only mode, we may not have a JWT; use auth-service user_id if present
                 user_id = auth_result.get("user_id")
@@ -742,15 +783,12 @@ async def AuthProvider(
                 }
                 
         except AuthenticationError as exc:
-            # Mark auth span as failed
+            # Mark auth span as failed (error handler will create request.reject span)
             auth_span.set_attribute("auth.authorized", False)
             auth_span.set_attribute("error.type", "AuthenticationError")
             auth_span.set_attribute("error.reason", "authentication_failed")
             auth_span.set_status(Status(StatusCode.ERROR, str(exc)))
-            # For BOTH mode, always surface a single, stable error message so
-            # repeated calls with the same bad API key/JWT combo never flicker.
-            if auth_source == "BOTH":
-                raise AuthenticationError("API key does not belong to the authenticated user")
+            # Re-raise AuthenticationError as-is to preserve the actual error message
             raise
         except AuthorizationError as exc:
             # Mark auth span as failed
@@ -758,8 +796,7 @@ async def AuthProvider(
             auth_span.set_attribute("error.type", "AuthorizationError")
             auth_span.set_attribute("error.reason", "authorization_failed")
             auth_span.set_status(Status(StatusCode.ERROR, str(exc)))
-            if auth_source == "BOTH":
-                raise AuthenticationError("API key does not belong to the authenticated user")
+            # Re-raise so AuthorizationError handler can format it properly
             raise
         except Exception as exc:
             auth_span.set_attribute("auth.authorized", False)
@@ -767,7 +804,8 @@ async def AuthProvider(
             auth_span.set_attribute("error.reason", "unexpected_error")
             auth_span.set_status(Status(StatusCode.ERROR, str(exc)))
             logger.error(f"Unexpected authentication error: {exc}")
-            raise AuthenticationError("Authentication failed")
+            # Even on unexpected errors we surface a useful message
+            raise AuthenticationError(str(exc) or "API key does not belong to the authenticated user")
 
     # Tracing-aware implementation
     with tracer.start_as_current_span("request.authorize") as auth_span:
@@ -814,10 +852,20 @@ async def AuthProvider(
                     service, action = determine_service_and_action(request)
                     auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
                     
-                    # CRITICAL: Always check valid field - auth-service may return valid=false for ownership mismatch
+                    # CRITICAL: Always check valid field - auth-service may return valid=false
                     if not auth_result.get("valid", False):
-                        error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
-                        # Raise AuthenticationError - the error handler will format it with error + message
+                        # Preserve detailed message from auth-service, e.g.:
+                        # "Invalid API key: This key does not have access to ASR service"
+                        # Handle multiple response formats: message, detail (string), or detail.message (dict)
+                        error_msg = auth_result.get("message")
+                        if not error_msg:
+                            detail = auth_result.get("detail")
+                            if isinstance(detail, str):
+                                error_msg = detail
+                            elif isinstance(detail, dict) and "message" in detail:
+                                error_msg = detail.get("message")
+                        if not error_msg:
+                            error_msg = "API key does not belong to the authenticated user"
                         raise AuthenticationError(error_msg)
 
                     # 4) Populate request.state – keep JWT as primary identity
@@ -831,22 +879,22 @@ async def AuthProvider(
                     auth_span.set_attribute("auth.user_id", str(jwt_user_id))
                     auth_span.set_status(Status(StatusCode.OK))
                     return bearer_result
-                except (AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
-                    # For ANY auth/key error in BOTH mode, surface a single, consistent message
+                except (AuthenticationError, AuthorizationError) as e:
+                    # For ANY auth/key error in BOTH mode, surface the underlying message when available
                     logger.error(f"ASR BOTH mode (tracing): Authentication/Authorization error: {e}")
                     auth_span.set_attribute("auth.authorized", False)
                     auth_span.set_attribute("error", True)
                     auth_span.set_attribute("error.type", type(e).__name__)
-                    auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
-                    raise AuthenticationError("API key does not belong to the authenticated user")
+                    auth_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
                 except Exception as e:
                     logger.error(f"ASR BOTH mode (tracing): Unexpected error: {e}", exc_info=True)
                     auth_span.set_attribute("auth.authorized", False)
                     auth_span.set_attribute("error", True)
                     auth_span.set_attribute("error.type", type(e).__name__)
-                    auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
-                    # Even on unexpected errors we normalize the external message
-                    raise AuthenticationError("API key does not belong to the authenticated user")
+                    auth_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    # Even on unexpected errors we surface a useful message
+                    raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
 
             # API key only
             auth_span.set_attribute("auth.method", "API_KEY")
@@ -855,13 +903,27 @@ async def AuthProvider(
                 auth_span.set_attribute("error", True)
                 auth_span.set_attribute("error.type", "MissingAPIKey")
                 auth_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
+                # Don't record exception here - error handler will do it
                 raise AuthenticationError("Missing API key")
 
             redis_client = request.app.state.redis_client
             api_key_db, user_db = await validate_api_key(api_key, db, redis_client)
             service, action = determine_service_and_action(request)
-            await validate_api_key_permissions(api_key, service, action)
-
+            auth_result = await validate_api_key_permissions(api_key, service, action)
+            # Check if auth-service returned valid=false (shouldn't happen, but handle edge case)
+            if not auth_result.get("valid", False):
+                # Handle multiple response formats: message, detail (string), or detail.message (dict)
+                error_msg = auth_result.get("message")
+                if not error_msg:
+                    detail = auth_result.get("detail")
+                    if isinstance(detail, str):
+                        error_msg = detail
+                    elif isinstance(detail, dict) and "message" in detail:
+                        error_msg = detail.get("message")
+                if not error_msg:
+                    error_msg = "Permission denied"
+                raise AuthorizationError(error_msg)
+            
             request.state.user_id = user_db.id
             request.state.api_key_id = api_key_db.id
             request.state.api_key_name = api_key_db.name
@@ -882,9 +944,7 @@ async def AuthProvider(
             auth_span.set_attribute("error.type", "AuthenticationError")
             auth_span.set_attribute("error.message", str(e))
             auth_span.set_status(Status(StatusCode.ERROR, str(e)))
-            # For BOTH mode, always surface a single, stable error message
-            if auth_source == "BOTH":
-                raise AuthenticationError("API key does not belong to the authenticated user")
+            # Re-raise so error handler can format it properly
             raise
         except (InvalidAPIKeyError, ExpiredAPIKeyError, AuthorizationError) as e:
             auth_span.set_attribute("auth.authorized", False)
@@ -892,9 +952,7 @@ async def AuthProvider(
             auth_span.set_attribute("error.type", type(e).__name__)
             auth_span.set_attribute("error.message", str(e))
             auth_span.set_status(Status(StatusCode.ERROR, str(e)))
-            # For BOTH mode, convert all auth/key errors to consistent ownership message
-            if auth_source == "BOTH":
-                raise AuthenticationError("API key does not belong to the authenticated user")
+            # Re-raise so error handler can format it properly
             raise
         except Exception as e:
             auth_span.set_attribute("auth.authorized", False)
@@ -903,10 +961,8 @@ async def AuthProvider(
             auth_span.set_attribute("error.message", str(e))
             auth_span.set_status(Status(StatusCode.ERROR, str(e)))
             logger.error(f"Unexpected authentication error: {e}")
-            # For BOTH mode, even unexpected errors should show consistent message
-            if auth_source == "BOTH":
-                raise AuthenticationError("API key does not belong to the authenticated user")
-            raise AuthenticationError("Authentication failed")
+            # Even on unexpected errors we surface a useful message
+            raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
 
 
 async def OptionalAuthProvider(

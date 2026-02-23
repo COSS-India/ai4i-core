@@ -1,0 +1,60 @@
+# Service API Docs Registry
+# Each service has one OpenAPI spec file (YAML or JSON) in this specs/ folder.
+# The Docs Manager merges them into a single Swagger UI.
+#
+# api_gateway_url: base URL for proxy (e.g. http://localhost:8080)
+# For deployed envs where the gateway has no /api-proxy route, set USE_API_PROXY=false
+# so "Try it out" calls API_GATEWAY_URL directly.
+
+services:
+  asr-service:
+    description: "ASR (Automatic Speech Recognition)"
+    spec_file: "asr-service.yaml"
+  audio-lang-detection-service:
+    description: "Audio Language Detection"
+    spec_file: "audio-lang-detection-service.yaml"
+  auth-service:
+    description: "Authentication & Authorization"
+    spec_file: "auth-service.yaml"
+  config-service:
+    description: "Feature Flags"
+    spec_file: "config-service.yaml"
+  language-diarization-service:
+    description: "Language Diarization"
+    spec_file: "language-diarization-service.yaml"
+  language-detection-service:
+    description: "Language Detection"
+    spec_file: "language-detection-service.yaml"
+  llm-service:
+    description: "LLM (Large Language Model)"
+    spec_file: "llm-service.yaml"
+  model-management-service:
+    description: "Model Management"
+    spec_file: "model-management-service.yaml"
+  multi-tenant-service:
+    description: "Multi-Tenant"
+    spec_file: "multi-tenant-service.yaml"
+  ner-service:
+    description: "NER (Named Entity Recognition)"
+    spec_file: "ner-service.yaml"
+  nmt-service:
+    description: "NMT (Neural Machine Translation)"
+    spec_file: "nmt-service.yaml"
+  ocr-service:
+    description: "OCR (Optical Character Recognition)"
+    spec_file: "ocr-service.yaml"
+  pipeline-service:
+    description: "Pipeline"
+    spec_file: "pipeline-service.yaml"
+  speaker-diarization-service:
+    description: "Speaker Diarization"
+    spec_file: "speaker-diarization-service.yaml"
+  telemetry-service:
+    description: "Observability"
+    spec_file: "telemetry-service.yaml"
+  transliteration-service:
+    description: "Transliteration"
+    spec_file: "transliteration-service.yaml"
+  tts-service:
+    description: "TTS (Text-to-Speech)"
+    spec_file: "tts-service.yaml"
