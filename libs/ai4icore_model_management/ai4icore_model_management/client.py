@@ -168,7 +168,8 @@ class ModelManagementClient:
                     data = json.loads(cached)
                     return [ServiceInfo(**item) for item in data]
             except Exception as e:
-                logger.warning(f"Redis cache read failed: {e}")
+                # Cache failures are non-critical - log at debug level to avoid noise
+                logger.debug(f"Redis cache read failed: {e}")
         
         # Try in-memory cache
         if use_cache:
@@ -227,7 +228,8 @@ class ModelManagementClient:
                             json.dumps(cache_data)
                         )
                     except Exception as e:
-                        logger.warning(f"Redis cache write failed: {e}")
+                        # Cache failures are non-critical - log at debug level to avoid noise
+                        logger.debug(f"Redis cache write failed: {e}")
                 
                 # Cache in memory
                 self._set_cache(cache_key, services)
@@ -278,7 +280,8 @@ class ModelManagementClient:
                     data = json.loads(cached)
                     return ServiceInfo(**data)
             except Exception as e:
-                logger.warning(f"Redis cache read failed: {e}")
+                # Cache failures are non-critical - log at debug level to avoid noise
+                logger.debug(f"Redis cache read failed: {e}")
         
         # Try in-memory cache
         if use_cache:
@@ -342,7 +345,8 @@ class ModelManagementClient:
                             json.dumps(service_info.model_dump())
                         )
                     except Exception as e:
-                        logger.warning(f"Redis cache write failed: {e}")
+                        # Cache failures are non-critical - log at debug level to avoid noise
+                        logger.debug(f"Redis cache write failed: {e}")
                 
                 # Cache in memory
                 self._set_cache(cache_key, service_info)
@@ -391,7 +395,7 @@ class ModelManagementClient:
         """
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/experiments/select-variant"
+            url = f"{self.base_url}/api/v1/model-management/experiments/select-variant"
             headers = self._get_headers(auth_headers)
             payload = {
                 "task_type": task_type,
@@ -433,7 +437,7 @@ class ModelManagementClient:
         """
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/experiments/track-metric"
+            url = f"{self.base_url}/api/v1/model-management/experiments/track-metric"
             headers = self._get_headers(auth_headers)
             payload = {
                 "experiment_id": experiment_id,
@@ -453,4 +457,3 @@ class ModelManagementClient:
         
         if redis_client:
             logger.info("Redis cache should be cleared manually if needed")
-

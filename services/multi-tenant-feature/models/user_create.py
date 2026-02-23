@@ -22,6 +22,7 @@ class UserRegisterRequest(BaseModel):
     email: EmailStr
     username: str = Field(..., min_length=3, max_length=100)
     full_name: str = Field(None, max_length=150)
+    phone_number: Optional[str] = Field(None, max_length=20, description="User phone number")
     services: List[str] = Field(..., example=["tts", "asr"])
     is_approved: bool = Field(False, description="Indicates if the user is approved by tenant admin")
     role: Optional[str] = Field(

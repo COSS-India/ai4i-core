@@ -126,8 +126,8 @@ async def lifespan(app: FastAPI):
         # Store Redis client in app state for middleware access
         app.state.redis_client = redis_client
         
-        # Register error handlers
-        add_error_handlers(app)
+        # Error handlers are already registered at app creation time (above)
+        # This ensures they take precedence over FastAPI's default handlers
         
         # Register service into the central registry via config-service
         registry_client = ServiceRegistryHttpClient()
@@ -209,6 +209,10 @@ app = FastAPI(
     },
     lifespan=lifespan
 )
+
+# CRITICAL: Register error handlers IMMEDIATELY after app creation
+# This ensures our handlers take precedence over FastAPI's default handlers
+add_error_handlers(app)
 
 # Observability Plugin (OpenSearch metrics)
 if OBSERVABILITY_AVAILABLE:

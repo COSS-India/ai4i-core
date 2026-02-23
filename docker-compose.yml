@@ -18,6 +18,7 @@ services:
       postgres
       -c password_encryption=md5
       -c listen_addresses='*'
+      -c max_connections=300
     networks:
       - microservices-network
     healthcheck:
@@ -275,24 +276,6 @@ services:
     networks:
       - microservices-network
     restart: unless-stopped
-
-  # Swagger UI for Kong-facing API documentation
-  swagger-kong-ui:
-    image: swaggerapi/swagger-ui
-    container_name: ai4v-swagger-kong-ui
-    ports:
-      - "8086:8080"
-    volumes:
-      # Generated OpenAPI spec that points to Kong and includes all endpoints.
-      # Mount it at a custom path; the swagger-ui entrypoint will copy it into
-      # /usr/share/nginx/html/openapi.json on startup.
-      - ./docs/kong-openapi.json:/kong-openapi.json:ro
-    environment:
-      SWAGGER_JSON: /kong-openapi.json
-    networks:
-      - microservices-network
-    depends_on:
-      - kong
 
   # Microservices
   api-gateway-service:
@@ -1039,16 +1022,49 @@ services:
       timeout: 10s
       retries: 3
 
+  # Alert Management Service
+  # Provides CRUD operations for alert definitions, notification receivers, and routing rules
+  alert-management-service:
+    build:
+      context: .
+      dockerfile: ./services/alert-management-service/Dockerfile
+    container_name: ai4v-alert-management-service
+    ports:
+      - "8104:8098"
+    environment:
+      - SERVICE_NAME=alert-management-service
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - ALERT_CONFIG_SYNC_SERVICE_URL=http://alert-config-sync-service:8097
+      - ALERT_SYNC_ENABLED=true
+      - PORT=8098
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8098/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
   # Alert Configuration Sync Service
   # Generates Prometheus and Alertmanager YAML files from database and triggers hot reload
   alert-config-sync-service:
     build:
-      context: ./services/alert-config-sync-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./services/alert-config-sync-service/Dockerfile
     container_name: ai4v-alert-config-sync-service
     ports:
       - "8101:8097"
     environment:
+      - SERVICE_NAME=alert-config-sync-service
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_USER=${POSTGRES_USER}

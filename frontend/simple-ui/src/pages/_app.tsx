@@ -32,6 +32,7 @@ const layoutRoutes = [
   '/ner',
   '/logs',
   '/traces',
+  '/alerts-management',
 ];
 
 export default function App({ Component, pageProps }: AppProps) {

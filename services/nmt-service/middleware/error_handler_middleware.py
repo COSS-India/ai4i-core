@@ -1,8 +1,14 @@
 """
 Global error handler middleware for consistent error responses.
+
+
 """
 import os
 import time
+import logging
+import traceback
+import re
+
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -11,15 +17,15 @@ from opentelemetry.trace import Status, StatusCode
 from ai4icore_logging import get_correlation_id, get_logger
 
 from middleware.exceptions import (
-    AuthenticationError, 
-    AuthorizationError, 
+    AuthenticationError,
+    AuthorizationError,
     RateLimitExceededError,
     ErrorDetail,
     ServiceError,
     TritonInferenceError,
     ModelNotFoundError,
     ServiceUnavailableError,
-    TextProcessingError
+    TextProcessingError,
 )
 from services.constants.error_messages import (
     AUTH_FAILED,
@@ -47,13 +53,25 @@ from services.constants.error_messages import (
     LANGUAGE_PAIR_NOT_SUPPORTED,
     LANGUAGE_PAIR_NOT_SUPPORTED_MESSAGE,
     TRANSLATION_FAILED,
-    TRANSLATION_FAILED_MESSAGE
+    TRANSLATION_FAILED_MESSAGE,
 )
-import logging
-import traceback
 
 logger = get_logger(__name__)
 tracer = trace.get_tracer("nmt-service")
+
+
+def _strip_status_prefix(message: str) -> str:
+    """
+    Remove leading HTTP status codes like '403: ' from error messages so that
+    user-facing messages match API Gateway (which does not include status
+    codes in the message text).
+    """
+    if not isinstance(message, str):
+        return message
+    match = re.match(r"^\s*(\d{3})\s*:\s*(.+)$", message)
+    if match:
+        return match.group(2)
+    return message
 
 
 def sanitize_validation_errors(errors: list) -> list:
@@ -95,6 +113,28 @@ def add_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AuthenticationError)
     async def authentication_error_handler(request: Request, exc: AuthenticationError):
         """Handle authentication errors."""
+        # Capture original message for tracing and ownership checks
+        error_msg = (
+            getattr(exc, "message", None)
+            or (str(exc.detail) if hasattr(exc, "detail") and exc.detail else "")
+        )
+        error_msg = _strip_status_prefix(error_msg) if error_msg else ""
+
+        # Check if no API key header is provided first - return API_KEY_MISSING
+        # This handles cases where the error message might not be extracted correctly
+        x_auth_source = (request.headers.get("x-auth-source") or "API_KEY").upper()
+        x_api_key = request.headers.get("x-api-key")
+        if not x_api_key and x_auth_source == "API_KEY":
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "API_KEY_MISSING",
+                        "message": "API key is required to access this service.",
+                    }
+                },
+            )
+
         if tracer:
             with tracer.start_as_current_span("request.reject") as reject_span:
                 reject_span.set_attribute("auth.operation", "reject_authentication")
@@ -102,26 +142,111 @@ def add_error_handlers(app: FastAPI) -> None:
                 # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
                 reject_span.set_attribute("error.type", "AuthenticationError")
                 reject_span.set_attribute("error.reason", "authentication_failed")
-                reject_span.set_attribute("error.message", exc.message)
+                # Record the low-level message for debugging
+                reject_span.set_attribute("error.message", error_msg or exc.message)
                 reject_span.set_attribute("error.code", "AUTHENTICATION_ERROR")
                 reject_span.set_attribute("http.status_code", 401)
-                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+                reject_span.set_status(
+                    Status(StatusCode.ERROR, error_msg or exc.message or AUTH_FAILED_NMT_MESSAGE)
+                )
                 # Don't record exception here - OpenTelemetry already recorded it
                 # automatically in parent spans when exception was raised
-        
-        error_detail = ErrorDetail(
-            message=AUTH_FAILED_NMT_MESSAGE,
-            code=AUTH_FAILED
-        )
+
+        # For the ownership case, return explicit error + message fields with AUTHORIZATION_ERROR
+        if "API key does not belong to the authenticated user" in (error_msg or ""):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "AUTHORIZATION_ERROR",
+                        "message": "API key does not belong to the authenticated user",
+                    }
+                },
+            )
+
+        # For invalid API key errors (BOTH mode with bad/missing key), mirror API
+        # Gateway behavior by surfacing AUTHORIZATION_ERROR with the original message
+        if "Invalid API key" in (error_msg or ""):
+            clean_message = _strip_status_prefix(error_msg or "Invalid API key")
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "AUTHORIZATION_ERROR",
+                        "message": clean_message,
+                    }
+                },
+            )
+
+        # For missing API key, mirror API Gateway "API_KEY_MISSING" behavior
+        if "Missing API key" in (error_msg or ""):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "API_KEY_MISSING",
+                        "message": "API key is required to access this service.",
+                    }
+                },
+            )
+
+        # For token-expired / invalid-token and all other authentication failures,
+        # align user-facing message with API Gateway:
+        #   "Authentication failed. Please log in again."
         return JSONResponse(
             status_code=401,
-            content={"detail": error_detail.dict()}
+            content={
+                "detail": {
+                    "error": "AUTHENTICATION_ERROR",
+                    "message": AUTH_FAILED_NMT_MESSAGE,
+                }
+            },
         )
     
     
     @app.exception_handler(AuthorizationError)
     async def authorization_error_handler(request: Request, exc: AuthorizationError):
         """Handle authorization errors."""
+        # Preserve detailed API key permission messages from auth-service (e.g.,
+        # "Invalid API key: This key does not have access to NMT service") so they
+        # are not prefixed with a generic authorization message.
+        message_raw = getattr(exc, "message", None) or getattr(exc, "detail", None) or str(exc)
+        message = _strip_status_prefix(message_raw)
+
+        # If we see an "Invalid API key" authorization error and there is no explicit
+        # X-API-Key header, treat this like API_KEY_MISSING to match API Gateway.
+        if "invalid api key" in message.lower() and not request.headers.get("x-api-key"):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "error": "API_KEY_MISSING",
+                        "message": "API key is required to access this service.",
+                    }
+                },
+            )
+
+        # For permission/ownership issues, keep or normalize the message to a clear
+        # "Insufficient permission" format instead of prefixing with "Authorization error".
+        if (
+            "permission" in message.lower()
+            or "does not have" in message.lower()
+            or "nmt.inference" in message
+            or "nmt service" in message.lower()
+        ):
+            # Normalize to the desired format if this is the standard NMT access message
+            if "does not have access to nmt service" in message.lower():
+                message = "Insufficient permission: This key does not have access to NMT service"
+            # Also handle cases where the message might be "Invalid API key: This key does not have access to NMT service"
+            elif "invalid api key" in message.lower() and "does not have access to nmt service" in message.lower():
+                message = "Insufficient permission: This key does not have access to NMT service"
+            # Else leave the permission-related message as-is
+        else:
+            # For non-permission/ownership-related authorization errors, we can keep or
+            # lightly prefix the message if needed.
+            if "Authorization error" not in message:
+                message = f"Authorization error: {message}"
+
         if tracer:
             with tracer.start_as_current_span("request.reject") as reject_span:
                 reject_span.set_attribute("auth.operation", "reject_authorization")
@@ -129,20 +254,20 @@ def add_error_handlers(app: FastAPI) -> None:
                 # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
                 reject_span.set_attribute("error.type", "AuthorizationError")
                 reject_span.set_attribute("error.reason", "authorization_failed")
-                reject_span.set_attribute("error.message", exc.message)
+                reject_span.set_attribute("error.message", message)
                 reject_span.set_attribute("error.code", "AUTHORIZATION_ERROR")
                 reject_span.set_attribute("http.status_code", 403)
-                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
+                reject_span.set_status(Status(StatusCode.ERROR, message))
                 # Don't record exception here - OpenTelemetry already recorded it
                 # automatically in parent spans when exception was raised
         
         error_detail = ErrorDetail(
-            message=exc.message,
-            code="AUTHORIZATION_ERROR"
+            message=message,
+            code="AUTHORIZATION_ERROR",
         )
         return JSONResponse(
             status_code=403,
-            content={"detail": error_detail.dict()}
+            content={"detail": error_detail.dict()},
         )
     
     

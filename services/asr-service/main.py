@@ -6,7 +6,10 @@ Provides batch ASR inference using Triton Inference Server.
 """
 
 import asyncio
+import importlib.util
+import logging
 import os
+import traceback
 from contextlib import asynccontextmanager
 from typing import Dict, Any
 
@@ -24,7 +27,7 @@ from ai4icore_logging import (
 )
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig
+from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig, AuthContextMiddleware
 
 # Import streaming service components
 from services.streaming_service import StreamingASRService
@@ -50,7 +53,6 @@ configure_logging(
 
 # Aggressively disable uvicorn access logger BEFORE uvicorn starts
 # This must happen before uvicorn imports/creates its loggers
-import logging
 
 uvicorn_access = logging.getLogger("uvicorn.access")
 uvicorn_access.handlers.clear()
@@ -184,6 +186,7 @@ async def lifespan(app: FastAPI):
         
         # Store connections in app state for middleware access
         app.state.redis_client = redis_client
+        app.state.db_engine = db_engine
         app.state.db_session_factory = db_session_factory
         
         # NOTE: Triton endpoint/model MUST come from Model Management for inference.
@@ -195,10 +198,8 @@ async def lifespan(app: FastAPI):
         app.state.triton_api_key = TRITON_API_KEY
         app.state.triton_timeout = TRITON_TIMEOUT
         
-        # Register error handlers
-        add_error_handlers(app)
-        
-        # NOTE: Model Management Plugin is registered BEFORE app starts (outside lifespan)
+        # NOTE: Error handlers are registered AFTER app starts (outside lifespan)
+        # to match NMT/TTS pattern and ensure proper registration order
         # to ensure middleware can be added. See line ~330 for registration.
         
         # Register service in central registry via config-service
@@ -326,6 +327,7 @@ model_mgmt_config = ModelManagementConfig(
 )
 model_mgmt_plugin = ModelManagementPlugin(model_mgmt_config)
 model_mgmt_plugin.register_plugin(app, redis_client=redis_client)
+app.add_middleware(AuthContextMiddleware, path_prefixes=model_mgmt_config.middleware_paths or ["/api/v1"])
 logger.info("✅ Model Management Plugin initialized for ASR service")
 
 # Distributed Tracing (Jaeger)
@@ -407,7 +409,7 @@ async def root() -> Dict[str, Any]:
         "name": "ASR Service",
         "version": "1.0.0",
         "status": "running",
-        "description": "Automatic Speech Recognition microservice"
+        "description": "Automatic Speech Recognition service"
     }
 
 
@@ -515,14 +517,35 @@ async def health_check() -> Dict[str, Any]:
 
 # Include routers
 try:
-    from routers.inference_router import inference_router
-    from routers.health_router import health_router
+    # Use importlib to explicitly load routers from the service root to avoid conflicts
+    _service_root = os.path.dirname(os.path.abspath(__file__))
+    _inference_router_path = os.path.join(_service_root, 'routers', 'inference_router.py')
+    _health_router_path = os.path.join(_service_root, 'routers', 'health_router.py')
+    
+    # Load inference_router
+    spec = importlib.util.spec_from_file_location("inference_router", _inference_router_path)
+    inference_router_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(inference_router_module)
+    inference_router = inference_router_module.inference_router
+    
+    # Load health_router
+    spec = importlib.util.spec_from_file_location("health_router", _health_router_path)
+    health_router_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(health_router_module)
+    health_router = health_router_module.health_router
+    
+    # Register error handlers (AFTER middleware, BEFORE routes - matches NMT/TTS pattern)
+    add_error_handlers(app)
     
     app.include_router(inference_router)
     app.include_router(health_router)
+    logger.info("✅ Routers registered successfully")
     
 except ImportError as e:
-    logger.warning(f"Could not import routers: {e}. Service will start without API endpoints.")
+    error_details = traceback.format_exc()
+    logger.error(f"Could not import routers: {e}")
+    logger.error(f"Import error details:\n{error_details}")
+    logger.warning("Service will start without API endpoints.")
 
 
 if __name__ == "__main__":

@@ -104,34 +104,51 @@ class ModelManagementClient:
         expiry = datetime.now() + timedelta(seconds=self.cache_ttl_seconds)
         self._cache[cache_key] = (value, expiry)
     
-    def _get_headers(self, auth_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    def _get_headers(self, auth_headers: Optional[Dict[str, str]] = None, request: Optional[Any] = None) -> Dict[str, str]:
         """Get request headers with authentication
         
         Args:
             auth_headers: Optional dict of auth headers from incoming request (Authorization, X-API-Key, etc.)
+            request: Optional FastAPI Request object to extract X-Try-It header
         """
         headers = {"Content-Type": "application/json"}
+        
+        # Forward X-Try-It header if present (allows anonymous access in Model Management)
+        if request:
+            try_it_header = getattr(request, "headers", {}).get("X-Try-It") or getattr(request, "headers", {}).get("x-try-it")
+            if try_it_header:
+                headers["X-Try-It"] = try_it_header
+                logger.info("Forwarding X-Try-It header to Model Management for anonymous access")
         
         # Use auth headers from incoming request if provided (preferred)
         if auth_headers:
             logger.info(f"Processing auth_headers in _get_headers: {list(auth_headers.keys())}")
-            # Forward all auth-related headers
+            # Forward all auth-related headers and special headers like X-Try-It
             for key, value in auth_headers.items():
                 key_lower = key.lower()
-                # Forward Authorization, X-API-Key, and X-Auth-Source headers
-                if key_lower in ["authorization", "x-api-key", "x-auth-source"]:
+                # Forward Authorization, X-API-Key, X-Auth-Source, and X-Try-It headers
+                if key_lower in ["authorization", "x-api-key", "x-auth-source", "x-try-it"]:
                     # Use proper header case
                     header_name = "Authorization" if key_lower == "authorization" else \
                                  "X-API-Key" if key_lower == "x-api-key" else \
-                                 "X-Auth-Source" if key_lower == "x-auth-source" else key
+                                 "X-Auth-Source" if key_lower == "x-auth-source" else \
+                                 "X-Try-It" if key_lower == "x-try-it" else key
                     headers[header_name] = value
                     logger.info(f"Added {header_name} header to request")
         else:
             logger.warning("No auth_headers provided to _get_headers")
         
-        # Do not inject fallback API keys here; rely on forwarded request auth only
+        # If no auth headers provided, use fallback API key if available (for try-it anonymous requests)
+        # But if X-Try-It header is present, Model Management will allow anonymous access
         if "Authorization" not in headers and "X-API-Key" not in headers:
-            logger.warning("No authentication headers will be sent to model management service!")
+            if "X-Try-It" in headers:
+                logger.info("X-Try-It header present - Model Management will allow anonymous access")
+            elif self.api_key:
+                headers["X-API-Key"] = self.api_key
+                headers["X-Auth-Source"] = "API_KEY"
+                logger.info("Using fallback API key for Model Management request (no auth headers provided)")
+            else:
+                logger.warning("No authentication headers will be sent to model management service!")
         else:
             # If Authorization is present but X-Auth-Source is missing, assume AUTH_TOKEN
             if "Authorization" in headers and "X-Auth-Source" not in headers:
@@ -176,7 +193,8 @@ class ModelManagementClient:
                     data = json.loads(cached)
                     return [ServiceInfo(**item) for item in data]
             except Exception as e:
-                logger.warning(f"Redis cache read failed: {e}")
+                # Cache failures are non-critical - log at debug level to avoid noise
+                logger.debug(f"Redis cache read failed: {e}")
         
         # Try in-memory cache
         if use_cache:
@@ -253,7 +271,8 @@ class ModelManagementClient:
                             json.dumps(cache_data)
                         )
                     except Exception as e:
-                        logger.warning(f"Redis cache write failed: {e}")
+                        # Cache failures are non-critical - log at debug level to avoid noise
+                        logger.debug(f"Redis cache write failed: {e}")
                 
                 # Cache in memory
                 self._set_cache(cache_key, services)
@@ -304,7 +323,8 @@ class ModelManagementClient:
                     data = json.loads(cached)
                     return ServiceInfo(**data)
             except Exception as e:
-                logger.warning(f"Redis cache read failed: {e}")
+                # Cache failures are non-critical - log at debug level to avoid noise
+                logger.debug(f"Redis cache read failed: {e}")
         
         # Try in-memory cache
         if use_cache:
@@ -367,7 +387,8 @@ class ModelManagementClient:
                             json.dumps(service_info.model_dump())
                         )
                     except Exception as e:
-                        logger.warning(f"Redis cache write failed: {e}")
+                        # Cache failures are non-critical - log at debug level to avoid noise
+                        logger.debug(f"Redis cache write failed: {e}")
                 
                 # Cache in memory
                 self._set_cache(cache_key, service_info)
@@ -403,7 +424,7 @@ class ModelManagementClient:
         """Select an experiment variant for A/B testing. Returns variant dict or None."""
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/experiments/select-variant"
+            url = f"{self.base_url}/api/v1/model-management/experiments/select-variant"
             headers = self._get_headers(auth_headers)
             payload = {
                 "task_type": task_type,
@@ -433,7 +454,7 @@ class ModelManagementClient:
         """Track one request's metrics for an experiment variant (best-effort)."""
         try:
             client = await self._get_client()
-            url = f"{self.base_url}/experiments/track-metric"
+            url = f"{self.base_url}/api/v1/model-management/experiments/track-metric"
             headers = self._get_headers(auth_headers)
             payload = {
                 "experiment_id": experiment_id,

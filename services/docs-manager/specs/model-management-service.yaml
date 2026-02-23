@@ -1,0 +1,738 @@
+# Model Management Service - Public API (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: Model Management Service
+  description: Models, services, and A/B experiments.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: Model Management
+paths:
+  /api/v1/model-management/models:
+    get:
+      tags: [Model Management]
+      summary: List models
+      description: List all registered models. Use include_deprecated=false to show only ACTIVE versions.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: task_type
+          in: query
+          required: false
+          schema: { type: string, enum: [asr, nmt, tts, llm, transliteration, language-detection, speaker-diarization, audio-lang-detection, language-diarization, ocr, ner] }
+          description: Filter by task type
+        - name: include_deprecated
+          in: query
+          required: false
+          schema: { type: boolean, default: true }
+          description: Include deprecated versions. Set to false to show only ACTIVE versions.
+        - name: model_name
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by model name (returns all versions matching this name)
+        - name: created_by
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by creator user ID
+      responses:
+        "200":
+          description: List of models
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ModelViewResponse" }
+    post:
+      tags: [Model Management]
+      summary: Create model
+      description: Register a new model. Requires Bearer token with model.create permission.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ModelCreateRequest" }
+      responses:
+        "200":
+          description: Success message with model name and ID
+          content:
+            application/json:
+              schema: { type: string }
+  /api/v1/model-management/models/{model_id}:
+    get:
+      tags: [Model Management]
+      summary: Get model
+      description: Fetch metadata for a specific model. If version is provided, returns that version.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: model_id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Model ID (may contain slashes)
+        - name: version
+          in: query
+          required: false
+          schema: { type: string }
+          description: Optional version to get specific version
+      responses:
+        "200":
+          description: Model details
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelViewResponse" }
+        "404": { description: Model not found }
+      tags: [Model Management]
+      summary: Get model
+      description: Fetch metadata for a specific model. If version is provided in body, returns that version.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: model_id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Model ID (may contain slashes)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ModelViewRequestWithVersion" }
+      responses:
+        "200":
+          description: Model details
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelViewResponse" }
+        "404": { description: Model not found }
+    patch:
+      tags: [Model Management]
+      summary: Update model
+      description: Update an existing model. Requires modelId in body.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ModelUpdateRequest" }
+      responses:
+        "200":
+          description: Success message
+          content:
+            application/json:
+              schema: { type: string }
+        "404": { description: Model not found }
+    delete:
+      tags: [Model Management]
+      summary: Delete model
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: model_id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Model ID (may contain slashes)
+      responses:
+        "200":
+          description: Success message
+          content:
+            application/json:
+              schema: { type: string }
+        "404": { description: Model not found }
+  /api/v1/model-management/services:
+    get:
+      tags: [Model Management]
+      summary: List services
+      description: List all registered services. Filter by task type, publish status, or creator.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: task_type
+          in: query
+          required: false
+          schema: { type: string, enum: [asr, nmt, tts, llm, transliteration, language-detection, speaker-diarization, audio-lang-detection, language-diarization, ocr, ner] }
+          description: Filter by task type
+        - name: is_published
+          in: query
+          required: false
+          schema: { type: boolean }
+          description: true = published only, false = unpublished only, omit = all
+        - name: created_by
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by creator user ID
+      responses:
+        "200":
+          description: List of services
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ServiceListResponse" }
+    post:
+      tags: [Model Management]
+      summary: Create service
+      description: Register a new service. Requires Bearer token with appropriate permission.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServiceCreateRequest" }
+      responses:
+        "200":
+          description: Success message with service name and ID
+          content:
+            application/json:
+              schema: { type: string }
+    patch:
+      tags: [Model Management]
+      summary: Update service
+      description: Update an existing service. serviceId in body identifies the service. name, modelId, modelVersion are not updatable.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServiceUpdateRequest" }
+      responses:
+        "200":
+          description: Success message
+          content:
+            application/json:
+              schema: { type: string }
+        "404": { description: Service not found }
+  /api/v1/model-management/services/{service_id}:
+    post:
+      tags: [Model Management]
+      summary: Get service
+      description: View service details by ID (service_id may contain slashes).
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: service_id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Service ID (may contain slashes, e.g. ai4bharat/surya-ocr-v1--gpu--t4)
+      responses:
+        "200":
+          description: Service details
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceListResponse" }
+        "404": { description: Service not found }
+    delete:
+      tags: [Model Management]
+      summary: Delete service
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: service_id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Service ID (may contain slashes)
+      responses:
+        "200":
+          description: Success message
+          content:
+            application/json:
+              schema: { type: string }
+        "404": { description: Service not found }
+  /api/v1/model-management/services/{service_id}/health:
+    patch:
+      tags: [Model Management]
+      summary: Update service health
+      description: Update health status for a service (heartbeat).
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: service_id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Service ID (may contain slashes)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServiceHeartbeatRequest" }
+      responses:
+        "200":
+          description: Success message
+          content:
+            application/json:
+              schema: { type: string }
+        "404": { description: Service not found }
+  /api/v1/model-management/experiments:
+    get:
+      tags: [Model Management]
+      summary: List experiments
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by experiment status
+        - name: task_type
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by task type
+        - name: created_by
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filter by creator user ID
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ExperimentListResponse" }
+    post:
+      tags: [Model Management]
+      summary: Create experiment
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExperimentCreateRequest"
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExperimentResponse" }
+  /api/v1/model-management/experiments/{experiment_id}:
+    get:
+      tags: [Model Management]
+      summary: Get experiment
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: experiment_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExperimentResponse" }
+        "404": { description: Experiment not found }
+    patch:
+      tags: [Model Management]
+      summary: Update experiment
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: experiment_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExperimentUpdateRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExperimentResponse" }
+        "404": { description: Experiment not found }
+    delete:
+      tags: [Model Management]
+      summary: Delete experiment
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: experiment_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Experiment not found }
+  /api/v1/model-management/experiments/{experiment_id}/status:
+    post:
+      tags: [Model Management]
+      summary: Update experiment status
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: experiment_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExperimentStatusUpdateRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExperimentResponse" }
+        "404": { description: Experiment not found }
+  /api/v1/model-management/experiments/select-variant:
+    post:
+      tags: [Model Management]
+      summary: Select experiment variant
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExperimentVariantSelectionRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExperimentVariantSelectionResponse" }
+  /api/v1/model-management/experiments/{experiment_id}/metrics:
+    get:
+      tags: [Model Management]
+      summary: Get experiment metrics
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: experiment_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ExperimentMetricsResponse" }
+        "404": { description: Experiment not found }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+  schemas:
+    # ----- Model schemas -----
+    ModelViewRequestWithVersion:
+      type: object
+      description: Request body for POST /models/{model_id} - optional version for specific version lookup
+      properties:
+        version: { type: string, description: Optional version to get specific version }
+    ModelViewResponse:
+      type: object
+      properties:
+        modelId: { type: string }
+        uuid: { type: string }
+        name: { type: string }
+        version: { type: string }
+        versionStatus: { type: string, description: ACTIVE or DEPRECATED }
+        versionStatusUpdatedAt: { type: string, format: date-time }
+        description: { type: string }
+        languages: { type: array, items: { type: object } }
+        domain: { type: array, items: { type: string } }
+        submitter: { $ref: "#/components/schemas/Submitter" }
+        license: { type: string }
+        inferenceEndPoint: { $ref: "#/components/schemas/InferenceEndPoint" }
+        source: { type: string }
+        task: { $ref: "#/components/schemas/TaskResponse" }
+        createdBy: { type: string }
+        updatedBy: { type: string }
+    TaskResponse:
+      type: object
+      properties:
+        type: { type: string, description: Task type e.g. asr, nmt, tts }
+    InferenceEndPoint:
+      type: object
+      additionalProperties: true
+      properties:
+        schema: { $ref: "#/components/schemas/InferenceSchema" }
+        endpoint: { type: string }
+        model_name: { type: string }
+        modelName: { type: string }
+        model: { type: string }
+    InferenceSchema:
+      type: object
+      properties:
+        modelProcessingType: { type: object }
+        model_name: { type: string }
+        request: { type: object }
+        response: { type: object }
+    Submitter:
+      type: object
+      properties:
+        name: { type: string }
+        aboutMe: { type: string }
+        team: { type: array, items: { $ref: "#/components/schemas/TeamMember" } }
+    TeamMember:
+      type: object
+      properties:
+        name: { type: string }
+        aboutMe: { type: string }
+        oauthId: { $ref: "#/components/schemas/OAuthId" }
+    OAuthId:
+      type: object
+      properties:
+        oauthId: { type: string }
+        provider: { type: string }
+    Task:
+      type: object
+      required: [type]
+      properties:
+        type: { type: string, enum: [nmt, tts, asr, llm, transliteration, language-detection, speaker-diarization, audio-lang-detection, language-diarization, ocr, ner] }
+    Benchmark:
+      type: object
+      properties:
+        benchmarkId: { type: string }
+        name: { type: string }
+        description: { type: string }
+        domain: { type: string }
+        createdOn: { type: string, format: date-time }
+        languages: { type: object }
+        score: { type: array, items: { $ref: "#/components/schemas/BenchmarkScore" } }
+    BenchmarkScore:
+      type: object
+      properties:
+        metricName: { type: string }
+        score: { type: string }
+    ModelCreateRequest:
+      type: object
+      required: [version, name, description, refUrl, task, languages, license, domain, inferenceEndPoint, benchmarks, submitter]
+      properties:
+        version: { type: string }
+        versionStatus: { type: string, enum: [ACTIVE, DEPRECATED], default: ACTIVE }
+        submittedOn: { type: integer }
+        updatedOn: { type: integer }
+        name: { type: string, description: "Alphanumeric, hyphen, slash only e.g. ai4bharath/indictrans-gpu" }
+        description: { type: string }
+        refUrl: { type: string }
+        task: { $ref: "#/components/schemas/Task" }
+        languages: { type: array, items: { type: object } }
+        license: { type: string, description: "One of MIT, Apache-2.0, GPL-3.0, etc. (see LicenseEnum)" }
+        domain: { type: array, items: { type: string } }
+        inferenceEndPoint: { $ref: "#/components/schemas/InferenceEndPoint" }
+        benchmarks: { type: array, items: { $ref: "#/components/schemas/Benchmark" } }
+        submitter: { $ref: "#/components/schemas/Submitter" }
+    ModelUpdateRequest:
+      type: object
+      required: [modelId]
+      properties:
+        modelId: { type: string }
+        version: { type: string }
+        versionStatus: { type: string, enum: [ACTIVE, DEPRECATED] }
+        submittedOn: { type: integer }
+        updatedOn: { type: integer }
+        name: { type: string }
+        description: { type: string }
+        refUrl: { type: string }
+        task: { $ref: "#/components/schemas/Task" }
+        languages: { type: array, items: { type: object } }
+        license: { type: string }
+        domain: { type: array, items: { type: string } }
+        inferenceEndPoint: { $ref: "#/components/schemas/InferenceEndPoint" }
+        benchmarks: { type: array, items: { $ref: "#/components/schemas/Benchmark" } }
+        submitter: { $ref: "#/components/schemas/Submitter" }
+    # ----- Service schemas -----
+    ServiceStatus:
+      type: object
+      properties:
+        status: { type: string }
+        lastUpdated: { type: string }
+    BenchmarkEntry:
+      type: object
+      properties:
+        output_length: { type: integer }
+        generated: { type: integer }
+        actual: { type: integer }
+        throughput: { type: integer }
+        p50: { type: number }
+        p99: { type: number }
+        language: { type: string }
+    ServiceCreateRequest:
+      type: object
+      required: [name, serviceDescription, hardwareDescription, modelId, modelVersion, endpoint, api_key]
+      properties:
+        name: { type: string, description: "Alphanumeric, hyphen, slash only" }
+        serviceDescription: { type: string }
+        hardwareDescription: { type: string }
+        publishedOn: { type: integer }
+        modelId: { type: string }
+        modelVersion: { type: string }
+        endpoint: { type: string }
+        api_key: { type: string }
+        healthStatus: { $ref: "#/components/schemas/ServiceStatus" }
+        benchmarks: { type: object, additionalProperties: { type: array, items: { $ref: "#/components/schemas/BenchmarkEntry" } } }
+        isPublished: { type: boolean, default: false }
+    LanguagePair:
+      type: object
+      properties:
+        sourceLanguage: { type: string }
+        sourceScriptCode: { type: string }
+        targetLanguage: { type: string }
+        targetScriptCode: { type: string }
+    ServiceUpdateRequest:
+      type: object
+      required: [serviceId]
+      properties:
+        serviceId: { type: string }
+        serviceDescription: { type: string }
+        hardwareDescription: { type: string }
+        publishedOn: { type: integer }
+        endpoint: { type: string }
+        api_key: { type: string }
+        languagePair: { $ref: "#/components/schemas/LanguagePair" }
+        healthStatus: { $ref: "#/components/schemas/ServiceStatus" }
+        benchmarks: { type: object }
+        isPublished: { type: boolean }
+      description: "name, modelId, modelVersion are not updatable"
+    ServiceListResponse:
+      type: object
+      properties:
+        serviceId: { type: string }
+        uuid: { type: string }
+        name: { type: string }
+        serviceDescription: { type: string }
+        hardwareDescription: { type: string }
+        publishedOn: { type: integer }
+        modelId: { type: string }
+        endpoint: { type: string }
+        api_key: { type: string }
+        healthStatus: { $ref: "#/components/schemas/ServiceStatus" }
+        benchmarks: { type: object }
+        isPublished: { type: boolean }
+        createdBy: { type: string }
+        updatedBy: { type: string }
+        task: { $ref: "#/components/schemas/TaskResponse" }
+        languages: { type: array, items: { type: object } }
+        modelVersion: { type: string }
+        versionStatus: { type: string }
+    ServiceHeartbeatRequest:
+      type: object
+      required: [status]
+      properties:
+        serviceId: { type: string, description: "Optional when sent to .../services/{service_id}/health (path overrides)" }
+        status: { type: string }
+    # ----- Experiment schemas -----
+    ExperimentVariantRequest:
+      type: object
+      required: [variant_name, service_id, traffic_percentage]
+      properties:
+        variant_name: { type: string, description: "e.g. 'control', 'variant-a'" }
+        service_id: { type: string }
+        traffic_percentage: { type: integer, minimum: 0, maximum: 100 }
+        description: { type: string }
+    ExperimentVariantResponse:
+      type: object
+      properties:
+        id: { type: string }
+        variant_name: { type: string }
+        service_id: { type: string }
+        traffic_percentage: { type: integer }
+        description: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ExperimentCreateRequest:
+      type: object
+      required: [name, variants]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        description: { type: string }
+        task_type: { type: array, items: { type: string }, description: "e.g. ['asr', 'tts']" }
+        languages: { type: array, items: { type: string }, description: "e.g. ['hi', 'en']" }
+        start_date: { type: string, format: date-time }
+        end_date: { type: string, format: date-time }
+        variants:
+          type: array
+          minItems: 2
+          items:
+            $ref: "#/components/schemas/ExperimentVariantRequest"
+    ExperimentUpdateRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        description: { type: string }
+        task_type: { type: array, items: { type: string } }
+        languages: { type: array, items: { type: string } }
+        start_date: { type: string, format: date-time }
+        end_date: { type: string, format: date-time }
+        variants: { type: array, items: { $ref: "#/components/schemas/ExperimentVariantRequest" } }
+    ExperimentStatusUpdateRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [start, stop, pause, resume, cancel]
+          description: "start=DRAFT→RUNNING, stop=RUNNING→COMPLETED, pause/resume, cancel→CANCELLED"
+    ExperimentResponse:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        status: { type: string }
+        task_type: { type: array, items: { type: string } }
+        languages: { type: array, items: { type: string } }
+        start_date: { type: string, format: date-time }
+        end_date: { type: string, format: date-time }
+        created_by: { type: string }
+        updated_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        variants: { type: array, items: { $ref: "#/components/schemas/ExperimentVariantResponse" } }
+    ExperimentListResponse:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        status: { type: string }
+        task_type: { type: array, items: { type: string } }
+        languages: { type: array, items: { type: string } }
+        start_date: { type: string, format: date-time }
+        end_date: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        variant_count: { type: integer }
+    ExperimentVariantSelectionRequest:
+      type: object
+      required: [task_type]
+      properties:
+        task_type: { type: string, description: "e.g. 'asr', 'tts'" }
+        language: { type: string }
+        request_id: { type: string }
+        user_id: { type: string }
+        service_id: { type: string, description: "When set, only experiments including this service as a variant are considered" }
+    ExperimentVariantSelectionResponse:
+      type: object
+      properties:
+        experiment_id: { type: string }
+        variant_id: { type: string }
+        variant_name: { type: string }
+        service_id: { type: string }
+        model_id: { type: string }
+        model_version: { type: string }
+        endpoint: { type: string }
+        api_key: { type: string }
+        is_experiment: { type: boolean, default: false }
+    ExperimentMetricsResponse:
+      type: object
+      properties:
+        experiment_id: { type: string }
+        variant_id: { type: string }
+        variant_name: { type: string }
+        request_count: { type: integer }
+        success_count: { type: integer }
+        error_count: { type: integer }
+        success_rate: { type: number }
+        avg_latency_ms: { type: integer }
+        custom_metrics: { type: object }
+        metric_date: { type: string, format: date }
+security:
+  - BearerAuth: []
