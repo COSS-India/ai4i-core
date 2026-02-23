@@ -1265,23 +1265,91 @@ async def _enforce_tenant_and_service_checks(http_request: Request, service_name
             raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant information"})
 
     # Next, ensure the service is globally active
+    # Multi-tenant endpoints only require Bearer token (not API key)
+    # Create headers with only Authorization for multi-tenant service check
+    service_check_headers = {}
+    if headers.get("Authorization") or headers.get("authorization"):
+        service_check_headers["Authorization"] = headers.get("Authorization") or headers.get("authorization")
+    # Don't forward X-API-Key or X-Auth-Source for multi-tenant endpoints
+    
+    # Increase timeout for production environments where network latency may be higher
+    timeout_duration = float(os.getenv("SERVICE_CHECK_TIMEOUT", "10.0"))
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            svc_resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/list/services", headers=headers)
+        async with httpx.AsyncClient(timeout=timeout_duration) as client:
+            svc_resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/list/services", headers=service_check_headers)
             if svc_resp.status_code == 200:
                 services = svc_resp.json().get("services", [])
                 svc_entry = next((s for s in services if str(s.get("service_name")).lower() == service_name.lower()), None)
                 if not svc_entry or not svc_entry.get("is_active", False):
                     raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message="TTS service is not active at the moment.Please contact your administrator").dict())
             else:
-                logger.warning("TTS: API_GATEWAY /list/services returned non-200", extra={"status_code": svc_resp.status_code, "text": svc_resp.text})
-                raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message="Cannot detect service availability. Please contact your administrator").dict())
-    except httpx.TimeoutException:
+                # Log detailed error information for debugging
+                error_detail = {
+                    "status_code": svc_resp.status_code,
+                    "response_text": svc_resp.text[:500],  # Limit response text to 500 chars
+                    "api_gateway_url": API_GATEWAY_URL,
+                    "headers_present": bool(headers),
+                    "has_auth_header": bool(headers.get("Authorization") or headers.get("authorization")),
+                    "has_api_key": bool(headers.get("X-API-Key") or headers.get("x-api-key"))
+                }
+                logger.error(
+                    f"TTS: API_GATEWAY /list/services returned non-200 status",
+                    extra=error_detail
+                )
+                
+                # Provide more specific error messages based on status code
+                if svc_resp.status_code == 401:
+                    error_message = "Authentication failed when checking service availability. Please verify your API key and token."
+                elif svc_resp.status_code == 403:
+                    error_message = "Access denied when checking service availability. Please verify your permissions."
+                elif svc_resp.status_code == 404:
+                    error_message = f"Service availability endpoint not found at {API_GATEWAY_URL}. Please contact your administrator."
+                elif svc_resp.status_code >= 500:
+                    error_message = f"API Gateway returned server error (status {svc_resp.status_code}). Please contact your administrator."
+                else:
+                    error_message = f"Cannot detect service availability (status {svc_resp.status_code}). Please contact your administrator."
+                
+                raise HTTPException(
+                    status_code=503,
+                    detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message=error_message).dict()
+                )
+    except httpx.TimeoutException as e:
+        logger.error(
+            f"TTS: Timeout when checking service availability for '{service_name}'",
+            extra={
+                "api_gateway_url": API_GATEWAY_URL,
+                "timeout": timeout_duration,
+                "error": str(e)
+            }
+        )
         raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message=SERVICE_UNAVAILABLE_TTS_MESSAGE).dict())
+    except httpx.ConnectError as e:
+        logger.error(
+            f"TTS: Connection error when checking service availability for '{service_name}'",
+            extra={
+                "api_gateway_url": API_GATEWAY_URL,
+                "error": str(e)
+            }
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=ErrorDetail(
+                code=SERVICE_UNAVAILABLE,
+                message=f"Cannot connect to API Gateway at {API_GATEWAY_URL}. Please contact your administrator."
+            ).dict()
+        )
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning(f"Failed to verify service active state for '{service_name}': {e}")
+        logger.error(
+            f"Failed to verify service active state for '{service_name}'",
+            extra={
+                "api_gateway_url": API_GATEWAY_URL,
+                "error_type": type(e).__name__,
+                "error": str(e)
+            },
+            exc_info=True
+        )
         raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message=SERVICE_UNAVAILABLE_TTS_MESSAGE).dict())
 
     # Finally, if tenant context present, enforce tenant status (must be ACTIVE)
@@ -1465,31 +1533,35 @@ async def run_inference(
                         fallback_triton_client = TritonClient(triton_url, triton_api_key)
                         
                         # Get database session for fallback service
-                        fallback_db = await get_tenant_db_session(http_request)
-                        fallback_repository = TTSRepository(fallback_db)
-                        fallback_audio_service = AudioService()
-                        fallback_text_service = TextService()
-                        fallback_tts_service = TTSService(
-                            fallback_repository,
-                            fallback_audio_service,
-                            fallback_text_service,
-                            fallback_triton_client,
-                            resolved_model_name=triton_model_name
-                        )
-                        
-                        # Retry inference with fallback service
-                        logger.info(
-                            "TTS: Retrying inference with fallback service",
-                            extra={"fallback_service_id": fallback_service_id}
-                        )
-                        
-                        response = await fallback_tts_service.run_inference(
-                            request=request,
-                            user_id=user_id,
-                            api_key_id=api_key_id,
-                            session_id=session_id,
-                            http_request_state=http_request.state
-                        )
+                        # Use async for to properly manage the generator lifecycle
+                        # The generator's finally block will close the session automatically
+                        async for fallback_db in get_tenant_db_session(http_request):
+                            fallback_repository = TTSRepository(fallback_db)
+                            fallback_audio_service = AudioService()
+                            fallback_text_service = TextService()
+                            fallback_tts_service = TTSService(
+                                fallback_repository,
+                                fallback_audio_service,
+                                fallback_text_service,
+                                fallback_triton_client,
+                                resolved_model_name=triton_model_name
+                            )
+                            
+                            # Retry inference with fallback service
+                            logger.info(
+                                "TTS: Retrying inference with fallback service",
+                                extra={"fallback_service_id": fallback_service_id}
+                            )
+                            
+                            response = await fallback_tts_service.run_inference(
+                                request=request,
+                                user_id=user_id,
+                                api_key_id=api_key_id,
+                                session_id=session_id,
+                                http_request_state=http_request.state
+                            )
+                            # Break after successful inference - generator will close session in finally block
+                            break
                         
                         using_fallback = True
                         

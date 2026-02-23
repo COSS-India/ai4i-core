@@ -94,9 +94,9 @@ const ALERT_TYPES_BY_CATEGORY: Record<string, { value: string; label: string }[]
     { value: "error_rate", label: "Error Rate" },
   ],
   infrastructure: [
-    { value: "cpu", label: "CPU" },
-    { value: "memory", label: "Memory" },
-    { value: "gpu", label: "GPU" },
+    { value: "CPU", label: "CPU" },
+    { value: "Memory", label: "Memory" },
+    { value: "Disk", label: "Disk" },
   ],
 };
 const THRESHOLD_UNITS = ["Seconds", "Percentage"] as const;
