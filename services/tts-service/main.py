@@ -154,7 +154,13 @@ async def lifespan(app: FastAPI):
             database_url,
             pool_size=db_pool_size,
             max_overflow=db_max_overflow,
-            echo=False
+            pool_pre_ping=True,  # Test connections before using them
+            pool_recycle=3600,   # Recycle connections after 1 hour to prevent stale connections
+            echo=False,
+            connect_args={
+                "timeout": 30,
+                "command_timeout": 30,
+            }
         )
         
         # Create async session factory
