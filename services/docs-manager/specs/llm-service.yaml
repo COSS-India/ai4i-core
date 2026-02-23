@@ -9,7 +9,31 @@ servers:
     description: API Gateway
 tags:
   - name: LLM
+  - name: Health
 paths:
+  /api/v1/llm/health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Check service health and dependencies (Redis, PostgreSQL, Triton).
+      security: []
+      responses:
+        "200":
+          description: Service and dependencies are healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: "healthy" }
+                  service: { type: string, example: "llm-service" }
+                  version: { type: string }
+                  redis: { type: string, description: "Redis status" }
+                  postgres: { type: string, description: "PostgreSQL status" }
+                  triton: { type: string, description: "Triton inference server status" }
+                  timestamp: { type: number }
+        "503":
+          description: Service or a dependency is unhealthy
   /api/v1/llm/inference:
     post:
       tags: [LLM]

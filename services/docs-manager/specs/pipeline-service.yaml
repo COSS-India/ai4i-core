@@ -27,13 +27,6 @@ paths:
         "200": { description: Pipeline result }
         "400": { description: Bad request or pipeline error }
         "401": { description: Unauthorized }
-  /api/v1/pipeline/info:
-    get:
-      tags: [Pipeline]
-      summary: Get Pipeline Info
-      description: Pipeline service capabilities and supported task types.
-      responses:
-        "200": { description: Service info and example pipelines }
   /api/v1/pipeline/health:
     get:
       tags: [Pipeline]

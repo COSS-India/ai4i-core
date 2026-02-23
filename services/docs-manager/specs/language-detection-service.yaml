@@ -26,20 +26,6 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/LanguageDetectionInferenceResponse" }
         "401": { description: Unauthorized }
-  /api/v1/language-detection/models:
-    get:
-      tags: [Language Detection]
-      summary: List models
-      security: [{ BearerAuth: [] }]
-      responses:
-        "200": { description: List of models }
-  /api/v1/language-detection/languages:
-    get:
-      tags: [Language Detection]
-      summary: List languages
-      security: [{ BearerAuth: [] }]
-      responses:
-        "200": { description: List of languages }
   /api/v1/language-detection/health:
     get:
       tags: [Language Detection]
