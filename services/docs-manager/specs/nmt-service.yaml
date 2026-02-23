@@ -20,7 +20,7 @@ paths:
   /api/v1/nmt/inference:
     post:
       tags: [NMT]
-      summary: Batch NMT inference
+      summary: NMT inference
       description: Translate one or more text inputs (max 90). Request body matches ULCA-style config.
       operationId: nmtInference
       security:
@@ -46,65 +46,6 @@ paths:
           $ref: "#/components/responses/RateLimitExceeded"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
-
-  /api/v1/nmt/batch-translate:
-    post:
-      tags: [NMT]
-      summary: Batch translate
-      description: Alternative batch translation endpoint.
-      operationId: nmtBatchTranslate
-      security:
-        - BearerAuth: []
-      requestBody:
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        "200":
-          description: Translation result
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/nmt/languages:
-    get:
-      tags: [NMT]
-      summary: List supported languages
-      operationId: nmtLanguages
-      security:
-        - BearerAuth: []
-      responses:
-        "200":
-          description: Language list
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/nmt/models:
-    get:
-      tags: [NMT]
-      summary: List NMT models
-      operationId: nmtModels
-      security:
-        - BearerAuth: []
-      responses:
-        "200":
-          description: List of models
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /api/v1/nmt/services:
-    get:
-      tags: [NMT]
-      summary: List NMT services
-      operationId: nmtServices
-      security:
-        - BearerAuth: []
-      responses:
-        "200":
-          description: List of services
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
   /api/v1/nmt/health:
     get:
       tags: [NMT]
