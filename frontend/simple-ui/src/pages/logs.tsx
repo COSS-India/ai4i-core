@@ -1429,4 +1429,3 @@ const LogsPage: React.FC = () => {
 };
 
 export default LogsPage;
-
