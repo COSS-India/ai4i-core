@@ -9,6 +9,49 @@ import { useTokenRefresh } from './useTokenRefresh';
 // Broadcast auth state changes so other hook instances (e.g., Header) can react immediately
 const AUTH_UPDATED_EVENT = 'auth:updated';
 
+// Shared init promise: only one getCurrentUser() + listApiKeys() run for all useAuth() instances.
+// This prevents N components (Header, Sidebar, AuthGuard, pages, useFeatureFlag hooks) from each
+// calling auth/me and listApiKeys on every load.
+let authInitPromise: Promise<void> | null = null;
+
+function runAuthInitOnce(): Promise<void> {
+  if (authInitPromise !== null) return authInitPromise;
+  authInitPromise = (async () => {
+    const storedUser = authService.getStoredUser();
+    const hasToken = authService.isAuthenticated();
+
+    if (hasToken && storedUser) {
+      try {
+        const currentUser = await authService.getCurrentUser();
+        authService.setStoredUser(currentUser);
+        try {
+          const apiKeyList = await authService.listApiKeys();
+          authService.applyApiKeyListToStorage(apiKeyList);
+        } catch {
+          // Non-blocking; user can set key in profile
+        }
+      } catch (error: any) {
+        const errorMessage = error?.message || 'Token validation failed';
+        console.log('Token validation failed during initialization:', errorMessage);
+        if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+          console.warn('Auth service timeout during initialization - clearing auth state silently');
+        }
+        authService.clearAuthTokens();
+        authService.clearStoredUser();
+        authInitPromise = null; // Allow re-init after next login in same session
+      }
+    } else {
+      if (!hasToken) authService.clearStoredUser();
+    }
+  })();
+  return authInitPromise;
+}
+
+// Reset shared init so that after logout a future load can run init again (e.g. new login).
+export function resetAuthInitPromise(): void {
+  authInitPromise = null;
+}
+
 export const useAuth = () => {
   const [authState, setAuthState] = useState<AuthState>({
     user: null,
@@ -26,7 +69,7 @@ export const useAuth = () => {
     refreshThresholdMinutes: 5, // Refresh if token expires within 5 minutes
   });
 
-  // Initialize auth state
+  // Initialize auth state (shared init: only one auth/me + listApiKeys for all hook instances)
   useEffect(() => {
     const handleAuthUpdated = () => {
       try {
@@ -46,90 +89,33 @@ export const useAuth = () => {
       }
     };
 
-    // Listen for cross-component auth updates
+    // Listen for cross-component auth updates (login/logout from another component)
     if (typeof window !== 'undefined') {
       window.addEventListener(AUTH_UPDATED_EVENT, handleAuthUpdated as EventListener);
     }
 
+    const syncStateFromAuthService = () => {
+      const storedUser = authService.getStoredUser();
+      const hasToken = authService.isAuthenticated();
+      setAuthState({
+        user: storedUser,
+        accessToken: authService.getAccessToken(),
+        refreshToken: authService.getRefreshToken(),
+        isAuthenticated: !!hasToken && !!storedUser,
+        isLoading: false,
+        error: null,
+      });
+    };
+
     const initializeAuth = async () => {
       try {
-        const storedUser = authService.getStoredUser();
-        const hasToken = authService.isAuthenticated();
-
-        // Only restore auth state if we have BOTH a valid token AND user data
-        if (hasToken && storedUser) {
-          // Verify token is still valid by calling /me endpoint
-          // The getCurrentUser method now has a 20 second timeout built-in
-          try {
-            const currentUser = await authService.getCurrentUser();
-            
-            // Token is valid and we got user data
-            setAuthState({
-              user: currentUser, // Use fresh user data from API
-              accessToken: authService.getAccessToken(),
-              refreshToken: authService.getRefreshToken(),
-              isAuthenticated: true,
-              isLoading: false,
-              error: null,
-            });
-            // Update stored user with fresh data
-            authService.setStoredUser(currentUser);
-            // Restore selected API key to localStorage for use in services
-            try {
-              const apiKeyList = await authService.listApiKeys();
-              authService.applyApiKeyListToStorage(apiKeyList);
-            } catch {
-              // Non-blocking; user can set key in profile
-            }
-          } catch (error: any) {
-            // Token is invalid or expired, or request timed out - clear everything
-            const errorMessage = error?.message || 'Token validation failed';
-            console.log('Token validation failed during initialization:', errorMessage);
-            
-            // If it's a timeout, log it but don't show error to user (silent fail)
-            // This prevents showing errors on every page load if service is slow
-            if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
-              console.warn('Auth service timeout during initialization - clearing auth state silently');
-            }
-            
-            authService.clearAuthTokens();
-            authService.clearStoredUser();
-            setAuthState({
-              user: null,
-              accessToken: null,
-              refreshToken: null,
-              isAuthenticated: false,
-              isLoading: false,
-              error: null, // Don't set error on init timeout - let user try to login
-            });
-          }
-        } else {
-          // No token or no user data - ensure everything is cleared
-          if (!hasToken) {
-            authService.clearStoredUser();
-          }
-          setAuthState({
-            user: null,
-            accessToken: null,
-            refreshToken: null,
-            isAuthenticated: false,
-            isLoading: false,
-            error: null,
-          });
-        }
+        await runAuthInitOnce();
+        syncStateFromAuthService();
       } catch (error) {
         console.error('Auth initialization failed:', error);
-        // Clear everything on error
         authService.clearAuthTokens();
         authService.clearStoredUser();
-        setAuthState({
-          user: null,
-          accessToken: null,
-          refreshToken: null,
-          isAuthenticated: false,
-          isLoading: false,
-          error: null,
-        });
+        syncStateFromAuthService();
       }
     };
 
@@ -305,6 +291,7 @@ export const useAuth = () => {
 
       // Clear stored user data
       authService.clearStoredUser();
+      resetAuthInitPromise();
 
       // Broadcast auth update so UI reflects logout without manual refresh
       if (typeof window !== 'undefined') {
@@ -324,6 +311,7 @@ export const useAuth = () => {
         error: null,
       });
       authService.clearStoredUser();
+      resetAuthInitPromise();
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent(AUTH_UPDATED_EVENT));
