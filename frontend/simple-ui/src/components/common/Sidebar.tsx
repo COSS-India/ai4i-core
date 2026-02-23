@@ -409,6 +409,10 @@ const Sidebar: React.FC = () => {
   // Filter top nav items (Home and Model Management)
   const topItems = topNavItems.filter((item) => {
     if (item.id === "home") return true;
+    // Hide traces for all users
+    if (item.id === "traces") {
+      return false;
+    }
     // Hide Model Management and Services Management for GUEST and USER users
     if ((isGuest || isUser) && (item.id === "model-management" || item.id === "services-management")) {
       return false;
