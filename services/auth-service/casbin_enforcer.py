@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from models import Role, Permission, RolePermission, UserRole
+from services.constants import get_resource_name
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,10 @@ async def check_apikey_permission(
     We map each permission into a temporary policy for subject 'apikey:<id>'.
     This keeps code ready for a future DB-backed policy store without changing
     enforcement call sites.
+    
+    Note: Permission service names may use hyphens (e.g., 'audio-lang-detection'),
+    but resource names use underscores (e.g., 'audio_lang_detection'). We normalize
+    permission service names to match resource name format for consistent checking.
     """
     e = get_enforcer()
     sub = f"apikey:{api_key_id}"
@@ -146,12 +151,16 @@ async def check_apikey_permission(
     for rule in list(existing):
         e.remove_policy(*rule)
 
-    # Add current permissions as policies
+    # Add current permissions as policies, normalizing service names to resource names
+    # Permissions in database use hyphens (e.g., "audio-lang-detection.inference")
+    # but resource names for checking use underscores (e.g., "audio_lang_detection")
     for perm in permissions:
         if "." not in perm:
             continue
         service, action = perm.split(".", 1)
-        e.add_policy(sub, tenant, service, action)
+        # Normalize service name to resource name format (hyphens -> underscores)
+        resource = get_resource_name(service)
+        e.add_policy(sub, tenant, resource, action)
 
     return e.enforce(sub, tenant, obj, act)
 
