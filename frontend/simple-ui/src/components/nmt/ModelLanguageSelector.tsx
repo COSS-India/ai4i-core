@@ -19,6 +19,7 @@ import { useQuery } from '@tanstack/react-query';
 import { LanguageSelectorProps } from '../../types/nmt';
 import { listNMTServices, getNMTLanguagesForService } from '../../services/nmtService';
 import { NMTServiceDetailsResponse, NMTLanguagesResponse } from '../../types/nmt';
+import { useAuth } from '../../hooks/useAuth';
 
 interface ModelLanguageSelectorProps extends LanguageSelectorProps {
   selectedServiceId?: string;
@@ -41,10 +42,11 @@ const ModelLanguageSelector: React.FC<ModelLanguageSelectorProps> = ({
   const [currentServiceId, setCurrentServiceId] = useState<string>(selectedServiceId || '');
   const [availableLanguages, setAvailableLanguages] = useState<string[]>([]);
   const [languageDetails, setLanguageDetails] = useState<Array<{code: string; name: string}>>([]);
+  const { isAuthenticated } = useAuth();
 
-  // Fetch available services
+  // Fetch available services (key includes auth so we refetch after login and get published list, not cached anonymous IndicTrans)
   const { data: services, isLoading: servicesLoading } = useQuery({
-    queryKey: ['nmt-services'],
+    queryKey: ['nmt-services', isAuthenticated],
     queryFn: listNMTServices,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
