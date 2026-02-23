@@ -135,7 +135,7 @@ export const listASRModels = async (): Promise<ASRModelsResponse> => {
 export const listASRServices = async (): Promise<ASRServiceDetails[]> => {
   try {
     // Fetch services from model management service filtered by task_type='asr'
-    const services = await listServices('asr');
+    const services = await listServices('asr', true);
     const seen = new Set<string>();
 
     // Transform model management service response to ASRServiceDetails format
