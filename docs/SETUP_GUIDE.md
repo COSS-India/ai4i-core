@@ -185,7 +185,7 @@ Check the status of all services:
 docker compose -f docker-compose-local.yml ps
 ```
 
-All services should show as "Up" or "healthy". Services may take 30-60 seconds to become healthy after starting.
+All services should show as "Up" or "healthy". Services may take 30-60 seconds to become healthy after starting. If any containers stay in **Created** state or you see other errors, see [Troubleshooting](#containers-in-created-state) for help.
 
 ### View Logs (Optional)
 
