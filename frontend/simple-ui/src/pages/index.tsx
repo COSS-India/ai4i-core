@@ -34,7 +34,7 @@ import {
 } from "react-icons/io5";
 import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
-import { useFeatureFlag } from "../hooks/useFeatureFlag";
+import { useFeatureFlagsBulk, ALL_UI_FEATURE_FLAG_NAMES } from "../hooks/useFeatureFlag";
 import DoubleMicrophoneIcon from "../components/common/DoubleMicrophoneIcon";
 
 const safeColorMap:any = {
@@ -159,131 +159,122 @@ const HomePage: React.FC = () => {
     router.push(path);
   };
 
-  // Feature flags for each service
-  const asrEnabled = useFeatureFlag({ flagName: "asr-enabled" });
-  const ttsEnabled = useFeatureFlag({ flagName: "tts-enabled" });
-  const nmtEnabled = useFeatureFlag({ flagName: "nmt-enabled" });
-  const llmEnabled = useFeatureFlag({ flagName: "llm-enabled" });
-  const pipelineEnabled = useFeatureFlag({ flagName: "pipeline-enabled" });
-  const modelManagementEnabled = useFeatureFlag({ flagName: "model-management-enabled" });
-  const ocrEnabled = useFeatureFlag({ flagName: "ocr-enabled" });
-  const transliterationEnabled = useFeatureFlag({ flagName: "transliteration-enabled" });
-  const languageDetectionEnabled = useFeatureFlag({ flagName: "language-detection-enabled" });
-  const speakerDiarizationEnabled = useFeatureFlag({ flagName: "speaker-diarization-enabled" });
-  const languageDiarizationEnabled = useFeatureFlag({ flagName: "language-diarization-enabled" });
-  const audioLanguageDetectionEnabled = useFeatureFlag({ flagName: "audio-language-detection-enabled" });
-  const nerEnabled = useFeatureFlag({ flagName: "ner-enabled" });
+  // Single bulk request shared with Sidebar (same queryKey = one request for whole app)
+  const { flags, isLoading: flagsLoading } = useFeatureFlagsBulk({
+    flagNames: [...ALL_UI_FEATURE_FLAG_NAMES],
+    defaultValue: true,
+  });
 
-const services = [
-  {
-    id: "asr",
-    title: "Automatic Speech Recognition (ASR)",
-    description: "Convert spoken audio into accurate text in multiple Indic languages.",
-    icon: FaMicrophone,
-    path: "/asr",
-    color: "orange",
-    enabled: asrEnabled.isEnabled,
-  },
-  {
-    id: "tts",
-    title: "Text-to-Speech (TTS)",
-    description: "Generate natural-sounding speech from text in various Indic languages.",
-    icon: IoVolumeHighOutline,
-    path: "/tts",
-    color: "blue",
-    enabled: ttsEnabled.isEnabled,
-  },
-  {
-    id: "nmt",
-    title: "Neural Machine Translation (NMT)",
-    description: "Translate text instantly between 22+ Indic languages.",
-    icon: IoLanguageOutline,
-    path: "/nmt",
-    color: "green",
-    enabled: nmtEnabled.isEnabled,
-  },
-  {
-    id: "llm",
-    title: "Large Language Model (LLM)",
-    description: "Use advanced AI models for contextual translation and language tasks.",
-    icon: IoSparklesOutline,
-    path: "/llm",
-    color: "pink",
-    enabled: llmEnabled.isEnabled,
-  },
-  {
-    id: "pipeline",
-    title: "Speech to Speech\nPipeline",
-    description: "Create workflows by chaining together multiple AI language services.",
-    icon: DoubleMicrophoneIcon,
-    path: "/pipeline",
-    color: "purple",
-    enabled: pipelineEnabled.isEnabled,
-  },
-  {
-    id: "ocr",
-    title: "Optical Character Recognition (OCR)",
-    description: "Extract editable text from images, scanned documents, and photos.",
-    icon: IoDocumentTextOutline,
-    path: "/ocr",
-    color: "indigo",
-    enabled: ocrEnabled.isEnabled,
-  },
-  {
-    id: "transliteration",
-    title: "Transliteration Service",
-    description: "Convert text from one script to another while keeping pronunciation intact.",
-    icon: IoSwapHorizontalOutline,
-    path: "/transliteration",
-    color: "cyan",
-    enabled: transliterationEnabled.isEnabled,
-  },
-  {
-    id: "language-detection",
-    title: "Language Detection",
-    description: "Automatically identify the language and script of any given text.",
-    icon: IoGlobeOutline,
-    path: "/language-detection",
-    color: "teal",
-    enabled: languageDetectionEnabled.isEnabled,
-  },
-  {
-    id: "speaker-diarization",
-    title: "Speaker Diarization",
-    description: "Separate conversations into segments based on who is speaking.",
-    icon: IoPeopleOutline,
-    path: "/speaker-diarization",
-    color: "red",
-    enabled: speakerDiarizationEnabled.isEnabled,
-  },
-  {
-    id: "language-diarization",
-    title: "Language Diarization",
-    description: "Identify when language changes occur within spoken audio.",
-    icon: IoLanguageOutline,
-    path: "/language-diarization",
-    color: "yellow",
-    enabled: languageDiarizationEnabled.isEnabled,
-  },
-  {
-    id: "audio-language-detection",
-    title: "Audio Language Detection",
-    description: "Detect the spoken language directly from an audio file.",
-    icon: IoRadioOutline,
-    path: "/audio-language-detection",
-    color: "gray",
-    enabled: audioLanguageDetectionEnabled.isEnabled,
-  },
-  {
-    id: "ner",
-    title: "Named Entity Recognition (NER)",
-    description: "Identify key entities like names, locations, and organizations in text.",
-    icon: IoPricetagOutline,
-    path: "/ner",
-    color: "rose",
-    enabled: nerEnabled.isEnabled,
-  },
-].filter((service) => service.enabled);
+  const services = [
+    {
+      id: "asr",
+      title: "Automatic Speech Recognition (ASR)",
+      description: "Convert spoken audio into accurate text in multiple Indic languages.",
+      icon: FaMicrophone,
+      path: "/asr",
+      color: "orange",
+      enabled: flags["asr-enabled"] ?? true,
+    },
+    {
+      id: "tts",
+      title: "Text-to-Speech (TTS)",
+      description: "Generate natural-sounding speech from text in various Indic languages.",
+      icon: IoVolumeHighOutline,
+      path: "/tts",
+      color: "blue",
+      enabled: flags["tts-enabled"] ?? true,
+    },
+    {
+      id: "nmt",
+      title: "Neural Machine Translation (NMT)",
+      description: "Translate text instantly between 22+ Indic languages.",
+      icon: IoLanguageOutline,
+      path: "/nmt",
+      color: "green",
+      enabled: flags["nmt-enabled"] ?? true,
+    },
+    {
+      id: "llm",
+      title: "Large Language Model (LLM)",
+      description: "Use advanced AI models for contextual translation and language tasks.",
+      icon: IoSparklesOutline,
+      path: "/llm",
+      color: "pink",
+      enabled: flags["llm-enabled"] ?? true,
+    },
+    {
+      id: "pipeline",
+      title: "Speech to Speech\nPipeline",
+      description: "Create workflows by chaining together multiple AI language services.",
+      icon: DoubleMicrophoneIcon,
+      path: "/pipeline",
+      color: "purple",
+      enabled: flags["pipeline-enabled"] ?? true,
+    },
+    {
+      id: "ocr",
+      title: "Optical Character Recognition (OCR)",
+      description: "Extract editable text from images, scanned documents, and photos.",
+      icon: IoDocumentTextOutline,
+      path: "/ocr",
+      color: "indigo",
+      enabled: flags["ocr-enabled"] ?? true,
+    },
+    {
+      id: "transliteration",
+      title: "Transliteration Service",
+      description: "Convert text from one script to another while keeping pronunciation intact.",
+      icon: IoSwapHorizontalOutline,
+      path: "/transliteration",
+      color: "cyan",
+      enabled: flags["transliteration-enabled"] ?? true,
+    },
+    {
+      id: "language-detection",
+      title: "Language Detection",
+      description: "Automatically identify the language and script of any given text.",
+      icon: IoGlobeOutline,
+      path: "/language-detection",
+      color: "teal",
+      enabled: flags["language-detection-enabled"] ?? true,
+    },
+    {
+      id: "speaker-diarization",
+      title: "Speaker Diarization",
+      description: "Separate conversations into segments based on who is speaking.",
+      icon: IoPeopleOutline,
+      path: "/speaker-diarization",
+      color: "red",
+      enabled: flags["speaker-diarization-enabled"] ?? true,
+    },
+    {
+      id: "language-diarization",
+      title: "Language Diarization",
+      description: "Identify when language changes occur within spoken audio.",
+      icon: IoLanguageOutline,
+      path: "/language-diarization",
+      color: "yellow",
+      enabled: flags["language-diarization-enabled"] ?? true,
+    },
+    {
+      id: "audio-language-detection",
+      title: "Audio Language Detection",
+      description: "Detect the spoken language directly from an audio file.",
+      icon: IoRadioOutline,
+      path: "/audio-language-detection",
+      color: "gray",
+      enabled: flags["audio-language-detection-enabled"] ?? true,
+    },
+    {
+      id: "ner",
+      title: "Named Entity Recognition (NER)",
+      description: "Identify key entities like names, locations, and organizations in text.",
+      icon: IoPricetagOutline,
+      path: "/ner",
+      color: "rose",
+      enabled: flags["ner-enabled"] ?? true,
+    },
+  ].filter((service) => flagsLoading || service.enabled);
 
 
   return (
