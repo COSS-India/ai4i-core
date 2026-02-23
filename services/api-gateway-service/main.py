@@ -7461,6 +7461,7 @@ async def resolve_tenant_from_user(
 @app.get("/api/v1/observability/logs/search", tags=["Observability"])
 async def search_logs(
     request: Request,
+    tenant_id: Optional[str] = Query(None, description="Filter by tenant ID (admin only)"),
     service: Optional[str] = Query(None, description="Filter by service name"),
     level: Optional[str] = Query(None, description="Filter by log level (INFO, WARN, ERROR, DEBUG)"),
     search_text: Optional[str] = Query(None, description="Search text in log messages"),
@@ -7476,8 +7477,14 @@ async def search_logs(
     
     Requires 'logs.read' permission.
     Admin users see all logs, normal users see only their tenant's logs.
+    
+    The tenant_id parameter can only be used by admin users to filter logs for a specific tenant.
+    If provided by a non-admin user, it will be rejected with a 403 error.
+    
+    Note: In production with APISIX/Kong, this endpoint may not be used as requests go directly to telemetry-service.
+    This is kept for development/testing environments that still use the API gateway.
     """
-    return await proxy_to_service(request, "/api/v1/observability/logs/search", "telemetry-service")
+    return await proxy_to_service(request, "/api/v1/telemetry/logs/search", "telemetry-service")
 
 
 @app.get("/api/v1/observability/logs/aggregate", tags=["Observability"])
@@ -7494,7 +7501,7 @@ async def get_log_aggregations(
     Requires 'logs.read' permission.
     Returns total logs, error count, warning count, breakdown by level and service.
     """
-    return await proxy_to_service(request, "/api/v1/observability/logs/aggregate", "telemetry-service")
+    return await proxy_to_service(request, "/api/v1/telemetry/logs/aggregate", "telemetry-service")
 
 
 @app.get("/api/v1/observability/logs/services", tags=["Observability"])
@@ -7511,7 +7518,7 @@ async def get_log_services(
     Requires 'logs.read' permission.
     Admin users see all services, normal users see only services registered to their tenant.
     """
-    return await proxy_to_service(request, "/api/v1/observability/logs/services", "telemetry-service")
+    return await proxy_to_service(request, "/api/v1/telemetry/logs/services", "telemetry-service")
 
 
 @app.get("/api/v1/observability/traces/search", tags=["Observability"])
@@ -7531,7 +7538,7 @@ async def search_traces(
     Requires 'traces.read' permission.
     Admin users see all traces, normal users see only their organization's traces.
     """
-    return await proxy_to_service(request, "/api/v1/observability/traces/search", "telemetry-service")
+    return await proxy_to_service(request, "/api/v1/telemetry/traces/search", "telemetry-service")
 
 
 @app.get("/api/v1/observability/traces/{trace_id}", tags=["Observability"])
@@ -7547,7 +7554,7 @@ async def get_trace_by_id(
     Requires 'traces.read' permission.
     Returns 404 if trace not found or not accessible.
     """
-    return await proxy_to_service(request, f"/api/v1/observability/traces/{trace_id}", "telemetry-service")
+    return await proxy_to_service(request, f"/api/v1/telemetry/traces/{trace_id}", "telemetry-service")
 
 
 @app.get("/api/v1/observability/traces/services", tags=["Observability"])
@@ -7561,7 +7568,7 @@ async def get_trace_services(
     
     Requires 'traces.read' permission.
     """
-    return await proxy_to_service(request, "/api/v1/observability/traces/services", "telemetry-service")
+    return await proxy_to_service(request, "/api/v1/telemetry/traces/services", "telemetry-service")
 
 
 @app.get("/api/v1/observability/traces/services/{service}/operations", tags=["Observability"])
@@ -7576,7 +7583,7 @@ async def get_trace_operations(
     
     Requires 'traces.read' permission.
     """
-    return await proxy_to_service(request, f"/api/v1/observability/traces/services/{service}/operations", "telemetry-service")
+    return await proxy_to_service(request, f"/api/v1/telemetry/traces/services/{service}/operations", "telemetry-service")
 
 
 # Helper function to proxy requests to auth service
