@@ -243,7 +243,6 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
                     t.status
                 FROM tenants t
                 WHERE t.user_id = :user_id
-                AND t.status = 'ACTIVE'
                 LIMIT 1
             """)
 
@@ -251,13 +250,13 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
             row = result.fetchone()
 
             if row:
-                # User is a tenant admin
+                # User is a tenant admin — return tenant info regardless of tenant status
                 return {
                     "tenant_id": row[0],
                     "tenant_uuid": str(row[1]),
                     "schema_name": row[2],
                     "subscriptions": row[3] if row[3] else [],
-                    "user_subscriptions": row[4] if row[4] else [],
+                    "user_subscriptions": [],  # tenant admin has no per-user subscriptions
                 }
         else:
             tenant_user_query = text("""
@@ -271,8 +270,6 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
                 FROM tenant_users tu
                 JOIN tenants t ON tu.tenant_uuid = t.id
                 WHERE tu.user_id = :user_id
-                AND t.status = 'ACTIVE'
-                AND tu.status = 'ACTIVE'
                 LIMIT 1
             """)
 
@@ -280,7 +277,7 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
             row = result.fetchone()
 
             if row:
-                # User is a tenant user
+                # User is a tenant user — return tenant info regardless of tenant/user status
                 return {
                     "tenant_id": row[0],
                     "tenant_uuid": str(row[1]),
@@ -720,6 +717,15 @@ async def login(
         logger.debug(f"Fetching tenant info for user_id={user.id}")
         tenant_info = await get_tenant_info(user.id, multi_tenant_db, user.is_tenant)
 
+        # Set tenant_id in logging context so it appears in all logs for this request
+        if tenant_info:
+            try:
+                from ai4icore_logging.context import set_tenant_id
+                set_tenant_id(tenant_info["tenant_id"])
+                logger.debug(f"Set tenant_id in logging context: {tenant_info['tenant_id']}")
+            except Exception as e:
+                logger.debug(f"Failed to set tenant_id in logging context: {e}")
+
         token_data = {
             "sub": str(user.id),
             "email": user.email,
@@ -845,32 +851,12 @@ async def login(
         
         logger.info(f"✅ User logged in successfully: email={user.email}, user_id={user.id}, ip={client_ip}")
         
-        # 🔍 Step 8: Build response (include tenant_id for tenant admins/users)
-        user_dict = {
-            "id": user.id,
-            "email": user.email,
-            "username": user.username,
-            "full_name": user.full_name,
-            "phone_number": user.phone_number,
-            "timezone": user.timezone,
-            "language": user.language,
-            "is_active": user.is_active,
-            "is_verified": user.is_verified,
-            "is_superuser": user.is_superuser,
-            "created_at": user.created_at,
-            "updated_at": user.updated_at,
-            "last_login": user.last_login,
-            "avatar_url": user.avatar_url,
-            "roles": user_roles,
-            "tenant_id": tenant_info["tenant_id"] if tenant_info else None,
-        }
-        
+        # 🔍 Step 8: Build response (only tokens, no user details)
         return LoginResponse(
             access_token=access_token,
             refresh_token=refresh_token,
             token_type="bearer",
             expires_in=int(access_token_expires.total_seconds()),
-            user=user_dict,
         )
         
     except HTTPException:

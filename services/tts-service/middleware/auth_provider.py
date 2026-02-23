@@ -444,6 +444,8 @@ async def AuthProvider(
         if auth_source == "BOTH":
             try:
                 # 1) Authenticate user via JWT
+                # If JWT verification fails (expired/invalid token), this will raise AuthenticationError
+                # which should be immediately re-raised to preserve the error message (e.g., "Authentication failed. Please log in again.")
                 bearer_result = await authenticate_bearer_token(request, authorization)
                 jwt_user_id = bearer_result.get("user_id")
 
@@ -462,8 +464,7 @@ async def AuthProvider(
                 try:
                     auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
                     auth_duration = time_module.time() - auth_start
-                    # Log removed - middleware handles request/response logging
-                    logger.debug(f"API key validation completed in {auth_duration:.3f}s for user_id={jwt_user_id}")
+                    logger.info(f"API key validation completed in {auth_duration:.3f}s for user_id={jwt_user_id}")
                     
                     # CRITICAL: Always check valid field - auth-service may return valid=false
                     if not auth_result.get("valid", False):
@@ -493,8 +494,15 @@ async def AuthProvider(
                 request.state.is_authenticated = True
 
                 return bearer_result
-            except (AuthenticationError, AuthorizationError):
-                # Re-raise AuthenticationError and AuthorizationError as-is
+            except AuthenticationError as e:
+                # Re-raise AuthenticationError as-is to preserve the original message
+                # This ensures expired token errors ("Authentication failed. Please log in again.")
+                # are not converted to "API key does not belong to the authenticated user"
+                logger.error(f"TTS BOTH mode: Authentication error: {e}")
+                raise
+            except AuthorizationError as e:
+                # Re-raise AuthorizationError as-is
+                logger.error(f"TTS BOTH mode: Authorization error: {e}")
                 raise
             except Exception as e:
                 logger.error(f"Unexpected error in BOTH authentication mode: {e}", exc_info=True)
@@ -542,71 +550,87 @@ async def AuthProvider(
             if auth_source == "BOTH":
                 auth_span.set_attribute("auth.method", "JWT+API_KEY")
 
-                # 1) Authenticate user via JWT
-                bearer_result = await authenticate_bearer_token(request, authorization)
-                jwt_user_id = bearer_result.get("user_id")
-
-                # 2) Extract API key
-                api_key = x_api_key or get_api_key_from_header(authorization)
-                if not api_key:
-                    auth_span.set_attribute("error", True)
-                    auth_span.set_attribute("error.type", "MissingAPIKey")
-                    auth_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
-                    raise AuthenticationError("Missing API key")
-
-                # 3) Validate API key + permissions via auth-service (single source of truth)
-                # and let auth-service enforce ownership using provided user_id.
-                service, action = determine_service_and_action(request)
-                import time as time_module
-                auth_start = time_module.time()
-                logger.debug(f"Validating API key permissions for service={service}, action={action}, user_id={jwt_user_id}")
                 try:
-                    auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
-                    auth_duration = time_module.time() - auth_start
-                    # Log removed - middleware handles request/response logging
-                    logger.debug(f"API key validation completed in {auth_duration:.3f}s for user_id={jwt_user_id}")
-                    
-                    # CRITICAL: Always check valid field - auth-service may return valid=false
-                    if not auth_result.get("valid", False):
-                        # Preserve detailed message from auth-service, e.g.:
-                        # "Invalid API key: This key does not have access to TTS service"
-                        error_msg = auth_result.get("message", "Permission denied")
-                        logger.error(f"Auth-service returned valid=false (tracing): {error_msg}")
+                    # 1) Authenticate user via JWT
+                    # If JWT verification fails (expired/invalid token), this will raise AuthenticationError
+                    # which should be immediately re-raised to preserve the error message
+                    bearer_result = await authenticate_bearer_token(request, authorization)
+                    jwt_user_id = bearer_result.get("user_id")
+
+                    # 2) Extract API key
+                    api_key = x_api_key or get_api_key_from_header(authorization)
+                    if not api_key:
+                        auth_span.set_attribute("error", True)
+                        auth_span.set_attribute("error.type", "MissingAPIKey")
+                        auth_span.set_status(Status(StatusCode.ERROR, "Missing API key"))
+                        raise AuthenticationError("Missing API key")
+
+                    # 3) Validate API key + permissions via auth-service (single source of truth)
+                    # and let auth-service enforce ownership using provided user_id.
+                    service, action = determine_service_and_action(request)
+                    import time as time_module
+                    auth_start = time_module.time()
+                    logger.debug(f"Validating API key permissions for service={service}, action={action}, user_id={jwt_user_id}")
+                    try:
+                        auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
+                        auth_duration = time_module.time() - auth_start
+                        logger.info(f"API key validation completed in {auth_duration:.3f}s for user_id={jwt_user_id}")
+                        
+                        # CRITICAL: Always check valid field - auth-service may return valid=false
+                        if not auth_result.get("valid", False):
+                            # Preserve detailed message from auth-service, e.g.:
+                            # "Invalid API key: This key does not have access to TTS service"
+                            error_msg = auth_result.get("message", "Permission denied")
+                            logger.error(f"Auth-service returned valid=false (tracing): {error_msg}")
+                            auth_span.set_attribute("auth.authorized", False)
+                            auth_span.set_attribute("error", True)
+                            auth_span.set_status(Status(StatusCode.ERROR, error_msg))
+                            # Raise AuthorizationError for permission issues (not AuthenticationError)
+                            raise AuthorizationError(error_msg)
+                    except AuthorizationError as e:
+                        # For permission errors, preserve as AuthorizationError so it goes to the correct handler
+                        # This allows proper handling of "does not have access to TTS service" messages
+                        error_msg = str(e) if e else "Permission denied"
+                        logger.error(f"TTS BOTH mode (tracing): Authorization error: {error_msg}")
                         auth_span.set_attribute("auth.authorized", False)
                         auth_span.set_attribute("error", True)
+                        auth_span.set_attribute("error.type", "AuthorizationError")
                         auth_span.set_status(Status(StatusCode.ERROR, error_msg))
-                        # Raise AuthorizationError for permission issues (not AuthenticationError)
-                        raise AuthorizationError(error_msg)
-                except AuthorizationError as e:
-                    # For permission errors, preserve as AuthorizationError so it goes to the correct handler
-                    # This allows proper handling of "does not have access to TTS service" messages
-                    error_msg = str(e) if e else "Permission denied"
-                    logger.error(f"TTS BOTH mode (tracing): Authorization error: {error_msg}")
+                        raise
+                    except AuthenticationError as e:
+                        # For authentication errors (invalid key, expired, etc.), preserve the message
+                        error_msg = str(e) if e else "API key does not belong to the authenticated user"
+                        logger.error(f"TTS BOTH mode (tracing): Authentication error: {error_msg}")
+                        auth_span.set_attribute("auth.authorized", False)
+                        auth_span.set_attribute("error", True)
+                        auth_span.set_attribute("error.type", "AuthenticationError")
+                        auth_span.set_status(Status(StatusCode.ERROR, error_msg))
+                        raise AuthenticationError(error_msg)
+
+                    # 4) Populate request.state
+                    request.state.user_id = jwt_user_id
+                    request.state.api_key_id = None
+                    request.state.api_key_name = None
+                    request.state.user_email = bearer_result.get("user", {}).get("email")
+                    request.state.is_authenticated = True
+
+                    auth_span.set_attribute("auth.authorized", True)
+                    auth_span.set_status(Status(StatusCode.OK))
+                    return bearer_result
+                except (AuthenticationError, AuthorizationError) as e:
+                    # For ANY auth/key error in BOTH mode, surface the underlying message when available
+                    # This preserves expired token errors ("Authentication failed. Please log in again.")
+                    # and only falls back to "API key does not belong to the authenticated user" if no message
+                    logger.error(f"TTS BOTH mode (tracing): Authentication/Authorization error: {e}")
                     auth_span.set_attribute("auth.authorized", False)
                     auth_span.set_attribute("error", True)
-                    auth_span.set_attribute("error.type", "AuthorizationError")
-                    auth_span.set_status(Status(StatusCode.ERROR, error_msg))
-                    raise
-                except AuthenticationError as e:
-                    # For authentication errors (invalid key, expired, etc.), preserve the message
-                    error_msg = str(e) if e else "API key does not belong to the authenticated user"
-                    logger.error(f"TTS BOTH mode (tracing): Authentication error: {error_msg}")
-                    auth_span.set_attribute("auth.authorized", False)
-                    auth_span.set_attribute("error", True)
-                    auth_span.set_attribute("error.type", "AuthenticationError")
-                    auth_span.set_status(Status(StatusCode.ERROR, error_msg))
-                    raise AuthenticationError(error_msg)
-
-                # 4) Populate request.state
-                request.state.user_id = jwt_user_id
-                request.state.api_key_id = None
-                request.state.api_key_name = None
-                request.state.user_email = bearer_result.get("user", {}).get("email")
-                request.state.is_authenticated = True
-
-                auth_span.set_attribute("auth.authorized", True)
-                auth_span.set_status(Status(StatusCode.OK))
-                return bearer_result
+                    auth_span.set_attribute("error.type", type(e).__name__)
+                    auth_span.set_status(Status(StatusCode.ERROR, str(e)))
+                    # Preserve the original error message (e.g., "Authentication failed. Please log in again.")
+                    # Only fall back to default message if no message is available
+                    if isinstance(e, AuthorizationError):
+                        raise
+                    raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
 
             auth_span.set_attribute("auth.method", "API_KEY")
             api_key = x_api_key or get_api_key_from_header(authorization)
@@ -643,23 +667,29 @@ async def AuthProvider(
             auth_span.set_status(Status(StatusCode.ERROR, str(e)))
             raise
         except (AuthenticationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
-            # Normalize auth/key-related failures in BOTH/API_KEY modes so callers
-            # always see a single, stable message when API key auth fails.
+            # For ANY auth/key error in BOTH mode, surface the underlying message when available
+            # This preserves expired token errors ("Authentication failed. Please log in again.")
+            # and only falls back to "API key does not belong to the authenticated user" if no message
+            logger.error(f"TTS BOTH mode (tracing): Authentication/Authorization error: {e}")
             auth_span.set_attribute("auth.authorized", False)
             auth_span.set_attribute("error", True)
             auth_span.set_attribute("error.type", type(e).__name__)
             auth_span.set_attribute("error.message", str(e))
             auth_span.set_status(Status(StatusCode.ERROR, str(e)))
-            raise AuthenticationError("API key does not belong to the authenticated user")
+            # Preserve the original error message (e.g., "Authentication failed. Please log in again.")
+            # Only fall back to default message if no message is available
+            raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
         except Exception as e:
             # Even unexpected errors during auth are surfaced with the same external
             # message to avoid flickering error texts across identical calls.
+            logger.error(f"TTS BOTH mode (tracing): Unexpected error: {e}", exc_info=True)
             auth_span.set_attribute("auth.authorized", False)
             auth_span.set_attribute("error", True)
             auth_span.set_attribute("error.type", type(e).__name__)
             auth_span.set_attribute("error.message", str(e))
             auth_span.set_status(Status(StatusCode.ERROR, str(e)))
-            raise AuthenticationError("API key does not belong to the authenticated user")
+            # Even on unexpected errors we surface a useful message
+            raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
 
 
 async def OptionalAuthProvider(

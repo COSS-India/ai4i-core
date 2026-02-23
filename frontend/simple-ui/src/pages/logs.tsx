@@ -43,6 +43,7 @@ import ContentLayout from "../components/common/ContentLayout";
 import { useAuth } from "../hooks/useAuth";
 import { useRouter } from "next/router";
 import { getJwtToken } from "../services/api";
+import { getTenantIdFromToken } from "../utils/helpers";
 import {
   searchLogs,
   getLogAggregations,
@@ -52,6 +53,47 @@ import {
   LogAggregationResponse,
 } from "../services/observabilityService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
+import { listTenants } from "../services/multiTenantService";
+
+/**
+ * Convert datetime-local format (YYYY-MM-DDTHH:mm) to ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
+ * This ensures the timestamp is properly formatted for OpenSearch queries
+ */
+const convertToISOFormat = (datetimeLocal: string): string => {
+  if (!datetimeLocal || datetimeLocal.trim() === "") {
+    return "";
+  }
+  
+  // Parse the datetime-local string (YYYY-MM-DDTHH:mm)
+  // Treat it as local time and convert to ISO format
+  try {
+    // If the string doesn't have seconds, add :00
+    let normalized = datetimeLocal;
+    if (!normalized.includes(":")) {
+      return ""; // Invalid format
+    }
+    
+    // Count colons to determine format
+    const colonCount = (normalized.match(/:/g) || []).length;
+    if (colonCount === 1) {
+      // Format: YYYY-MM-DDTHH:mm - add seconds
+      normalized = normalized + ":00";
+    }
+    
+    // Parse as local time and convert to ISO (UTC)
+    const date = new Date(normalized);
+    if (isNaN(date.getTime())) {
+      console.warn(`Invalid datetime format: ${datetimeLocal}`);
+      return "";
+    }
+    
+    // Return ISO format string
+    return date.toISOString();
+  } catch (error) {
+    console.error(`Error converting datetime to ISO: ${datetimeLocal}`, error);
+    return "";
+  }
+};
 
 const LogsPage: React.FC = () => {
   const toast = useToastWithDeduplication();
@@ -65,47 +107,132 @@ const LogsPage: React.FC = () => {
   const [searchText, setSearchText] = useState<string>("");
   const [startTime, setStartTime] = useState<string>("");
   const [endTime, setEndTime] = useState<string>("");
+  const [selectedTenantId, setSelectedTenantId] = useState<string>(""); // Admin-only tenant filter
+  
+  // Check if user is admin
+  const isAdmin = user?.roles?.includes('ADMIN') || false;
   
   const cardBg = useColorModeValue("white", "gray.800");
   const borderColor = useColorModeValue("gray.200", "gray.700");
   const theadBg = useColorModeValue("gray.50", "gray.700");
   const rowHoverBg = useColorModeValue("gray.50", "gray.800");
 
-  // Check if user is ADMIN
-  const isAdmin = user?.roles?.includes('ADMIN') || false;
-
-  // Redirect to login if not authenticated or not ADMIN
+  // Redirect to login if not authenticated
   useEffect(() => {
-    if (!authLoading) {
-      if (!isAuthenticated) {
-        toast({
-          title: "Authentication Required",
-          description: "Please log in to view logs.",
-          status: "warning",
-          duration: 3000,
-          isClosable: true,
-        });
-        router.push("/auth");
-      } else if (!isAdmin) {
+    if (!authLoading && !isAuthenticated) {
+      toast({
+        title: "Authentication Required",
+        description: "Please log in to view logs.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      router.push("/auth");
+    }
+  }, [isAuthenticated, authLoading, router, toast]);
+
+  // Redirect if user doesn't have tenant_id (but allow admins)
+  useEffect(() => {
+    if (!authLoading && isAuthenticated) {
+      const tenantId = getTenantIdFromToken();
+      const isAdmin = user?.roles?.includes('ADMIN') || false;
+      if (!tenantId && !isAdmin) {
         toast({
           title: "Access Denied",
-          description: "Only administrators can access the logs dashboard.",
+          description: "You need to be assigned to a tenant to view logs.",
           status: "error",
-          duration: 3000,
+          duration: 5000,
           isClosable: true,
         });
         router.push("/");
       }
     }
-  }, [isAuthenticated, authLoading, isAdmin, router, toast]);
+  }, [isAuthenticated, authLoading, user, router, toast]);
 
-  // Fetch services list (only if authenticated and ADMIN)
+  // Fetch services list (only if authenticated)
   const { data: services, isLoading: servicesLoading, error: servicesError } = useQuery({
     queryKey: ["logs-services"],
     queryFn: getServicesWithLogs,
-    enabled: isAuthenticated && isAdmin,
+    enabled: isAuthenticated,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
+
+  // Fetch tenants list (only for admins)
+  const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } = useQuery({
+    queryKey: ["tenants-list"],
+    queryFn: async () => {
+      try {
+        console.log('Fetching tenants list...');
+        const result = await listTenants();
+        console.log('Tenants list fetched successfully:', {
+          count: result?.count,
+          tenantsCount: result?.tenants?.length || 0,
+          tenants: result?.tenants,
+        });
+        return result;
+      } catch (error: any) {
+        console.error('Error in listTenants queryFn:', error);
+        console.error('Error details:', {
+          message: error?.message,
+          response: error?.response?.data,
+          status: error?.response?.status,
+          statusText: error?.response?.statusText,
+          url: error?.config?.url,
+        });
+        throw error; // Re-throw to let React Query handle it
+      }
+    },
+    enabled: isAuthenticated && isAdmin,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    retry: 1, // Retry once on failure
+  });
+
+  // Filter tenants to only show ACTIVE tenants
+  const activeTenants = useMemo(() => {
+    if (!tenantsData?.tenants || !Array.isArray(tenantsData.tenants)) {
+      console.log('No tenants data available:', { tenantsData });
+      return [];
+    }
+    
+    // Filter for ACTIVE tenants (case-insensitive, trim whitespace)
+    const active = tenantsData.tenants.filter((tenant: any) => {
+      const status = String(tenant?.status || '').trim().toUpperCase();
+      return status === 'ACTIVE';
+    });
+    
+    console.log('Active tenants filter result:', {
+      totalTenants: tenantsData.tenants.length,
+      activeCount: active.length,
+      allStatuses: tenantsData.tenants.map((t: any) => ({ 
+        tenant_id: t.tenant_id, 
+        status: t.status,
+        statusType: typeof t.status 
+      })),
+      activeTenants: active.map((t: any) => ({ 
+        tenant_id: t.tenant_id, 
+        organization_name: t.organization_name 
+      }))
+    });
+    
+    return active;
+  }, [tenantsData]);
+
+  // Debug: Log admin status, tenant data, and errors
+  useEffect(() => {
+    if (isAuthenticated && isAdmin) {
+      console.log('Logs page - Admin status:', {
+        isAdmin,
+        userRoles: user?.roles,
+        tenantsData: tenantsData,
+        tenantsCount: tenantsData?.tenants?.length || 0,
+        activeTenantsCount: activeTenants.length,
+        tenantsError: tenantsError,
+      });
+    }
+    if (tenantsError) {
+      console.error('Error fetching tenants:', tenantsError);
+    }
+  }, [isAuthenticated, isAdmin, user, tenantsData, activeTenants, tenantsError]);
 
   // Filter services to only show application services (exclude infrastructure services)
   const filteredServices = useMemo(() => {
@@ -177,12 +304,16 @@ const LogsPage: React.FC = () => {
   // Fetch aggregations (only if authenticated and ADMIN)
   const { data: aggregations, isLoading: aggregationsLoading, error: aggregationsError } = useQuery({
     queryKey: ["logs-aggregations", startTime, endTime],
-    queryFn: () =>
-      getLogAggregations({
-        start_time: startTime || undefined,
-        end_time: endTime || undefined,
-      }),
-    enabled: isAuthenticated && isAdmin,
+    queryFn: () => {
+      // Convert datetime-local format to ISO format for API
+      const apiStartTime = startTime && startTime.trim() !== "" ? convertToISOFormat(startTime) : undefined;
+      const apiEndTime = endTime && endTime.trim() !== "" ? convertToISOFormat(endTime) : undefined;
+      return getLogAggregations({
+        start_time: apiStartTime,
+        end_time: apiEndTime,
+      });
+    },
+    enabled: isAuthenticated,
     staleTime: 1 * 60 * 1000, // 1 minute
   });
 
@@ -214,6 +345,7 @@ const LogsPage: React.FC = () => {
       startTime,
       endTime,
       size, // Include size in query key since we use it for fetch size
+      selectedTenantId, // Include tenant_id for admin filtering
     ],
     queryFn: async () => {
       // API has a maximum limit of 100 for size parameter
@@ -232,6 +364,17 @@ const LogsPage: React.FC = () => {
         endTime: endTime || 'not set',
       });
       
+      // Convert datetime-local format to ISO format for API
+      const apiStartTime = startTime && startTime.trim() !== "" ? convertToISOFormat(startTime) : undefined;
+      const apiEndTime = endTime && endTime.trim() !== "" ? convertToISOFormat(endTime) : undefined;
+      
+      console.log('Time conversion:', {
+        startTime_local: startTime,
+        startTime_iso: apiStartTime,
+        endTime_local: endTime,
+        endTime_iso: apiEndTime,
+      });
+      
       // First, fetch page 1 to get total count
       const firstPage = await searchLogs({
         page: 1,
@@ -239,8 +382,9 @@ const LogsPage: React.FC = () => {
         service: apiService,
         level: apiLevel,
         search_text: searchText && searchText.trim() !== "" ? searchText : undefined,
-        start_time: startTime && startTime.trim() !== "" ? startTime : undefined,
-        end_time: endTime && endTime.trim() !== "" ? endTime : undefined,
+        start_time: apiStartTime,
+        end_time: apiEndTime,
+        tenant_id: isAdmin && selectedTenantId && selectedTenantId.trim() !== "" ? selectedTenantId : undefined,
       });
       
       // Ensure logs is always an array
@@ -269,16 +413,17 @@ const LogsPage: React.FC = () => {
           const batchPromises = [];
           
           for (let page = batchStart; page <= batchEnd; page++) {
-            batchPromises.push(
-              searchLogs({
-                page,
-                size: fetchSize,
-                service: apiService,
-                level: apiLevel,
-                search_text: searchText && searchText.trim() !== "" ? searchText : undefined,
-                start_time: startTime && startTime.trim() !== "" ? startTime : undefined,
-                end_time: endTime && endTime.trim() !== "" ? endTime : undefined,
-              }).catch((error) => {
+              batchPromises.push(
+                searchLogs({
+                  page,
+                  size: fetchSize,
+                  service: apiService,
+                  level: apiLevel,
+                  search_text: searchText && searchText.trim() !== "" ? searchText : undefined,
+                  start_time: apiStartTime,
+                  end_time: apiEndTime,
+                  tenant_id: isAdmin && selectedTenantId && selectedTenantId.trim() !== "" ? selectedTenantId : undefined,
+                }).catch((error) => {
                 console.error(`Error fetching page ${page}:`, error);
                 return { logs: [] }; // Return empty logs on error
               })
@@ -306,7 +451,7 @@ const LogsPage: React.FC = () => {
         total_pages: Math.ceil(allLogs.length / fetchSize),
       };
     },
-    enabled: isAuthenticated && isAdmin,
+    enabled: isAuthenticated,
     staleTime: 30 * 1000, // 30 seconds
   });
 
@@ -430,13 +575,24 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, authLoading]);
 
-  // Set default time range (last 1 hour)
+  // Set default time range (last 1 hour) - update when page loads or when both are empty
   useEffect(() => {
+    // Only set default if both startTime and endTime are empty
+    // This ensures we set it once on initial load, but don't override user's manual selections
     if (!startTime && !endTime) {
       const now = new Date();
       const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-      setEndTime(now.toISOString().slice(0, 16));
-      setStartTime(oneHourAgo.toISOString().slice(0, 16));
+      // Format as YYYY-MM-DDTHH:mm for datetime-local input
+      const formatDateTime = (date: Date) => {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        return `${year}-${month}-${day}T${hours}:${minutes}`;
+      };
+      setEndTime(formatDateTime(now));
+      setStartTime(formatDateTime(oneHourAgo));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -451,10 +607,20 @@ const LogsPage: React.FC = () => {
     setService("");
     setLevel("");
     setSearchText("");
+    setSelectedTenantId(""); // Clear tenant filter
     const now = new Date();
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    setEndTime(now.toISOString().slice(0, 16));
-    setStartTime(oneHourAgo.toISOString().slice(0, 16));
+    // Format as YYYY-MM-DDTHH:mm for datetime-local input
+    const formatDateTime = (date: Date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      return `${year}-${month}-${day}T${hours}:${minutes}`;
+    };
+    setEndTime(formatDateTime(now));
+    setStartTime(formatDateTime(oneHourAgo));
     setPage(1);
     setClientPage(1);
   };
@@ -599,7 +765,7 @@ const LogsPage: React.FC = () => {
   // Reset client page when filters change
   useEffect(() => {
     setClientPage(1);
-  }, [service, level, searchText, startTime, endTime, size]);
+  }, [service, level, searchText, startTime, endTime, size, selectedTenantId]);
 
   // Debug: Log filtered results
   useEffect(() => {
@@ -841,6 +1007,39 @@ const LogsPage: React.FC = () => {
             <CardBody>
               <Heading size="sm" mb={4} color="gray.700">Filters</Heading>
               <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} w="full">
+                {/* Tenant Filter - Admin Only */}
+                {isAdmin && (
+                  <FormControl>
+                    <FormLabel fontWeight="medium">Tenant</FormLabel>
+                    <Select
+                      value={selectedTenantId || ""}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setSelectedTenantId(value === "" ? "" : value);
+                        setPage(1);
+                        setClientPage(1); // Reset to first page when tenant changes
+                      }}
+                      bg="white"
+                      isDisabled={tenantsLoading}
+                    >
+                      <option value="">All Tenants</option>
+                      {tenantsLoading ? (
+                        <option value="" disabled>Loading tenants...</option>
+                      ) : tenantsError ? (
+                        <option value="" disabled>Error loading tenants</option>
+                      ) : activeTenants.length > 0 ? (
+                        activeTenants.map((tenant: any) => (
+                          <option key={tenant.tenant_id} value={tenant.tenant_id}>
+                            {tenant.organization_name || tenant.tenant_id}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="" disabled>No active tenants found</option>
+                      )}
+                    </Select>
+                  </FormControl>
+                )}
+
                 <FormControl>
                   <FormLabel fontWeight="medium">Service</FormLabel>
                   <Select
@@ -1230,4 +1429,3 @@ const LogsPage: React.FC = () => {
 };
 
 export default LogsPage;
-

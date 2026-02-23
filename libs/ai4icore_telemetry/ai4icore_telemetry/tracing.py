@@ -119,19 +119,26 @@ def setup_tracing(service_name: str, jaeger_endpoint: Optional[str] = None) -> O
 
 class OrganizationSpanProcessor(SpanProcessor):
     """
-    Span processor that adds organization attribute to all spans.
+    Span processor that adds organization and tenant_id attributes to all spans.
     
-    Reads organization from logging context and adds it as a span attribute.
+    Reads organization and tenant_id from logging context and adds them as span attributes.
     """
     
     def on_start(self, span: Span, parent_context=None) -> None:
         """Called when a span is started."""
         try:
-            # Try to import organization context
-            from ai4icore_logging.context import get_organization
+            # Try to import context functions
+            from ai4icore_logging.context import get_organization, get_tenant_id
             organization = get_organization()
+            tenant_id = get_tenant_id()
+            
+            # Add organization attribute (for backward compatibility)
             if organization:
                 span.set_attribute("organization", organization)
+            
+            # Add tenant_id attribute (primary filter for multi-tenant RBAC)
+            if tenant_id:
+                span.set_attribute("tenant_id", tenant_id)
         except Exception:
             # Silently fail if context is not available
             pass

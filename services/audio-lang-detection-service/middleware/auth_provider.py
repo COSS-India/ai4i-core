@@ -129,13 +129,14 @@ async def validate_api_key_permissions(
                     # Decision point: Check if API key is valid
                     with tracer.start_as_current_span("auth.decision.check_validity") as validity_span:
                         validity_span.set_attribute("auth.decision", "check_api_key_validity")
-                        # Treat missing/false 'valid' as failure (auth-service is source of truth)
+                        # CRITICAL: Check valid=False FIRST - this means the API key doesn't belong to the user
                         if not result.get("valid", False):
-                            # API key invalid OR ownership/permission failure
+                            # API key invalid - extract detailed reason
                             error_msg = result.get("message", "Permission denied")
                             error_code = result.get("code", "PERMISSION_DENIED")
                             error_reason = result.get("reason", "unknown")
-
+                            logger.error(f"Auth-service returned valid=False: {error_msg}, user_id={result.get('user_id')}, requested_user_id={user_id}")
+                            
                             validity_span.set_attribute("auth.decision.result", "rejected")
                             validity_span.set_attribute("error", True)
                             validity_span.set_attribute("error.type", "AuthorizationError")
@@ -143,63 +144,49 @@ async def validate_api_key_permissions(
                             validity_span.set_attribute("error.code", error_code)
                             validity_span.set_attribute("error.message", error_msg)
                             validity_span.set_status(Status(StatusCode.ERROR, error_msg))
-
+                            
                             span.set_attribute("auth.valid", False)
                             span.set_attribute("error", True)
                             span.set_attribute("error.type", "AuthorizationError")
                             span.set_attribute("error.reason", error_reason)
                             span.set_attribute("error.code", error_code)
                             span.set_attribute("error.message", error_msg)
-                            span.add_event(
-                                "auth.validation.failed",
-                                {"reason": error_reason, "code": error_code, "message": error_msg},
-                            )
+                            span.add_event("auth.validation.failed", {
+                                "reason": error_reason,
+                                "code": error_code,
+                                "message": error_msg
+                            })
                             span.set_status(Status(StatusCode.ERROR, error_msg))
-
+                            
                             validate_span.set_attribute("auth.valid", False)
                             validate_span.set_attribute("error", True)
                             validate_span.set_attribute("error.type", "AuthorizationError")
                             validate_span.set_attribute("error.reason", error_reason)
                             validate_span.set_attribute("error.code", error_code)
                             validate_span.set_status(Status(StatusCode.ERROR, error_msg))
-
+                            
                             raise AuthorizationError(error_msg)
 
-                        # API key is valid - optional extra ownership check using returned user_id
+                        # API key is valid - check ownership if user_id provided
                         if user_id is not None and result.get("user_id") is not None:
-                            try:
-                                api_key_user_id = int(result.get("user_id"))
-                                requested_user_id = int(user_id)
-                            except (TypeError, ValueError):
-                                api_key_user_id = result.get("user_id")
-                                requested_user_id = user_id
-
-                            if api_key_user_id != requested_user_id:
-                                # Local safety net: enforce ownership even if auth-service forgot
-                                ownership_msg = "API key does not belong to the authenticated user"
+                            if int(result.get("user_id")) != int(user_id):
+                                logger.error(f"API key ownership mismatch: requested_user_id={user_id}, api_key_user_id={result.get('user_id')}")
                                 validity_span.set_attribute("auth.decision.result", "rejected")
                                 validity_span.set_attribute("error", True)
-                                validity_span.set_attribute("error.type", "APIKeyOwnershipMismatch")
-                                validity_span.set_attribute("error.message", ownership_msg)
-                                validity_span.set_status(Status(StatusCode.ERROR, ownership_msg))
-
+                                validity_span.set_attribute("error.type", "AuthorizationError")
+                                validity_span.set_attribute("error.reason", "ownership_mismatch")
+                                validity_span.set_attribute("error.message", "API key does not belong to the authenticated user")
+                                validity_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
                                 span.set_attribute("auth.valid", False)
                                 span.set_attribute("error", True)
-                                span.set_attribute("error.type", "APIKeyOwnershipMismatch")
-                                span.set_attribute("error.message", ownership_msg)
-                                span.set_status(Status(StatusCode.ERROR, ownership_msg))
-
+                                span.set_attribute("error.type", "AuthorizationError")
+                                span.set_attribute("error.reason", "ownership_mismatch")
+                                span.set_attribute("error.message", "API key does not belong to the authenticated user")
+                                span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
                                 validate_span.set_attribute("auth.valid", False)
                                 validate_span.set_attribute("error", True)
-                                validate_span.set_attribute("error.type", "APIKeyOwnershipMismatch")
-                                validate_span.set_status(Status(StatusCode.ERROR, ownership_msg))
-
-                                logger.error(
-                                    "Audio-lang BOTH auth: API key ownership mismatch: jwt_user_id=%s, api_key_user_id=%s",
-                                    requested_user_id,
-                                    api_key_user_id,
-                                )
-                                raise AuthorizationError(ownership_msg)
+                                validate_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
+                                raise AuthorizationError("API key does not belong to the authenticated user")
 
                         # Success case
                         validity_span.set_attribute("auth.decision.result", "approved")
@@ -394,21 +381,16 @@ async def _validate_api_key_permissions_impl(
 
     if response.status_code == 200:
         result = response.json()
-        # Enforce auth-service 'valid' flag
+        logger.info(f"Auth-service response: valid={result.get('valid')}, message={result.get('message')}, user_id={result.get('user_id')}, requested_user_id={user_id}")
         if not result.get("valid", False):
+            # CRITICAL: Auth-service returned valid=False - this means the API key doesn't belong to the user
             error_msg = result.get("message", "Permission denied")
+            logger.error(f"Auth-service returned valid=False: {error_msg}, requested_user_id={user_id}, api_key_user_id={result.get('user_id')}")
             raise AuthorizationError(error_msg)
-
-        # Optional local ownership check
+        # Additional check: if user_id was provided, verify the API key's user_id matches
         if user_id is not None and result.get("user_id") is not None:
-            try:
-                api_key_user_id = int(result.get("user_id"))
-                requested_user_id = int(user_id)
-            except (TypeError, ValueError):
-                api_key_user_id = result.get("user_id")
-                requested_user_id = user_id
-
-            if api_key_user_id != requested_user_id:
+            if int(result.get("user_id")) != int(user_id):
+                logger.error(f"API key ownership mismatch: requested_user_id={user_id}, api_key_user_id={result.get('user_id')}")
                 raise AuthorizationError("API key does not belong to the authenticated user")
 
         return result
@@ -714,10 +696,12 @@ async def AuthProvider(
                         service, action = determine_service_and_action(request)
                         auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
                         
-                        # CRITICAL: Always check valid field - auth-service may return valid=false for ownership mismatch
+                        # CRITICAL: Always check valid field - auth-service may return valid=false
                         if not auth_result.get("valid", False):
+                            # Preserve detailed message from auth-service, e.g.:
+                            # "Invalid API key: This key does not have access to audio-lang-detection service"
                             error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
-                            raise AuthenticationError("API key does not belong to the authenticated user")
+                            raise AuthenticationError(error_msg)
                     
                         # 4) Populate request.state – keep JWT as primary identity (matching ASR/TTS/NMT)
                         request.state.user_id = jwt_user_id
@@ -731,21 +715,22 @@ async def AuthProvider(
                         auth_span.set_status(Status(StatusCode.OK))
                         return bearer_result
                     except (AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
-                        # For ANY auth/key error in BOTH mode, surface a single, consistent message
+                        # For ANY auth/key error in BOTH mode, surface the underlying message when available
                         logger.error(f"Audio-lang-detection BOTH mode: Authentication/Authorization error: {e}")
                         auth_span.set_attribute("auth.authorized", False)
                         auth_span.set_attribute("error", True)
                         auth_span.set_attribute("error.type", type(e).__name__)
-                        auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
-                        raise AuthenticationError("API key does not belong to the authenticated user")
+                        auth_span.set_status(Status(StatusCode.ERROR, str(e)))
+                        raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
                     except Exception as e:
                         logger.error(f"Audio-lang-detection BOTH mode: Unexpected error: {e}", exc_info=True)
                         auth_span.set_attribute("auth.authorized", False)
                         auth_span.set_attribute("error", True)
                         auth_span.set_attribute("error.type", type(e).__name__)
-                        auth_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
-                        # Even on unexpected errors we normalize the external message
-                        raise AuthenticationError("API key does not belong to the authenticated user")
+                        error_msg = str(e) if e else ""
+                        auth_span.set_status(Status(StatusCode.ERROR, error_msg or "API key does not belong to the authenticated user"))
+                        # Even on unexpected errors we surface a useful message
+                        raise AuthenticationError(error_msg or "API key does not belong to the authenticated user")
 
                 # Default: API_KEY
                 method_span.set_attribute("auth.decision.result", "api_key")
@@ -832,15 +817,17 @@ async def _auth_provider_impl(
             service, action = determine_service_and_action(request)
             auth_result = await _validate_api_key_permissions_impl(api_key, service, action, user_id=jwt_user_id)
             
-            # CRITICAL: Always check valid field - auth-service may return valid=false for ownership mismatch
+            # CRITICAL: Always check valid field - auth-service may return valid=false
             if not auth_result.get("valid", False):
-                error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
-                logger.error(
-                    "Audio-lang-detection BOTH auth (no tracing): API key validation failed: jwt_user_id=%s, error=%s",
-                    jwt_user_id,
-                    error_msg,
+                error_msg = auth_result.get(
+                    "message", "API key does not belong to the authenticated user"
                 )
-                raise AuthenticationError("API key does not belong to the authenticated user")
+                logger.error(
+                    "Auth-service returned valid=false: "
+                    f"{error_msg}, jwt_user_id={jwt_user_id}, "
+                    f"api_key_user_id={auth_result.get('user_id')}"
+                )
+                raise AuthenticationError(error_msg)
             
             # 3) Populate request.state – keep JWT as primary identity (matching ASR/TTS/NMT)
             request.state.user_id = jwt_user_id
@@ -850,11 +837,13 @@ async def _auth_provider_impl(
             request.state.is_authenticated = True
             
             return bearer_result
-        except (AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError):
+        except (AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
+            # Preserve the original error message (especially for JWT token errors)
             raise
         except Exception as e:
             logger.error(f"Audio-lang-detection BOTH auth (no tracing): Unexpected error: {e}", exc_info=True)
-            raise AuthenticationError("API key does not belong to the authenticated user")
+            error_msg = str(e) if e else ""
+            raise AuthenticationError(error_msg or "API key does not belong to the authenticated user")
 
     # Default: API_KEY
     if not api_key:

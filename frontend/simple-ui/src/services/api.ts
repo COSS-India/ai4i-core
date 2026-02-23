@@ -5,8 +5,8 @@ import axios, { AxiosInstance, AxiosResponse, AxiosError, InternalAxiosRequestCo
 // API Base URL from environment.
 // For production this should be set to the browser-facing API gateway URL
 // (for example, https://dev.ai4inclusion.org or a dedicated API domain).
-// Default to localhost:8080 for local development if not set.
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+// Default to localhost:9000 for local development (docker-compose-local.yml) if not set.
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9000';
 
 // Debug: Log the API base URL in development
 if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
@@ -311,7 +311,7 @@ apiClient.interceptors.request.use(
     const isSpeakerDiarizationEndpoint = url.includes('/api/v1/speaker-diarization');
     const isLanguageDiarizationEndpoint = url.includes('/api/v1/language-diarization');
     const isAudioLangDetectionEndpoint = url.includes('/api/v1/audio-lang-detection');
-    const isObservabilityEndpoint = url.includes('/api/v1/observability');
+    const isObservabilityEndpoint = url.includes('/api/v1/telemetry');
     const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
@@ -478,7 +478,7 @@ apiClient.interceptors.response.use(
                                      url.includes('/api/v1/speaker-diarization') ||
                                      url.includes('/api/v1/language-diarization') ||
                                      url.includes('/api/v1/audio-lang-detection') ||
-                                     url.includes('/api/v1/observability') ||
+                                     url.includes('/api/v1/telemetry') ||
                                      isModelManagementEndpoint ||
                                      isMultiTenantEndpoint;
             

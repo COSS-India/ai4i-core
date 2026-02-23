@@ -33,10 +33,24 @@ const BASE = '/api/v1/multi-tenant';
 
 /**
  * List all tenants in the system (admin).
+ * Note: The admin router has prefix "/admin", so the endpoint is "/admin/list/tenants"
  */
 export async function listTenants(): Promise<ListTenantsResponse> {
-  const { data } = await apiClient.get<ListTenantsResponse>(`${BASE}/list/tenants`);
-  return data;
+  try {
+    // The admin router has prefix "/admin", so we need "/admin/list/tenants"
+    // If BASE is "/api/v1/multi-tenant", the full path becomes "/api/v1/multi-tenant/admin/list/tenants"
+    const { data } = await apiClient.get<ListTenantsResponse>(`${BASE}/admin/list/tenants`);
+    return data;
+  } catch (error: any) {
+    console.error('Error in listTenants service call:', {
+      error,
+      message: error?.message,
+      response: error?.response?.data,
+      status: error?.response?.status,
+      url: error?.config?.url,
+    });
+    throw error;
+  }
 }
 
 /**

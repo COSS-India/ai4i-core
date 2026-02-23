@@ -39,6 +39,7 @@ import {
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import { useFeatureFlag } from "../../hooks/useFeatureFlag";
+import { getTenantIdFromToken } from "../../utils/helpers";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
 const safeColorMap = {
@@ -402,15 +403,26 @@ const Sidebar: React.FC = () => {
     "ner-enabled": nerEnabled.isEnabled,
   };
 
+  // Get tenant_id from JWT token
+  const tenantId = getTenantIdFromToken();
+
   // Filter top nav items (Home and Model Management)
   const topItems = topNavItems.filter((item) => {
     if (item.id === "home") return true;
+    // Hide traces for all users
+    if (item.id === "traces") {
+      return false;
+    }
     // Hide Model Management and Services Management for GUEST and USER users
     if ((isGuest || isUser) && (item.id === "model-management" || item.id === "services-management")) {
       return false;
     }
-    // Hide admin-only items for non-ADMIN users
-    if ((item.id === "logs" || item.id === "traces" || item.id === "alerts-management") && !isAdmin) {
+    // Hide admin-only items for non-ADMIN users (only alerts-management is admin-only now)
+    if (item.id === "alerts-management" && !isAdmin) {
+      return false;
+    }
+    // Hide logs for users without tenant_id (but allow admins to see it)
+    if (item.id === "logs" && !tenantId && !isAdmin) {
       return false;
     }
     if (item.featureFlag) {
