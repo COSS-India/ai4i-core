@@ -20,6 +20,8 @@ from utils.utils import (
     generate_service_id,
     generate_random_password,
     hash_password,
+    encrypt_sensitive_data,
+    decrypt_sensitive_data,
 )
 from models.db_models import (
     Tenant, 
@@ -67,6 +69,55 @@ EMAIL_VERIFICATION_LINK = str(os.getenv("EMAIL_VERIFICATION_LINK",""))
 DB_NAME                 = str(os.getenv("APP_DB_NAME", "multi_tenant_db"))
 API_GATEWAY_URL        = str(os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080"))
 API_GATEWAY_TIMEOUT       = float(os.getenv("API_GATEWAY_TIMEOUT", "10"))
+
+# Status transition rules
+TENANT_STATUS_TRANSITIONS = {
+    TenantStatus.PENDING: [TenantStatus.ACTIVE, TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED],
+    TenantStatus.ACTIVE: [TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED],
+    TenantStatus.SUSPENDED: [TenantStatus.ACTIVE, TenantStatus.DEACTIVATED],
+    TenantStatus.DEACTIVATED: [],  # No transitions allowed from DEACTIVATED
+    TenantStatus.IN_PROGRESS: [TenantStatus.ACTIVE, TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED],
+}
+
+TENANT_USER_STATUS_TRANSITIONS = {
+    TenantUserStatus.ACTIVE: [TenantUserStatus.SUSPENDED, TenantUserStatus.DEACTIVATED],
+    TenantUserStatus.SUSPENDED: [TenantUserStatus.ACTIVE, TenantUserStatus.DEACTIVATED],
+    TenantUserStatus.DEACTIVATED: [],  # No transitions allowed from DEACTIVATED
+}
+
+def validate_status_transition(old_status, new_status, allowed_transitions: dict, entity_type: str = "Entity"):
+    """
+    Validate if a status transition is allowed.
+    
+    Args:
+        old_status: Current status (TenantStatus or TenantUserStatus)
+        new_status: Desired new status (TenantStatus or TenantUserStatus)
+        allowed_transitions: Dictionary mapping old status to list of allowed new statuses
+        entity_type: Type of entity for error messages (e.g., "Tenant" or "User")
+    
+    Raises:
+        HTTPException: If transition is not allowed
+    """
+    if old_status not in allowed_transitions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{entity_type} status {old_status.value} is not configured for status transitions"
+        )
+    
+    # Check if DEACTIVATED status cannot be changed
+    if not allowed_transitions[old_status]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot update {entity_type.lower()} status from {old_status.value}. Deactivated entities cannot be modified."
+        )
+    
+    # Check if the desired transition is allowed
+    if new_status not in allowed_transitions[old_status]:
+        allowed = [s.value for s in allowed_transitions[old_status]]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {entity_type.lower()} status transition from {old_status.value} to {new_status.value}. Allowed transitions: {allowed}"
+        )
 
 
 async def _get_roles_from_auth(user_id: int, auth_header: Optional[str]) -> List[str]:
@@ -645,12 +696,21 @@ async def create_new_tenant(
     """
 
     if payload.contact_email:
-        stmt = select(Tenant).where(
-            Tenant.contact_email == payload.contact_email,
-            Tenant.domain == payload.domain,
-        )
-        result = await db.execute(stmt)
-        existing = result.scalar_one_or_none()
+        # Check for existing tenant by decrypting stored emails
+        # Note: This is not efficient for large datasets. Consider adding email_hash column for searching.
+        all_tenants = await db.scalars(select(Tenant).where(Tenant.domain == payload.domain))
+        existing = None
+        for tenant in all_tenants:
+            try:
+                decrypted_email = decrypt_sensitive_data(tenant.contact_email)
+                if decrypted_email == payload.contact_email:
+                    existing = tenant
+                    break
+            except Exception:
+                # If decryption fails, compare directly (backward compatibility)
+                if tenant.contact_email == payload.contact_email:
+                    existing = tenant
+                    break
         
         if existing:
             # Check status
@@ -690,10 +750,15 @@ async def create_new_tenant(
     # Convert SubscriptionType enums to strings for storage
     subscription_strings = [s.value if hasattr(s, "value") else str(s) for s in payload.requested_subscriptions]
     
+    # Encrypt sensitive data before saving
+    encrypted_email = encrypt_sensitive_data(payload.contact_email) if payload.contact_email else None
+    encrypted_phone = encrypt_sensitive_data(payload.phone_number) if payload.phone_number else None
+    
     tenant_data = {
         "tenant_id": tenant_id,
         "organization_name": payload.organization_name,
-        "contact_email": payload.contact_email,
+        "contact_email": encrypted_email,
+        "phone_number": encrypted_phone,
         "domain": payload.domain,
         # "subdomain": subdomain,
         "schema_name": schema_name,
@@ -803,11 +868,16 @@ async def send_initial_verification_email(
             detail="Verification link can only be sent when tenant status is PENDING",
         )
 
+    # Decrypt email before using it
+    decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+    if not decrypted_email:
+        raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
+    
     # Construct a minimal payload-like object for email helper
     class _Payload(BaseModel):
         contact_email: EmailStr
 
-    payload = _Payload(contact_email=tenant.contact_email)
+    payload = _Payload(contact_email=decrypted_email)
 
     # Reuse the existing token creation + email send helper
     token = await send_verification_link(
@@ -869,7 +939,7 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     plain_password = generate_random_password(length = 8)
 
     # TODO: Add logging for password generation , Remove once done testing
-    logger.info(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+    # logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
 
     # Store temp credentials on tenant for email / audit purposes
     hashed_password = hash_password(plain_password)
@@ -880,15 +950,22 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     # Create tenant admin user in auth-service via /api/v1/auth/register
     try:
         async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
+            # Decrypt email and phone_number before sending to auth service
+            decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+            decrypted_phone = decrypt_sensitive_data(tenant.phone_number) if tenant.phone_number else None
+            
+            if not decrypted_email:
+                raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
+            
             auth_response = await client.post(
                 f"{API_GATEWAY_URL}/api/v1/auth/register",
                 json={
-                    "email": tenant.contact_email,
+                    "email": decrypted_email,
                     "username": admin_username,
                     "password": plain_password,
                     "confirm_password": plain_password,
                     "full_name": tenant.organization_name,
-                    "phone_number": None,
+                    "phone_number": decrypted_phone,
                     "timezone": "UTC",
                     "language": "en",
                     "is_tenant": True,
@@ -951,8 +1028,13 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     await tenant_db.refresh(tenant)
 
     # Extract values before adding background task to avoid detached object issues
+    # Decrypt email before using it
+    decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+    if not decrypted_email:
+        raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
+    
     tenant_id_str = str(tenant.tenant_id)
-    contact_email_str = str(tenant.contact_email)
+    contact_email_str = decrypted_email
     admin_username_str = str(tenant.temp_admin_username) if tenant.temp_admin_username else admin_username
     password_str = str(plain_password)
 
@@ -1033,7 +1115,12 @@ async def resend_verification_email(
     verification_link = f"{EMAIL_VERIFICATION_LINK}/api/v1/multi-tenant/email/verify?token={token}"
    
     # Extract values before adding background task to avoid detached object issues
-    contact_email_str = str(tenant.contact_email)
+    # Decrypt email before using it
+    decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+    if not decrypted_email:
+        raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
+    
+    contact_email_str = decrypted_email
     tenant_id_str = str(tenant.tenant_id)
 
     background_tasks.add_task(
@@ -1208,7 +1295,7 @@ async def list_service(db: AsyncSession) -> ListServicesResponse:
     """
 
     result = await db.execute(
-        select(ServiceConfig).where(ServiceConfig.is_active.is_(True))
+        select(ServiceConfig)
     )
 
     services = result.scalars().all()
@@ -1466,8 +1553,22 @@ async def register_user(
         )
     
     # Check if user already exists under this tenant
-    existing_tenant_user = await tenant_db.scalar(
-    select(TenantUser).where(TenantUser.email == payload.email))
+    # Decrypt stored emails to compare (Note: Consider adding email_hash for efficient searching)
+    tenant_users = await tenant_db.scalars(
+        select(TenantUser).where(TenantUser.tenant_id == tenant.tenant_id)
+    )
+    existing_tenant_user = None
+    for tu in tenant_users:
+        try:
+            decrypted_email = decrypt_sensitive_data(tu.email)
+            if decrypted_email == payload.email:
+                existing_tenant_user = tu
+                break
+        except Exception:
+            # If decryption fails, compare directly (backward compatibility)
+            if tu.email == payload.email:
+                existing_tenant_user = tu
+                break
 
     if existing_tenant_user:
         raise HTTPException(status_code=409,detail="Email already registered , please use a different email")
@@ -1490,7 +1591,7 @@ async def register_user(
                     "password": plain_password,
                     "confirm_password": plain_password,
                     "full_name": payload.full_name,
-                    "phone_number": None,
+                    "phone_number": payload.phone_number,
                     "timezone": "UTC",
                     "language": "en",
                     "is_tenant": False,
@@ -1531,16 +1632,21 @@ async def register_user(
             logger.warning(f"Could not assign role {role_name} to user_id={user_id}; auth may use default.")
     
     # TODO: Add logging for password generation , Remove once done testing
-    logger.info(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+    # logger.debug(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
     
     if payload.is_approved:
         #Create TenantUser entry only if user is approved
+        # Encrypt sensitive data before saving
+        encrypted_user_email = encrypt_sensitive_data(payload.email) if payload.email else None
+        encrypted_user_phone = encrypt_sensitive_data(payload.phone_number) if payload.phone_number else None
+        
         tenant_user = TenantUser(
                 user_id=user_id,
                 tenant_uuid=tenant.id,
                 tenant_id=tenant.tenant_id,
                 username=payload.username,
-                email=payload.email,
+                email=encrypted_user_email,
+                phone_number=encrypted_user_phone,
                 subscriptions=list(requested_services),
                 status=TenantUserStatus.ACTIVE, 
                 is_approved=True,
@@ -1645,6 +1751,9 @@ async def update_tenant_status(payload: TenantStatusUpdateRequest, db: AsyncSess
             status_code=400,
             detail=f"Tenant already in {new_status.value} state",
         )
+
+    # Validate status transition rules
+    validate_status_transition(old_status, new_status, TENANT_STATUS_TRANSITIONS, "Tenant")
 
     tenant.status = new_status
 
@@ -1794,6 +1903,10 @@ async def update_tenant_user_status(payload: TenantUserStatusUpdateRequest, db: 
         )
 
     old_status = tenant_user.status
+    
+    # Validate status transition rules
+    validate_status_transition(old_status, payload.status, TENANT_USER_STATUS_TRANSITIONS, "User")
+    
     tenant_user.status = payload.status
 
     # Cascade status to this user's billing records
@@ -2082,12 +2195,35 @@ async def view_tenant_details(
         auth_roles = await _get_roles_from_auth(tenant.user_id, auth_header)
         role = auth_roles[0] if auth_roles else ""
 
+    # Decrypt sensitive data for display
+    decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+    decrypted_phone = decrypt_sensitive_data(tenant.phone_number) if tenant.phone_number else None
+    
+    # Validate email - ensure it's a valid email format for Pydantic
+    if not decrypted_email:
+        decrypted_email = "unknown@example.com"
+    elif decrypted_email.startswith('gAAAAA'):
+        # Still encrypted - decryption failed
+        logger.error(
+            f"CRITICAL: Failed to decrypt email for tenant {tenant.tenant_id}. "
+            f"This usually means the encryption key changed. "
+            f"Encrypted value starts with: {decrypted_email[:20]}..."
+        )
+        decrypted_email = "encrypted@example.com"
+    elif '@' not in decrypted_email:
+        # Invalid email format (no @ sign)
+        logger.warning(
+            f"Invalid email format for tenant {tenant.tenant_id}: {decrypted_email[:20]}..."
+        )
+        decrypted_email = "invalid@example.com"
+    
     response = TenantViewResponse(
         id=tenant.id,
         tenant_id=tenant.tenant_id,
         user_id=tenant.user_id or None,
         organization_name=tenant.organization_name,
-        email=tenant.contact_email,
+        email=decrypted_email,  # Validated above
+        phone_number=decrypted_phone,
         domain=tenant.domain,
         schema=tenant.schema_name,
         subscriptions=tenant.subscriptions or [],
@@ -2258,12 +2394,35 @@ async def view_tenant_user_details(
     role_names = await _get_roles_from_auth(tenant_user.user_id, auth_header)
     role = role_names[0] if role_names else ""
 
+    # Decrypt sensitive data for display
+    decrypted_email = decrypt_sensitive_data(tenant_user.email) if tenant_user.email else None
+    decrypted_phone = decrypt_sensitive_data(tenant_user.phone_number) if tenant_user.phone_number else None
+    
+    # Validate email - ensure it's a valid email format for Pydantic
+    if not decrypted_email:
+        decrypted_email = "unknown@example.com"
+    elif decrypted_email.startswith('gAAAAA'):
+        # Still encrypted - decryption failed
+        logger.error(
+            f"CRITICAL: Failed to decrypt email for tenant user {tenant_user.user_id}. "
+            f"This usually means the encryption key changed. "
+            f"Encrypted value starts with: {decrypted_email[:20]}..."
+        )
+        decrypted_email = "encrypted@example.com"
+    elif '@' not in decrypted_email:
+        # Invalid email format (no @ sign)
+        logger.warning(
+            f"Invalid email format for tenant user {tenant_user.user_id}: {decrypted_email[:20]}..."
+        )
+        decrypted_email = "invalid@example.com"
+    
     response = TenantUserViewResponse(
         id=tenant_user.id,
         tenant_id=tenant_user.tenant_id,
         user_id=tenant_user.user_id,
         username=tenant_user.username,
-        email=tenant_user.email,
+        email=decrypted_email,  # Validated above
+        phone_number=decrypted_phone,
         subscriptions=tenant_user.subscriptions or [],
         status=tenant_user.status.value if hasattr(tenant_user.status, "value") else str(tenant_user.status),
         is_approved=tenant_user.is_approved,
@@ -2292,13 +2451,38 @@ async def list_all_tenants(
         if tenant.user_id and auth_header:
             auth_roles = await _get_roles_from_auth(tenant.user_id, auth_header)
             role = auth_roles[0] if auth_roles else ""
+        
+        # Decrypt sensitive data for display
+        decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+        decrypted_phone = decrypt_sensitive_data(tenant.phone_number) if tenant.phone_number else None
+        
+        # Validate email - ensure it's a valid email format for Pydantic
+        # Check multiple conditions to catch all failure cases
+        if not decrypted_email:
+            decrypted_email = "unknown@example.com"
+        elif decrypted_email.startswith('gAAAAA'):
+            # Still encrypted - decryption failed
+            logger.error(
+                f"CRITICAL: Failed to decrypt email for tenant {tenant.tenant_id}. "
+                f"This usually means the encryption key changed. "
+                f"Encrypted value starts with: {decrypted_email[:20]}..."
+            )
+            decrypted_email = "encrypted@example.com"
+        elif '@' not in decrypted_email:
+            # Invalid email format (no @ sign)
+            logger.warning(
+                f"Invalid email format for tenant {tenant.tenant_id}: {decrypted_email[:20]}..."
+            )
+            decrypted_email = "invalid@example.com"
+        
         tenant_list.append(
             TenantViewResponse(
                 id=tenant.id,
                 tenant_id=tenant.tenant_id,
                 user_id=tenant.user_id or 0,
                 organization_name=tenant.organization_name,
-                email=tenant.contact_email,
+                email=decrypted_email,  # Validated above
+                phone_number=decrypted_phone,
                 domain=tenant.domain,
                 schema=tenant.schema_name,
                 subscriptions=tenant.subscriptions or [],
@@ -2338,13 +2522,37 @@ async def list_all_users(
     for user in users:
         role_names = await _get_roles_from_auth(user.user_id, auth_header)
         role = role_names[0] if role_names else ""
+        
+        # Decrypt sensitive data for display
+        decrypted_email = decrypt_sensitive_data(user.email) if user.email else None
+        decrypted_phone = decrypt_sensitive_data(user.phone_number) if user.phone_number else None
+        
+        # Validate email - ensure it's a valid email format for Pydantic
+        if not decrypted_email:
+            decrypted_email = "unknown@example.com"
+        elif decrypted_email.startswith('gAAAAA'):
+            # Still encrypted - decryption failed
+            logger.error(
+                f"CRITICAL: Failed to decrypt email for tenant user {user.user_id}. "
+                f"This usually means the encryption key changed. "
+                f"Encrypted value starts with: {decrypted_email[:20]}..."
+            )
+            decrypted_email = "encrypted@example.com"
+        elif '@' not in decrypted_email:
+            # Invalid email format (no @ sign)
+            logger.warning(
+                f"Invalid email format for tenant user {user.user_id}: {decrypted_email[:20]}..."
+            )
+            decrypted_email = "invalid@example.com"
+        
         user_list.append(
             TenantUserViewResponse(
                 id=user.id,
                 tenant_id=user.tenant_id,
                 user_id=user.user_id,
                 username=user.username,
-                email=user.email,
+                email=decrypted_email,  # Validated above
+                phone_number=decrypted_phone,
                 subscriptions=user.subscriptions or [],
                 status=user.status.value if hasattr(user.status, "value") else str(user.status),
                 is_approved=user.is_approved,

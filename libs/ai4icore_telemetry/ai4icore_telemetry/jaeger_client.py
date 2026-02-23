@@ -52,7 +52,8 @@ class JaegerQueryClient:
         Build Jaeger tags query string.
         
         Args:
-            organization_filter: Organization ID to filter by (None = admin)
+            organization_filter: Tenant ID to filter by (None = admin)
+                                Note: Despite the parameter name, this is actually tenant_id
             additional_tags: Additional tags to filter by
         
         Returns:
@@ -60,12 +61,12 @@ class JaegerQueryClient:
         """
         tags = []
         
-        # Organization filter (RBAC)
+        # Tenant ID filter (RBAC) - primary filter for multi-tenant RBAC
         if organization_filter:
-            # Try organization attribute first
+            # Filter by tenant_id tag (primary)
+            tags.append(f"tenant_id={organization_filter}")
+            # Also include organization tag for backward compatibility
             tags.append(f"organization={organization_filter}")
-            # Fallback: also try user.id if available (for backward compatibility)
-            # Note: This is a fallback, primary filter is organization
         
         # Additional tags
         if additional_tags:
@@ -224,24 +225,30 @@ class JaegerQueryClient:
             
             traces = data.get("data", [])
             
-            # Filter traces by organization if needed (client-side filtering as fallback)
+            # Filter traces by tenant_id if needed (client-side filtering as fallback)
             if organization_filter:
                 filtered_traces = []
                 for trace in traces:
-                    # Check if any span has the organization attribute
+                    tenant_found = False
                     spans = trace.get("spans", [])
                     for span in spans:
                         tags = span.get("tags", [])
-                        span_org = None
                         for tag in tags:
-                            if tag.get("key") == "organization":
-                                span_org = tag.get("value")
-                                break
-                        
-                        # If span has organization and it matches, include trace
-                        if span_org == organization_filter:
-                            filtered_traces.append(trace)
+                            # Check tenant_id tag first (primary filter)
+                            if tag.get("key") == "tenant_id":
+                                if tag.get("value") == organization_filter:
+                                    tenant_found = True
+                                    break
+                            # Fallback: check organization tag for backward compatibility
+                            elif tag.get("key") == "organization":
+                                if tag.get("value") == organization_filter:
+                                    tenant_found = True
+                                    break
+                        if tenant_found:
                             break
+                    
+                    if tenant_found:
+                        filtered_traces.append(trace)
                 
                 return filtered_traces
             
@@ -313,31 +320,32 @@ class JaegerQueryClient:
             
             trace = traces[0]  # Jaeger returns trace in array
             
-            # RBAC check: Verify trace belongs to organization
+            # RBAC check: Verify trace belongs to tenant_id
             if organization_filter:
                 spans = trace.get("spans", [])
+                tenant_found = False
                 for span in spans:
                     tags = span.get("tags", [])
                     for tag in tags:
-                        if tag.get("key") == "organization":
+                        # Check tenant_id tag first (primary filter)
+                        if tag.get("key") == "tenant_id":
                             if tag.get("value") == organization_filter:
-                                return trace
-                            else:
-                                # Organization doesn't match
-                                return None
+                                tenant_found = True
+                                break
+                            # If tenant_id exists but doesn't match, continue checking other spans
+                            # (don't return immediately - another span might have the correct tenant_id)
+                        # Fallback: check organization tag for backward compatibility
+                        elif tag.get("key") == "organization":
+                            if tag.get("value") == organization_filter:
+                                tenant_found = True
+                                break
+                    if tenant_found:
+                        break
                 
-                # No organization found in trace - check user.id as fallback
-                # This is for backward compatibility with old traces
-                for span in spans:
-                    tags = span.get("tags", [])
-                    for tag in tags:
-                        if tag.get("key") == "user.id":
-                            # If user.id exists, we'd need to check if user belongs to org
-                            # For now, if no organization tag, deny access
-                            return None
-                
-                # No organization or user.id found - deny access
-                return None
+                if not tenant_found:
+                    # No matching tenant_id or organization tag found in any span
+                    logger.debug(f"Trace {trace_id} has no tenant_id or organization tag matching {organization_filter}, denying access")
+                    return None
             
             return trace
             

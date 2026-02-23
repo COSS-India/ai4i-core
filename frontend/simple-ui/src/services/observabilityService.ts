@@ -129,6 +129,7 @@ export const searchLogs = async (
     end_time?: string;
     page?: number;
     size?: number;
+    tenant_id?: string; // Admin-only: filter by tenant_id
   }
 ): Promise<LogSearchResponse> => {
   try {
@@ -146,11 +147,12 @@ export const searchLogs = async (
     if (params.search_text) queryParams.append('search_text', params.search_text);
     if (params.start_time) queryParams.append('start_time', params.start_time);
     if (params.end_time) queryParams.append('end_time', params.end_time);
+    if (params.tenant_id) queryParams.append('tenant_id', params.tenant_id);
     queryParams.append('page', String(params.page || 1));
     queryParams.append('size', String(params.size || 50));
 
     const response = await observabilityClient.get<LogSearchResponse>(
-      `/api/v1/observability/logs/search?${queryParams.toString()}`
+      `/api/v1/telemetry/logs/search?${queryParams.toString()}`
     );
 
     console.log('searchLogs: Response received:', {
@@ -209,7 +211,7 @@ export const getLogAggregations = async (
     if (params?.start_time) queryParams.append('start_time', params.start_time);
     if (params?.end_time) queryParams.append('end_time', params.end_time);
 
-    const url = `/api/v1/observability/logs/aggregate${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
+    const url = `/api/v1/telemetry/logs/aggregate${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
     const response = await observabilityClient.get<LogAggregationResponse>(url);
 
     return response.data;
@@ -239,7 +241,7 @@ export const getLogAggregations = async (
 export const getServicesWithLogs = async (): Promise<string[]> => {
   try {
     const response = await observabilityClient.get<{services: string[]} | string[]>(
-      '/api/v1/observability/logs/services'
+      '/api/v1/telemetry/logs/services'
     );
 
     console.log('getServicesWithLogs: Response received:', {
@@ -313,7 +315,7 @@ export const searchTraces = async (
     }
 
     const response = await observabilityClient.get<TraceSearchResponse>(
-      `/api/v1/observability/traces/search?${queryParams.toString()}`
+      `/api/v1/telemetry/traces/search?${queryParams.toString()}`
     );
 
     return response.data;
@@ -343,7 +345,7 @@ export const searchTraces = async (
 export const getTraceById = async (traceId: string): Promise<Trace> => {
   try {
     const response = await observabilityClient.get<Trace>(
-      `/api/v1/observability/traces/${traceId}`
+      `/api/v1/telemetry/traces/${traceId}`
     );
 
     return response.data;
@@ -373,7 +375,7 @@ export const getTraceById = async (traceId: string): Promise<Trace> => {
 export const getServicesWithTraces = async (): Promise<string[]> => {
   try {
     const response = await observabilityClient.get<{services: string[]} | string[]>(
-      '/api/v1/observability/traces/services'
+      '/api/v1/telemetry/traces/services'
     );
 
     // Handle both response formats: {"services": [...]} or [...]
@@ -412,7 +414,7 @@ export const getServicesWithTraces = async (): Promise<string[]> => {
 export const getOperationsForService = async (serviceName: string): Promise<string[]> => {
   try {
     const response = await observabilityClient.get<string[]>(
-      `/api/v1/observability/traces/services/${serviceName}/operations`
+      `/api/v1/telemetry/traces/services/${serviceName}/operations`
     );
 
     return response.data;

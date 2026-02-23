@@ -1,0 +1,81 @@
+# OCR Service - Public API (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: OCR Service
+  description: Optical Character Recognition. Extract text from images.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: OCR
+paths:
+  /api/v1/ocr/inference:
+    post:
+      tags: [OCR]
+      summary: OCR inference
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OCRInferenceRequest" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OCRInferenceResponse" }
+        "401": { description: Unauthorized }
+  /api/v1/ocr/health:
+    get:
+      tags: [OCR]
+      summary: Health check
+      responses:
+        "200": { description: Health status }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+  schemas:
+    OCRLanguageConfig:
+      type: object
+      required: [sourceLanguage]
+      properties:
+        sourceLanguage: { type: string, description: "Source language code (e.g. 'en', 'hi', 'ta')" }
+    OCRImageInput:
+      type: object
+      properties:
+        imageContent: { type: string, format: byte, description: Base64 encoded image content }
+        imageUri: { type: string, description: URI to image file }
+    OCRInferenceConfig:
+      type: object
+      required: [language]
+      properties:
+        serviceId: { type: string, description: OCR service/model ID (optional; Smart Router will assign if omitted) }
+        language: { $ref: "#/components/schemas/OCRLanguageConfig" }
+        textDetection: { type: boolean, default: false, description: Enable advanced text detection (bounding boxes, lines) }
+    OCRInferenceRequest:
+      type: object
+      required: [image, config]
+      properties:
+        image:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/OCRImageInput" }
+        config: { $ref: "#/components/schemas/OCRInferenceConfig" }
+    OCRTextOutput:
+      type: object
+      properties:
+        source: { type: string, description: Extracted text from the image }
+        target: { type: string, description: Reserved for future use }
+    OCRInferenceResponse:
+      type: object
+      properties:
+        output:
+          type: array
+          items: { $ref: "#/components/schemas/OCRTextOutput" }
+        config: { type: object, description: Response configuration metadata }
+security:
+  - BearerAuth: []

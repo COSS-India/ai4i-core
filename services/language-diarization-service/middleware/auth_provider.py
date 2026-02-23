@@ -10,7 +10,7 @@ import httpx
 from fastapi import Request, Header
 from jose import JWTError, jwt
 
-from middleware.exceptions import AuthenticationError, AuthorizationError
+from middleware.exceptions import AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError
 
 logger = logging.getLogger(__name__)
 
@@ -76,36 +76,32 @@ async def validate_api_key_permissions(
             payload["user_id"] = int(user_id)
 
         async with httpx.AsyncClient(timeout=AUTH_HTTP_TIMEOUT) as client:
-            response = await client.post(validate_url, json=payload)
-
-        if response.status_code == 200:
+            try:
+                response = await client.post(validate_url, json=payload)
+                response.raise_for_status()  # Raise exception for 4xx/5xx status codes
+            except httpx.HTTPStatusError as e:
+                # Handle HTTP error responses (4xx, 5xx)
+                try:
+                    err_json = e.response.json()
+                    err_msg = err_json.get("message") or err_json.get("detail") or e.response.text
+                except Exception:
+                    err_msg = e.response.text or str(e)
+                logger.error(f"Auth service returned status {e.response.status_code}: {err_msg}, service={service}, user_id={user_id}")
+                raise AuthorizationError(err_msg or "Failed to validate API key permissions")
+            
+            # Response is 200 OK
             result = response.json()
             # Enforce auth-service 'valid' flag
             if not result.get("valid", False):
+                # Preserve detailed message from auth-service, e.g.:
+                # "Invalid API key: This key does not have access to language-diarization service"
                 error_msg = result.get("message", "Permission denied")
+                logger.error(f"Auth-service returned valid=false: {error_msg}, service={service}, user_id={user_id}")
                 raise AuthorizationError(error_msg)
 
-            # Optional local ownership safety net
-            if user_id is not None and result.get("user_id") is not None:
-                try:
-                    api_key_user_id = int(result.get("user_id"))
-                    requested_user_id = int(user_id)
-                except (TypeError, ValueError):
-                    api_key_user_id = result.get("user_id")
-                    requested_user_id = user_id
-
-                if api_key_user_id != requested_user_id:
-                    raise AuthorizationError("API key does not belong to the authenticated user")
-
+            # No need for local ownership check - auth-service already validates this
+            # when user_id is provided in BOTH mode
             return result
-
-        try:
-            err_json = response.json()
-            err_msg = err_json.get("message") or err_json.get("detail") or response.text
-        except Exception:
-            err_msg = response.text
-        logger.error(f"Auth service returned status {response.status_code}: {err_msg}")
-        raise AuthorizationError(err_msg or "Failed to validate API key permissions")
     except httpx.TimeoutException:
         logger.error("Timeout calling auth-service for permission validation")
         raise AuthorizationError("Permission validation service unavailable")
@@ -199,7 +195,7 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
     except JWTError as e:
         logger.warning("Language Diarization: JWT verification failed: %s", e)
         if "expired" in str(e).lower() or "exp" in str(e).lower():
-            raise AuthenticationError("Authentication failed. Please log in again.")
+            raise AuthenticationError("Invalid or expired token")
         raise AuthenticationError("Invalid or expired token")
     except Exception as e:
         logger.error("Language Diarization: unexpected error during JWT verification: %s", e)
@@ -222,25 +218,82 @@ async def AuthProvider(
     # BOTH mode - require both JWT and API key
     api_key = x_api_key or get_api_key_from_header(authorization)
     if auth_source == "BOTH":
-        # 1) Authenticate user via JWT
-        bearer_result = await authenticate_bearer_token(request, authorization)
-        jwt_user_id = bearer_result.get("user_id")
+        try:
+            # 1) Authenticate user via JWT
+            bearer_result = await authenticate_bearer_token(request, authorization)
+            jwt_user_id = bearer_result.get("user_id")
 
-        if not api_key:
-            raise AuthenticationError("Missing API key")
+            if not api_key:
+                raise AuthenticationError("Missing API key")
 
-        # 2) Validate API key + enforce ownership via auth-service (and local safety net)
-        service, action = determine_service_and_action(request)
-        await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
+            # 2) Validate API key + permissions via auth-service (single source of truth),
+            # passing jwt_user_id so auth-service can enforce ownership.
+            service, action = determine_service_and_action(request)
+            auth_result = await validate_api_key_permissions(api_key, service, action, user_id=jwt_user_id)
+            
+            # CRITICAL: Always check valid field - auth-service may return valid=false
+            if not auth_result.get("valid", False):
+                error_msg = auth_result.get("message", "API key does not belong to the authenticated user")
+                api_key_user_id = auth_result.get("user_id")
+                logger.error(f"Auth-service returned valid=false in BOTH mode: {error_msg}, jwt_user_id={jwt_user_id}, api_key_user_id={api_key_user_id}")
+                
+                # In BOTH mode, if we provided user_id and auth-service returned valid=false,
+                # we need to distinguish between ownership and permission.
+                # When user_id is provided, auth-service checks ownership, but it may return
+                # a permission error if the API key doesn't have permission (even if it doesn't belong to the user).
+                # So we need to check: if user_ids don't match OR if there's no user_id in response, it's ownership.
+                if jwt_user_id is not None:
+                    # Check if auth-service returned a user_id that matches our requested user_id
+                    ownership_issue = True
+                    if api_key_user_id is not None:
+                        try:
+                            api_key_user_id_int = int(api_key_user_id)
+                            requested_user_id_int = int(jwt_user_id)
+                            if api_key_user_id_int == requested_user_id_int:
+                                # User IDs match - check if error message indicates ownership
+                                error_msg_lower = error_msg.lower()
+                                if "does not belong" in error_msg_lower or "ownership" in error_msg_lower:
+                                    # Error explicitly indicates ownership
+                                    logger.error(f"BOTH mode: valid=false, user_id matches ({jwt_user_id}), but error indicates ownership: {error_msg}")
+                                else:
+                                    # User IDs match and error doesn't indicate ownership: permission issue
+                                    ownership_issue = False
+                                    logger.error(f"BOTH mode: valid=false but user_id matches ({jwt_user_id}) and error indicates permission, treating as permission issue: {error_msg}")
+                            else:
+                                # Ownership mismatch: API key belongs to a different user
+                                logger.error(f"API key ownership mismatch: requested_user_id={requested_user_id_int}, api_key_user_id={api_key_user_id_int}")
+                        except (TypeError, ValueError):
+                            # If conversion fails, cannot confirm it's permission issue, treat as ownership
+                            logger.error(f"BOTH mode: valid=false with user_id={jwt_user_id} provided, but user_id conversion failed, treating as ownership issue")
+                    else:
+                        # No user_id in response but we provided one: this means ownership issue
+                        logger.error(f"BOTH mode: valid=false with user_id={jwt_user_id} provided, but no user_id in response - treating as ownership issue")
+                    
+                    if ownership_issue:
+                        # Ownership issue: API key doesn't belong to the authenticated user
+                        raise AuthenticationError("API key does not belong to the authenticated user")
+                    else:
+                        # Permission issue: preserve the original error message
+                        raise AuthenticationError(error_msg)
+                
+                # For other errors (when user_id not provided), preserve the message
+                raise AuthenticationError(error_msg)
 
-        # 3) Populate request state with JWT identity
-        request.state.user_id = jwt_user_id
-        request.state.api_key_id = None  # not tracked locally for BOTH
-        request.state.api_key_name = None
-        request.state.user_email = bearer_result.get("user", {}).get("email")
-        request.state.is_authenticated = True
+            # 3) Populate request.state – keep JWT as primary identity (matching ASR/TTS/NMT)
+            request.state.user_id = jwt_user_id
+            request.state.api_key_id = None
+            request.state.api_key_name = None
+            request.state.user_email = bearer_result.get("user", {}).get("email")
+            request.state.is_authenticated = True
 
-        return bearer_result
+            return bearer_result
+        except (AuthenticationError, AuthorizationError, InvalidAPIKeyError, ExpiredAPIKeyError) as e:
+            # For ANY auth/key error in BOTH mode, surface the underlying message when available
+            logger.error(f"Language-diarization BOTH mode: Authentication/Authorization error: {e}")
+            raise AuthenticationError(str(e) or "API key does not belong to the authenticated user")
+        except Exception as e:
+            logger.error(f"Language-diarization BOTH mode: Unexpected error: {e}", exc_info=True)
+            raise AuthenticationError("API key does not belong to the authenticated user")
 
     # API_KEY mode (default) - require API key only
     # IMPORTANT: In API_KEY mode, if Authorization header contains "Bearer " token,

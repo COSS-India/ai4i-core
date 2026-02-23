@@ -191,7 +191,7 @@ class ExperimentDeleteResponse(BaseModel):
 
 
 class ExperimentMetricItem(BaseModel):
-    """Single variant metric (per day) - no experiment_id to avoid repetition."""
+    """Single variant metric (per day or aggregated). metric_date is null when aggregate=true."""
     variant_id: str
     variant_name: str
     request_count: int
@@ -200,7 +200,7 @@ class ExperimentMetricItem(BaseModel):
     success_rate: float
     avg_latency_ms: Optional[int] = None
     custom_metrics: Optional[Dict[str, Any]] = None
-    metric_date: datetime
+    metric_date: Optional[datetime] = None  # None when aggregated (one row per variant)
 
 
 class ExperimentMetricsResponse(BaseModel):

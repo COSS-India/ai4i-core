@@ -60,7 +60,8 @@ async def resolve_tenant_from_user_id(
             if response.status_code == 200:
                 return response.json()
             elif response.status_code == 404:
-                logger.warning(f"Tenant not found for user_id {user_id}")
+                # Normal case for non-tenant users - log at debug level to avoid noise
+                logger.debug(f"Tenant not found for user_id {user_id}")
                 return None
             else:
                 logger.error(f"Failed to resolve tenant for user_id {user_id}: {response.status_code} - {response.text}")
@@ -85,16 +86,17 @@ async def try_get_tenant_context(request: Request) -> Optional[Dict[str, Any]]:
     # Try to get from JWT token (if tenant info is in token)
     jwt_payload = getattr(request.state, "jwt_payload", None)
     if jwt_payload:
-        logger.info(f"try_get_tenant_context: JWT payload found, keys={list(jwt_payload.keys())}, tenant_id={jwt_payload.get('tenant_id')}, schema_name={jwt_payload.get('schema_name')}")
+        # Log removed - middleware handles request/response logging
         tenant_context = await resolve_tenant_from_jwt(jwt_payload)
         if tenant_context:
             request.state.tenant_context = tenant_context
             request.state.tenant_schema = tenant_context.get("schema_name")
             request.state.tenant_id = tenant_context.get("tenant_id")
-            logger.info(f"try_get_tenant_context: Resolved tenant context from JWT: tenant_id={tenant_context.get('tenant_id')}, schema={tenant_context.get('schema_name')}")
+            # Log removed - middleware handles request/response logging
             return tenant_context
         else:
-            logger.warning(f"try_get_tenant_context: JWT payload present but no tenant context resolved. tenant_id in payload={jwt_payload.get('tenant_id')}")
+            # Normal case for non-tenant users - log at debug level to avoid noise
+            logger.debug(f"try_get_tenant_context: JWT payload present but no tenant context resolved. tenant_id in payload={jwt_payload.get('tenant_id')}")
 
     # Fallback: resolve from user_id via API Gateway → multi-tenant-service
     user_id = getattr(request.state, "user_id", None)

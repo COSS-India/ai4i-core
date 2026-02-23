@@ -2,13 +2,40 @@ import enum
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import Column,String,DateTime,Enum,Integer,Boolean,text,ForeignKey,Numeric,Date,BigInteger
+from sqlalchemy import Column,String,DateTime,Enum,Integer,Boolean,text,ForeignKey,Numeric,Date,BigInteger, TypeDecorator
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID, JSONB, TIMESTAMP
 from sqlalchemy.orm import relationship
 
 from .enum_tenant import TenantStatus , AuditAction ,BillingStatus , AuditActorType , ServiceUnitType , TenantUserStatus
 from db_connection import TenantDBBase
+
+
+class ServiceUnitTypeEnum(TypeDecorator):
+    """Custom type decorator to handle ServiceUnitType enum values correctly."""
+    impl = String(50)
+    cache_ok = True
+    
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, ServiceUnitType):
+            return value.value
+        return str(value)
+    
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            try:
+                return ServiceUnitType(value)
+            except ValueError:
+                # Fallback: try to find by value
+                for member in ServiceUnitType:
+                    if member.value == value:
+                        return member
+                raise ValueError(f"Invalid ServiceUnitType value: {value}")
+        return value
 
 
 def default_expiry():
@@ -20,7 +47,8 @@ class Tenant(TenantDBBase):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
     tenant_id = Column(String(255), unique=True, nullable=False)  # user/provided id
     organization_name = Column(String(255), nullable=False)
-    contact_email = Column(String(320), nullable=False, index=True)
+    contact_email = Column(String(500), nullable=False, index=True)  # encrypted email can be longer
+    phone_number = Column(String(500), nullable=True)  # encrypted phone number can be longer
     domain = Column(String(255), unique=True, nullable=False)  # user-provided domain e.g. acme.com
     # subdomain = Column(String(255), unique=True, nullable=False)  # generated: acme.ai4i.com
 
@@ -111,7 +139,7 @@ class ServiceConfig(TenantDBBase):
 
     id = Column(BigInteger, primary_key=True) 
     service_name = Column(String(50), unique=True, nullable=False)  # asr, tts, nmt
-    unit_type = Column(Enum(ServiceUnitType, native_enum=False,length=50), nullable=False) # char, second, request
+    unit_type = Column(ServiceUnitTypeEnum, nullable=False) # char, second, request
     price_per_unit = Column(Numeric(10, 6), nullable=False)         # 0.010
     currency = Column(String(10), default="INR")
     is_active = Column(Boolean, default=True)
@@ -132,7 +160,8 @@ class TenantUser(TenantDBBase):
     tenant_uuid = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     tenant_id = Column(String(255),ForeignKey("tenants.tenant_id", ondelete="CASCADE"),nullable=False,index=True)
     username = Column(String(255), nullable=False)
-    email = Column(String(320), nullable=False, index=True)
+    email = Column(String(500), nullable=False, index=True)  # encrypted email can be longer
+    phone_number = Column(String(500), nullable=True)  # encrypted phone number can be longer
     subscriptions = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     is_approved = Column(Boolean, nullable=False, default=False)
     status = Column(Enum(TenantUserStatus, native_enum=False, create_type=False), nullable=False, default=TenantStatus.PENDING)

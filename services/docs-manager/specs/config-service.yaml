@@ -1,0 +1,121 @@
+# Config Service - Feature Flags (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: Config Service (Feature Flags)
+  description: Feature flag management using Unleash. Evaluate, list, and sync flags.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: Feature Flags
+paths:
+  /api/v1/feature-flags/evaluate:
+    post:
+      tags: [Feature Flags]
+      summary: Evaluate Feature Flag
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                flag_name: { type: string }
+                user_id: { type: string }
+                context: { type: object }
+                default_value: {}
+                environment: { type: string }
+      responses:
+        "200": { description: Evaluation result }
+  /api/v1/feature-flags/evaluate/boolean:
+    post:
+      tags: [Feature Flags]
+      summary: Evaluate Boolean Feature Flag
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                flag_name: { type: string }
+                user_id: { type: string }
+                context: { type: object }
+                default_value: { type: boolean }
+                environment: { type: string }
+      responses:
+        "200": { description: Boolean value and reason }
+  /api/v1/feature-flags/evaluate/bulk:
+    post:
+      tags: [Feature Flags]
+      summary: Bulk Evaluate Feature Flags
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                flag_names: { type: array, items: { type: string } }
+                user_id: { type: string }
+                context: { type: object }
+                environment: { type: string }
+      responses:
+        "200": { description: Results for each flag }
+  /api/v1/feature-flags/{name}:
+    get:
+      tags: [Feature Flags]
+      summary: Get Feature Flag
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: environment
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Flag details }
+        "404": { description: Flag not found }
+  /api/v1/feature-flags/:
+    get:
+      tags: [Feature Flags]
+      summary: List Feature Flags
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: environment
+          in: query
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        "200": { description: Paginated list of flags }
+  /api/v1/feature-flags/sync:
+    post:
+      tags: [Feature Flags]
+      summary: Sync Feature Flags
+      description: Refresh feature flags cache from Unleash.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: environment
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Sync result with count }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+security:
+  - BearerAuth: []
