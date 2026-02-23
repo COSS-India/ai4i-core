@@ -55,6 +55,46 @@ import {
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 import { listTenants } from "../services/multiTenantService";
 
+/**
+ * Convert datetime-local format (YYYY-MM-DDTHH:mm) to ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
+ * This ensures the timestamp is properly formatted for OpenSearch queries
+ */
+const convertToISOFormat = (datetimeLocal: string): string => {
+  if (!datetimeLocal || datetimeLocal.trim() === "") {
+    return "";
+  }
+  
+  // Parse the datetime-local string (YYYY-MM-DDTHH:mm)
+  // Treat it as local time and convert to ISO format
+  try {
+    // If the string doesn't have seconds, add :00
+    let normalized = datetimeLocal;
+    if (!normalized.includes(":")) {
+      return ""; // Invalid format
+    }
+    
+    // Count colons to determine format
+    const colonCount = (normalized.match(/:/g) || []).length;
+    if (colonCount === 1) {
+      // Format: YYYY-MM-DDTHH:mm - add seconds
+      normalized = normalized + ":00";
+    }
+    
+    // Parse as local time and convert to ISO (UTC)
+    const date = new Date(normalized);
+    if (isNaN(date.getTime())) {
+      console.warn(`Invalid datetime format: ${datetimeLocal}`);
+      return "";
+    }
+    
+    // Return ISO format string
+    return date.toISOString();
+  } catch (error) {
+    console.error(`Error converting datetime to ISO: ${datetimeLocal}`, error);
+    return "";
+  }
+};
+
 const LogsPage: React.FC = () => {
   const toast = useToastWithDeduplication();
   const router = useRouter();
@@ -264,11 +304,15 @@ const LogsPage: React.FC = () => {
   // Fetch aggregations (only if authenticated and ADMIN)
   const { data: aggregations, isLoading: aggregationsLoading, error: aggregationsError } = useQuery({
     queryKey: ["logs-aggregations", startTime, endTime],
-    queryFn: () =>
-      getLogAggregations({
-        start_time: startTime || undefined,
-        end_time: endTime || undefined,
-      }),
+    queryFn: () => {
+      // Convert datetime-local format to ISO format for API
+      const apiStartTime = startTime && startTime.trim() !== "" ? convertToISOFormat(startTime) : undefined;
+      const apiEndTime = endTime && endTime.trim() !== "" ? convertToISOFormat(endTime) : undefined;
+      return getLogAggregations({
+        start_time: apiStartTime,
+        end_time: apiEndTime,
+      });
+    },
     enabled: isAuthenticated,
     staleTime: 1 * 60 * 1000, // 1 minute
   });
@@ -320,6 +364,17 @@ const LogsPage: React.FC = () => {
         endTime: endTime || 'not set',
       });
       
+      // Convert datetime-local format to ISO format for API
+      const apiStartTime = startTime && startTime.trim() !== "" ? convertToISOFormat(startTime) : undefined;
+      const apiEndTime = endTime && endTime.trim() !== "" ? convertToISOFormat(endTime) : undefined;
+      
+      console.log('Time conversion:', {
+        startTime_local: startTime,
+        startTime_iso: apiStartTime,
+        endTime_local: endTime,
+        endTime_iso: apiEndTime,
+      });
+      
       // First, fetch page 1 to get total count
       const firstPage = await searchLogs({
         page: 1,
@@ -327,8 +382,8 @@ const LogsPage: React.FC = () => {
         service: apiService,
         level: apiLevel,
         search_text: searchText && searchText.trim() !== "" ? searchText : undefined,
-        start_time: startTime && startTime.trim() !== "" ? startTime : undefined,
-        end_time: endTime && endTime.trim() !== "" ? endTime : undefined,
+        start_time: apiStartTime,
+        end_time: apiEndTime,
         tenant_id: isAdmin && selectedTenantId && selectedTenantId.trim() !== "" ? selectedTenantId : undefined,
       });
       
@@ -358,17 +413,17 @@ const LogsPage: React.FC = () => {
           const batchPromises = [];
           
           for (let page = batchStart; page <= batchEnd; page++) {
-            batchPromises.push(
-              searchLogs({
-                page,
-                size: fetchSize,
-                service: apiService,
-                level: apiLevel,
-                search_text: searchText && searchText.trim() !== "" ? searchText : undefined,
-                start_time: startTime && startTime.trim() !== "" ? startTime : undefined,
-                end_time: endTime && endTime.trim() !== "" ? endTime : undefined,
-                tenant_id: isAdmin && selectedTenantId && selectedTenantId.trim() !== "" ? selectedTenantId : undefined,
-              }).catch((error) => {
+              batchPromises.push(
+                searchLogs({
+                  page,
+                  size: fetchSize,
+                  service: apiService,
+                  level: apiLevel,
+                  search_text: searchText && searchText.trim() !== "" ? searchText : undefined,
+                  start_time: apiStartTime,
+                  end_time: apiEndTime,
+                  tenant_id: isAdmin && selectedTenantId && selectedTenantId.trim() !== "" ? selectedTenantId : undefined,
+                }).catch((error) => {
                 console.error(`Error fetching page ${page}:`, error);
                 return { logs: [] }; // Return empty logs on error
               })
