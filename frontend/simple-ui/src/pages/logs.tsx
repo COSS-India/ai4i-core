@@ -520,13 +520,24 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, authLoading]);
 
-  // Set default time range (last 1 hour)
+  // Set default time range (last 1 hour) - update when page loads or when both are empty
   useEffect(() => {
+    // Only set default if both startTime and endTime are empty
+    // This ensures we set it once on initial load, but don't override user's manual selections
     if (!startTime && !endTime) {
       const now = new Date();
       const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-      setEndTime(now.toISOString().slice(0, 16));
-      setStartTime(oneHourAgo.toISOString().slice(0, 16));
+      // Format as YYYY-MM-DDTHH:mm for datetime-local input
+      const formatDateTime = (date: Date) => {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        return `${year}-${month}-${day}T${hours}:${minutes}`;
+      };
+      setEndTime(formatDateTime(now));
+      setStartTime(formatDateTime(oneHourAgo));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -544,8 +555,17 @@ const LogsPage: React.FC = () => {
     setSelectedTenantId(""); // Clear tenant filter
     const now = new Date();
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    setEndTime(now.toISOString().slice(0, 16));
-    setStartTime(oneHourAgo.toISOString().slice(0, 16));
+    // Format as YYYY-MM-DDTHH:mm for datetime-local input
+    const formatDateTime = (date: Date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      return `${year}-${month}-${day}T${hours}:${minutes}`;
+    };
+    setEndTime(formatDateTime(now));
+    setStartTime(formatDateTime(oneHourAgo));
     setPage(1);
     setClientPage(1);
   };
