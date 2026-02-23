@@ -6,6 +6,7 @@ import type {
   RoutingRuleCreate,
   RoutingRuleUpdate,
   NotificationReceiver,
+  NotificationReceiverCreate,
 } from "../../../types/alerting";
 import { DEFAULT_GROUP_BY } from "../../../types/alerting";
 
@@ -97,7 +98,8 @@ export function useRoutingRules() {
     setCreateForm(EMPTY_CREATE_FORM);
   };
   const handleCreate = async (selectedRole?: string) => {
-    if (!createForm.rule_name.trim()) {
+    const ruleName = createForm.rule_name.trim();
+    if (!ruleName) {
       toast({
         title: "Validation Error",
         description: "Rule name is required",
@@ -107,31 +109,38 @@ export function useRoutingRules() {
       });
       return;
     }
+    if (!selectedRole?.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Assign to Role is required",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     setIsCreating(true);
     try {
-      let receiverId = createForm.receiver_id;
+      // Single create path: create receiver by role only (backend auto-creates one routing rule).
+      const receiverPayload: NotificationReceiverCreate = {
+        category: createForm.match_category || "application",
+        severity: createForm.match_severity || "critical",
+        rbac_role: selectedRole.trim(),
+      };
+      if (createForm.match_alert_type) {
+        receiverPayload.alert_type = createForm.match_alert_type;
+      }
+      const newReceiver = await alertingService.createReceiver(receiverPayload);
 
-      if (selectedRole) {
-        const receiverPayload: Record<string, unknown> = {
-          category: createForm.match_category || "application",
-          severity: createForm.match_severity || "critical",
-          rbac_role: selectedRole,
-        };
-        if (createForm.match_alert_type) {
-          receiverPayload.alert_type = createForm.match_alert_type;
-        }
-        const newReceiver = await alertingService.createReceiver(receiverPayload as any);
-        receiverId = newReceiver.id;
+      // Find the auto-created routing rule for this receiver and set the user's rule name.
+      const allRules = await alertingService.listRoutingRules();
+      const autoCreatedRule = allRules.find((r) => r.receiver_id === newReceiver.id);
+      if (autoCreatedRule) {
+        await alertingService.updateRoutingRule(autoCreatedRule.id, {
+          rule_name: ruleName,
+        });
       }
 
-      const payload: RoutingRuleCreate = {
-        ...createForm,
-        receiver_id: receiverId,
-        match_severity: createForm.match_severity || undefined,
-        match_category: createForm.match_category || undefined,
-        match_alert_type: createForm.match_alert_type || undefined,
-      };
-      await alertingService.createRoutingRule(payload);
       toast({
         title: "Routing Rule Created",
         status: "success",

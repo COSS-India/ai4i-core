@@ -27,9 +27,13 @@ export function useCreateApiKeyTab({
     useState<SelectedUserForPermissions | null>(null);
   const [selectedUserPermissions, setSelectedUserPermissions] = useState<string[]>([]);
   const [isLoadingPermissions, setIsLoadingPermissions] = useState(false);
-  const [apiKeyForUser, setApiKeyForUser] = useState({
+  const [apiKeyForUser, setApiKeyForUser] = useState<{
+    key_name: string;
+    permissions: string[];
+    expires_days: number | "";
+  }>({
     key_name: "",
-    permissions: [] as string[],
+    permissions: [],
     expires_days: 30,
   });
   const [selectedPermissionsForUser, setSelectedPermissionsForUser] = useState<string[]>([]);
@@ -102,7 +106,7 @@ export function useCreateApiKeyTab({
       const createdKey = await authService.createApiKeyForUser({
         key_name: apiKeyForUser.key_name,
         permissions: selectedPermissionsForUser,
-        expires_days: apiKeyForUser.expires_days,
+        expires_days: Number(apiKeyForUser.expires_days) || 30,
         user_id: selectedUserForPermissions.id,
       });
       try {
