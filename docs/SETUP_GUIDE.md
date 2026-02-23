@@ -6,6 +6,7 @@ This guide provides step-by-step instructions for setting up and running the AI4
 
 - **[Docker](https://docs.docker.com/get-started/get-docker/)** and **[Docker Compose](https://docs.docker.com/compose/install/)** installed
 - **[Git](https://git-scm.com/install/)** installed
+- **[Python 3](https://www.python.org/downloads/)** and **[pip3](https://pip.pypa.io/en/stable/installation/)** installed
 - At least **8GB RAM** and **20GB disk space**
 
 ## Important Note
@@ -101,6 +102,11 @@ docker compose -f docker-compose-local.yml ps
 
 You should see `postgres`, `redis`, `kafka`, `zookeeper`, `influxdb`, and `unleash` all showing as "healthy" or "Up".
 
+If any service is not running, start the specific service using: 
+```bash
+docker compose -f docker-compose-local.yml up -d <service-name>
+```
+
 ## Step 5: Initialize Databases
 
 The platform uses a custom Laravel-like migration framework for database management.
@@ -117,6 +123,12 @@ cd ../..
 
 External services (like Unleash) manage their own schemas. Create their databases first:
 
+**Windows:**
+```bash
+python infrastructure/databases/cli.py init:external
+```
+
+**MacOS/Linux:**
 ```bash
 python3 infrastructure/databases/cli.py init:external
 ```
@@ -173,7 +185,7 @@ Check the status of all services:
 docker compose -f docker-compose-local.yml ps
 ```
 
-All services should show as "Up" or "healthy". Services may take 30-60 seconds to become healthy after starting.
+All services should show as "Up" or "healthy". Services may take 30-60 seconds to become healthy after starting. If any containers stay in **Created** state or you see other errors, see [Troubleshooting](#troubleshooting) for help.
 
 ### View Logs (Optional)
 
@@ -192,63 +204,42 @@ docker compose -f docker-compose-local.yml logs -f <service-name>
 
 ## Step 7: Access the Platform
 
-Once all services are running, you can access:
+Once all services are running, use the table below to find URLs and ports. The **Compose service** column gives the service name to use with Docker Compose (for example, `docker compose -f docker-compose-local.yml logs -f asr-service` or `docker compose -f docker-compose-local.yml up -d nmt-service`).
 
-### Frontend & API
-
-- **Simple UI Frontend**: http://localhost:3000
-- **API Gateway**: http://localhost:9000
-- **API Gateway Swagger**: http://localhost:9000/docs
-
-### Service Swagger Documentation
-
-#### Core Services
-| Service | URL | Port |
-|---------|-----|------|
-| API Gateway | http://localhost:9000/docs | 9000 |
-| Auth Service | http://localhost:8081/docs | 8081 |
-| Config Service | http://localhost:8082/docs | 8082 |
-| Model Management Service | http://localhost:8094/docs | 8094 |
-
-#### AI/ML Services
-| Service | URL | Port |
-|---------|-----|------|
-| ASR Service | http://localhost:8087/docs | 8087 |
-| TTS Service | http://localhost:8088/docs | 8088 |
-| NMT Service | http://localhost:8091/docs | 8091 |
-| LLM Service | http://localhost:8093/docs | 8093 |
-| Transliteration Service | http://localhost:8097/docs | 8097 |
-| OCR Service | http://localhost:8099/docs | 8099 |
-| NER Service | http://localhost:9001/docs | 9001 |
-| Language Detection Service | http://localhost:8098/docs | 8098 |
-| Language Diarization Service | http://localhost:9002/docs | 9002 |
-| Audio Language Detection Service | http://localhost:8096/docs | 8096 |
-| Speaker Diarization Service | http://localhost:8095/docs | 8095 |
-| Pipeline Service | http://localhost:8092/docs | 8092 |
-
-#### Observability Services
-| Service | URL | Port |
-|---------|-----|------|
-| Metrics Service | http://localhost:8083/docs | 8083 |
-| Telemetry Service | http://localhost:8084/docs | 8084 |
-| Alerting Service | http://localhost:8085/docs | 8085 |
-| Dashboard Service | http://localhost:8090/docs | 8090 |
-
-### Monitoring & Observability
-
-| Tool | URL | Purpose |
-|------|-----|---------|
-| Prometheus | http://localhost:9090 | Metrics collection and querying |
-| Grafana | http://localhost:8097 | Metrics visualization dashboards |
-| Jaeger | http://localhost:16686 | Distributed tracing |
-| OpenSearch Dashboards | http://localhost:5601 | Log analysis and visualization |
+| Service / Tool | Compose service | URL | Port |
+|----------------|-----------------|-----|------|
+| Frontend | simple-ui-frontend | http://localhost:3000 | 3000 |
+| Auth Service | auth-service | http://localhost:8081/docs | 8081 |
+| Config Service | config-service | http://localhost:8082/docs | 8082 |
+| Model Management Service | model-management-service | http://localhost:8094/docs | 8094 |
+| ASR Service | asr-service | http://localhost:8087/docs | 8087 |
+| TTS Service | tts-service | http://localhost:8088/docs | 8088 |
+| NMT Service | nmt-service | http://localhost:8091/docs | 8091 |
+| LLM Service | llm-service | http://localhost:8093/docs | 8093 |
+| Transliteration Service | transliteration-service | http://localhost:8097/docs | 8097 |
+| OCR Service | ocr-service | http://localhost:8099/docs | 8099 |
+| NER Service | ner-service | http://localhost:9001/docs | 9001 |
+| Language Detection Service | language-detection-service | http://localhost:8098/docs | 8098 |
+| Language Diarization Service | language-diarization-service | http://localhost:9002/docs | 9002 |
+| Audio Language Detection Service | audio-lang-detection-service | http://localhost:8096/docs | 8096 |
+| Speaker Diarization Service | speaker-diarization-service | http://localhost:8095/docs | 8095 |
+| Pipeline Service | pipeline-service | http://localhost:8092/docs | 8092 |
+| Metrics Service | metrics-service | http://localhost:8083/docs | 8083 |
+| Telemetry Service | telemetry-service | http://localhost:8084/docs | 8084 |
+| Alerting Service | alerting-service | http://localhost:8085/docs | 8085 |
+| Dashboard Service | dashboard-service | http://localhost:8090/docs | 8090 |
+| API Gateway | api-gateway-service | http://localhost:9000 | 9000 |
+| Prometheus | prometheus | http://localhost:9090 | 9090 |
+| Grafana | grafana | http://localhost:3001 | 3001 |
+| Jaeger | jaeger | http://localhost:16686 | 16686 |
+| OpenSearch Dashboards | opensearch-dashboards | http://localhost:5602 | 5602 |
 
 ### Default Credentials
 
 **Platform Admin:**
 - **Username**: `admin`
 - **Email**: `admin@ai4inclusion.org`
-- **Password**: `git`
+- **Password**: `Admin@123`
 - **Role**: ADMIN (all permissions)
 
 **Unleash (Feature Flags):**
@@ -263,6 +254,25 @@ Once all services are running, you can access:
 1. Check logs: `docker compose -f docker-compose-local.yml logs <service-name>`
 2. Verify environment files exist in each service directory
 3. Check if ports are already in use: `netstat -tulpn | grep <port>`
+
+### Containers in Created State
+
+If some containers stay in a **Created** state and do not start, bring them up explicitly:
+
+```bash
+docker compose -f docker-compose-local.yml up -d <service-name>
+```
+
+Replace `<service-name>` with the service that is stuck (e.g. `asr-service`, `tts-service`).
+
+Alternatively, start services in smaller groups so they come up more reliably:
+
+```bash
+docker compose -f docker-compose-local.yml up -d asr-service tts-service nmt-service
+docker compose -f docker-compose-local.yml up -d llm-service pipeline-service ner-service
+```
+
+Add or repeat similar groups for other services as needed.
 
 ### Database connection errors
 
@@ -319,7 +329,7 @@ This `docker-compose-local.yml` configuration is optimized for local development
 - **Kong API Gateway**: Not included in local setup (production only)
 - **Health checks**: Configured with 6-hour intervals to reduce overhead
 - **Monitoring stack**: Full observability with Prometheus, Grafana, Jaeger, and OpenSearch
-- **Feature flags**: Unleash for gradual feature rollout and A/B testing
+- **Feature flags**: Unleash for gradual feature rollout
 
 ### Production Deployment
 
@@ -347,49 +357,34 @@ To stop and remove all data (volumes):
 docker compose -f docker-compose-local.yml down -v
 ```
 
-## Optional: Feature Flags Configuration
+On some Linux systems you may need `sudo`:
 
-The UI is integrated with feature flags to conditionally show/hide service features. If you want to control the visibility of services in the UI, you can create the following feature flags in Unleash:
+```bash
+sudo docker compose -f docker-compose-local.yml down -v
+```
 
-### Feature Flags Integrated with UI
+## Fresh Start: Starting from Scratch
 
-The following feature flags are used by the frontend to control service visibility:
+To reset the installation and start over:
+ 
+Stop containers and remove volumes for this project.
 
-- **`asr-enabled`** - Controls visibility of ASR (Automatic Speech Recognition) service
-- **`tts-enabled`** - Controls visibility of TTS (Text-to-Speech) service
-- **`nmt-enabled`** - Controls visibility of NMT (Neural Machine Translation) service
-- **`llm-enabled`** - Controls visibility of LLM (Large Language Model) service
-- **`pipeline-enabled`** - Controls visibility of Pipeline service
+```bash
+docker compose -f docker-compose-local.yml down -v
+```
 
-### How to Create Feature Flags in Unleash
+On Linux, if you run Docker with sudo:
 
-1. **Access Unleash UI**: 
-   - **Local Development**: Navigate to http://localhost:4242/feature-flags
-   - **Default Username**: `admin`
-   - **Default Password**: `unleash4all`
+```bash
+sudo docker compose -f docker-compose-local.yml down -v
+```
+Then run the setup again from [Step 1: Clone the Repository](#step-1-clone-the-repository) (or from [Step 3](#step-3-build-docker-images) if you keep the repo and only need to rebuild).
 
-2. **Create a Feature Flag**:
-   - Click "Create feature toggle"
-   - Enter the flag name (e.g., `asr-enabled`)
-   - Add a description (optional)
-   - Select flag type: `release` (recommended)
-   - Click "Create feature toggle"
+## Optional Configurations
 
-3. **Configure Environment Settings**:
-   - Enable or disable the flag for each environment (development, staging, production)
-   - Add targeting strategies if needed (gradual rollout, user targeting, etc.)
+After the platform is running, you can enable or customize these optional features:
 
-4. **Repeat** for each flag you want to configure
-
-### Behavior
-
-- **If a flag exists and is enabled**: The corresponding service will be visible in the UI
-- **If a flag exists and is disabled**: The corresponding service will be hidden in the UI
-- **If a flag doesn't exist**: The service will be visible by default
-
-**Note**: Feature flags are completely optional. If you don't create them, all services will be visible in the UI by default. Only create flags if you need to control service visibility.
-
----
+- **[Feature Flags](../services/config-service/docs/FEATURE_FLAGS_SETUP.md)** — Control visibility of services in the UI and create feature toggles in Unleash (e.g. `asr-enabled`, `tts-enabled`).
 
 **Need Help?** Check the [Troubleshooting Guide](TROUBLESHOOTING.md) or open an issue on GitHub.
 
