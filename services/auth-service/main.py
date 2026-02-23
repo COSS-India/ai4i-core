@@ -1059,23 +1059,8 @@ async def validate_api_key(
     # Map service names to permission resource names (for compatibility)
     # Permissions use resource names with underscores (e.g., "audio_lang_detection") 
     # but services may send names with hyphens (e.g., "audio-lang-detection")
-    service_to_resource = {
-        'audio-lang-detection': 'audio_lang_detection',
-        'language-detection': 'language_detection',
-        'language-diarization': 'language_diarization',
-        'ner': 'ner',
-        'ocr': 'ocr',
-        'speaker-diarization': 'speaker_diarization',
-        'transliteration': 'transliteration',
-        'asr': 'asr',
-        'tts': 'tts',
-        'nmt': 'nmt',
-        'pipeline': 'pipeline',
-        'model-management': 'model-management',
-        'llm': 'llm'
-    }
-    # Use mapped resource name for permission checking
-    resource_name = service_to_resource.get(service, service)
+    from services.constants import get_resource_name
+    resource_name = get_resource_name(service)
     
     # Validate API key
     is_valid, api_key_obj, error_message = await AuthUtils.validate_api_key(

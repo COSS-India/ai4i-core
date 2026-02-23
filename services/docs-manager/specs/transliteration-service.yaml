@@ -26,27 +26,6 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TransliterationInferenceResponse" }
         "401": { description: Unauthorized }
-  /api/v1/transliteration/models:
-    get:
-      tags: [Transliteration]
-      summary: List models
-      security: [{ BearerAuth: [] }]
-      responses:
-        "200": { description: List of models }
-  /api/v1/transliteration/services:
-    get:
-      tags: [Transliteration]
-      summary: List services
-      security: [{ BearerAuth: [] }]
-      responses:
-        "200": { description: List of services }
-  /api/v1/transliteration/languages:
-    get:
-      tags: [Transliteration]
-      summary: List languages
-      security: [{ BearerAuth: [] }]
-      responses:
-        "200": { description: List of languages }
   /api/v1/transliteration/health:
     get:
       tags: [Transliteration]
