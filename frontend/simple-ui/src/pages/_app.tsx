@@ -7,6 +7,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { useRouter } from 'next/router';
 import customTheme from '../theme';
+// Force feature-flag module to load before Layout/Sidebar to avoid circular dependency (useFeatureFlagsBulk undefined)
+import '../hooks/useFeatureFlag';
 import Layout from '../components/common/Layout';
 import AuthGuard from '../components/auth/AuthGuard';
 import '../styles/globals.css';

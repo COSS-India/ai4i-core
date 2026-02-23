@@ -1589,12 +1589,10 @@ async def register_user(
     if not payload.is_approved:
         raise HTTPException(status_code=400, detail="User must be approved by tenant admin to register")
 
-    # Use password from request instead of generating one
-    # Password is provided by the user and will be stored in auth-service for login
-    user_password = payload.password
+    # No password collected in create-user flow; generate one so user can set password later (e.g. via reset)
+    user_password = generate_random_password(length=12)
 
     # Create user in AUTH-SERVICE via /api/v1/auth/register
-    # Store the password provided by user so they can login with it
     try:
         async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
             auth_response = await client.post(
@@ -1713,14 +1711,14 @@ async def register_user(
     # Commented out: Sending generated password over email
     # Instead, password is provided by user in request and stored in auth-service
     # User can login with the password they provided via auth/login endpoint
-    # background_tasks.add_task(
-    #     send_user_welcome_email,
-    #     user_id,
-    #     payload.email,
-    #     None,  # add subdomain if required
-    #     payload.username,
-    #     plain_password,
-    # )
+    background_tasks.add_task(
+        send_user_welcome_email,
+        user_id,
+        payload.email,
+        None,  # add subdomain if required
+        payload.username,
+        user_password,
+    )
 
     logger.info(
         f"User registered successfully | tenant={tenant.tenant_id} | user={payload.username}"
