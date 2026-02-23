@@ -12,37 +12,41 @@ class AuthDefaultAdminSeeder(BaseSeeder):
     
     def run(self, adapter):
         """Run seeder"""
-        # Create default admin user
+        # Create default admin user if it doesn't exist
         # Password hash for "Admin@123" (bcrypt)
         
-        # First, update or delete the old admin user if exists
+        # Insert admin user if it doesn't exist, or update if it exists
         adapter.execute(
             """
-            DELETE FROM users WHERE username = 'admin' AND email != 'admin@ai4inclusion.org'
-            """
-        )
-        
-        # Now insert or update the correct admin user
-        adapter.execute(
-            """
-            INSERT INTO users (email, username, password_hash, is_active, is_verified)
-            VALUES (:email, :username, :password_hash, :is_active, :is_verified)
+            INSERT INTO users (email, username, password_hash, is_active, is_verified, is_superuser)
+            VALUES (:email, :username, :password_hash, :is_active, :is_verified, :is_superuser)
             ON CONFLICT (email) DO UPDATE
             SET 
                 username = EXCLUDED.username,
                 password_hash = EXCLUDED.password_hash,
                 is_active = EXCLUDED.is_active,
-                is_verified = EXCLUDED.is_verified
+                is_verified = EXCLUDED.is_verified,
+                is_superuser = EXCLUDED.is_superuser
             """,
             {
                 'email': 'admin@ai4inclusion.org',
                 'username': 'admin',
                 'password_hash': '$2b$12$4RQ5dBZcbuUGcmtMrySGxOv7Jj4h.v088MTrkTadx4kPfa.GrsaWW',
                 'is_active': True,
-                'is_verified': True
+                'is_verified': True,
+                'is_superuser': True
             }
         )
-        print("    ✓ Created default admin user (admin@ai4inclusion.org / Admin@123)")
+        print("    ✓ Created/updated default admin user (admin@ai4inclusion.org / Admin@123)")
+        
+        # Ensure is_superuser is set to true for admin@ai4inclusion.org (in case it was false)
+        adapter.execute(
+            """
+            UPDATE users 
+            SET is_superuser = true 
+            WHERE email = 'admin@ai4inclusion.org' AND is_superuser = false
+            """
+        )
         
         # Assign ADMIN role to the default admin user
         adapter.execute("""
