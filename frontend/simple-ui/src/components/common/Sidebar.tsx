@@ -42,6 +42,23 @@ import { useFeatureFlagsBulk, ALL_UI_FEATURE_FLAG_NAMES } from "../../hooks/useF
 import { getTenantIdFromToken } from "../../utils/helpers";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
 
+// Defensive: use array fallback if ALL_UI_FEATURE_FLAG_NAMES is undefined (e.g. circular dep during init)
+const SIDEBAR_FLAG_NAMES = Array.isArray(ALL_UI_FEATURE_FLAG_NAMES)
+  ? [...ALL_UI_FEATURE_FLAG_NAMES]
+  : [
+      'asr-enabled', 'tts-enabled', 'nmt-enabled', 'llm-enabled', 'pipeline-enabled',
+      'model-management-enabled', 'services-management-enabled', 'ocr-enabled',
+      'transliteration-enabled', 'language-detection-enabled', 'speaker-diarization-enabled',
+      'language-diarization-enabled', 'audio-language-detection-enabled', 'ner-enabled',
+    ];
+
+// Fallback when useFeatureFlagsBulk is undefined (circular dep): return all flags as true
+function useFeatureFlagsBulkFallback(_opts: { flagNames: string[]; defaultValue?: boolean }) {
+  const flags = Object.fromEntries(SIDEBAR_FLAG_NAMES.map((n) => [n, true]));
+  return { flags, isLoading: false, error: null, refetch: () => {} };
+}
+const useBulkFlags = typeof useFeatureFlagsBulk === 'function' ? useFeatureFlagsBulk : useFeatureFlagsBulkFallback;
+
 const safeColorMap = {
   asr: { // Coral → Pastel Coral
     50:  "#FFE9E2",
@@ -370,8 +387,8 @@ const Sidebar: React.FC = () => {
   const isAdmin = user?.roles?.includes('ADMIN') || false;
 
   // Single bulk request shared with home page (same queryKey = one request for whole app)
-  const { flags: sidebarFlags } = useFeatureFlagsBulk({
-    flagNames: [...ALL_UI_FEATURE_FLAG_NAMES],
+  const { flags: sidebarFlags } = useBulkFlags({
+    flagNames: SIDEBAR_FLAG_NAMES,
     defaultValue: true,
   });
 
