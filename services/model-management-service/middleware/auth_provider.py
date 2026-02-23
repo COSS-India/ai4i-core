@@ -127,8 +127,13 @@ async def AuthProvider(
     require_api_key = _env_bool("REQUIRE_API_KEY", True)
     allow_anonymous = _env_bool("ALLOW_ANONYMOUS_ACCESS", False)
     auth_source = (x_auth_source or "API_KEY").upper()
+    
+    # Allow anonymous access for try-it requests (X-Try-It header)
+    # This enables anonymous try-it functionality without requiring API keys
+    try_it_header = request.headers.get("X-Try-It") or request.headers.get("x-try-it")
+    is_try_it = try_it_header and str(try_it_header).lower() == "true"
 
-    if not auth_enabled or (allow_anonymous and not require_api_key):
+    if not auth_enabled or (allow_anonymous and not require_api_key) or is_try_it:
         # Populate anonymous context
         request.state.user_id = None
         request.state.api_key_id = None
@@ -241,6 +246,12 @@ async def authenticate_bearer_token(request: Request, authorization: Optional[st
         request.state.api_key_name = None
         request.state.user_email = email
         request.state.is_authenticated = True
+        # Store user info with roles for permission checking
+        request.state.user = {
+            "username": username,
+            "email": email,
+            "roles": roles,
+        }
 
         return {
             "user_id": int(user_id) if isinstance(user_id, (str, int)) else user_id,

@@ -939,7 +939,7 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     plain_password = generate_random_password(length = 8)
 
     # TODO: Add logging for password generation , Remove once done testing
-    logger.info(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+    # logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
 
     # Store temp credentials on tenant for email / audit purposes
     hashed_password = hash_password(plain_password)
@@ -1295,7 +1295,7 @@ async def list_service(db: AsyncSession) -> ListServicesResponse:
     """
 
     result = await db.execute(
-        select(ServiceConfig).where(ServiceConfig.is_active.is_(True))
+        select(ServiceConfig)
     )
 
     services = result.scalars().all()
@@ -1632,7 +1632,7 @@ async def register_user(
             logger.warning(f"Could not assign role {role_name} to user_id={user_id}; auth may use default.")
     
     # TODO: Add logging for password generation , Remove once done testing
-    logger.info(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+    # logger.debug(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
     
     if payload.is_approved:
         #Create TenantUser entry only if user is approved
@@ -2199,27 +2199,30 @@ async def view_tenant_details(
     decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
     decrypted_phone = decrypt_sensitive_data(tenant.phone_number) if tenant.phone_number else None
     
-    # Check if decryption actually succeeded
-    # If the original data was encrypted (starts with 'gAAAAA') but decryption returned the same value,
-    # it means decryption failed (likely due to encryption key mismatch)
-    if tenant.contact_email and tenant.contact_email.startswith('gAAAAA'):
-        if decrypted_email == tenant.contact_email:
-            # Decryption failed - encrypted data couldn't be decrypted (key mismatch or corruption)
-            logger.error(
-                f"CRITICAL: Failed to decrypt email for tenant {tenant.tenant_id}. "
-                f"This usually means the encryption key changed. "
-                f"Original encrypted value starts with: {tenant.contact_email[:20]}..."
-            )
-            # Use placeholder to prevent validation error, but log the issue
-            decrypted_email = "encrypted@example.com"
-        # If decrypted_email != tenant.contact_email, decryption succeeded, use it
+    # Validate email - ensure it's a valid email format for Pydantic
+    if not decrypted_email:
+        decrypted_email = "unknown@example.com"
+    elif decrypted_email.startswith('gAAAAA'):
+        # Still encrypted - decryption failed
+        logger.error(
+            f"CRITICAL: Failed to decrypt email for tenant {tenant.tenant_id}. "
+            f"This usually means the encryption key changed. "
+            f"Encrypted value starts with: {decrypted_email[:20]}..."
+        )
+        decrypted_email = "encrypted@example.com"
+    elif '@' not in decrypted_email:
+        # Invalid email format (no @ sign)
+        logger.warning(
+            f"Invalid email format for tenant {tenant.tenant_id}: {decrypted_email[:20]}..."
+        )
+        decrypted_email = "invalid@example.com"
     
     response = TenantViewResponse(
         id=tenant.id,
         tenant_id=tenant.tenant_id,
         user_id=tenant.user_id or None,
         organization_name=tenant.organization_name,
-        email=decrypted_email or "unknown@example.com",  # Use placeholder if decryption fails
+        email=decrypted_email,  # Validated above
         phone_number=decrypted_phone,
         domain=tenant.domain,
         schema=tenant.schema_name,
@@ -2395,27 +2398,30 @@ async def view_tenant_user_details(
     decrypted_email = decrypt_sensitive_data(tenant_user.email) if tenant_user.email else None
     decrypted_phone = decrypt_sensitive_data(tenant_user.phone_number) if tenant_user.phone_number else None
     
-    # Check if decryption actually succeeded
-    # If the original data was encrypted (starts with 'gAAAAA') but decryption returned the same value,
-    # it means decryption failed (likely due to encryption key mismatch)
-    if tenant_user.email and tenant_user.email.startswith('gAAAAA'):
-        if decrypted_email == tenant_user.email:
-            # Decryption failed - encrypted data couldn't be decrypted (key mismatch or corruption)
-            logger.error(
-                f"CRITICAL: Failed to decrypt email for tenant user {tenant_user.user_id}. "
-                f"This usually means the encryption key changed. "
-                f"Original encrypted value starts with: {tenant_user.email[:20]}..."
-            )
-            # Use placeholder to prevent validation error, but log the issue
-            decrypted_email = "encrypted@example.com"
-        # If decrypted_email != tenant_user.email, decryption succeeded, use it
+    # Validate email - ensure it's a valid email format for Pydantic
+    if not decrypted_email:
+        decrypted_email = "unknown@example.com"
+    elif decrypted_email.startswith('gAAAAA'):
+        # Still encrypted - decryption failed
+        logger.error(
+            f"CRITICAL: Failed to decrypt email for tenant user {tenant_user.user_id}. "
+            f"This usually means the encryption key changed. "
+            f"Encrypted value starts with: {decrypted_email[:20]}..."
+        )
+        decrypted_email = "encrypted@example.com"
+    elif '@' not in decrypted_email:
+        # Invalid email format (no @ sign)
+        logger.warning(
+            f"Invalid email format for tenant user {tenant_user.user_id}: {decrypted_email[:20]}..."
+        )
+        decrypted_email = "invalid@example.com"
     
     response = TenantUserViewResponse(
         id=tenant_user.id,
         tenant_id=tenant_user.tenant_id,
         user_id=tenant_user.user_id,
         username=tenant_user.username,
-        email=decrypted_email or "unknown@example.com",  # Use placeholder if decryption fails
+        email=decrypted_email,  # Validated above
         phone_number=decrypted_phone,
         subscriptions=tenant_user.subscriptions or [],
         status=tenant_user.status.value if hasattr(tenant_user.status, "value") else str(tenant_user.status),
@@ -2450,20 +2456,24 @@ async def list_all_tenants(
         decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
         decrypted_phone = decrypt_sensitive_data(tenant.phone_number) if tenant.phone_number else None
         
-        # Check if decryption actually succeeded
-        # If the original data was encrypted (starts with 'gAAAAA') but decryption returned the same value,
-        # it means decryption failed (likely due to encryption key mismatch)
-        if tenant.contact_email and tenant.contact_email.startswith('gAAAAA'):
-            if decrypted_email == tenant.contact_email:
-                # Decryption failed - encrypted data couldn't be decrypted (key mismatch or corruption)
-                logger.error(
-                    f"CRITICAL: Failed to decrypt email for tenant {tenant.tenant_id}. "
-                    f"This usually means the encryption key changed. "
-                    f"Original encrypted value starts with: {tenant.contact_email[:20]}..."
-                )
-                # Use placeholder to prevent validation error, but log the issue
-                decrypted_email = "encrypted@example.com"
-            # If decrypted_email != tenant.contact_email, decryption succeeded, use it
+        # Validate email - ensure it's a valid email format for Pydantic
+        # Check multiple conditions to catch all failure cases
+        if not decrypted_email:
+            decrypted_email = "unknown@example.com"
+        elif decrypted_email.startswith('gAAAAA'):
+            # Still encrypted - decryption failed
+            logger.error(
+                f"CRITICAL: Failed to decrypt email for tenant {tenant.tenant_id}. "
+                f"This usually means the encryption key changed. "
+                f"Encrypted value starts with: {decrypted_email[:20]}..."
+            )
+            decrypted_email = "encrypted@example.com"
+        elif '@' not in decrypted_email:
+            # Invalid email format (no @ sign)
+            logger.warning(
+                f"Invalid email format for tenant {tenant.tenant_id}: {decrypted_email[:20]}..."
+            )
+            decrypted_email = "invalid@example.com"
         
         tenant_list.append(
             TenantViewResponse(
@@ -2471,7 +2481,7 @@ async def list_all_tenants(
                 tenant_id=tenant.tenant_id,
                 user_id=tenant.user_id or 0,
                 organization_name=tenant.organization_name,
-                email=decrypted_email or "unknown@example.com",  # Use placeholder if decryption fails
+                email=decrypted_email,  # Validated above
                 phone_number=decrypted_phone,
                 domain=tenant.domain,
                 schema=tenant.schema_name,
@@ -2517,20 +2527,23 @@ async def list_all_users(
         decrypted_email = decrypt_sensitive_data(user.email) if user.email else None
         decrypted_phone = decrypt_sensitive_data(user.phone_number) if user.phone_number else None
         
-        # Check if decryption actually succeeded
-        # If the original data was encrypted (starts with 'gAAAAA') but decryption returned the same value,
-        # it means decryption failed (likely due to encryption key mismatch)
-        if user.email and user.email.startswith('gAAAAA'):
-            if decrypted_email == user.email:
-                # Decryption failed - encrypted data couldn't be decrypted (key mismatch or corruption)
-                logger.error(
-                    f"CRITICAL: Failed to decrypt email for tenant user {user.user_id}. "
-                    f"This usually means the encryption key changed. "
-                    f"Original encrypted value starts with: {user.email[:20]}..."
-                )
-                # Use placeholder to prevent validation error, but log the issue
-                decrypted_email = "encrypted@example.com"
-            # If decrypted_email != user.email, decryption succeeded, use it
+        # Validate email - ensure it's a valid email format for Pydantic
+        if not decrypted_email:
+            decrypted_email = "unknown@example.com"
+        elif decrypted_email.startswith('gAAAAA'):
+            # Still encrypted - decryption failed
+            logger.error(
+                f"CRITICAL: Failed to decrypt email for tenant user {user.user_id}. "
+                f"This usually means the encryption key changed. "
+                f"Encrypted value starts with: {decrypted_email[:20]}..."
+            )
+            decrypted_email = "encrypted@example.com"
+        elif '@' not in decrypted_email:
+            # Invalid email format (no @ sign)
+            logger.warning(
+                f"Invalid email format for tenant user {user.user_id}: {decrypted_email[:20]}..."
+            )
+            decrypted_email = "invalid@example.com"
         
         user_list.append(
             TenantUserViewResponse(
@@ -2538,7 +2551,7 @@ async def list_all_users(
                 tenant_id=user.tenant_id,
                 user_id=user.user_id,
                 username=user.username,
-                email=decrypted_email or "unknown@example.com",  # Use placeholder if decryption fails
+                email=decrypted_email,  # Validated above
                 phone_number=decrypted_phone,
                 subscriptions=user.subscriptions or [],
                 status=user.status.value if hasattr(user.status, "value") else str(user.status),

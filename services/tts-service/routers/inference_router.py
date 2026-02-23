@@ -80,6 +80,7 @@ from services.constants.error_messages import (
 from middleware.exceptions import AuthenticationError, AuthorizationError
 from middleware.auth_provider import AuthProvider
 from middleware.tenant_db_dependency import get_tenant_db_session
+from middleware.tenant_context import try_get_tenant_context
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -93,6 +94,10 @@ SMR_SERVICE_URL = os.getenv("SMR_SERVICE_URL", "http://smr-service:8097")
 
 # Use service name to get the same tracer instance as main.py
 tracer = trace.get_tracer("tts-service")
+
+# API Gateway URL for multi-tenant checks
+API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")
+
 
 # Create router
 # Enforce auth and permission checks on all routes (same as OCR and NMT)
@@ -1191,6 +1196,124 @@ async def get_tts_service(
     
     # Pass resolved model_name to TTS service
     return TTSService(repository, audio_service, text_service, triton_client, resolved_model_name=model_name)
+
+
+
+async def _enforce_tenant_and_service_checks(http_request: Request, service_name: str = "tts"):
+    """
+    Enforce tenant subscription, tenant status (ACTIVE) and global service active flag.
+    Execution order:
+      1) If tenant context exists, ensure tenant subscribes to this service
+      2) Ensure the service is globally active via /list/services
+      3) If tenant context exists, ensure tenant.status == ACTIVE
+    """
+    headers = {}
+    auth_header = http_request.headers.get("Authorization") or http_request.headers.get("authorization")
+    if auth_header:
+        headers["Authorization"] = auth_header
+                
+    x_api_key = http_request.headers.get("X-API-Key") or http_request.headers.get("x-api-key")
+    if x_api_key:
+        headers["X-API-Key"] = x_api_key
+
+    x_auth_source = http_request.headers.get("X-Auth-Source") or http_request.headers.get("x-auth-source")
+    if x_auth_source:
+        headers["x-auth-source"] = x_auth_source
+
+    # Determine tenant context in a best-effort way.
+    tenant_context = getattr(http_request.state, "tenant_context", None)
+    jwt_payload = getattr(http_request.state, "jwt_payload", None)
+    tenant_id_from_jwt = jwt_payload.get("tenant_id") if jwt_payload else None
+
+    tenant_data = tenant_context if tenant_context else None
+    tenant_id = tenant_context.get("tenant_id") if tenant_context else (tenant_id_from_jwt or None)
+
+    # If still no tenant info, attempt best-effort resolution (returns None for normal users)
+    if not tenant_id:
+        try:
+            resolved = await try_get_tenant_context(http_request)
+            if resolved:
+                tenant_context = resolved
+                tenant_id = tenant_context.get("tenant_id")
+                tenant_data = tenant_context
+            else:
+                tenant_id = None
+        except Exception as e:
+            logger.debug(f"try_get_tenant_context discovery failed: {e}")
+
+    # tenant_data may already be populated from tenant_context; only call API gateway if we still need tenant info
+    if tenant_id:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/admin/view/tenant", params={"tenant_id": tenant_id}, headers=headers)
+                if resp.status_code == 200:
+                    tenant_data = resp.json()
+                    subscriptions = [str(s).lower() for s in (tenant_data.get("subscriptions") or [])]
+                    if service_name.lower() not in subscriptions:
+                        raise HTTPException(
+                            status_code=403,
+                            detail={"code": "SERVICE_NOT_SUBSCRIBED", "message": f"Tenant '{tenant_id}' is not subscribed to '{service_name}'"},
+                        )
+                elif resp.status_code == 404:
+                    raise HTTPException(status_code=403, detail={"code": "TENANT_NOT_FOUND", "message": "Tenant not found"})
+                else:
+                    raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant information"})
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Failed to retrieve tenant info for tenant_id={tenant_id}: {e}")
+            raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant information"})
+
+    # Next, ensure the service is globally active
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            svc_resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/list/services", headers=headers)
+            if svc_resp.status_code == 200:
+                services = svc_resp.json().get("services", [])
+                svc_entry = next((s for s in services if str(s.get("service_name")).lower() == service_name.lower()), None)
+                if not svc_entry or not svc_entry.get("is_active", False):
+                    raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message="TTS service is not active at the moment.Please contact your administrator").dict())
+            else:
+                logger.warning("TTS: API_GATEWAY /list/services returned non-200", extra={"status_code": svc_resp.status_code, "text": svc_resp.text})
+                raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message="Cannot detect service availability. Please contact your administrator").dict())
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message=SERVICE_UNAVAILABLE_TTS_MESSAGE).dict())
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Failed to verify service active state for '{service_name}': {e}")
+        raise HTTPException(status_code=503, detail=ErrorDetail(code=SERVICE_UNAVAILABLE, message=SERVICE_UNAVAILABLE_TTS_MESSAGE).dict())
+
+    # Finally, if tenant context present, enforce tenant status (must be ACTIVE)
+    if tenant_id:
+        try:
+            if not tenant_data:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/admin/view/tenant", params={"tenant_id": tenant_id}, headers=headers)
+                    if resp.status_code == 200:
+                        tenant_data = resp.json()
+                    elif resp.status_code == 404:
+                        raise HTTPException(status_code=403, detail={"code": "TENANT_NOT_FOUND", "message": "Tenant not found"})
+                    else:
+                        raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant status"})
+
+            status_val = (tenant_data.get("status") or "").upper()
+            if status_val != "ACTIVE":
+                raise HTTPException(status_code=403, detail={"code": "TENANT_INACTIVE", "message": f"Tenant status is {status_val}. Access denied."})
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Failed to verify tenant status for tenant_id={tenant_id}: {e}")
+            raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant status"})
+
+
+async def enforce_tts_checks(request: Request):
+    """FastAPI dependency that enforces tenant and service checks for TTS before other dependencies run."""
+    # the service name is coming from multitenant SubscriptionType enum
+    await _enforce_tenant_and_service_checks(request, service_name="tts")
+
+# Add as a router-level dependency so it runs before path-operation dependencies like get_tts_service
+inference_router.dependencies.append(Depends(enforce_tts_checks))
 
 
 @inference_router.post(

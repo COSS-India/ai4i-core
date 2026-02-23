@@ -1,6 +1,38 @@
 // Utility helper functions for Simple UI
 
 /**
+ * Decode JWT token and extract tenant_id
+ * @returns tenant_id from JWT token or null if not found
+ */
+export const getTenantIdFromToken = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  
+  try {
+    // Get token from localStorage or sessionStorage
+    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    if (!token || token.trim() === '') {
+      return null;
+    }
+    
+    // Decode JWT payload
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      return null;
+    }
+    
+    const payload = parts[1];
+    const decoded = atob(payload);
+    const payloadObj = JSON.parse(decoded);
+    
+    // Extract tenant_id from JWT payload
+    return payloadObj.tenant_id || null;
+  } catch (error) {
+    console.error('Failed to extract tenant_id from token:', error);
+    return null;
+  }
+};
+
+/**
  * Get word count from text
  * @param text - Input text
  * @returns Number of words
