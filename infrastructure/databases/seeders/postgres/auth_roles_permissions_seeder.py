@@ -11,27 +11,63 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
     database = 'auth_db'  # Target database
     
     def run(self, adapter):
-        """Run seeder"""
-        # Insert default roles
+        """
+        Run seeder - ensures only seeded data exists, removes external data.
+        
+        This seeder is IDEMPOTENT - safe to run multiple times:
+        - Preserves existing seeded roles/permissions (updates if changed)
+        - Only deletes roles/permissions NOT in the seed list (external data)
+        - Recreates role_permissions to match seed definitions exactly
+        
+        Running multiple times will:
+        - Keep all seeded roles/permissions intact
+        - Remove any external roles/permissions added outside this seeder
+        - Ensure role_permissions match the seed definitions
+        """
+        # Define roles to keep
         roles = [
             ('ADMIN', 'Administrator with full system access'),
             ('USER', 'Regular user with standard permissions'),
             ('GUEST', 'Guest user with read-only access'),
             ('MODERATOR', 'Moderator with elevated permissions')
         ]
+        role_names = [r[0] for r in roles]
         
+        # Step 1: Delete role_permissions for roles not in our seed data
+        # (This must happen before deleting roles/permissions due to foreign key constraints)
+        # SAFE: Only deletes role_permissions for external roles, not seeded roles
+        role_names_quoted = "', '".join(role_names)
+        adapter.execute(
+            f"""
+            DELETE FROM role_permissions
+            WHERE role_id NOT IN (SELECT id FROM roles WHERE name IN ('{role_names_quoted}'))
+            """
+        )
+        
+        # Step 2: Delete roles that are NOT in our seed list (external roles only)
+        # SAFE: Only deletes roles not in seed list. Seeded roles are preserved in Step 3.
+        adapter.execute(
+            f"""
+            DELETE FROM roles
+            WHERE name NOT IN ('{role_names_quoted}')
+            """
+        )
+        
+        # Step 3: Insert/update roles (preserves existing seeded roles, updates if changed)
+        # SAFE: ON CONFLICT DO UPDATE ensures seeded roles are never deleted, only updated
         for name, description in roles:
             adapter.execute(
                 """
                 INSERT INTO roles (name, description)
                 VALUES (:name, :description)
-                ON CONFLICT (name) DO NOTHING
+                ON CONFLICT (name) DO UPDATE
+                  SET description = EXCLUDED.description
                 """,
                 {'name': name, 'description': description}
             )
-        print(f"    ✓ Seeded {len(roles)} roles")
+        print(f"    ✓ Seeded {len(roles)} roles (removed external roles)")
         
-        # Insert default permissions - mirror infrastructure/postgres/load-seed-data.sh
+        # Define permissions to keep - mirror infrastructure/postgres/load-seed-data.sh
         permissions = [
             # User management
             ('users.create', 'users', 'create'),
@@ -94,8 +130,8 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             ('nmt.inference', 'nmt', 'inference'),
             ('nmt.read', 'nmt', 'read'),
 
-            ('audio-lang.read', 'audio-lang', 'read'),
-            ('audio-lang.inference', 'audio-lang', 'inference'),
+            ('audio-lang-detection.read', 'audio-lang-detection', 'read'),
+            ('audio-lang-detection.inference', 'audio-lang-detection', 'inference'),
 
             ('language-detection.read', 'language-detection', 'read'),
             ('language-detection.inference', 'language-detection', 'inference'),
@@ -124,7 +160,20 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             ('logs.read', 'logs', 'read'),
             ('traces.read', 'traces', 'read'),
         ]
+        permission_names = [p[0] for p in permissions]
         
+        # Step 4: Delete permissions that are NOT in our seed list (external permissions only)
+        # SAFE: Only deletes permissions not in seed list. Seeded permissions are preserved in Step 5.
+        permission_names_quoted = "', '".join(permission_names)
+        adapter.execute(
+            f"""
+            DELETE FROM permissions
+            WHERE name NOT IN ('{permission_names_quoted}')
+            """
+        )
+        
+        # Step 5: Insert/update permissions (preserves existing seeded permissions, updates if changed)
+        # SAFE: ON CONFLICT DO UPDATE ensures seeded permissions are never deleted, only updated
         for name, resource, action in permissions:
             adapter.execute(
                 """
@@ -136,19 +185,36 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
                 """,
                 {'name': name, 'resource': resource, 'action': action}
             )
-        print(f"    ✓ Seeded {len(permissions)} permissions")
+        print(f"    ✓ Seeded {len(permissions)} permissions (removed external permissions)")
+        
+        # Step 6: Delete role_permissions for permissions not in our seed data
+        # SAFE: Only deletes role_permissions referencing external permissions
+        permission_names_quoted = "', '".join(permission_names)
+        adapter.execute(
+            f"""
+            DELETE FROM role_permissions
+            WHERE permission_id NOT IN (
+                SELECT id FROM permissions WHERE name IN ('{permission_names_quoted}')
+            )
+            """
+        )
         
         # ------------------------------------------------------------------
         # ROLE_PERMISSIONS: mirror the logic from load-seed-data.sh
+        # Step 7: Delete all existing role_permissions for our roles (clean slate for reseeding)
+        # SAFE: This ensures role_permissions match seed definitions exactly.
+        #       Seeded roles/permissions are preserved, only role_permissions are reset.
         # ------------------------------------------------------------------
-
-        # ADMIN: explicit list of permissions
+        role_names_quoted = "', '".join(role_names)
         adapter.execute(
-            """
+            f"""
             DELETE FROM role_permissions
-            WHERE role_id IN (SELECT id FROM roles WHERE name = 'ADMIN');
+            WHERE role_id IN (SELECT id FROM roles WHERE name IN ('{role_names_quoted}'))
             """
         )
+        
+        # Step 8: Insert role_permissions for our roles
+        # ADMIN: explicit list of permissions
         adapter.execute(
             """
             INSERT INTO role_permissions (role_id, permission_id)
