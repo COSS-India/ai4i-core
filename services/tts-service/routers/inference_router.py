@@ -1533,10 +1533,9 @@ async def run_inference(
                         fallback_triton_client = TritonClient(triton_url, triton_api_key)
                         
                         # Get database session for fallback service
-                        # Use async generator pattern to properly manage session lifecycle
-                        session_gen = get_tenant_db_session(http_request)
-                        fallback_db = await session_gen.__anext__()
-                        try:
+                        # Use async for to properly manage the generator lifecycle
+                        # The generator's finally block will close the session automatically
+                        async for fallback_db in get_tenant_db_session(http_request):
                             fallback_repository = TTSRepository(fallback_db)
                             fallback_audio_service = AudioService()
                             fallback_text_service = TextService()
@@ -1561,12 +1560,8 @@ async def run_inference(
                                 session_id=session_id,
                                 http_request_state=http_request.state
                             )
-                        finally:
-                            # Ensure session is closed by consuming the generator
-                            try:
-                                await session_gen.__anext__()
-                            except StopAsyncIteration:
-                                pass
+                            # Break after successful inference - generator will close session in finally block
+                            break
                         
                         using_fallback = True
                         
