@@ -313,6 +313,7 @@ apiClient.interceptors.request.use(
     const isAudioLangDetectionEndpoint = url.includes('/api/v1/audio-lang-detection');
     const isObservabilityEndpoint = url.includes('/api/v1/telemetry');
     const isMultiTenantEndpoint = url.includes('/api/v1/multi-tenant');
+    const isFeatureFlagsEndpoint = url.includes('/api/v1/feature-flags');
     const isAuthEndpoint = url.includes('/api/v1/auth');
     const isAuthRefreshEndpoint = url.includes('/api/v1/auth/refresh');
     
@@ -323,7 +324,8 @@ apiClient.interceptors.request.use(
                         isLanguageDiarizationEndpoint || isSpeakerDiarizationEndpoint ||
                         isNEREndpoint || isOCREndpoint || isTransliterationEndpoint ||
                         isObservabilityEndpoint ||
-                        isMultiTenantEndpoint;
+                        isMultiTenantEndpoint ||
+                        isFeatureFlagsEndpoint;
     
     // Proactively refresh token if it's expiring soon (skip for refresh and login endpoints)
     if ((requiresJWT || (isAuthEndpoint && !isAuthRefreshEndpoint)) && !isAuthRefreshEndpoint) {
@@ -393,6 +395,13 @@ apiClient.interceptors.request.use(
         } else {
           console.warn('Multi-tenant: No JWT token available', { url: config.url });
         }
+      }
+
+      // Feature-flags endpoints require JWT (gateway returns 401 without Bearer token)
+      if (isFeatureFlagsEndpoint && jwtToken) {
+        config.headers['Authorization'] = `Bearer ${jwtToken}`;
+        config.headers['x-auth-source'] = 'AUTH_TOKEN';
+        config.headers['X-Auth-Source'] = 'AUTH_TOKEN';
       }
       
       // All services require BOTH JWT token AND API key
