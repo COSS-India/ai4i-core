@@ -86,7 +86,7 @@ paths:
               schema: { $ref: "#/components/schemas/ModelViewResponse" }
         "404": { description: Model not found }
       tags: [Model Management]
-      summary: Get model (POST)
+      summary: Get model
       description: Fetch metadata for a specific model. If version is provided in body, returns that version.
       security: [{ BearerAuth: [] }]
       parameters:
@@ -206,7 +206,7 @@ paths:
   /api/v1/model-management/services/{service_id}:
     post:
       tags: [Model Management]
-      summary: Get service by ID
+      summary: Get service
       description: View service details by ID (service_id may contain slashes).
       security: [{ BearerAuth: [] }]
       parameters:
