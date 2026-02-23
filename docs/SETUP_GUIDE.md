@@ -260,7 +260,7 @@ Once all services are running, you can access:
 **Platform Admin:**
 - **Username**: `admin`
 - **Email**: `admin@ai4inclusion.org`
-- **Password**: `git`
+- **Password**: `Admin@123`
 - **Role**: ADMIN (all permissions)
 
 **Unleash (Feature Flags):**
