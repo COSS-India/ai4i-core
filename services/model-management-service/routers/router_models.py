@@ -3,6 +3,7 @@ Standard RESTful API router for Models - aligned with API Gateway paths.
 Routes: /models (GET, POST, PATCH), /models/{model_id} (GET, POST), /models/{model_id} (DELETE)
 """
 from fastapi import HTTPException, status, APIRouter, Depends, Query, Request, Body
+from sqlalchemy.ext.asyncio import AsyncSession
 from middleware.auth_provider import AuthProvider
 from models.model_view import ModelViewResponse, ModelViewRequestWithVersion
 from models.model_create import ModelCreateRequest
@@ -14,6 +15,8 @@ from db_operations import (
     update_model,
     delete_model_by_uuid,
 )
+from db_connection import get_auth_db_session
+from utils.permission_checker import require_permission, require_permission_dependency
 from logger import logger
 from typing import List, Union, Optional
 from models.type_enum import TaskTypeEnum
@@ -34,12 +37,16 @@ router_models = APIRouter(
 
 @router_models.get("", response_model=List[ModelViewResponse])
 async def list_models(
+    request: Request,
     task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.)"),
     include_deprecated: bool = Query(True, description="Include deprecated versions. Set to false to show only ACTIVE versions."),
     model_name: Optional[str] = Query(None, description="Filter by model name. Returns all versions of models matching this name."),
-    created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the model.")
+    created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the model."),
+    db: AsyncSession = Depends(get_auth_db_session)
 ):
-    """List all models - GET /models"""
+    """List all models - GET /models. Requires 'model.read' permission (ADMIN or MODERATOR only)."""
+    # Check permission - only ADMIN and MODERATOR can read models
+    await require_permission("model.read", request, db)
     try:
         if not task_type or task_type.lower() == "none":
             task_type_enum = None
@@ -64,9 +71,13 @@ async def list_models(
 @router_models.get("/{model_id:path}", response_model=ModelViewResponse)
 async def get_model_by_id(
     model_id: str,
-    version: Optional[str] = Query(None, description="Optional version to get specific version")
+    request: Request,
+    version: Optional[str] = Query(None, description="Optional version to get specific version"),
+    db: AsyncSession = Depends(get_auth_db_session)
 ):
-    """Get model by ID - GET /models/{model_id}"""
+    """Get model by ID - GET /models/{model_id}. Requires 'model.read' permission (ADMIN or MODERATOR only)."""
+    # Check permission - only ADMIN and MODERATOR can read models
+    await require_permission("model.read", request, db)
     try:
         data = await get_model_details(model_id, version=version)
         if not data:
@@ -85,9 +96,13 @@ async def get_model_by_id(
 @router_models.post("/{model_id:path}", response_model=ModelViewResponse)
 async def view_model_by_id(
     model_id: str,
-    payload: Optional[ModelViewRequestWithVersion] = Body(None, description="Request body with optional version")
+    request: Request,
+    payload: Optional[ModelViewRequestWithVersion] = Body(None, description="Request body with optional version"),
+    db: AsyncSession = Depends(get_auth_db_session)
 ):
-    """Get model by ID with optional version in body - POST /models/{model_id}"""
+    """Get model by ID with optional version in body - POST /models/{model_id}. Requires 'model.read' permission (ADMIN or MODERATOR only)."""
+    # Check permission - only ADMIN and MODERATOR can read models
+    await require_permission("model.read", request, db)
     try:
         version = payload.version if payload else None
         data = await get_model_details(model_id, version=version)
@@ -104,9 +119,14 @@ async def view_model_by_id(
         )
 
 
-@router_models.post("", response_model=str)
-async def create_model(payload: ModelCreateRequest, request: Request):
-    """Create a new model - POST /models"""
+@router_models.post("", response_model=str, dependencies=[Depends(require_permission_dependency("model.create"))])
+async def create_model(
+    payload: ModelCreateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_auth_db_session)
+):
+    """Create a new model - POST /models. Requires 'model.create' permission (ADMIN or MODERATOR only)."""
+    
     try:
         user_id = get_user_id_from_request(request)
         model_id = await save_model_to_db(payload, created_by=user_id)
@@ -122,9 +142,14 @@ async def create_model(payload: ModelCreateRequest, request: Request):
         )
 
 
-@router_models.patch("", response_model=str)
-async def update_model_endpoint(payload: ModelUpdateRequest, request: Request):
-    """Update a model - PATCH /models"""
+@router_models.patch("", response_model=str, dependencies=[Depends(require_permission_dependency("model.update"))])
+async def update_model_endpoint(
+    payload: ModelUpdateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_auth_db_session)
+):
+    """Update a model - PATCH /models. Requires 'model.update' permission (ADMIN or MODERATOR only)."""
+    
     try:
         user_id = get_user_id_from_request(request)
         result = await update_model(payload, updated_by=user_id)
@@ -149,9 +174,13 @@ async def update_model_endpoint(payload: ModelUpdateRequest, request: Request):
         )
 
 
-@router_models.delete("/{model_id:path}", response_model=str)
-async def delete_model(model_id: str):
-    """Delete a model by ID - DELETE /models/{model_id}"""
+@router_models.delete("/{model_id:path}", response_model=str, dependencies=[Depends(require_permission_dependency("model.delete"))])
+async def delete_model(
+    model_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_auth_db_session)
+):
+    """Delete a model by ID - DELETE /models/{model_id}. Requires 'model.delete' permission (ADMIN or MODERATOR only)."""
     try:
         result = await delete_model_by_uuid(model_id)
 

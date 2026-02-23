@@ -1,0 +1,91 @@
+# Speaker Diarization Service - Public API (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: Speaker Diarization Service
+  description: Identify and segment speakers in audio.
+  version: 1.0.0
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway
+tags:
+  - name: Speaker Diarization
+paths:
+  /api/v1/speaker-diarization/inference:
+    post:
+      tags: [Speaker Diarization]
+      summary: Speaker diarization inference
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SpeakerDiarizationInferenceRequest" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SpeakerDiarizationInferenceResponse" }
+        "401": { description: Unauthorized }
+  /api/v1/speaker-diarization/health:
+    get:
+      tags: [Speaker Diarization]
+      summary: Health check
+      responses:
+        "200": { description: Health status }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+  schemas:
+    SpeakerDiarizationControlConfig:
+      type: object
+      properties:
+        dataTracking: { type: boolean, default: true, description: Whether to enable data tracking }
+    SpeakerDiarizationConfig:
+      type: object
+      properties:
+        serviceId: { type: string, description: Speaker diarization service/model ID (optional; Smart Router will assign if omitted) }
+    SpeakerDiarizationAudioInput:
+      type: object
+      properties:
+        audioContent: { type: string, format: byte, description: Base64 encoded audio content }
+        audioUri: { type: string, description: URL from which the audio can be downloaded }
+    SpeakerDiarizationInferenceRequest:
+      type: object
+      required: [config, audio]
+      properties:
+        controlConfig: { $ref: "#/components/schemas/SpeakerDiarizationControlConfig" }
+        config: { $ref: "#/components/schemas/SpeakerDiarizationConfig" }
+        audio:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/SpeakerDiarizationAudioInput" }
+    SpeakerDiarizationSegment:
+      type: object
+      properties:
+        start_time: { type: number, description: Start time in seconds }
+        end_time: { type: number, description: End time in seconds }
+        duration: { type: number, description: Duration in seconds }
+        speaker: { type: string, description: Speaker identifier (e.g. SPEAKER_00) }
+    SpeakerDiarizationOutput:
+      type: object
+      properties:
+        total_segments: { type: integer }
+        num_speakers: { type: integer }
+        speakers: { type: array, items: { type: string } }
+        segments: { type: array, items: { $ref: "#/components/schemas/SpeakerDiarizationSegment" } }
+    SpeakerDiarizationResponseConfig:
+      type: object
+      properties:
+        serviceId: { type: string }
+        language: { type: string }
+    SpeakerDiarizationInferenceResponse:
+      type: object
+      properties:
+        taskType: { type: string, default: speaker-diarization }
+        output: { type: array, items: { $ref: "#/components/schemas/SpeakerDiarizationOutput" } }
+        config: { $ref: "#/components/schemas/SpeakerDiarizationResponseConfig" }
+security:
+  - BearerAuth: []

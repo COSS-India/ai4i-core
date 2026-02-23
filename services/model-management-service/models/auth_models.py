@@ -3,7 +3,7 @@ Auth Models
 SQLAlchemy ORM models for authentication-related database tables
 """
 
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, func
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, func, PrimaryKeyConstraint
 from sqlalchemy.orm import relationship
 
 from sqlalchemy.ext.declarative import declarative_base
@@ -17,7 +17,7 @@ class UserDB(AuthDBBase):
     id = Column(Integer, primary_key=True)
     email = Column(String(255), unique=True, nullable=False)
     username = Column(String(100), unique=True, nullable=False)
-    hashed_password = Column(String(255), nullable=True)  # Matches database column name (nullable for OAuth users)
+    password_hash = Column(String(255), nullable=True)  # Matches database column name (nullable for OAuth users)
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -26,17 +26,6 @@ class UserDB(AuthDBBase):
     # Relationships
     api_keys = relationship("ApiKeyDB", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("SessionDB", back_populates="user", cascade="all, delete-orphan")
-    
-    # Compatibility property for code that uses 'password_hash'
-    @property
-    def password_hash(self):
-        """Get password_hash (alias for hashed_password)"""
-        return self.hashed_password
-    
-    @password_hash.setter
-    def password_hash(self, value):
-        """Set password_hash (alias for hashed_password)"""
-        self.hashed_password = value
 
 
 class ApiKeyDB(AuthDBBase):
@@ -92,3 +81,67 @@ class SessionDB(AuthDBBase):
     
     # Relationships
     user = relationship("UserDB", back_populates="sessions")
+
+
+class Role(AuthDBBase):
+    """Role database model for RBAC"""
+    __tablename__ = "roles"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, index=True, nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    role_permissions = relationship("RolePermission", back_populates="role", cascade="all, delete-orphan")
+    user_roles = relationship("UserRole", back_populates="role", cascade="all, delete-orphan")
+
+
+class Permission(AuthDBBase):
+    """Permission database model for RBAC"""
+    __tablename__ = "permissions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, index=True, nullable=False)
+    resource = Column(String(100), nullable=False)
+    action = Column(String(50), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
+    role_permissions = relationship("RolePermission", back_populates="permission", cascade="all, delete-orphan")
+
+
+class UserRole(AuthDBBase):
+    """User-Role mapping for RBAC"""
+    __tablename__ = "user_roles"
+    
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, index=True)
+    assigned_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Composite primary key
+    __table_args__ = (
+        PrimaryKeyConstraint('user_id', 'role_id'),
+    )
+    
+    # Relationships
+    user = relationship("UserDB")
+    role = relationship("Role", back_populates="user_roles")
+
+
+class RolePermission(AuthDBBase):
+    """Role-Permission mapping for RBAC"""
+    __tablename__ = "role_permissions"
+    
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, index=True)
+    permission_id = Column(Integer, ForeignKey("permissions.id", ondelete="CASCADE"), nullable=False, index=True)
+    assigned_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Composite primary key
+    __table_args__ = (
+        PrimaryKeyConstraint('role_id', 'permission_id'),
+    )
+    
+    # Relationships
+    role = relationship("Role", back_populates="role_permissions")
+    permission = relationship("Permission", back_populates="role_permissions")

@@ -183,12 +183,14 @@ class JSONFormatter(logging.Formatter):
                 tenant_id = context.get("tenant_id")
         
         # Always add tenant_id field
-        # If not found, use temporary default value (temporary fix)
+        # If not found in context, use default to prevent logs without tenant_id
+        # The tenant_id should be set in logging context by middleware or during login
         if tenant_id:
             log_data["tenant_id"] = tenant_id
         else:
-            # Temporary fix: use default tenant_id if not found
-            # TODO: Remove this temporary fix once all users are registered to tenants
+            # Last resort: use default tenant_id to prevent logs without tenant_id
+            # This should only happen for system logs or when tenant_id is not set in context
+            # TODO: Consider making this configurable or removing once all services set tenant_id properly
             log_data["tenant_id"] = "new-organization-487578"
         
         # Add service metadata

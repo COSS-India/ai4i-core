@@ -1,0 +1,145 @@
+# TTS Service - Public API (as exposed via API Gateway)
+openapi: 3.0.3
+info:
+  title: TTS Service
+  description: Text-to-Speech. Convert text to speech (batch and streaming). 22+ Indic languages.
+  version: 1.0.0
+  contact:
+    name: Dhruva Platform Team
+    url: https://github.com/AI4Bharat/Dhruva
+
+servers:
+  - url: "http://localhost:8080"
+    description: API Gateway (use for Try it out)
+
+tags:
+  - name: TTS
+    description: Text-to-speech endpoints
+
+paths:
+  /api/v1/tts/inference:
+    post:
+      tags: [TTS]
+      summary: TTS inference
+      description: Convert text to speech for one or more text inputs.
+      operationId: ttsInference
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TTSInferenceRequest"
+      responses:
+        "200":
+          description: Synthesized audio
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TTSInferenceResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/RateLimitExceeded"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/tts/health:
+    get:
+      tags: [TTS]
+      summary: Health check
+      operationId: ttsHealth
+      responses:
+        "200":
+          description: Health status
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+  schemas:
+    TTSTextInput:
+      type: object
+      required: [source]
+      properties:
+        source: { type: string, description: Input text to synthesize }
+        audioDuration: { type: number, format: float, description: Desired audio duration in seconds }
+    TTSLanguageConfig:
+      type: object
+      required: [sourceLanguage]
+      properties:
+        sourceLanguage: { type: string, description: "Language code (e.g. 'en', 'hi', 'ta')" }
+        sourceScriptCode: { type: string, description: Script code if applicable }
+    TTSInferenceConfig:
+      type: object
+      required: [language]
+      properties:
+        serviceId: { type: string, description: TTS service/model ID (optional; Smart Router will assign if omitted) }
+        language: { $ref: "#/components/schemas/TTSLanguageConfig" }
+        gender: { type: string, enum: [male, female], default: female }
+        audioFormat: { type: string, enum: [wav, mp3, ogg, pcm], default: wav }
+        samplingRate: { type: integer, default: 22050 }
+        enableDurationAdjustment: { type: boolean, default: true }
+        enableFormatConversion: { type: boolean, default: true }
+    TTSInferenceRequest:
+      type: object
+      required: [input, config]
+      properties:
+        input:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/TTSTextInput" }
+        config: { $ref: "#/components/schemas/TTSInferenceConfig" }
+        controlConfig: { type: object, description: Additional control parameters }
+    AudioOutput:
+      type: object
+      properties:
+        audioContent: { type: string, format: byte, description: Base64-encoded audio data }
+        audioUri: { type: string, description: URL to audio file }
+    AudioConfig:
+      type: object
+      properties:
+        language: { $ref: "#/components/schemas/TTSLanguageConfig" }
+        audioFormat: { type: string, enum: [wav, mp3, ogg, pcm] }
+        encoding: { type: string, default: base64 }
+        samplingRate: { type: integer }
+        audioDuration: { type: number, format: float, description: Actual audio duration in seconds }
+    TTSInferenceResponse:
+      type: object
+      properties:
+        audio:
+          type: array
+          items: { $ref: "#/components/schemas/AudioOutput" }
+        config: { $ref: "#/components/schemas/AudioConfig", description: Response configuration metadata }
+    VoiceMetadata:
+      type: object
+      properties:
+        voiceId: { type: string }
+        name: { type: string }
+        language: { type: string }
+        gender: { type: string }
+        age: { type: string }
+        isActive: { type: boolean }
+    VoiceListResponse:
+      type: object
+      properties:
+        voices: { type: array, items: { $ref: "#/components/schemas/VoiceMetadata" } }
+        totalCount: { type: integer }
+        page: { type: integer, default: 1 }
+        pageSize: { type: integer, default: 50 }
+  responses:
+    Unauthorized:
+      description: Invalid or missing API key
+    ValidationError:
+      description: Validation error
+    RateLimitExceeded:
+      description: Rate limit exceeded
+    ServiceUnavailable:
+      description: Service unavailable
+
+security:
+  - BearerAuth: []

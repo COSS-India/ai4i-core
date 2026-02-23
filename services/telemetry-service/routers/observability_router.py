@@ -4,6 +4,7 @@ Observability Router for Telemetry Service
 Provides RBAC-enabled endpoints for querying logs and traces.
 """
 import logging
+import os
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, Query, HTTPException, status, Depends
@@ -17,6 +18,13 @@ from ai4icore_telemetry import (
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
+
+try:
+    from jose import jwt, JWTError
+    JWT_AVAILABLE = True
+except ImportError:
+    JWT_AVAILABLE = False
+    logger.warning("python-jose not available, JWT decoding will fail")
 
 router = APIRouter()
 
@@ -141,6 +149,50 @@ def map_subscription_to_service_name(subscription: str) -> str:
     return service_name_mapping.get(subscription.lower(), f"{subscription}-service")
 
 
+async def is_user_admin(request: Request) -> bool:
+    """
+    Check if the authenticated user is an admin by extracting roles from JWT token.
+    
+    Args:
+        request: FastAPI request object
+        
+    Returns:
+        True if user is admin, False otherwise
+    """
+    if not JWT_AVAILABLE:
+        return False
+    
+    try:
+        # Get JWT secret key
+        secret_key = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
+        
+        # Extract JWT token from Authorization header
+        authorization = request.headers.get("Authorization") or request.headers.get("authorization")
+        if not authorization or not authorization.startswith("Bearer "):
+            return False
+        
+        token = authorization.split(" ", 1)[1]
+        
+        # Decode JWT token
+        payload = jwt.decode(
+            token,
+            secret_key,
+            algorithms=["HS256"],
+            options={"verify_signature": True, "verify_exp": True}
+        )
+        
+        # Extract roles
+        roles = payload.get("roles", [])
+        
+        # Check if user has ADMIN role
+        is_admin = "ADMIN" in roles or any(role.upper() == "ADMIN" for role in roles)
+        return is_admin
+        
+    except (JWTError, Exception) as e:
+        logger.warning(f"Error checking admin status: {e}")
+        return False
+
+
 async def get_tenant_subscriptions(tenant_id: str) -> Optional[List[str]]:
     """
     Query tenant subscriptions (registered services) from multi_tenant_db.
@@ -193,6 +245,7 @@ async def get_tenant_subscriptions(tenant_id: str) -> Optional[List[str]]:
 @router.get("/logs/search")
 async def search_logs(
     request: Request,
+    tenant_id: Optional[str] = Query(None, description="Filter by tenant ID (admin only)"),
     service: Optional[str] = Query(None, description="Filter by service name"),
     level: Optional[str] = Query(None, description="Filter by log level (INFO, WARN, ERROR, DEBUG)"),
     search_text: Optional[str] = Query(None, description="Search text in log messages"),
@@ -210,8 +263,14 @@ async def search_logs(
     Admin users see all logs, normal users see only their tenant's logs.
     Non-tenant users are denied access.
     Tenant users can only see logs from services registered to their tenant.
+    
+    The tenant_id parameter can only be used by admin users to filter logs for a specific tenant.
+    If provided by a non-admin user, it will be ignored and their own tenant's logs will be returned.
     """
     try:
+        # Check if user is admin
+        is_admin = await is_user_admin(request)
+        
         # Get tenant_id filter (handles RBAC)
         # Returns None for admin (sees all), tenant_id for users, or raises 403 for non-tenant users
         org_filter = await get_organization_filter(
@@ -219,9 +278,25 @@ async def search_logs(
             tenant_id_fallback=query_tenant_id_from_db
         )
         
+        # If tenant_id parameter is provided, validate and use it
+        admin_filtering_by_tenant = False
+        if tenant_id:
+            if not is_admin:
+                # Non-admin users cannot filter by arbitrary tenant_id
+                logger.warning(f"Non-admin user attempted to filter by tenant_id {tenant_id}, ignoring parameter")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only admin users can filter logs by tenant_id parameter"
+                )
+            # Admin user provided tenant_id - use it for filtering
+            org_filter = tenant_id
+            admin_filtering_by_tenant = True
+            logger.info(f"Admin user filtering logs by tenant_id: {tenant_id}")
+        
         # If user is not admin, filter by tenant subscriptions
+        # Admin users filtering by tenant_id should see ALL logs for that tenant, not just subscribed services
         tenant_subscriptions = None
-        if org_filter:  # Not admin, has tenant_id
+        if org_filter and not admin_filtering_by_tenant:  # Not admin filtering by tenant_id, has tenant_id
             tenant_subscriptions = await get_tenant_subscriptions(org_filter)
             if tenant_subscriptions is None:
                 logger.warning(f"Could not retrieve subscriptions for tenant {org_filter}, denying access")
@@ -489,15 +564,20 @@ async def get_trace_by_id(
             tenant_id_fallback=query_tenant_id_from_db
         )
         
+        logger.info(f"Getting trace {trace_id} with tenant_id filter: {org_filter}")
+        
         # Get trace
         trace = await jaeger.get_trace_by_id(trace_id, organization_filter=org_filter)
         
         if trace is None:
+            # Log debug info to help diagnose
+            logger.warning(f"Trace {trace_id} not found or not accessible for tenant_id: {org_filter}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Trace {trace_id} not found or not accessible"
             )
         
+        logger.info(f"Successfully retrieved trace {trace_id} for tenant_id: {org_filter}")
         return trace
         
     except HTTPException:

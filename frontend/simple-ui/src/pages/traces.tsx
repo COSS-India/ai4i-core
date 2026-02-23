@@ -1234,33 +1234,19 @@ const TracesPage: React.FC = () => {
   const borderColor = useColorModeValue("gray.200", "gray.700");
   const bgGradient = useColorModeValue("linear(to-br, blue.50, purple.50)", "linear(to-br, gray.900, gray.800)");
 
-  // Check if user is ADMIN
-  const isAdmin = user?.roles?.includes('ADMIN') || false;
-
-  // Redirect to login if not authenticated or not ADMIN
+  // Redirect to login if not authenticated
   useEffect(() => {
-    if (!authLoading) {
-      if (!isAuthenticated) {
-        toast({
-          title: "Authentication Required",
-          description: "Please log in to view traces.",
-          status: "warning",
-          duration: 3000,
-          isClosable: true,
-        });
-        router.push("/auth");
-      } else if (!isAdmin) {
-        toast({
-          title: "Access Denied",
-          description: "Only administrators can access the traces dashboard.",
-          status: "error",
-          duration: 3000,
-          isClosable: true,
-        });
-        router.push("/");
-      }
+    if (!authLoading && !isAuthenticated) {
+      toast({
+        title: "Authentication Required",
+        description: "Please log in to view traces.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      router.push("/auth");
     }
-  }, [isAuthenticated, authLoading, isAdmin, router, toast]);
+  }, [isAuthenticated, authLoading, router, toast]);
 
   // Handle traceId from query parameter (e.g., from logs page)
   useEffect(() => {
@@ -1277,7 +1263,7 @@ const TracesPage: React.FC = () => {
   const { data: traceDetails, isLoading: traceDetailsLoading, error: traceError } = useQuery({
     queryKey: ["trace-details", selectedTraceId],
     queryFn: () => getTraceById(selectedTraceId!),
-    enabled: !!selectedTraceId && isAuthenticated && isAdmin,
+    enabled: !!selectedTraceId && isAuthenticated,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -1574,25 +1560,20 @@ const TracesPage: React.FC = () => {
             </Text>
           </Box>
 
-          {/* Show auth warning if not authenticated or not ADMIN */}
-          {!authLoading && (!isAuthenticated || !isAdmin) && (
-            <Alert status={!isAuthenticated ? "warning" : "error"}>
+          {/* Show auth warning if not authenticated */}
+          {!authLoading && !isAuthenticated && (
+            <Alert status="warning">
               <AlertIcon />
               <AlertDescription>
-                {!isAuthenticated 
-                  ? "Please log in to view traces."
-                  : "Only administrators can access the traces dashboard."
-                }{" "}
-                {!isAuthenticated && (
-                  <Button
-                    size="sm"
-                    colorScheme="blue"
-                    ml={4}
-                    onClick={() => router.push("/auth")}
-                  >
-                    Log In
-                  </Button>
-                )}
+                Please log in to view traces.{" "}
+                <Button
+                  size="sm"
+                  colorScheme="blue"
+                  ml={4}
+                  onClick={() => router.push("/auth")}
+                >
+                  Log In
+                </Button>
               </AlertDescription>
             </Alert>
           )}

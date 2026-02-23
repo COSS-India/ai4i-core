@@ -78,3 +78,9 @@ class NMTInferenceRequest(BaseModel):
         if "exclude_none" in kwargs and kwargs["exclude_none"] is False:
             return super().dict(**kwargs)
         return super().dict(exclude_none=True, **kwargs)
+
+
+class TryItRequest(BaseModel):
+    """Try-It request wrapper for anonymous access."""
+    service_name: str = Field(..., description="Target service name for Try-It (e.g., 'nmt')")
+    payload: Dict[str, Any] = Field(..., description="Service request payload (NMTInferenceRequest)")

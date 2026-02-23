@@ -260,7 +260,8 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 if endpoint and model_name:
                     return endpoint, model_name
         except Exception as e:
-            logger.warning(f"Redis read failed for service {service_id}: {e}")
+            # Cache failures are non-critical - log at debug level to avoid noise
+            logger.debug(f"Redis read failed for service {service_id}: {e}")
         return None
 
     async def _set_registry_in_redis(self, service_id: str, endpoint: str, model_name: str):
@@ -272,7 +273,8 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             payload = json.dumps({"endpoint": endpoint, "model_name": model_name})
             await self.redis_client.setex(cache_key, self.cache_ttl_seconds, payload)
         except Exception as e:
-            logger.warning(f"Redis write failed for service {service_id}: {e}")
+            # Cache failures are non-critical - log at debug level to avoid noise
+            logger.debug(f"Redis write failed for service {service_id}: {e}")
     
     async def _resolve_service(self, service_id: str, auth_headers: Dict[str, str]) -> Tuple[Optional[str], Optional[str], Optional[TritonClient]]:
         """Resolve serviceId to endpoint, model_name, and Triton client"""
@@ -326,7 +328,8 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 service_id = extract_service_id_from_body(body)
                 
                 if service_id:
-                    logger.info(f"Extracted serviceId from request: {service_id}")
+                    # Log removed - middleware handles request/response logging
+                    logger.debug(f"Extracted serviceId from request: {service_id}")
                 else:
                     logger.warning(f"No serviceId found in request body for {request.url.path}")
             
@@ -381,20 +384,23 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
             
             # If we found a serviceId, resolve it (normal path or variant service_id)
             if service_id:
-                logger.info(f"Resolving serviceId: {service_id} via Model Management")
+                # Log removed - middleware handles request/response logging
+                logger.debug(f"Resolving serviceId: {service_id} via Model Management")
                 auth_headers = extract_auth_headers(request)
                 endpoint, model_name, triton_client = await self._resolve_service(service_id, auth_headers)
                 
                 request.state.service_id = service_id
                 if endpoint:
                     request.state.triton_endpoint = endpoint
-                    logger.info(f"Resolved endpoint: {endpoint} for serviceId: {service_id}")
+                    # Log removed - middleware handles request/response logging
+                    logger.debug(f"Resolved endpoint: {endpoint} for serviceId: {service_id}")
                 else:
                     logger.error(f"Failed to resolve endpoint for serviceId: {service_id}")
                     request.state.model_management_error = "Endpoint not found"
                 if model_name:
                     request.state.triton_model_name = model_name
-                    logger.info(f"Resolved model_name: {model_name} for serviceId: {service_id}")
+                    # Log removed - middleware handles request/response logging
+                    logger.debug(f"Resolved model_name: {model_name} for serviceId: {service_id}")
                 else:
                     logger.error(f"Failed to resolve model_name for serviceId: {service_id}")
                     request.state.model_management_error = "Model name not found"

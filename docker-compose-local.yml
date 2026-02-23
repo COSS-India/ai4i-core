@@ -61,6 +61,7 @@ services:
       DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG}
       DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET}
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_ADMIN_TOKEN}
+      INFLUXD_HTTP_BIND_ADDRESS: ":8086"
     ports:
       - "8089:8086"
     volumes:
@@ -69,11 +70,11 @@ services:
     networks:
       - microservices-network
     healthcheck:
-      test: ["CMD-SHELL", "wget --spider -q http://localhost:8086/health"]
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:8086/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 30s
     restart: unless-stopped
 
   elasticsearch:
@@ -94,7 +95,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD-SHELL", "curl -u ${ELASTIC_USERNAME}:${ELASTIC_PASSWORD} -f http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 60s
@@ -114,7 +115,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "2181"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 20s
@@ -140,7 +141,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4242/feature-flags/health || exit 1"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -172,128 +173,11 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 40s
     restart: unless-stopped
-
-  kong:
-    image: kong:3.4-ubuntu
-    container_name: ai4v-kong-gateway
-    ports:
-      - "8000:8000"
-      - "8443:8443"
-      - "8001:8001"
-      - "8444:8444"
-    environment:
-      KONG_DATABASE: "off"
-      KONG_DECLARATIVE_CONFIG: /tmp/kong-substituted.yml
-      KONG_PROXY_ACCESS_LOG: /dev/stdout
-      KONG_ADMIN_ACCESS_LOG: /dev/stdout
-      KONG_PROXY_ERROR_LOG: /dev/stderr
-      KONG_ADMIN_ERROR_LOG: /dev/stderr
-      KONG_ADMIN_LISTEN: 0.0.0.0:8001
-      KONG_ADMIN_GUI_URL: http://localhost:8002
-      # Load only our custom plugin to avoid missing bundled plugins issues
-      KONG_PLUGINS: token-validator
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      AI4VOICE_API_KEY: ${AI4VOICE_API_KEY}
-      ASR_API_KEY: ${ASR_API_KEY}
-      TTS_API_KEY: ${TTS_API_KEY}
-      NMT_API_KEY: ${NMT_API_KEY}
-      PIPELINE_API_KEY: ${PIPELINE_API_KEY}
-      DEVELOPER_API_KEY: ${DEVELOPER_API_KEY}
-      MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
-      LLM_API_KEY: ${LLM_API_KEY}
-    env_file:
-      - ./.env
-    volumes:
-      - ./services/Konga-API-manager/kong-new-architecture.yml:/kong/kong-new-architecture.yml:ro
-      - ./services/Konga-API-manager/substitute-env.sh:/kong/substitute-env.sh:ro
-      - ./services/Konga-API-manager/plugins/token-validator/kong/plugins:/usr/local/share/lua/5.1/kong/plugins:ro
-    command: >
-      sh -c "
-        sh /kong/substitute-env.sh &&
-        /docker-entrypoint.sh kong docker-start
-      "
-    networks:
-      - microservices-network
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "kong", "health"]
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
-
-  postgres-konga:
-    image: postgres:11-alpine
-    container_name: ai4v-postgres-konga
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: konga
-    ports:
-      - "5435:5432"
-    volumes:
-      - postgres-konga-data:/var/lib/postgresql/data
-    networks:
-      - microservices-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d konga"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-    restart: unless-stopped 
-
-  kong-manager:
-    image: pantsel/konga:latest
-    container_name: ai4v-kong-manager
-    ports:
-      - "8002:1337"
-    environment:
-      NODE_ENV: production
-      DB_ADAPTER: postgres
-      DB_HOST: postgres-konga
-      DB_PORT: 5432
-      DB_USER: ${POSTGRES_USER}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
-      DB_DATABASE: konga
-      KONGA_HOOK_TIMEOUT: 120000
-      TOKEN_SECRET: ${KONG_MANAGER_TOKEN_SECRET}
-    depends_on:
-      kong:
-        condition: service_healthy
-      postgres-konga:
-        condition: service_healthy
-    networks:
-      - microservices-network
-    restart: unless-stopped
-
-  # Swagger UI for Kong-facing API documentation
-  swagger-kong-ui:
-    image: swaggerapi/swagger-ui
-    container_name: ai4v-swagger-kong-ui
-    ports:
-      - "8086:8080"
-    volumes:
-      # Generated OpenAPI spec that points to Kong and includes all endpoints.
-      # Mount it at a custom path; the swagger-ui entrypoint will copy it into
-      # /usr/share/nginx/html/openapi.json on startup.
-      - ./docs/kong-openapi.json:/kong-openapi.json:ro
-    environment:
-      SWAGGER_JSON: /kong-openapi.json
-    networks:
-      - microservices-network
-    depends_on:
-      - kong
 
   # Microservices
   api-gateway-service:
@@ -302,7 +186,7 @@ services:
       dockerfile: ./services/api-gateway-service/Dockerfile
     container_name: ai4v-api-gateway
     ports:
-      - "8080:8080"
+      - "9000:8080"
     environment:
       - ENV_FILE=.env
       # Swagger/OpenAPI server URL used in the generated docs
@@ -311,6 +195,13 @@ services:
       - TRY_IT_TTL_SECONDS=3600
     env_file:
       - ./services/api-gateway-service/.env
+    volumes:
+      - ./services/api-gateway-service:/app
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -318,12 +209,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   auth-service:
@@ -337,6 +228,14 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/auth-service/.env
+    volumes:
+      - ./services/auth-service:/app
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./services/constants:/app/services/constants
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8081", "--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -346,12 +245,12 @@ services:
       microservices-network:
         aliases:
           - auth-service
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   config-service:
@@ -365,6 +264,11 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/config-service/.env
+    volumes:
+      - ./services/config-service:/app
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -380,12 +284,31 @@ services:
       microservices-network:
         aliases:
           - config-service
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  docs-manager:
+    build:
+      context: .
+      dockerfile: ./services/docs-manager/Dockerfile
+    container_name: ai4v-docs-manager
+    ports:
+      - "8103:8103"
+    environment:
+      - API_GATEWAY_URL=http://api-gateway-service:8080
+      - USE_API_PROXY=true
+      - SPECS_ROOT=/app/specs
+      - SERVICE_DOCS_REGISTRY_PATH=/app/specs/service-docs-registry.yaml
+    volumes:
+      - ./services/docs-manager:/app
+    command: ["--reload"]
+    networks:
+      - microservices-network
     restart: unless-stopped
 
   metrics-service:
@@ -399,6 +322,9 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/metrics-service/.env
+    volumes:
+      - ./services/metrics-service:/app
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -408,12 +334,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   telemetry-service:
@@ -427,6 +353,12 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/telemetry-service/.env
+    volumes:
+      - ./services/telemetry-service:/app
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8084", "--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -438,12 +370,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8084/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8084/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   alerting-service:
@@ -457,6 +389,11 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/alerting-service/.env
+    volumes:
+      - ./services/alerting-service:/app
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -466,12 +403,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8085/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   dashboard-service:
@@ -486,6 +423,9 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/dashboard-service/.env
+    volumes:
+      - ./services/dashboard-service:/app
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -495,12 +435,12 @@ services:
         condition: service_healthy
     networks:
       - microservices-network
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   asr-service:
@@ -519,6 +459,17 @@ services:
       - TRITON_TIMEOUT=120
     env_file:
       - ./services/asr-service/.env
+    volumes:
+      - ./services/asr-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./services/constants:/app/services/constants
+      - ./services/multi-tenant-feature:/app/services/multi-tenant-feature
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -530,12 +481,12 @@ services:
       microservices-network:
         aliases:
           - asr-service
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8087/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8087/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   tts-service:
@@ -550,6 +501,16 @@ services:
       - TRITON_ENDPOINT=http://13.200.133.97:9000
     env_file:
       - ./services/tts-service/.env
+    volumes:
+      - ./services/tts-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./services/constants:/app/services/constants
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -561,12 +522,12 @@ services:
       microservices-network:
         aliases:
           - tts-service
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   nmt-service:
@@ -580,6 +541,16 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/nmt-service/.env
+    volumes:
+      - ./services/nmt-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./services/constants:/app/services/constants
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -591,12 +562,12 @@ services:
       microservices-network:
         aliases:
           - nmt-service
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8089/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8089/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   ocr-service:
@@ -610,6 +581,15 @@ services:
       - ./services/ocr-service/.env
     environment:
       - ENV_FILE=.env
+    volumes:
+      - ./services/ocr-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -625,7 +605,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8099/health"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -643,6 +623,15 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/ner-service/.env
+    volumes:
+      - ./services/ner-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -656,7 +645,7 @@ services:
           - ner-service
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -675,6 +664,15 @@ services:
       - TRITON_TIMEOUT=300
     env_file:
       - ./services/llm-service/.env
+    volumes:
+      - ./services/llm-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -684,12 +682,12 @@ services:
       microservices-network:
         aliases:
           - llm-service
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/llm/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/llm/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   pipeline-service:
@@ -707,6 +705,14 @@ services:
       - TTS_SERVICE_URL=http://tts-service:8088
     env_file:
       - ./services/pipeline-service/.env
+    volumes:
+      - ./services/pipeline-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -724,12 +730,12 @@ services:
       microservices-network:
         aliases:
           - pipeline-service
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   model-management-service:
@@ -762,6 +768,9 @@ services:
       - ALLOW_ANONYMOUS_ACCESS=${MODEL_MANAGEMENT_ALLOW_ANONYMOUS_ACCESS:-false}
       - MAX_ACTIVE_VERSIONS_PER_MODEL=${MAX_ACTIVE_VERSIONS_PER_MODEL:-5}
       - ALLOW_DEPRECATED_MODEL_CHANGES=${ALLOW_DEPRECATED_MODEL_CHANGES:-true}
+    volumes:
+      - ./services/model-management-service:/app
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -785,6 +794,9 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/multi-tenant-feature/.env
+    volumes:
+      - ./services/multi-tenant-feature:/app
+    command: ["--reload"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -807,6 +819,16 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/transliteration-service/.env
+    volumes:
+      - ./services/transliteration-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./services/constants:/app/services/constants
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -818,7 +840,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -835,6 +857,15 @@ services:
       - ENV_FILE=.env
     env_file:
       - ./services/language-detection-service/.env
+    volumes:
+      - ./services/language-detection-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -846,7 +877,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/api/v1/language-detection/health"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -862,6 +893,15 @@ services:
     environment:
       - ENV_FILE=.env
       - TRITON_ENDPOINT=http://65.1.35.3:8700
+    volumes:
+      - ./services/speaker-diarization-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -873,7 +913,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -891,6 +931,15 @@ services:
       - TRITON_ENDPOINT=65.1.35.3:8600
     env_file:
       - ./services/language-diarization-service/.env
+    volumes:
+      - ./services/language-diarization-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -902,7 +951,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -920,6 +969,15 @@ services:
       - TRITON_ENDPOINT=65.1.35.3:8100
     env_file:
       - ./services/audio-lang-detection-service/.env
+    volumes:
+      - ./services/audio-lang-detection-service:/app
+      - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
+      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
+      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
+      - ./libs/ai4icore_model_management:/app/libs/ai4icore_model_management
+      - ./infrastructure:/app/infrastructure
+      - ./shared:/app/shared
+    command: ["--reload"]
     depends_on:
       config-service:
         condition: service_healthy
@@ -931,7 +989,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8096/health"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 30s
@@ -941,12 +999,12 @@ services:
   simple-ui-frontend:
     build:
       context: ./frontend/simple-ui
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
       args:
         # Browser talks directly to the API Gateway on host port 8080
         # NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
         
-        NEXT_PUBLIC_API_URL: http://localhost:8080
+        NEXT_PUBLIC_API_URL: http://localhost:9000
         # Service-specific API keys from .env file (no hardcoding)
         NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
         NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
@@ -966,7 +1024,7 @@ services:
       - HOSTNAME=0.0.0.0
       # Route all frontend API calls through the API Gateway on host
       # - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
-      - NEXT_PUBLIC_API_URL=http://localhost:8080
+      - NEXT_PUBLIC_API_URL=http://localhost:9000
 
       - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
       # Service-specific API keys for API Gateway authentication / RBAC
@@ -979,17 +1037,21 @@ services:
       # - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://core-v1.ai4inclusion.org
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
       - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
+    volumes:
+      - ./frontend/simple-ui:/app
+      - /app/node_modules
+      - /app/.next
     depends_on:
       api-gateway-service:
         condition: service_healthy
     networks:
       - microservices-network
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 40s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: unless-stopped
 
   # Observability: Prometheus
@@ -1021,7 +1083,7 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
 
@@ -1040,7 +1102,7 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
 
@@ -1048,8 +1110,8 @@ services:
   # Generates Prometheus and Alertmanager YAML files from database and triggers hot reload
   alert-config-sync-service:
     build:
-      context: ./services/alert-config-sync-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/alert-config-sync-service/Dockerfile
     container_name: ai4v-alert-config-sync-service
     ports:
       - "8101:8097"
@@ -1066,6 +1128,8 @@ services:
       - SYNC_INTERVAL=60
       - PORT=8097
     volumes:
+      - ./services/alert-config-sync-service:/app/services/alert-config-sync-service
+      - ./infrastructure:/app/infrastructure
       # Mount Prometheus rules directory (writable so sync service can write YAML files)
       - ./infrastructure/prometheus/rules:/etc/prometheus/rules
       # Mount Alertmanager config file (writable so sync service can write YAML file)
@@ -1082,7 +1146,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8097/health"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 10s
@@ -1114,7 +1178,7 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
 
@@ -1134,6 +1198,12 @@ services:
       - "--path.rootfs=/rootfs"
     networks:
       - microservices-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9100/metrics"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 
   # Telemetry: OpenSearch (for logs)
@@ -1159,7 +1229,7 @@ services:
       - microservices-network
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
-      interval: 30s
+      interval: 10s
       timeout: 10s
       retries: 3
       start_period: 60s
@@ -1192,13 +1262,19 @@ services:
     environment:
       - OPENSEARCH_HOSTS=http://opensearch:9200
       - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
-      - SERVER_BASEPATH=/opensearch
-      - SERVER_REWRITEBASEPATH=true
+      # - SERVER_BASEPATH=/opensearch
+      # - SERVER_REWRITEBASEPATH=true
     networks:
       - microservices-network
     depends_on:
       opensearch:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
 
   # Telemetry: Jaeger (for distributed tracing)
@@ -1216,6 +1292,12 @@ services:
       - QUERY_BASE_PATH=/jaeger
     networks:
       - microservices-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:14269/"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
   # Telemetry: Fluent Bit (for log collection)
@@ -1245,6 +1327,12 @@ services:
     depends_on:
       opensearch:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/fluent-bit/bin/fluent-bit", "--version"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
 
@@ -1260,8 +1348,6 @@ volumes:
      # o: "bind"
      # device: "/home/ubuntu/ai4i-v/volumes/pg_data"
       
-  postgres-konga-data:
-    driver: local
   redis-data:
     driver: local
   influxdb-data:
