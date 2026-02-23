@@ -377,24 +377,36 @@ class AuthService {
     }
   }
 
+  // Single-flight: only one POST /auth/refresh at a time; concurrent callers wait for the same result.
+  private refreshPromise: Promise<TokenRefreshResponse> | null = null;
+
   async refreshToken(): Promise<TokenRefreshResponse> {
     const refreshToken = this.getRefreshToken();
     if (!refreshToken) {
       throw new Error('No refresh token available');
     }
 
-    // Use requestWithoutAuth for refresh endpoint - it doesn't need Authorization header
-    // The refresh_token in the body is sufficient
-    const response = await this.requestWithoutAuth<TokenRefreshResponse>('/refresh', {
-      method: 'POST',
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
+    if (this.refreshPromise !== null) {
+      return this.refreshPromise;
+    }
 
-    // Update access token with same remember_me preference
-    const rememberMe = localStorage.getItem('remember_me') === 'true';
-    this.setAccessToken(response.access_token, rememberMe);
+    this.refreshPromise = (async () => {
+      try {
+        const response = await this.requestWithoutAuth<TokenRefreshResponse>('/refresh', {
+          method: 'POST',
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
 
-    return response;
+        const rememberMe = typeof window !== 'undefined' && localStorage.getItem('remember_me') === 'true';
+        this.setAccessToken(response.access_token, rememberMe);
+
+        return response;
+      } finally {
+        this.refreshPromise = null;
+      }
+    })();
+
+    return this.refreshPromise;
   }
 
   async validateToken(): Promise<TokenValidationResponse> {
@@ -777,22 +789,17 @@ class AuthService {
       return false;
     }
 
-    // Check if token is expiring soon
+    // Check if token is expiring soon (no API call)
     if (!this.isTokenExpiringSoon(thresholdMinutes)) {
-      // Token is still valid for a while
       return true;
     }
 
-    // Token is expiring soon or expired, try to refresh
-    console.log('Token is expiring soon, attempting proactive refresh...');
-    
+    // Token is expiring soon or expired; refreshToken() is single-flight so many callers = one POST /refresh
     try {
       await this.refreshToken();
-      console.log('Token refreshed successfully');
       return true;
     } catch (error) {
       console.error('Failed to refresh token:', error);
-      // Don't clear tokens here - let the 401 handler deal with it
       return false;
     }
   }
