@@ -92,20 +92,52 @@ async def get_tenant_db_session(request: Request) -> AsyncGenerator[AsyncSession
         )
 
     # Get session factory for this tenant's schema
+    session = None
     try:
         factory = tenant_router.get_tenant_session_factory(schema_name)
         session = factory()
+        
+        # Ensure search_path is set (redundant but safe)
+        # This can fail in production due to network latency/timeouts
+        try:
+            await session.execute(text(f'SET search_path TO \"{schema_name}\", public'))
+        except Exception as db_error:
+            logger.error(
+                f"Failed to set search_path for schema {schema_name}: {db_error}",
+                exc_info=True
+            )
+            # Don't close session here - let finally block handle it
+            # Re-raise as HTTPException for proper error handling
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "DATABASE_ERROR",
+                    "message": f"Database connection error: {str(db_error)}"
+                }
+            ) from db_error
+        
+        # Yield the session - FastAPI will manage lifecycle after this point
+        yield session
+    except HTTPException:
+        # Re-raise HTTPExceptions (already properly formatted)
+        # The finally block will still run to close the session
+        raise
     except ValueError as e:
         logger.error(f"Invalid schema name: {e}")
+        # The finally block will still run to close the session
         raise HTTPException(
             status_code=400,
             detail={"code": "INVALID_SCHEMA", "message": f"Invalid tenant schema: {str(e)}"},
         )
-
-    # Ensure search_path is set (redundant but safe)
-    await session.execute(text(f'SET search_path TO \"{schema_name}\", public'))
-
-    try:
-        yield session
     finally:
-        await session.close()
+        # Always close session in finally block - this is critical for generator cleanup
+        # If yield succeeded: this runs when generator is closed by FastAPI
+        # If exception before yield: this runs immediately to clean up
+        if session is not None:
+            try:
+                await session.close()
+            except Exception as cleanup_error:
+                # Log but don't re-raise - cleanup errors shouldn't mask original errors
+                # This prevents "generator didn't stop after athrow()" errors
+                logger.debug(f"Error closing session during cleanup (this is normal if session already closed): {cleanup_error}")
+                pass
