@@ -359,49 +359,34 @@ To stop and remove all data (volumes):
 docker compose -f docker-compose-local.yml down -v
 ```
 
-## Optional: Feature Flags Configuration
+On some Linux systems you may need `sudo`:
 
-The UI is integrated with feature flags to conditionally show/hide service features. If you want to control the visibility of services in the UI, you can create the following feature flags in Unleash:
+```bash
+sudo docker compose -f docker-compose-local.yml down -v
+```
 
-### Feature Flags Integrated with UI
+## Fresh Start: Starting from Scratch
 
-The following feature flags are used by the frontend to control service visibility:
+To reset the installation and start over:
+ 
+Stop containers and remove volumes for this project.
 
-- **`asr-enabled`** - Controls visibility of ASR (Automatic Speech Recognition) service
-- **`tts-enabled`** - Controls visibility of TTS (Text-to-Speech) service
-- **`nmt-enabled`** - Controls visibility of NMT (Neural Machine Translation) service
-- **`llm-enabled`** - Controls visibility of LLM (Large Language Model) service
-- **`pipeline-enabled`** - Controls visibility of Pipeline service
+```bash
+docker compose -f docker-compose-local.yml down -v
+```
 
-### How to Create Feature Flags in Unleash
+On Linux, if you run Docker with sudo:
 
-1. **Access Unleash UI**: 
-   - **Local Development**: Navigate to http://localhost:4242/feature-flags
-   - **Default Username**: `admin`
-   - **Default Password**: `unleash4all`
+```bash
+sudo docker compose -f docker-compose-local.yml down -v
+```
+Then run the setup again from [Step 1: Clone the Repository](#step-1-clone-the-repository) (or from [Step 3](#step-3-build-docker-images) if you keep the repo and only need to rebuild).
 
-2. **Create a Feature Flag**:
-   - Click "Create feature toggle"
-   - Enter the flag name (e.g., `asr-enabled`)
-   - Add a description (optional)
-   - Select flag type: `release` (recommended)
-   - Click "Create feature toggle"
+## Optional Configurations
 
-3. **Configure Environment Settings**:
-   - Enable or disable the flag for each environment (development, staging, production)
-   - Add targeting strategies if needed (gradual rollout, user targeting, etc.)
+After the platform is running, you can enable or customize these optional features:
 
-4. **Repeat** for each flag you want to configure
-
-### Behavior
-
-- **If a flag exists and is enabled**: The corresponding service will be visible in the UI
-- **If a flag exists and is disabled**: The corresponding service will be hidden in the UI
-- **If a flag doesn't exist**: The service will be visible by default
-
-**Note**: Feature flags are completely optional. If you don't create them, all services will be visible in the UI by default. Only create flags if you need to control service visibility.
-
----
+- **[Feature Flags](../services/config-service/docs/FEATURE_FLAGS_SETUP.md)** — Control visibility of services in the UI and create feature toggles in Unleash (e.g. `asr-enabled`, `tts-enabled`).
 
 **Need Help?** Check the [Troubleshooting Guide](TROUBLESHOOTING.md) or open an issue on GitHub.
 
