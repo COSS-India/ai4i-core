@@ -206,33 +206,33 @@ docker compose -f docker-compose-local.yml logs -f <service-name>
 
 Once all services are running, use the table below to find URLs and ports. The **Compose service** column gives the service name to use with Docker Compose (for example, `docker compose -f docker-compose-local.yml logs -f asr-service` or `docker compose -f docker-compose-local.yml up -d nmt-service`).
 
-| Compose service | Service / Tool | URL | Port |
-|-----------------|----------------|-----|------|
-| simple-ui-frontend | Frontend | http://localhost:3000 | 3000 |
-| auth-service | Auth Service | http://localhost:8081/docs | 8081 |
-| config-service | Config Service | http://localhost:8082/docs | 8082 |
-| model-management-service | Model Management Service | http://localhost:8094/docs | 8094 |
-| asr-service | ASR Service | http://localhost:8087/docs | 8087 |
-| tts-service | TTS Service | http://localhost:8088/docs | 8088 |
-| nmt-service | NMT Service | http://localhost:8091/docs | 8091 |
-| llm-service | LLM Service | http://localhost:8093/docs | 8093 |
-| transliteration-service | Transliteration Service | http://localhost:8097/docs | 8097 |
-| ocr-service | OCR Service | http://localhost:8099/docs | 8099 |
-| ner-service | NER Service | http://localhost:9001/docs | 9001 |
-| language-detection-service | Language Detection Service | http://localhost:8098/docs | 8098 |
-| language-diarization-service | Language Diarization Service | http://localhost:9002/docs | 9002 |
-| audio-lang-detection-service | Audio Language Detection Service | http://localhost:8096/docs | 8096 |
-| speaker-diarization-service | Speaker Diarization Service | http://localhost:8095/docs | 8095 |
-| pipeline-service | Pipeline Service | http://localhost:8092/docs | 8092 |
-| metrics-service | Metrics Service | http://localhost:8083/docs | 8083 |
-| telemetry-service | Telemetry Service | http://localhost:8084/docs | 8084 |
-| alerting-service | Alerting Service | http://localhost:8085/docs | 8085 |
-| dashboard-service | Dashboard Service | http://localhost:8090/docs | 8090 |
-| api-gateway-service | API Gateway | http://localhost:9000 | 9000 |
-| prometheus | Prometheus | http://localhost:9090 | 9090 |
-| grafana | Grafana | http://localhost:3001 | 3001 |
-| jaeger | Jaeger | http://localhost:16686 | 16686 |
-| opensearch-dashboards | OpenSearch Dashboards | http://localhost:5602 | 5602 |
+| Service / Tool | Compose service | URL | Port |
+|----------------|-----------------|-----|------|
+| Frontend | simple-ui-frontend | http://localhost:3000 | 3000 |
+| Auth Service | auth-service | http://localhost:8081/docs | 8081 |
+| Config Service | config-service | http://localhost:8082/docs | 8082 |
+| Model Management Service | model-management-service | http://localhost:8094/docs | 8094 |
+| ASR Service | asr-service | http://localhost:8087/docs | 8087 |
+| TTS Service | tts-service | http://localhost:8088/docs | 8088 |
+| NMT Service | nmt-service | http://localhost:8091/docs | 8091 |
+| LLM Service | llm-service | http://localhost:8093/docs | 8093 |
+| Transliteration Service | transliteration-service | http://localhost:8097/docs | 8097 |
+| OCR Service | ocr-service | http://localhost:8099/docs | 8099 |
+| NER Service | ner-service | http://localhost:9001/docs | 9001 |
+| Language Detection Service | language-detection-service | http://localhost:8098/docs | 8098 |
+| Language Diarization Service | language-diarization-service | http://localhost:9002/docs | 9002 |
+| Audio Language Detection Service | audio-lang-detection-service | http://localhost:8096/docs | 8096 |
+| Speaker Diarization Service | speaker-diarization-service | http://localhost:8095/docs | 8095 |
+| Pipeline Service | pipeline-service | http://localhost:8092/docs | 8092 |
+| Metrics Service | metrics-service | http://localhost:8083/docs | 8083 |
+| Telemetry Service | telemetry-service | http://localhost:8084/docs | 8084 |
+| Alerting Service | alerting-service | http://localhost:8085/docs | 8085 |
+| Dashboard Service | dashboard-service | http://localhost:8090/docs | 8090 |
+| API Gateway | api-gateway-service | http://localhost:9000 | 9000 |
+| Prometheus | prometheus | http://localhost:9090 | 9090 |
+| Grafana | grafana | http://localhost:3001 | 3001 |
+| Jaeger | jaeger | http://localhost:16686 | 16686 |
+| OpenSearch Dashboards | opensearch-dashboards | http://localhost:5602 | 5602 |
 
 ### Default Credentials
 
