@@ -276,6 +276,25 @@ Once all services are running, you can access:
 2. Verify environment files exist in each service directory
 3. Check if ports are already in use: `netstat -tulpn | grep <port>`
 
+### Containers in Created State
+
+If some containers stay in a **Created** state and do not start, bring them up explicitly:
+
+```bash
+docker compose -f docker-compose-local.yml up -d <service-name>
+```
+
+Replace `<service-name>` with the service that is stuck (e.g. `asr-service`, `tts-service`).
+
+Alternatively, start services in smaller groups so they come up more reliably:
+
+```bash
+docker compose -f docker-compose-local.yml up -d asr-service tts-service nmt-service
+docker compose -f docker-compose-local.yml up -d llm-service pipeline-service ner-service
+```
+
+Add or repeat similar groups for other services as needed.
+
 ### Database connection errors
 
 1. Ensure PostgreSQL is running: `docker compose -f docker-compose-local.yml ps postgres`
@@ -331,7 +350,7 @@ This `docker-compose-local.yml` configuration is optimized for local development
 - **Kong API Gateway**: Not included in local setup (production only)
 - **Health checks**: Configured with 6-hour intervals to reduce overhead
 - **Monitoring stack**: Full observability with Prometheus, Grafana, Jaeger, and OpenSearch
-- **Feature flags**: Unleash for gradual feature rollout and A/B testing
+- **Feature flags**: Unleash for gradual feature rollout
 
 ### Production Deployment
 
