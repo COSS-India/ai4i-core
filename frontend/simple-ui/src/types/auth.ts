@@ -20,6 +20,8 @@ export interface User {
   avatar_url?: string;
   preferences?: Record<string, any>;
   roles?: string[];
+  /** Tenant identifier from /api/v1/auth/me when user is a tenant admin or tenant user */
+  tenant_id?: string | null;
 }
 
 export interface UserUpdateRequest {
