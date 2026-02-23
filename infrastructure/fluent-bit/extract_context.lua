@@ -195,10 +195,10 @@ function add_jaeger_url(tag, timestamp, record)
     return 1, timestamp, record
 end
 
--- Function to filter logs based on service allowlist (INCLUDE_SERVICE_LOGS)
+-- Function to filter logs based on service and endpoint whitelist
+-- Only logs matching BOTH service AND endpoint are kept
 function filter_dashboard_logs(tag, timestamp, record)
-    -- Read environment variables (no hardcoding)
-    local include_services = os.getenv("INCLUDE_SERVICE_LOGS") or ""
+    -- Read environment variables
     local exclude_init_logs = os.getenv("EXCLUDE_INIT_LOGS") or "false"
     
     -- Parse exclude_init_logs boolean
@@ -209,7 +209,6 @@ function filter_dashboard_logs(tag, timestamp, record)
         local message = record["message"] or ""
         local logger = record["logger"] or ""
         local level = record["level"] or ""
-        local trace_id = record["trace_id"] or ""
         local method = record["method"] or ""
         
         -- Filter logs from "main" logger with INFO level (most initialization logs)
@@ -242,7 +241,6 @@ function filter_dashboard_logs(tag, timestamp, record)
                (msg_lower:match("initialized") and msg_lower:match("service")) or
                (msg_lower:match("created") and (msg_lower:match("middleware") or msg_lower:match("for"))) or
                msg_lower:match("middleware added") or
-               -- Additional patterns for service startup logs
                msg_lower:match("registered.*service.*registry") or
                msg_lower:match(".*service started successfully") or
                msg_lower:match(".*service started") or
@@ -256,63 +254,107 @@ function filter_dashboard_logs(tag, timestamp, record)
                msg_lower:match("service shutdown") or
                msg_lower:match("service registry registration")
             
-            -- Filter initialization logs (especially those with trace_id that won't exist in Jaeger)
+            -- Filter initialization logs
             if is_init_log then
                 return -1, timestamp, record
             end
         end
     end
     
-    -- If INCLUDE_SERVICE_LOGS is not set or empty, keep all logs (no filtering)
-    if include_services == nil or include_services == "" then
-        return 1, timestamp, record
-    end
+    -- Define whitelist of allowed service + endpoint combinations
+    local allowed_combinations = {
+        ["asr-service"] = {
+            "/asr/inference",
+            "/api/v1/asr/inference"
+        },
+        ["audio-lang-detection-service"] = {
+            "/audio-lang-detection/inference",
+            "/api/v1/audio-lang-detection/inference"
+        },
+        ["language-detection-service"] = {
+            "/language-detection/inference",
+            "/api/v1/language-detection/inference"
+        },
+        ["language-diarization-service"] = {
+            "/language-diarization/inference",
+            "/api/v1/language-diarization/inference"
+        },
+        ["llm-service"] = {
+            "/llm/inference",
+            "/api/v1/llm/inference"
+        },
+        ["ner-service"] = {
+            "/ner/inference",
+            "/api/v1/ner/inference"
+        },
+        ["nmt-service"] = {
+            "/nmt/inference",
+            "/api/v1/nmt/inference"
+        },
+        ["ocr-service"] = {
+            "/ocr/inference",
+            "/api/v1/ocr/inference"
+        },
+        ["pipeline-service"] = {
+            "/pipeline/inference",
+            "/api/v1/pipeline/inference"
+        },
+        ["speaker-diarization-service"] = {
+            "/speaker-diarization/inference",
+            "/api/v1/speaker-diarization/inference"
+        },
+        ["transliteration-service"] = {
+            "/transliteration/inference",
+            "/api/v1/transliteration/inference"
+        },
+        ["tts-service"] = {
+            "/tts/inference",
+            "/api/v1/tts/inference"
+        },
+        ["auth-service"] = {
+            "/auth/login",
+            "/api/v1/auth/login",
+            "/auth/logout",
+            "/api/v1/auth/logout"
+        }
+    }
     
-    -- Parse comma-separated service list and normalize service names
-    local allowed_services = {}
-    for service in include_services:gmatch("([^,]+)") do
-        service = service:gsub("^%s+", ""):gsub("%s+$", ""):lower()  -- Trim whitespace and lowercase
-        if service ~= "" then
-            -- Map user-friendly names to actual service names in logs
-            local service_mapping = {
-                ["asr"] = "asr-service",
-                ["audio lang detection"] = "audio-lang-detection-service",
-                ["audio-lang-detection"] = "audio-lang-detection-service",
-                ["language detection"] = "language-detection-service",
-                ["language-detection"] = "language-detection-service",
-                ["language diarization"] = "language-diarization-service",
-                ["language-diarization"] = "language-diarization-service",
-                ["llm"] = "llm-service",
-                ["ner"] = "ner-service",
-                ["nmt"] = "nmt-service",
-                ["ocr"] = "ocr-service",
-                ["pipeline"] = "pipeline-service",
-                ["speaker diarization"] = "speaker-diarization-service",
-                ["speaker-diarization"] = "speaker-diarization-service",
-                ["transliteration"] = "transliteration-service",
-                ["tts"] = "tts-service",
-                ["auth"] = "auth-service"
-            }
-            
-            -- Use mapping if available, otherwise assume it's already a service name
-            local mapped_service = service_mapping[service] or service
-            -- If user provided name without "-service", add it
-            if not mapped_service:match("%-service$") then
-                mapped_service = mapped_service .. "-service"
-            end
-            allowed_services[mapped_service] = true
+    -- Get service and path from log record
+    local service = record["service"] or ""
+    local path = record["path"] or ""
+    
+    -- Fallback: check multiple possible locations for path
+    if (path == nil or path == "") then
+        -- Try context.path (if nest filter didn't lift it)
+        if record["context"] ~= nil and type(record["context"]) == "table" then
+            path = record["context"]["path"] or ""
+        end
+        -- Try req.path (some logs have path in req object)
+        if (path == nil or path == "") and record["req"] ~= nil and type(record["req"]) == "table" then
+            path = record["req"]["path"] or record["req"]["url"] or ""
         end
     end
     
-    -- If no valid services in allowlist, keep all logs (backward compatible)
-    if next(allowed_services) == nil then
-        return 1, timestamp, record
+    -- If path is empty, try to extract from message field
+    if path == nil or path == "" then
+        local message = record["message"] or ""
+        if type(message) == "string" and message ~= "" then
+            -- Look for patterns like "POST /api/v1/asr/inference" or "GET /auth/login"
+            -- Also handle "[TENANT_DEBUG] _extract_tenant_id called for path: /api/v1/asr/inference"
+            local extracted = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%.]+)")
+            if extracted then
+                path = extracted:match("([/%w%-%.]+)$")  -- Extract just the path part
+            else
+                -- Try pattern: "path: /api/v1/asr/inference"
+                extracted = message:match("path:%s+([/%w%-%.]+)")
+                if extracted then
+                    path = extracted
+                end
+            end
+        end
     end
     
-    -- Get service from log record
-    local service = record["service"] or ""
-    
-    -- If log has no service field, drop it (dashboard logs, Kafka logs, etc. don't have service field)
+    -- If log has no service field, drop it
     if service == nil or service == "" then
         return -1, timestamp, record
     end
@@ -320,23 +362,79 @@ function filter_dashboard_logs(tag, timestamp, record)
     -- Normalize service name for comparison
     local service_lower = service:lower()
     
-    -- Check if service is in allowed list
-    local is_allowed = false
-    for allowed_service, _ in pairs(allowed_services) do
+    -- Check if service is in whitelist
+    local allowed_endpoints = nil
+    for allowed_service, endpoints in pairs(allowed_combinations) do
         if service_lower == allowed_service:lower() or 
            service_lower:match("^" .. allowed_service:lower()) then
-            is_allowed = true
+            allowed_endpoints = endpoints
             break
         end
     end
     
-    -- Keep log if service is in allowlist, otherwise drop it
-    if is_allowed then
+    -- If service is not in whitelist, drop the log
+    if allowed_endpoints == nil then
+        return -1, timestamp, record
+    end
+    
+    -- If path is still empty, drop the log (we only want endpoint-specific logs)
+    if path == nil or path == "" then
+        return -1, timestamp, record
+    end
+    
+    -- Normalize path for comparison (remove query strings, trailing slashes)
+    local path_normalized = path:gsub("%?.*$", ""):gsub("/+$", "")
+    if path_normalized == "" then
+        path_normalized = "/"
+    end
+    
+    -- Filter out health checks and metrics endpoints
+    if path_normalized:match("/health") or 
+       path_normalized:match("/metrics") or 
+       path_normalized:match("/status") or
+       path_normalized:match("/healthz") or
+       path_normalized:match("/ready") then
+        return -1, timestamp, record
+    end
+    
+    -- Check if path matches any allowed endpoint for this service
+    local path_matches = false
+    for _, allowed_path in ipairs(allowed_endpoints) do
+        local allowed_normalized = allowed_path:gsub("%?.*$", ""):gsub("/+$", "")
+        if allowed_normalized == "" then
+            allowed_normalized = "/"
+        end
+        
+        -- Exact match
+        if path_normalized == allowed_normalized then
+            path_matches = true
+            break
+        end
+        
+        -- Match if path ends with allowed path (handles /api/v1/asr/inference matching /asr/inference)
+        -- Escape special characters in allowed_path for pattern matching
+        local escaped_allowed = allowed_normalized:gsub("([%-%.%+%[%]%(%)%^%$%%])", "%%%1")
+        if path_normalized:match(escaped_allowed .. "$") then
+            path_matches = true
+            break
+        end
+        
+        -- Match if path contains the allowed path (handles /api/v1/asr/inference containing /asr/inference)
+        -- Use plain string find (not pattern matching) for substring search
+        if path_normalized:find(allowed_normalized, 1, true) then
+            path_matches = true
+            break
+        end
+    end
+    
+    -- Keep log only if both service AND path match whitelist
+    if path_matches then
         return 1, timestamp, record
     else
         return -1, timestamp, record
     end
 end
+
 
 
 
