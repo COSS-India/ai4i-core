@@ -187,7 +187,23 @@ def decrypt_sensitive_data(encrypted_data: str) -> Optional[str]:
         decrypted = _fernet.decrypt(encrypted_data.encode())
         return decrypted.decode()
     except Exception as e:
-        logger.warning(f"Error decrypting data (may be plain text): {e}")
-        # If decryption fails, assume it's plain text (for backward compatibility)
+        logger.warning(f"Error decrypting data: {e}")
+        # If the input looks like a Fernet token (starts with the Fernet prefix),
+        # raise a clear error so callers can surface an actionable message
+        # (e.g. key mismatch / wrong API_KEY_ENCRYPTION_KEY).
+        try:
+            if isinstance(encrypted_data, str) and encrypted_data.startswith("gAAAA"):
+                # Raise a specific exception for callers to handle
+                raise DecryptionError("Failed to decrypt Fernet token - possible encryption key mismatch or corrupted token")
+        except DecryptionError:
+            raise
+        except Exception:
+            pass
+        # Otherwise, assume it's plain text (backward compatibility) and return it.
         return encrypted_data
+
+
+class DecryptionError(Exception):
+    """Raised when decryption of a Fernet token fails due to key mismatch or corruption."""
+    pass
 
