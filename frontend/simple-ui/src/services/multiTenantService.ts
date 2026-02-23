@@ -41,11 +41,13 @@ export async function listTenants(): Promise<ListTenantsResponse> {
 }
 
 /**
- * List all users across tenants in the system (admin).
+ * List users (optionally filtered by tenant). When tenant_id is passed, only users for that tenant are returned.
  * GET /api/v1/multi-tenant/admin/list/users
+ * @param tenant_id - Optional. From /api/v1/auth/me for logged-in tenant; when provided, returns only that tenant's users.
  */
-export async function listUsers(): Promise<ListUsersResponse> {
-  const { data } = await apiClient.get<ListUsersResponse>(`${BASE}/admin/list/users`);
+export async function listUsers(tenant_id?: string | null): Promise<ListUsersResponse> {
+  const params = tenant_id ? { tenant_id } : {};
+  const { data } = await apiClient.get<ListUsersResponse>(`${BASE}/admin/list/users`, { params });
   return data;
 }
 
@@ -177,9 +179,30 @@ export async function removeUserSubscriptions(payload: UserSubscriptionRemoveReq
 /**
  * Send verification email to a tenant. Used for tenants in PENDING status to re-send verification.
  * POST /api/v1/multi-tenant/admin/email/send/verification
+ * Returns the full response including token (for use in verify flow).
  */
-export async function sendVerificationEmail(tenant_id: string): Promise<{ message: string }> {
-  const { data } = await apiClient.post<{ message: string }>(`${BASE}/admin/email/send/verification`, { tenant_id });
+export interface SendVerificationEmailResponse {
+  tenant_uuid: string;
+  tenant_id: string;
+  token: string;
+  message: string;
+}
+
+export async function sendVerificationEmail(tenant_id: string): Promise<SendVerificationEmailResponse> {
+  const { data } = await apiClient.post<SendVerificationEmailResponse>(
+    `${BASE}/admin/email/send/verification`,
+    { tenant_id }
+  );
+  return data;
+}
+
+/**
+ * Verify tenant email with token. GET /api/v1/multi-tenant/email/verify?token=...
+ */
+export async function verifyEmailWithToken(token: string): Promise<{ message: string }> {
+  const { data } = await apiClient.get<{ message: string }>(`${BASE}/email/verify`, {
+    params: { token },
+  });
   return data;
 }
 

@@ -32,8 +32,8 @@ const TENANT_SUBSCRIPTION_OPTIONS = [
 ];
 
 export interface UseTenantManagementOptions {
-  /** Current user from useAuth(); used to set initial sub-view (adopter vs tenant) */
-  user: { id?: number; is_superuser?: boolean; is_tenant?: boolean } | null;
+  /** Current user from useAuth(); used to set initial sub-view and to filter list users by tenant */
+  user: { id?: number; is_superuser?: boolean; is_tenant?: boolean; tenant_id?: string | null } | null;
 }
 
 export function useTenantManagement(options: UseTenantManagementOptions) {
@@ -68,6 +68,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     description: "",
     requested_subscriptions: [],
   });
+  const [tenantFormErrors, setTenantFormErrors] = useState<Record<string, string>>({});
   const [isSubmittingTenant, setIsSubmittingTenant] = useState(false);
 
   // Add New User modal
@@ -199,7 +200,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const handleFetchTenantUsers = async () => {
     setIsLoadingTenantUsers(true);
     try {
-      const res = await multiTenantService.listUsers();
+      const res = await multiTenantService.listUsers(user?.tenant_id ?? undefined);
       const list = Array.isArray(res) ? (res as TenantUserView[]) : (res?.users ?? []);
       setTenantUsers(list);
     } catch (err) {
@@ -224,14 +225,15 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const openTenantModal = () => {
     setTenantForm({
-      organization_name: "",
-      domain: "",
-      contact_name: "",
-      contact_email: "",
-      contact_phone: "",
-      description: "",
-      requested_subscriptions: [],
-    });
+    organization_name: "",
+    domain: "",
+    contact_name: "",
+    contact_email: "",
+    contact_phone: "",
+    description: "",
+    requested_subscriptions: [],
+  });
+    setTenantFormErrors({});
     setAvailableServicesForCreate(null);
     setTenantModalStep(1);
     setIsTenantModalOpen(true);
@@ -243,7 +245,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const handleTenantStepNext = () => {
-    if (tenantModalStep === 1) setTenantModalStep(2);
+    if (tenantModalStep === 1) {
+      const errors: Record<string, string> = {};
+      setTenantFormErrors(errors);
+      if (Object.keys(errors).length > 0) return;
+      setTenantModalStep(2);
+    }
   };
 
   const handleTenantStepBack = () => {
@@ -255,19 +262,57 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       toast({ title: "Validation", description: "Organization name, domain, and contact email are required.", status: "error", isClosable: true });
       return;
     }
+    const errors: Record<string, string> = {};
+    setTenantFormErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      toast({ title: "Validation", description: "Please fix the errors below.", status: "error", isClosable: true });
+      return;
+    }
     if (!tenantForm.requested_subscriptions?.length) {
       toast({ title: "Validation", description: "At least one requested subscription is required.", status: "error", isClosable: true });
       return;
     }
     setIsSubmittingTenant(true);
     try {
-      await multiTenantService.registerTenant({
+      // When uncommenting HACK below: use registerResponse.tenant_id in sendVerificationEmail
+      const registerResponse = await multiTenantService.registerTenant({
         organization_name: tenantForm.organization_name.trim(),
         domain: tenantForm.domain.trim(),
         contact_email: tenantForm.contact_email.trim(),
         requested_subscriptions: tenantForm.requested_subscriptions,
       });
-      toast({ title: "Tenant created", description: "Verification email will be sent to the contact email. Tenant remains pending until verified.", status: "success", duration: 5000, isClosable: true });
+
+      // -------------------------------------------------------------------------
+      // HACK: Auto-verify tenant right after creation. Remove when proper
+      // verification flow (e.g. user clicks link in email) is in place.
+      // 1) POST admin/email/send/verification → get token
+      // 2) GET email/verify?token=... → verify tenant
+      // -------------------------------------------------------------------------
+      // let autoVerified = false;
+      // try {
+      //   const { token } = await multiTenantService.sendVerificationEmail(registerResponse.tenant_id);
+      //   await multiTenantService.verifyEmailWithToken(token);
+      //   autoVerified = true;
+      // } catch (hackErr) {
+      //   console.warn("Auto-verify after tenant creation failed (tenant was still created):", hackErr);
+      //   const { message: hackMsg } = extractErrorInfo(hackErr);
+      //   toast({
+      //     title: "Tenant created",
+      //     description: `Verification could not be completed automatically: ${hackMsg}. You can resend verification from the tenant list.`,
+      //     status: "warning",
+      //     duration: 6000,
+      //     isClosable: true,
+      //   });
+      // }
+      // -------------------------------------------------------------------------
+
+      toast({
+        title: "Tenant created",
+        description: `${registerResponse?.message ?? "Tenant created successfully."} Tenant remains pending until verified.`, 
+        status: "success",
+        duration: 5000,
+        isClosable: true,
+      });
       closeTenantModal();
       handleFetchTenants();
     } catch (err) {
@@ -350,7 +395,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     try {
       const [detail, usersRes] = await Promise.all([
         multiTenantService.getViewTenant(t.tenant_id),
-        multiTenantService.listUsers(),
+        multiTenantService.listUsers(user?.tenant_id ?? undefined),
       ]);
       setViewTenantDetail(detail);
       // Support both { users: [...] } and raw array (e.g. from gateway)
@@ -805,6 +850,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     tenantModalStep,
     tenantForm,
     setTenantForm,
+    tenantFormErrors,
+    setTenantFormErrors,
     isSubmittingTenant,
     openTenantModal,
     closeTenantModal,

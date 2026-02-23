@@ -753,10 +753,7 @@ async def create_new_tenant(
     # Encrypt sensitive data before saving
     encrypted_email = encrypt_sensitive_data(payload.contact_email) if payload.contact_email else None
     encrypted_phone = encrypt_sensitive_data(payload.phone_number) if payload.phone_number else None
-    # Encrypt password to store temporarily until email verification
-    # Password will be decrypted and used to create admin user in auth-service during verification
-    encrypted_password = encrypt_sensitive_data(payload.password) if payload.password else None
-    
+
     tenant_data = {
         "tenant_id": tenant_id,
         "organization_name": payload.organization_name,
@@ -770,7 +767,7 @@ async def create_new_tenant(
         "usage": usage_dict,
         "status": TenantStatus.PENDING,
         "temp_admin_username": "",                 # Will be set upon email verification
-        "temp_admin_password_hash": encrypted_password,  # Store encrypted password from request
+        "temp_admin_password_hash": "",            # No password at registration; generated on verification if needed
         "user_id": None,                           # Will be set upon email verification
     }
 
@@ -836,7 +833,7 @@ async def create_new_tenant(
 
     role_value = (getattr(payload, "role", None) or "").strip().upper() or "ADMIN"
 
-    resposne = TenantRegisterResponse(
+    response = TenantRegisterResponse(
         id=created.id,
         tenant_id=created.tenant_id,
         schema_name=created.schema_name,
@@ -844,10 +841,10 @@ async def create_new_tenant(
         quotas=created.quotas or {},
         usage_quota=created.usage or {},
         status=created.status.value if hasattr(created.status, "value") else str(created.status),
-        role=role_value if role_value in {"ADMIN", "USER", "GUEST", "MODERATOR"} else "ADMIN",
+        message="Tenant successfully created.",
     )
 
-    return resposne
+    return response
 
 
 async def send_initial_verification_email(
