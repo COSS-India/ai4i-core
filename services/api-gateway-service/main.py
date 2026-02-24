@@ -6287,8 +6287,11 @@ async def list_models(
     created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the model."),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """List all registered models. Use include_deprecated=false to show only ACTIVE versions. Use model_name to filter by model name and get all versions. Use created_by to filter by creator. Requires Bearer token authentication with 'model.read' permission."""
-    await check_permission("model.read", request, credentials)
+    """List all registered models.
+
+    Use include_deprecated=false to show only ACTIVE versions. Use model_name to filter by model name and get all versions. Use created_by to filter by creator.
+
+    Access: Any authenticated user role (ADMIN, MODERATOR, USER, GUEST)."""
     headers = build_auth_headers(request, credentials, None)
     params = {
         "task_type": task_type.value if task_type else None,
@@ -6316,8 +6319,11 @@ async def get_model_get(
     version: Optional[str] = Query(None, description="Optional version to get specific version"),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """Fetch metadata for a specific model (GET). If version is provided, returns that specific version. Otherwise returns the first matching model. Requires Bearer token authentication with 'model.read' permission."""
-    await check_permission("model.read", request, credentials)
+    """Fetch metadata for a specific model (GET).
+
+    If version is provided, returns that specific version. Otherwise returns the first matching model.
+
+    Access: Any authenticated user role (ADMIN, MODERATOR, USER, GUEST)."""
     headers = build_auth_headers(request, credentials, None)
     query_params = {}
     if version:
@@ -6435,8 +6441,11 @@ async def list_services(
     created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the service."),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme)
 ):
-    """List all deployed services. Use created_by to filter by creator. Requires Bearer token authentication with 'service.read' permission."""
-    await check_permission("service.read", request, credentials)
+    """List all deployed services.
+
+    Use created_by to filter by creator.
+
+    Access: Any authenticated user role (ADMIN, MODERATOR, USER, GUEST)."""
     headers = build_auth_headers(request, credentials, None)
     params = {"task_type": task_type.value if task_type else None}
     if is_published is not None:
