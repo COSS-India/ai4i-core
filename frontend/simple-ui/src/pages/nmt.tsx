@@ -182,7 +182,7 @@ const NMTPage: React.FC = () => {
             {/* Configuration Panel */}
             <GridItem>
               <VStack spacing={6} align="stretch">
-                {/* Service and Language Selector - same layout for all; service dropdown disabled for anonymous */}
+                {/* Service and Language Selector - same layout for all users (anonymous can change service from try-it API list) */}
                 <Box>
                   <ModelLanguageSelector
                     languagePair={languagePair}
@@ -192,7 +192,6 @@ const NMTPage: React.FC = () => {
                     selectedServiceId={selectedServiceId}
                     onServiceChange={setSelectedServiceId}
                     hideServiceSelector={false}
-                    serviceDropdownDisabled={!authLoading && !isAuthenticated}
                   />
                 </Box>
 
