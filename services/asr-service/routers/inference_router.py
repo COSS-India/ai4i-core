@@ -59,6 +59,8 @@ from services.constants.error_messages import (
     LANGUAGE_NOT_SUPPORTED_MESSAGE,
     SERVICE_UNAVAILABLE,
     SERVICE_UNAVAILABLE_MESSAGE,
+    SERVICE_UNPUBLISHED,
+    SERVICE_UNPUBLISHED_MESSAGE,
     MODEL_UNAVAILABLE,
     MODEL_UNAVAILABLE_MESSAGE,
     POOR_AUDIO_QUALITY,
@@ -280,6 +282,19 @@ async def resolve_service_id_if_needed(
                     )
                     http_request.state.model_management_error = (
                         f"Service {service_id} not found in Model Management database"
+                    )
+                elif service_info.is_published is not True:
+                    logger.warning(
+                        "ASR inference rejected: service is unpublished",
+                        extra={"service_id": service_id},
+                    )
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "code": SERVICE_UNPUBLISHED,
+                            "message": SERVICE_UNPUBLISHED_MESSAGE,
+                            "serviceId": service_id,
+                        },
                     )
                 elif not service_info.endpoint:
                     logger.error(
@@ -512,6 +527,15 @@ async def switch_to_fallback_service(
                 detail={
                     "code": "FALLBACK_SERVICE_UNAVAILABLE",
                     "message": f"Fallback service {fallback_service_id} not found or has no endpoint configured",
+                },
+            )
+        if service_info.is_published is not True:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": SERVICE_UNPUBLISHED,
+                    "message": SERVICE_UNPUBLISHED_MESSAGE,
+                    "serviceId": fallback_service_id,
                 },
             )
         

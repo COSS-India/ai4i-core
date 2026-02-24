@@ -36,6 +36,8 @@ Copy the environment template for each service and the frontend:
 
 
 **Core Services**
+
+**Core Services**
 ```bash
 cp services/api-gateway-service/env.template services/api-gateway-service/.env
 cp services/auth-service/env.template services/auth-service/.env
@@ -113,34 +115,48 @@ The platform uses a custom Laravel-like migration framework for database managem
 
 ### Step 5.1: Install Migration Framework Dependencies
 
+**Linux/macOS:**
 ```bash
 cd infrastructure/databases
 pip3 install -r requirements.txt
 cd ../..
 ```
 
+**Windows:**
+```bash
+cd infrastructure/databases
+pip install -r requirements.txt
+cd ..\..
+```
+
 ### Step 5.2: Initialize External Service Databases
 
 External services (like Unleash) manage their own schemas. Create their databases first:
+
+**Linux/macOS:**
+```bash
+python3 infrastructure/databases/cli.py init:external
+```
 
 **Windows:**
 ```bash
 python infrastructure/databases/cli.py init:external
 ```
 
-**MacOS/Linux:**
-```bash
-python3 infrastructure/databases/cli.py init:external
-```
-
 This creates the `unleash` database for the Unleash feature flag service.
 
 ### Step 5.3: Run All Migrations
 
-Run migrations for all databases at once:
+Run migrations for all databases at once.
 
+**Linux/macOS:**
 ```bash
 python3 infrastructure/databases/cli.py migrate:all
+```
+
+**Windows:**
+```bash
+python infrastructure/databases/cli.py migrate:all
 ```
 
 This command will:
@@ -151,10 +167,16 @@ This command will:
 
 ### Step 5.4: Seed Default Data
 
-Populate databases with default data:
+Populate databases with default data.
 
+**Linux/macOS:**
 ```bash
 python3 infrastructure/databases/cli.py seed:all
+```
+
+**Windows:**
+```bash
+python infrastructure/databases/cli.py seed:all
 ```
 
 This will create:
@@ -253,7 +275,7 @@ Once all services are running, use the table below to find URLs and ports. The *
 
 1. Check logs: `docker compose -f docker-compose-local.yml logs <service-name>`
 2. Verify environment files exist in each service directory
-3. Check if ports are already in use: `netstat -tulpn | grep <port>`
+3. Check if ports are already in use: `netstat -tulpn | grep <port>` (Windows: `netstat -ano | findstr <port>`)
 
 ### Containers in Created State
 
@@ -279,10 +301,41 @@ Add or repeat similar groups for other services as needed.
 1. Ensure PostgreSQL is running: `docker compose -f docker-compose-local.yml ps postgres`
 2. Check PostgreSQL is healthy: `docker compose -f docker-compose-local.yml ps | grep postgres`
 3. Re-run migrations if needed:
+
+   **Linux/macOS:**
    ```bash
    python3 infrastructure/databases/cli.py migrate:all
    python3 infrastructure/databases/cli.py seed:all
    ```
+
+   **Windows:**
+   ```bash
+   python infrastructure/databases/cli.py migrate:all
+   python infrastructure/databases/cli.py seed:all
+   ```
+
+### InfluxDB not starting
+
+If InfluxDB fails to start or you see errors related to it, try resetting the container and volume:
+
+```bash
+docker stop ai4v-influxdb
+docker rm ai4v-influxdb
+
+docker volume ls | grep influxdb
+```
+
+Then remove the volume (replace `<VOLUME_NAME>` with the name you see, e.g. `ai4i-core_influxdb-data`):
+
+```bash
+docker volume rm <VOLUME_NAME>
+```
+
+Finally, bring InfluxDB back up:
+
+```bash
+docker compose -f docker-compose-local.yml up -d --build influxdb
+```
 
 ### Postgres volume or "no such file or directory" for pg_data
 
@@ -306,8 +359,15 @@ If login still fails:
    ```
 
 2. Re-run the seeders to recreate the admin user:
+
+   **Linux/macOS:**
    ```bash
    python3 infrastructure/databases/cli.py seed:all
+   ```
+
+   **Windows:**
+   ```bash
+   python infrastructure/databases/cli.py seed:all
    ```
 
 3. Check auth service logs:
