@@ -153,10 +153,7 @@ security = HTTPBearer()
 async def get_db() -> AsyncSession:
     """Get database session"""
     async with db_session() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
+        yield session
 
 # Dependency to get multi-tenant database session
 async def get_multi_tenant_db():
@@ -166,10 +163,10 @@ async def get_multi_tenant_db():
         return
     try:
         async with multi_tenant_db_session() as session:
-            try:
-                yield session
-            finally:
-                await session.close()
+            yield session
+    except HTTPException:
+        # Re-raise so FastAPI dependency cleanup doesn't get "generator didn't stop after athrow()"
+        raise
     except Exception as e:
         # Log error but don't fail the request - multi-tenant DB is optional
         # This prevents authentication failures when tenant DB is unavailable
@@ -658,8 +655,11 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
             )
     
     await db.commit()
-    await db.refresh(db_user)
-    
+    # Re-query user after commit instead of refresh(); refresh() can raise
+    # InvalidRequestError in async/deployed environments (session state after commit).
+    result = await db.execute(select(User).where(User.id == db_user.id))
+    db_user = result.scalar_one()
+
     # Get user roles directly (query immediately after commit to ensure we get the role)
     role_result = await db.execute(
         select(Role.name)
