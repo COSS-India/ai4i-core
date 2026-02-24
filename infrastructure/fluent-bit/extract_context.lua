@@ -252,7 +252,8 @@ function filter_dashboard_logs(tag, timestamp, record)
                msg_lower:match("streaming endpoint mounted") or
                msg_lower:match("shutting down.*service") or
                msg_lower:match("service shutdown") or
-               msg_lower:match("service registry registration")
+               msg_lower:match("service registry registration") or
+               msg_lower:match("requestloggingmiddleware initialized")
             
             -- Filter initialization logs
             if is_init_log then
@@ -321,17 +322,30 @@ function filter_dashboard_logs(tag, timestamp, record)
     
     -- Get service and path from log record
     local service = record["service"] or ""
+    
+    -- CRITICAL: Check path in multiple locations
+    -- Priority 1: Check if path was already lifted by nest filter (should be at top level)
     local path = record["path"] or ""
     
-    -- Fallback: check multiple possible locations for path
+    -- Priority 2: Check context.path (source of truth for RequestLoggingMiddleware logs)
+    -- The nest filter should lift it, but we check context.path directly as fallback
     if (path == nil or path == "") then
-        -- Try context.path (if nest filter didn't lift it)
         if record["context"] ~= nil and type(record["context"]) == "table" then
             path = record["context"]["path"] or ""
+            -- If found in context, set it at top level for matching and indexing
+            if path ~= "" then
+                record["path"] = path
+            end
         end
-        -- Try req.path (some logs have path in req object)
+    end
+    
+    -- Priority 3: Try req.path (some logs have path in req object)
+    if (path == nil or path == "") then
         if record["req"] ~= nil and type(record["req"]) == "table" then
             path = record["req"]["path"] or record["req"]["url"] or ""
+            if path ~= "" then
+                record["path"] = path
+            end
         end
     end
     
@@ -344,12 +358,13 @@ function filter_dashboard_logs(tag, timestamp, record)
             -- First try: Extract path from HTTP method pattern "METHOD /path - status"
             -- Pattern: METHOD SPACE PATH (where PATH is everything until space-dash-space or end)
             -- This handles: "POST /api/v1/auth/logout - 200"
-            local method_match, path_part = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%.]+)")
+            -- Use more flexible pattern to match paths with slashes, dashes, dots, and word characters
+            local method_match, path_part = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%./]+)")
             if path_part and path_part:match("^/") then
                 path = path_part
             else
                 -- Try pattern: "path: /api/v1/asr/inference"
-                local extracted = message:match("path:%s+([/%w%-%.]+)")
+                local extracted = message:match("path:%s+([/%w%-%./]+)")
                 if extracted then
                     path = extracted
                 else
@@ -385,7 +400,7 @@ function filter_dashboard_logs(tag, timestamp, record)
         if type(message) == "string" and (message:find("login") or message:find("logout")) then
             -- Extract path from message if not already found
             if (path == nil or path == "") then
-                local _, msg_path = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%.]+)")
+                local _, msg_path = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%./]+)")
                 if msg_path and msg_path:match("^/") then
                     path = msg_path
                 end
@@ -408,7 +423,8 @@ function filter_dashboard_logs(tag, timestamp, record)
         local message = record["message"] or ""
         if type(message) == "string" and message ~= "" then
             -- Extract from "POST /api/v1/auth/login - 200"
-            local _, msg_path = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%.]+)")
+            -- Use more flexible pattern to match paths with slashes, dashes, dots, and word characters
+            local _, msg_path = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%./]+)")
             if msg_path and msg_path:match("^/") then
                 path = msg_path
             end
@@ -436,7 +452,48 @@ function filter_dashboard_logs(tag, timestamp, record)
         return -1, timestamp, record
     end
     
+    -- SAFETY: For RequestLoggingMiddleware logs, ensure path is extracted before dropping
+    -- These are the actual API request logs we want to keep - check BEFORE dropping empty paths
+    local logger = record["logger"] or ""
+    if (path == nil or path == "") and type(logger) == "string" and logger:find("request_logging") and allowed_endpoints ~= nil then
+        -- Extract path from message if not already found
+        local message = record["message"] or ""
+        if type(message) == "string" and message ~= "" then
+            local _, msg_path = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%./]+)")
+            if msg_path and msg_path:match("^/") then
+                path = msg_path
+                record["path"] = path
+            end
+        end
+        -- Also try to get from context (most reliable source)
+        if (path == nil or path == "") and record["context"] ~= nil and type(record["context"]) == "table" then
+            path = record["context"]["path"] or ""
+            if path ~= "" then
+                record["path"] = path
+            end
+        end
+        -- If we found the path, allow through (don't drop)
+        if path ~= nil and path ~= "" then
+            -- Path found, continue to matching logic below
+        else
+            -- Even if path extraction failed, allow RequestLoggingMiddleware logs through
+            -- Extract from message as last resort and set a placeholder
+            if type(message) == "string" and message ~= "" then
+                local _, msg_path = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%./]+)")
+                if msg_path and msg_path:match("^/") then
+                    record["path"] = msg_path
+                    path = msg_path
+                end
+            end
+            -- Always allow RequestLoggingMiddleware logs through if service is whitelisted
+            if allowed_endpoints ~= nil then
+                return 1, timestamp, record
+            end
+        end
+    end
+    
     -- If path is still empty, drop the log (we only want endpoint-specific logs)
+    -- BUT: RequestLoggingMiddleware logs are already handled above
     if path == nil or path == "" then
         return -1, timestamp, record
     end
@@ -470,7 +527,7 @@ function filter_dashboard_logs(tag, timestamp, record)
             break
         end
         
-g        -- Match if path ends with allowed path (handles /api/v1/asr/inference matching /asr/inference)
+        -- Match if path ends with allowed path (handles /api/v1/asr/inference matching /asr/inference)
         -- Escape special characters in allowed_path for pattern matching
         local escaped_allowed = allowed_normalized:gsub("([%-%.%+%[%]%(%)%^%$%%])", "%%%1")
         if path_normalized:match(escaped_allowed .. "$") then
@@ -494,13 +551,49 @@ g        -- Match if path ends with allowed path (handles /api/v1/asr/inference 
         end
         return 1, timestamp, record
     else
+        -- SAFETY: For RequestLoggingMiddleware logs (logger contains "request_logging")
+        -- These are the actual API request logs we want to keep - they have the path in context.path
+        -- Allow them through if service is in whitelist, regardless of path matching
+        local request_logger = record["logger"] or ""
+        if type(request_logger) == "string" and request_logger:find("request_logging") and allowed_endpoints ~= nil then
+            -- Extract path from message if not already found
+            if (path == nil or path == "") then
+                local message = record["message"] or ""
+                if type(message) == "string" and message ~= "" then
+                    local _, msg_path = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%./]+)")
+                    if msg_path and msg_path:match("^/") then
+                        path = msg_path
+                    end
+                end
+            end
+            -- Also try to get from context (most reliable source)
+            if (path == nil or path == "") and record["context"] ~= nil and type(record["context"]) == "table" then
+                path = record["context"]["path"] or ""
+            end
+            -- Set path in record for indexing (use message extraction as fallback)
+            if path ~= nil and path ~= "" then
+                record["path"] = path
+            elseif (path == nil or path == "") then
+                -- Last resort: extract from message
+                local message = record["message"] or ""
+                if type(message) == "string" and message ~= "" then
+                    local _, msg_path = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%./]+)")
+                    if msg_path and msg_path:match("^/") then
+                        record["path"] = msg_path
+                    end
+                end
+            end
+            -- Always allow RequestLoggingMiddleware logs through if service is whitelisted
+            return 1, timestamp, record
+        end
+        
         -- SAFETY: For auth-service, always allow logs with login/logout in message
         -- This ensures logs aren't dropped due to path extraction or matching issues
         if service_lower == "auth-service" then
             local message = record["message"] or ""
             if type(message) == "string" and (message:find("login") or message:find("logout")) then
                 -- Extract path from message and set it
-                local _, msg_path = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%.]+)")
+                local _, msg_path = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%./]+)")
                 if msg_path and msg_path:match("^/") then
                     record["path"] = msg_path
                 elseif path ~= nil and path ~= "" then

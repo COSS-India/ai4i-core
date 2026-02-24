@@ -8,8 +8,14 @@ Provides batch language diarization inference using Triton Inference Server.
 import asyncio
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from typing import Optional
+
+# CRITICAL: Prioritize mounted volume over installed package for development
+# This ensures code changes in libs/ai4icore_observability are picked up immediately
+if "/app/libs" not in sys.path:
+    sys.path.insert(0, "/app/libs")
 
 import redis.asyncio as redis
 from fastapi import FastAPI, Request
