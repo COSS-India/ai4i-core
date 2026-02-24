@@ -322,8 +322,7 @@ app.add_middleware(RequestLoggingMiddleware)
 # This ensures organization is extracted and set in context before RequestLoggingMiddleware logs
 config = PluginConfig.from_env()
 config.enabled = True  # Enable plugin
-config.enabled = True
-config.debug = True  # Enable debug logging for organization extraction
+config.debug = False  # Disable debug print statements - use structured logging instead
 if not config.customers:
     config.customers = []  # Will be extracted from JWT/headers automatically
 if not config.apps:
@@ -365,36 +364,11 @@ tracer = setup_tracing("ocr-service")
 if tracer:
     logger.info("✅ Distributed tracing initialized for OCR service")
     # Instrument FastAPI to automatically create spans for all requests
-    FastAPIInstrumentor.instrument_app(app)
-    logger.info("✅ FastAPI instrumentation enabled for tracing")
-else:
-    logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
-
-# Observability (MUST be added AFTER RequestLoggingMiddleware)
-# FastAPI middleware runs in REVERSE order, so this will run FIRST
-# This ensures organization is extracted and set in context before RequestLoggingMiddleware logs
-config = PluginConfig.from_env()
-config.enabled = True
-config.debug = False  # Disable debug print statements - use structured logging instead
-if not config.customers:
-    config.customers = []
-if not config.apps:
-    config.apps = ["ocr"]
-
-
-
-plugin = ObservabilityPlugin(config)
-
-plugin.register_plugin(app)
-logger.info("AI4ICore Observability Plugin initialized for OCR service")
-
-# Distributed Tracing (Jaeger)
-# IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
-tracer = setup_tracing("ocr-service")
-if tracer:
-    logger.info("✅ Distributed tracing initialized for OCR service")
-    # Instrument FastAPI to automatically create spans for all requests
-    FastAPIInstrumentor.instrument_app(app)
+    # Exclude health check and docs endpoints to reduce span noise
+    FastAPIInstrumentor.instrument_app(
+        app,
+        excluded_urls="/health,/ready,/docs,/redoc,/openapi.json"
+    )
     logger.info("✅ FastAPI instrumentation enabled for tracing")
 else:
     logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
