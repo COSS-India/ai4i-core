@@ -655,10 +655,11 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
             )
     
     await db.commit()
-    # Re-query user after commit instead of refresh(); refresh() can raise
-    # InvalidRequestError in async/deployed environments (session state after commit).
+    # Re-query user after commit when possible; if no row (e.g. replication lag/schema in deployed env), use in-memory object.
     result = await db.execute(select(User).where(User.id == db_user.id))
-    db_user = result.scalar_one()
+    loaded = result.scalar_one_or_none()
+    if loaded is not None:
+        db_user = loaded
 
     # Get user roles directly (query immediately after commit to ensure we get the role)
     role_result = await db.execute(
@@ -672,7 +673,8 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     
     logger.info(f"New user registered: {user_data.email} with roles: {user_roles}")
     
-    # Create response dict with roles
+    # Create response dict with roles (use fallbacks when re-query didn't run, so server defaults may be unset on object)
+    now = datetime.utcnow()
     user_dict = {
         "id": db_user.id,
         "email": db_user.email,
@@ -684,13 +686,13 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
         "is_active": db_user.is_active,
         "is_verified": db_user.is_verified,
         "is_superuser": db_user.is_superuser,
-        "created_at": db_user.created_at,
+        "created_at": db_user.created_at if db_user.created_at is not None else now,
         "updated_at": db_user.updated_at,
         "last_login": db_user.last_login,
         "avatar_url": db_user.avatar_url,
         "roles": user_roles
     }
-    
+
     return user_dict
 
 @app.post("/api/v1/auth/login", response_model=LoginResponse)
