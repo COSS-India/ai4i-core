@@ -115,15 +115,22 @@ class ModelManagementClient:
         
         # Use auth headers from incoming request if provided (preferred)
         if auth_headers:
-            # Forward all auth-related headers
+            # Forward all relevant headers
             for key, value in auth_headers.items():
                 key_lower = key.lower()
-                # Forward Authorization, X-API-Key, and X-Auth-Source headers
-                if key_lower in ["authorization", "x-api-key", "x-auth-source"]:
-                    # Use proper header case
-                    header_name = "Authorization" if key_lower == "authorization" else \
-                                 "X-API-Key" if key_lower == "x-api-key" else \
-                                 "X-Auth-Source" if key_lower == "x-auth-source" else key
+                # Forward Authorization, X-API-Key, X-Auth-Source, and X-Try-It headers
+                if key_lower in ["authorization", "x-api-key", "x-auth-source", "x-try-it"]:
+                    # Normalize header casing
+                    if key_lower == "authorization":
+                        header_name = "Authorization"
+                    elif key_lower == "x-api-key":
+                        header_name = "X-API-Key"
+                    elif key_lower == "x-auth-source":
+                        header_name = "X-Auth-Source"
+                    elif key_lower == "x-try-it":
+                        header_name = "X-Try-It"
+                    else:
+                        header_name = key
                     headers[header_name] = value
         
         # If Authorization is present but X-Auth-Source is missing, assume AUTH_TOKEN
