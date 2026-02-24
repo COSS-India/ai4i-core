@@ -22,6 +22,7 @@ from utils.utils import (
     hash_password,
     encrypt_sensitive_data,
     decrypt_sensitive_data,
+    DecryptionError,
 )
 from models.db_models import (
     Tenant, 
@@ -753,10 +754,7 @@ async def create_new_tenant(
     # Encrypt sensitive data before saving
     encrypted_email = encrypt_sensitive_data(payload.contact_email) if payload.contact_email else None
     encrypted_phone = encrypt_sensitive_data(payload.phone_number) if payload.phone_number else None
-    # Encrypt password to store temporarily until email verification
-    # Password will be decrypted and used to create admin user in auth-service during verification
-    encrypted_password = encrypt_sensitive_data(payload.password) if payload.password else None
-    
+
     tenant_data = {
         "tenant_id": tenant_id,
         "organization_name": payload.organization_name,
@@ -770,7 +768,7 @@ async def create_new_tenant(
         "usage": usage_dict,
         "status": TenantStatus.PENDING,
         "temp_admin_username": "",                 # Will be set upon email verification
-        "temp_admin_password_hash": encrypted_password,  # Store encrypted password from request
+        "temp_admin_password_hash": "",            # No password at registration; generated on verification if needed
         "user_id": None,                           # Will be set upon email verification
     }
 
@@ -834,9 +832,7 @@ async def create_new_tenant(
         await db.rollback()
         raise HTTPException(status_code=500,detail="Failed to create tenant")
 
-    role_value = (getattr(payload, "role", None) or "").strip().upper() or "ADMIN"
-
-    resposne = TenantRegisterResponse(
+    response = TenantRegisterResponse(
         id=created.id,
         tenant_id=created.tenant_id,
         schema_name=created.schema_name,
@@ -844,10 +840,10 @@ async def create_new_tenant(
         quotas=created.quotas or {},
         usage_quota=created.usage or {},
         status=created.status.value if hasattr(created.status, "value") else str(created.status),
-        role=role_value if role_value in {"ADMIN", "USER", "GUEST", "MODERATOR"} else "ADMIN",
+        message="Tenant successfully created.Tenant remains pending until verified.",
     )
 
-    return resposne
+    return response
 
 
 async def send_initial_verification_email(
@@ -939,38 +935,32 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     # Use password from registration request instead of generating one
     # Decrypt the password that was stored during tenant registration
     admin_username = f"admin@{tenant.tenant_id}"
+    plain_password = generate_random_password(length = 8)
     
-    if tenant.temp_admin_password_hash:
-        # Decrypt the password that was stored during tenant registration
-        try:
-            plain_password = decrypt_sensitive_data(tenant.temp_admin_password_hash)
-        except Exception as e:
-            logger.error(f"Failed to decrypt stored password for tenant {tenant.tenant_id}: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to retrieve stored password for tenant admin"
-            )
-    else:
-        # Fallback: if no password was stored, generate one (backward compatibility)
-        logger.warning(f"No stored password found for tenant {tenant.tenant_id}, generating one")
-        plain_password = generate_random_password(length=8)
 
-    # Password will be stored in auth-service, no need to hash and store here
+    hashed_password = hash_password(plain_password)
+
     tenant.temp_admin_username = admin_username
-    # Clear the encrypted password after use (password is now in auth-service)
-    tenant.temp_admin_password_hash = ""
+    tenant.temp_admin_password_hash = hashed_password
 
     # Create tenant admin user in auth-service via /api/v1/auth/register
     # Store the password provided during registration so tenant admin can login with it
     try:
         async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
             # Decrypt email and phone_number before sending to auth service
-            decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
-            decrypted_phone = decrypt_sensitive_data(tenant.phone_number) if tenant.phone_number else None
+            try:
+                decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+                decrypted_phone = decrypt_sensitive_data(tenant.phone_number) if tenant.phone_number else None
+            except DecryptionError as e:
+                logger.error(f"Decryption failed for tenant {tenant.tenant_id}: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to decrypt tenant contact data. Ensure API_KEY_ENCRYPTION_KEY / JWT_SECRET_KEY matches the key used to encrypt stored data."
+                )
             
             if not decrypted_email:
                 raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
-            
+
             auth_response = await client.post(
                 f"{API_GATEWAY_URL}/api/v1/auth/register",
                 json={
@@ -1049,17 +1039,19 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     
     logger.info(f"Tenant verified and activated: {tenant.tenant_id}")
 
-    # Commented out: Sending generated password over email
-    # Instead, password is provided by user during registration and stored in auth-service
-    # Tenant admin can login with the password they provided via auth/login endpoint
-    # background_tasks.add_task(
-    #     send_welcome_email,
-    #     tenant_id_str,
-    #     contact_email_str,
-    #     None,  # use subdomain if required
-    #     admin_username_str,
-    #     password_str,
-    # )
+    tenant_id_str = str(tenant.tenant_id)
+    contact_email_str = decrypted_email
+    admin_username_str = str(tenant.temp_admin_username) if tenant.temp_admin_username else admin_username
+    password_str = str(plain_password)
+
+    background_tasks.add_task(
+        send_welcome_email,
+        tenant_id_str,
+        contact_email_str,
+        None,  # use subdomain if required
+        admin_username_str,
+        password_str,
+    )
 
     background_tasks.add_task(
         provision_tenant_schema,
@@ -1128,7 +1120,15 @@ async def resend_verification_email(
    
     # Extract values before adding background task to avoid detached object issues
     # Decrypt email before using it
-    decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+    try:
+        decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+    except DecryptionError as e:
+        logger.error(f"Decryption failed while preparing resend for tenant {tenant.tenant_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to decrypt tenant contact data for resend. Ensure API_KEY_ENCRYPTION_KEY / JWT_SECRET_KEY matches the key used to encrypt stored data."
+        )
+
     if not decrypted_email:
         raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
     
@@ -1589,12 +1589,10 @@ async def register_user(
     if not payload.is_approved:
         raise HTTPException(status_code=400, detail="User must be approved by tenant admin to register")
 
-    # Use password from request instead of generating one
-    # Password is provided by the user and will be stored in auth-service for login
-    user_password = payload.password
+    # No password collected in create-user flow; generate one so user can set password later (e.g. via reset)
+    user_password = generate_random_password(length=12)
 
     # Create user in AUTH-SERVICE via /api/v1/auth/register
-    # Store the password provided by user so they can login with it
     try:
         async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
             auth_response = await client.post(
@@ -1713,14 +1711,14 @@ async def register_user(
     # Commented out: Sending generated password over email
     # Instead, password is provided by user in request and stored in auth-service
     # User can login with the password they provided via auth/login endpoint
-    # background_tasks.add_task(
-    #     send_user_welcome_email,
-    #     user_id,
-    #     payload.email,
-    #     None,  # add subdomain if required
-    #     payload.username,
-    #     plain_password,
-    # )
+    background_tasks.add_task(
+        send_user_welcome_email,
+        user_id,
+        payload.email,
+        None,  # add subdomain if required
+        payload.username,
+        user_password,
+    )
 
     logger.info(
         f"User registered successfully | tenant={tenant.tenant_id} | user={payload.username}"

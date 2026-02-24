@@ -36,6 +36,7 @@ import {
   MAX_RECORDING_DURATION,
   TTS_SUPPORTED_LANGUAGES,
 } from "../config/constants";
+import { useAuth } from "../hooks/useAuth";
 import { usePipeline } from "../hooks/usePipeline";
 import { listASRServices, ASRServiceDetails } from "../services/asrService";
 import { listNMTServices } from "../services/nmtService";
@@ -45,6 +46,7 @@ import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
 const PipelinePage: React.FC = () => {
   const toast = useToastWithDeduplication();
   const router = useRouter();
+  const { isAuthenticated } = useAuth();
   const [sourceLanguage, setSourceLanguage] = useState("hi");
   const [targetLanguage, setTargetLanguage] = useState("mr");
   const [asrServiceId, setAsrServiceId] = useState<string>("");
@@ -71,7 +73,7 @@ const PipelinePage: React.FC = () => {
   });
 
   const { data: nmtServices } = useQuery({
-    queryKey: ["nmt-services"],
+    queryKey: ["nmt-services", isAuthenticated],
     queryFn: listNMTServices,
     staleTime: 5 * 60 * 1000,
   });
