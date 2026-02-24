@@ -16,16 +16,16 @@ const tryItClient: AxiosInstance = axios.create({
   },
 });
 
-// Add request interceptor to add anonymous session ID
+// Add request interceptor to add anonymous session ID and try-it header
 tryItClient.interceptors.request.use(
   (config) => {
+    // Mark request as try-it (no auth; backend may return try-it eligible services)
+    config.headers['X-Try-It'] = 'true';
     // Add anonymous session ID for rate limiting
     const sessionId = getAnonymousSessionId();
     config.headers['X-Anonymous-Session-Id'] = sessionId;
-    
     // Add request start time for timing calculation
     config.headers['request-startTime'] = new Date().getTime().toString();
-    
     return config;
   },
   (error) => {
@@ -55,6 +55,18 @@ export interface TryItRequest {
   service_name: 'nmt';
   payload: NMTInferenceRequest;
 }
+
+/**
+ * Fetch NMT services for try-it (anonymous) users.
+ * Uses GET /api/v1/model-management/services?task_type=nmt with X-Try-It: true (no auth).
+ * @returns Promise with raw list of services from the API
+ */
+export const listTryItNMTServices = async (): Promise<any[]> => {
+  const response = await tryItClient.get<any[]>('/api/v1/model-management/services', {
+    params: { task_type: 'nmt' },
+  });
+  return Array.isArray(response.data) ? response.data : [];
+};
 
 /**
  * Perform NMT inference using Try-It endpoint (anonymous access)
