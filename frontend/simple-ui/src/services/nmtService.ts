@@ -13,12 +13,8 @@ import {
   NMTServiceDetailsResponse,
   LanguagePair,
 } from '../types/nmt';
-import { performTryItNMTInference, trackTryItRequest } from './tryItService';
+import { performTryItNMTInference, trackTryItRequest, listTryItNMTServices } from './tryItService';
 import { isAnonymousUser } from '../utils/anonymousSession';
-import {
-  INDICTRANS_ANONYMOUS_SERVICE_ID,
-  INDICTRANS_ANONYMOUS_SERVICE,
-} from '../data/indictransAnonymousService';
 import { LANG_CODE_TO_LABEL } from '../config/constants';
 
 /**
@@ -94,45 +90,75 @@ export const listNMTModels = async (): Promise<NMTModelDetailsResponse[]> => {
   }
 };
 
-/**
- * Get hardcoded IndicTrans service for anonymous (try-it) users in NMTServiceDetailsResponse format.
- */
-export const getIndicTransAnonymousService = (): NMTServiceDetailsResponse => {
-  const pairs: LanguagePair[] = INDICTRANS_ANONYMOUS_SERVICE.languages.map((lang) => ({
-    sourceLanguage: lang.sourceLanguage,
-    targetLanguage: lang.targetLanguage,
-  }));
-  const codes = new Set<string>();
-  INDICTRANS_ANONYMOUS_SERVICE.languages.forEach((lang) => {
-    codes.add(lang.sourceLanguage);
-    codes.add(lang.targetLanguage);
-  });
-  return {
-    service_id: INDICTRANS_ANONYMOUS_SERVICE.serviceId,
-    model_id: 'ai4bharat/indictrans-v2',
-    model_version: 'v1',
-    triton_endpoint: '',
-    triton_model: 'nmt',
-    provider: INDICTRANS_ANONYMOUS_SERVICE.name,
-    description: INDICTRANS_ANONYMOUS_SERVICE.serviceDescription,
-    name: INDICTRANS_ANONYMOUS_SERVICE.name,
-    serviceDescription: INDICTRANS_ANONYMOUS_SERVICE.serviceDescription,
-    supported_languages: Array.from(codes),
-    supported_language_pairs: pairs,
-    modelVersion: 'v1',
-  };
+/** Default script codes for common language codes (when API does not return them) */
+const DEFAULT_SCRIPT_BY_LANG: Record<string, string> = {
+  en: 'Latn', hi: 'Deva', bn: 'Beng', ta: 'Taml', te: 'Telu', mr: 'Deva', gu: 'Gujr',
+  kn: 'Knda', ml: 'Mlym', pa: 'Guru', or: 'Orya', as: 'Beng', ur: 'Aran', ks: 'Aran',
+  sa: 'Deva', ne: 'Deva', sd: 'Deva', mai: 'Deva', brx: 'Deva', doi: 'Deva', gom: 'Deva',
+  mni: 'Mtei', sat: 'Olck',
 };
 
+function normalizeServiceToNMTDetails(service: any): NMTServiceDetailsResponse {
+  const supportedLanguages: string[] = [];
+  const pairs: Array<{ sourceLanguage: string; targetLanguage: string; sourceScriptCode?: string; targetScriptCode?: string }> = [];
+  if (service.languages && Array.isArray(service.languages)) {
+    service.languages.forEach((lang: any) => {
+      const src = lang.sourceLanguage || lang.source_language;
+      const tgt = lang.targetLanguage || lang.target_language;
+      if (src) supportedLanguages.push(src);
+      if (tgt) supportedLanguages.push(tgt);
+      if (src && tgt) {
+        pairs.push({
+          sourceLanguage: src,
+          targetLanguage: tgt,
+          sourceScriptCode: lang.sourceScriptCode || DEFAULT_SCRIPT_BY_LANG[src] || 'Latn',
+          targetScriptCode: lang.targetScriptCode || DEFAULT_SCRIPT_BY_LANG[tgt] || 'Deva',
+        });
+      }
+    });
+  }
+  const uniqueLangs = Array.from(new Set(supportedLanguages));
+  let endpoint = service.endpoint || '';
+  if (endpoint) endpoint = endpoint.replace(/^https?:\/\//, '');
+  return {
+    service_id: service.serviceId || service.service_id,
+    model_id: service.modelId || service.model_id || '',
+    model_version: service.modelVersion || service.model_version || '',
+    triton_endpoint: endpoint,
+    triton_model: 'nmt',
+    provider: service.name || service.serviceId || 'unknown',
+    description: service.serviceDescription || service.description || '',
+    name: service.name || '',
+    serviceDescription: service.serviceDescription || service.description || '',
+    supported_languages: uniqueLangs,
+    supported_language_pairs: pairs.length ? pairs : undefined,
+    modelVersion: service.modelVersion || service.model_version,
+  } as NMTServiceDetailsResponse;
+}
+
 /**
- * Get list of available NMT services from model management service
- * For anonymous users returns hardcoded IndicTrans service only.
- * For logged-in users returns only published services from Service Management
- * (if IndicTrans is in Service Management and published, it will appear here too).
+ * Get list of available NMT services.
+ * For anonymous users: GET model-management/services?task_type=nmt with X-Try-It: true (no auth).
+ * For logged-in users: published services from model management (with auth).
  * @returns Promise with NMT services response
  */
 export const listNMTServices = async (): Promise<NMTServiceDetailsResponse[]> => {
   if (isAnonymousUser()) {
-    return [getIndicTransAnonymousService()];
+    try {
+      const raw = await listTryItNMTServices();
+      const seen = new Set<string>();
+      const out: NMTServiceDetailsResponse[] = [];
+      for (const s of raw) {
+        const normalized = normalizeServiceToNMTDetails(s);
+        if (!normalized.service_id || seen.has(normalized.service_id)) continue;
+        seen.add(normalized.service_id);
+        out.push(normalized);
+      }
+      return out;
+    } catch (error) {
+      console.error('Failed to fetch try-it NMT services:', error);
+      throw new Error('Failed to fetch NMT services for try-it');
+    }
   }
   try {
     // Logged-in users: only published services from Service Management
@@ -271,35 +297,46 @@ export const getNMTLanguages = async (modelId?: string): Promise<NMTLanguagesRes
 };
 
 /**
- * Get supported languages for a specific NMT service from model management service.
- * For anonymous IndicTrans service returns hardcoded data.
+ * Get supported languages for a specific NMT service.
+ * For anonymous users uses try-it services API; for logged-in uses model management (auth).
  * @param serviceId - Service ID to get languages for
  * @returns Promise with NMT languages response
  */
 export const getNMTLanguagesForService = async (
   serviceId: string
 ): Promise<NMTLanguagesResponse | null> => {
-  if (serviceId === INDICTRANS_ANONYMOUS_SERVICE_ID) {
-    const codes = new Set<string>();
-    INDICTRANS_ANONYMOUS_SERVICE.languages.forEach((lang) => {
-      codes.add(lang.sourceLanguage);
-      codes.add(lang.targetLanguage);
-    });
-    const uniqueLanguages = Array.from(codes);
-    const language_details = uniqueLanguages.map((code) => ({
-      code,
-      name: LANG_CODE_TO_LABEL[code] || code,
-    }));
-    return {
-      model_id: 'ai4bharat/indictrans-v2',
-      provider: INDICTRANS_ANONYMOUS_SERVICE.name,
-      supported_languages: uniqueLanguages,
-      language_details,
-      total_languages: uniqueLanguages.length,
-    };
+  if (isAnonymousUser()) {
+    try {
+      const raw = await listTryItNMTServices();
+      const service = raw.find((s: any) => (s.serviceId || s.service_id) === serviceId);
+      if (!service) return null;
+      const codes = new Set<string>();
+      if (service.languages && Array.isArray(service.languages)) {
+        service.languages.forEach((lang: any) => {
+          const src = lang.sourceLanguage || lang.source_language;
+          const tgt = lang.targetLanguage || lang.target_language;
+          if (src) codes.add(src);
+          if (tgt) codes.add(tgt);
+        });
+      }
+      const uniqueLanguages = Array.from(codes);
+      const language_details = uniqueLanguages.map((code) => ({
+        code,
+        name: LANG_CODE_TO_LABEL[code] || code,
+      }));
+      return {
+        model_id: service.modelId || service.model_id || '',
+        provider: service.name || service.serviceId || 'unknown',
+        supported_languages: uniqueLanguages,
+        language_details,
+        total_languages: uniqueLanguages.length,
+      };
+    } catch (error) {
+      console.error('Failed to fetch try-it NMT languages for service:', error);
+      return null;
+    }
   }
   try {
-    // Fetch published NMT services from model management service
     const services = await listServices('nmt', true);
 
     // Find the service by serviceId
