@@ -1160,8 +1160,12 @@ async def update_current_user(
     
     current_user.updated_at = datetime.utcnow()
     await db.commit()
-    await db.refresh(current_user)
-    
+    # Re-query user after commit to avoid refresh() InvalidRequestError in async/deployed envs
+    result = await db.execute(select(User).where(User.id == current_user.id))
+    loaded = result.scalar_one_or_none()
+    if loaded is not None:
+        current_user = loaded
+
     logger.info(f"User updated: {current_user.email}")
 
     user_roles = await AuthUtils.get_user_roles(db, current_user.id)
@@ -1366,11 +1370,16 @@ async def create_api_key(
     )
     
     db.add(db_api_key)
+    await db.flush()  # get db_api_key.id
     await db.commit()
-    await db.refresh(db_api_key)
-    
+    # Re-query after commit to avoid refresh() InvalidRequestError; fallback to in-memory if no row
+    result = await db.execute(select(APIKey).where(APIKey.id == db_api_key.id))
+    loaded = result.scalar_one_or_none()
+    if loaded is not None:
+        db_api_key = loaded
+
     logger.info(f"API key created for user: {target_user.email} (created by: {current_user.email})")
-    
+
     return APIKeyResponse(
         id=db_api_key.id,
         key_name=db_api_key.key_name,
@@ -1570,7 +1579,11 @@ async def update_api_key(
         api_key.is_active = update_data.is_active
 
     await db.commit()
-    await db.refresh(api_key)
+    # Re-query after commit to avoid refresh() InvalidRequestError; fallback to in-memory if no row
+    result = await db.execute(select(APIKey).where(APIKey.id == api_key.id))
+    loaded = result.scalar_one_or_none()
+    if loaded is not None:
+        api_key = loaded
 
     logger.info(f"API key updated: {key_id} by user: {current_user.email}")
 
@@ -2028,9 +2041,7 @@ async def get_user_roles_endpoint(
                 f"for user {user_id} (email: {target_user.email}). Kept only: {most_recent_role_name}"
             )
         
-        # Refresh the session to ensure we see the latest data after cleanup
-        await db.refresh(target_user)
-        
+        # target_user in memory is sufficient; skip refresh to avoid InvalidRequestError in async/deployed envs
         # Now get the roles (should be only one after cleanup)
         # Query directly to ensure we get the current state
         if len(all_user_roles) > 1:
