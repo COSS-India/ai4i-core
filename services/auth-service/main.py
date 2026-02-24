@@ -867,9 +867,7 @@ async def login(
                     detail="Login failed due to database error. Please contact support."
                 )
         
-        # 🔍 Step 7: Refresh user object
-        await db.refresh(user)
-        
+        # 🔍 Step 7: User object is already in memory; no refresh needed (avoids InvalidRequestError in async/deployed envs)
         logger.info(f"✅ User logged in successfully: email={user.email}, user_id={user.id}, ip={client_ip}")
         
         # 🔍 Step 8: Build response (only tokens, no user details)
