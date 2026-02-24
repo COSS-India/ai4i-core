@@ -828,6 +828,12 @@ async def _enforce_tenant_and_service_checks(http_request: Request, service_name
       2) Ensure the service is globally active via /list/services
       3) If tenant context exists, ensure tenant.status == ACTIVE.
     """
+    # Skip tenant and service availability checks for anonymous Try-It requests.
+    # API Gateway forwards X-Try-It: true for /api/v1/try-it calls which proxy to NMT.
+    try_it_header = http_request.headers.get("X-Try-It") or http_request.headers.get("x-try-it")
+    if try_it_header and str(try_it_header).strip().lower() == "true":
+        return
+
     headers = {}
     auth_header = http_request.headers.get("Authorization") or http_request.headers.get("authorization")
     if auth_header:

@@ -3279,10 +3279,10 @@ load_balancer = None
 route_manager = None
 health_monitor_task = None
 
-# Try-It anonymous access controls
-TRY_IT_LIMIT = int(os.environ["TRY_IT_LIMIT"])
-TRY_IT_TTL_SECONDS = int(os.environ["TRY_IT_TTL_SECONDS"])
-try_it_counters: Dict[str, Dict[str, Any]] = {}
+#
+# NOTE: Try-It anonymous access controls (rate limiting, default service, etc.)
+# are now fully handled inside nmt-service (see its try_it_router and try_it_utils).
+# The API Gateway only exposes /api/v1/try-it and proxies requests to nmt-service.
 
 # Utility functions
 def generate_correlation_id() -> str:
@@ -5202,37 +5202,28 @@ async def audio_lang_detection_inference(
         None, "/api/v1/audio-lang-detection/inference", "audio-lang-detection-service", method="POST", body=body, headers=headers
     )
 
-# Try-It endpoint (anonymous access for NMT only)
 @app.post("/api/v1/try-it", response_model=Dict[str, Any], tags=["Try It"])
 async def try_it_inference(
     payload: TryItRequest,
     request: Request,
 ):
-    """Anonymous Try-It access. Only NMT is allowed; others require login."""
-    service_name = payload.service_name.strip().lower()
-    if service_name not in {"nmt", "nmt-service"}:
-        raise HTTPException(
-            status_code=403,
-            detail="Please login to access other services."
-        )
+    """
+    Try-It endpoint (anonymous access for NMT only).
 
-    key = _get_try_it_key(request)
-    count = await _increment_try_it_count(key)
-    if count > TRY_IT_LIMIT:
-        raise HTTPException(
-            status_code=403,
-            detail="Please login to access other services."
-        )
-
+    NOTE: All Try-It business logic (rate limiting, default service selection,
+    endpoint resolution, etc.) is implemented inside nmt-service.
+    API Gateway simply proxies this request to nmt-service.
+    """
     import json
-    body = json.dumps(payload.payload).encode()
+    body = json.dumps(payload.model_dump(mode="json")).encode()
+    # Forward as-is to nmt-service Try-It endpoint
     return await proxy_to_service(
         None,
-        "/api/v1/nmt/inference",
+        "/api/v1/try-it",
         "nmt-service",
         method="POST",
         body=body,
-        headers={"X-Try-It": "true"},
+        headers=request.headers,
     )
 
 # NMT Service Endpoints (Proxy to NMT Service)
