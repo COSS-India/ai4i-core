@@ -151,6 +151,7 @@ async def call_policy_engine_for_smr(
 async def fetch_candidate_services_for_task(
     http_client: httpx.AsyncClient,
     task_type: str,
+    headers: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """Fetch candidate services for a given task type from model-management-service."""
     params = {
@@ -163,10 +164,17 @@ async def fetch_candidate_services_for_task(
         extra={"context": {"task_type": task_type}},
     )
     try:
+        request_kwargs: Dict[str, Any] = {
+            "params": params,
+            "timeout": 15.0,
+        }
+        # Forward auth headers (Authorization / X-API-Key / X-Auth-Source / X-Try-It) to model-management
+        if headers:
+            request_kwargs["headers"] = headers
+
         resp = await http_client.get(
             f"{MODEL_MANAGEMENT_SERVICE_URL}/api/v1/model-management/services",
-            params=params,
-            timeout=15.0,
+            **request_kwargs,
         )
     except httpx.RequestError as e:
         logger.error(f"Model Management request failed: {e}")
@@ -214,15 +222,23 @@ async def fetch_candidate_services_for_task(
 async def fetch_policies_for_task(
     http_client: httpx.AsyncClient,
     task_type: str,
+    headers: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Fetch per-service policies for a given task type from model-management-service."""
     params = {"task_type": task_type}
 
     try:
+        request_kwargs: Dict[str, Any] = {
+            "params": params,
+            "timeout": 10.0,
+        }
+        # Forward auth headers (Authorization / X-API-Key / X-Auth-Source / X-Try-It) to model-management
+        if headers:
+            request_kwargs["headers"] = headers
+
         resp = await http_client.get(
             f"{MODEL_MANAGEMENT_SERVICE_URL}/api/v1/model-management/services/policies",
-            params=params,
-            timeout=10.0,
+            **request_kwargs,
         )
     except httpx.RequestError as e:
         logger.warning(f"Model Management policy request failed: {e}")
@@ -1433,6 +1449,7 @@ async def inject_service_id_if_missing(
     accuracy_policy: Optional[str] = None,
     is_context_aware: bool = False,
     is_request_profiler: bool = False,
+    mm_headers: Optional[Dict[str, str]] = None,
 ) -> Tuple[str, Optional[str], Dict[str, Any], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """
     Ensure that body_dict.config.serviceId is populated, using SMR selection if needed.
@@ -1522,10 +1539,11 @@ async def inject_service_id_if_missing(
         profiler_domain = profiler_result.get("domain")
         profiler_complexity = profiler_result.get("complexity_level")
         
-        # Fetch candidate services
+        # Fetch candidate services (forward auth headers to model-management if available)
         candidate_services = await fetch_candidate_services_for_task(
             http_client=http_client,
             task_type=task_type,
+            headers=mm_headers,
         )
         
         if not candidate_services:
@@ -1736,10 +1754,15 @@ async def inject_service_id_if_missing(
     candidate_services = await fetch_candidate_services_for_task(
         http_client=http_client,
         task_type=task_type,
+        headers=mm_headers,
     )
 
     try:
-        policies_map = await fetch_policies_for_task(http_client, task_type)
+        policies_map = await fetch_policies_for_task(
+            http_client=http_client,
+            task_type=task_type,
+            headers=mm_headers,
+        )
         if policies_map:
             for svc in candidate_services:
                 sid = str(svc.get("serviceId", ""))
@@ -1893,6 +1916,22 @@ async def select_service(request: Request, payload: SMRSelectRequest) -> SMRSele
     # Extract user context
     user_id = payload.user_id
     tenant_id = payload.tenant_id
+
+    # Prepare auth-related headers to forward to model-management-service.
+    # Model Management's AuthProvider expects:
+    # - Authorization (Bearer <token>) and X-Auth-Source=AUTH_TOKEN for JWT-based auth
+    # - or X-API-Key / Authorization (ApiKey <key>) with X-Auth-Source=API_KEY for API key auth
+    lower_headers = {k.lower(): v for k, v in headers.items()}
+    mm_headers: Dict[str, str] = {}
+    if "authorization" in lower_headers:
+        mm_headers["Authorization"] = lower_headers["authorization"]
+    if "x-api-key" in lower_headers:
+        mm_headers["X-API-Key"] = lower_headers["x-api-key"]
+    if "x-auth-source" in lower_headers:
+        mm_headers["X-Auth-Source"] = lower_headers["x-auth-source"]
+    # Forward X-Try-It so anonymous "try-it" flows work consistently if enabled
+    if "x-try-it" in lower_headers:
+        mm_headers["X-Try-It"] = lower_headers["x-try-it"]
     
     # Extract policy headers (highest priority) - these override Policy Engine
     # Headers: X-Latency-Policy, X-Cost-Policy, X-Accuracy-Policy
@@ -1998,6 +2037,7 @@ async def select_service(request: Request, payload: SMRSelectRequest) -> SMRSele
                 accuracy_policy=accuracy_policy_header,
                 is_context_aware=is_context_aware,
                 is_request_profiler=is_request_profiler,
+                mm_headers=mm_headers or None,
             )
             # Log after calling to verify what was returned
             logger.info(
