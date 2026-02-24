@@ -1535,33 +1535,39 @@ async def run_inference(
                         # Get database session for fallback service
                         # Use async for to properly manage the generator lifecycle
                         # The generator's finally block will close the session automatically
-                        async for fallback_db in get_tenant_db_session(http_request):
-                            fallback_repository = TTSRepository(fallback_db)
-                            fallback_audio_service = AudioService()
-                            fallback_text_service = TextService()
-                            fallback_tts_service = TTSService(
-                                fallback_repository,
-                                fallback_audio_service,
-                                fallback_text_service,
-                                fallback_triton_client,
-                                resolved_model_name=triton_model_name
-                            )
-                            
-                            # Retry inference with fallback service
-                            logger.info(
-                                "TTS: Retrying inference with fallback service",
-                                extra={"fallback_service_id": fallback_service_id}
-                            )
-                            
-                            response = await fallback_tts_service.run_inference(
-                                request=request,
-                                user_id=user_id,
-                                api_key_id=api_key_id,
-                                session_id=session_id,
-                                http_request_state=http_request.state
-                            )
-                            # Break after successful inference - generator will close session in finally block
-                            break
+                        try:
+                            async for fallback_db in get_tenant_db_session(http_request):
+                                fallback_repository = TTSRepository(fallback_db)
+                                fallback_audio_service = AudioService()
+                                fallback_text_service = TextService()
+                                fallback_tts_service = TTSService(
+                                    fallback_repository,
+                                    fallback_audio_service,
+                                    fallback_text_service,
+                                    fallback_triton_client,
+                                    resolved_model_name=triton_model_name
+                                )
+                                
+                                # Retry inference with fallback service
+                                logger.info(
+                                    "TTS: Retrying inference with fallback service",
+                                    extra={"fallback_service_id": fallback_service_id}
+                                )
+                                
+                                response = await fallback_tts_service.run_inference(
+                                    request=request,
+                                    user_id=user_id,
+                                    api_key_id=api_key_id,
+                                    session_id=session_id,
+                                    http_request_state=http_request.state
+                                )
+                                # Break after successful inference - generator will close session in finally block
+                                break
+                        except Exception as fallback_error:
+                            # Log the error but don't suppress it - let it propagate
+                            # The generator will properly clean up in its finally block
+                            logger.error(f"Fallback TTS service failed: {fallback_error}", exc_info=True)
+                            raise
                         
                         using_fallback = True
                         
