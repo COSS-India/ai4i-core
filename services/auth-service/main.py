@@ -62,13 +62,15 @@ except ImportError:
 
 # Configure logging with ai4icore_logging
 try:
-    from ai4icore_logging import get_logger
+    from ai4icore_logging import get_logger, CorrelationMiddleware, RequestLoggingMiddleware
     logger = get_logger(__name__)
     logger.info("✅ Using ai4icore_logging for structured logging")
 except ImportError:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     logger.warning("⚠️ ai4icore_logging not available, using standard logging")
+    CorrelationMiddleware = None
+    RequestLoggingMiddleware = None
 
 # Import telemetry and tracing
 try:
@@ -115,6 +117,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Correlation middleware (MUST be before RequestLoggingMiddleware)
+# This extracts X-Correlation-ID from headers and sets it in logging context
+if CorrelationMiddleware:
+    app.add_middleware(CorrelationMiddleware)
+    logger.info("✅ CorrelationMiddleware added to auth-service")
+
+# Request logging middleware (logs all requests to OpenSearch)
+# This ensures login/logout endpoints are logged even though API Gateway skips successful requests
+if RequestLoggingMiddleware:
+    app.add_middleware(RequestLoggingMiddleware)
+    logger.info(
+        "✅ RequestLoggingMiddleware added to auth-service",
+        extra={"context": {
+            "service": "auth-service",
+            "middleware": "RequestLoggingMiddleware",
+            "endpoints": ["/api/v1/auth/login", "/api/v1/auth/logout"]
+        }}
+    )
+else:
+    logger.warning("⚠️ RequestLoggingMiddleware not available - login/logout requests will not be logged to OpenSearch")
 
 # Setup Distributed Tracing (Jaeger)
 # IMPORTANT: Setup tracing BEFORE instrumenting FastAPI

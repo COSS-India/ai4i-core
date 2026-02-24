@@ -330,7 +330,7 @@ function filter_dashboard_logs(tag, timestamp, record)
             path = record["context"]["path"] or ""
         end
         -- Try req.path (some logs have path in req object)
-        if (path == nil or path == "") and record["req"] ~= nil and type(record["req"]) == "table" then
+        if record["req"] ~= nil and type(record["req"]) == "table" then
             path = record["req"]["path"] or record["req"]["url"] or ""
         end
     end
@@ -339,19 +339,35 @@ function filter_dashboard_logs(tag, timestamp, record)
     if path == nil or path == "" then
         local message = record["message"] or ""
         if type(message) == "string" and message ~= "" then
-            -- Look for patterns like "POST /api/v1/asr/inference" or "GET /auth/login"
+            -- Look for patterns like "POST /api/v1/asr/inference - 200" or "GET /auth/login"
             -- Also handle "[TENANT_DEBUG] _extract_tenant_id called for path: /api/v1/asr/inference"
-            local extracted = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%.]+)")
-            if extracted then
-                path = extracted:match("([/%w%-%.]+)$")  -- Extract just the path part
+            -- First try: Extract path from HTTP method pattern "METHOD /path - status"
+            -- Pattern: METHOD SPACE PATH (where PATH is everything until space-dash-space or end)
+            -- This handles: "POST /api/v1/auth/logout - 200"
+            local method_match, path_part = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%.]+)")
+            if path_part and path_part:match("^/") then
+                path = path_part
             else
                 -- Try pattern: "path: /api/v1/asr/inference"
-                extracted = message:match("path:%s+([/%w%-%.]+)")
+                local extracted = message:match("path:%s+([/%w%-%.]+)")
                 if extracted then
                     path = extracted
+                else
+                    -- Last resort: extract path from message like "POST /api/v1/auth/logout - 200"
+                    -- Match everything after method until space-dash or space-number
+                    local _, extracted_path2 = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([^%s%-]+)")
+                    if extracted_path2 and extracted_path2:match("^/") then
+                        path = extracted_path2
+                    end
                 end
             end
         end
+    end
+    
+    -- CRITICAL: Set path in record IMMEDIATELY after extraction
+    -- This ensures it's available for both matching and indexing
+    if path ~= nil and path ~= "" then
+        record["path"] = path
     end
     
     -- If log has no service field, drop it
@@ -361,6 +377,49 @@ function filter_dashboard_logs(tag, timestamp, record)
     
     -- Normalize service name for comparison
     local service_lower = service:lower()
+    
+    -- EARLY EXIT: For auth-service with login/logout, always allow through
+    -- This ensures logs are never dropped due to path extraction issues
+    if service_lower == "auth-service" then
+        local message = record["message"] or ""
+        if type(message) == "string" and (message:find("login") or message:find("logout")) then
+            -- Extract path from message if not already found
+            if (path == nil or path == "") then
+                local _, msg_path = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%.]+)")
+                if msg_path and msg_path:match("^/") then
+                    path = msg_path
+                end
+            end
+            -- Also try to get from context
+            if (path == nil or path == "") and record["context"] ~= nil and type(record["context"]) == "table" then
+                path = record["context"]["path"] or ""
+            end
+            -- Set path in record for indexing
+            if path ~= nil and path ~= "" then
+                record["path"] = path
+            end
+            -- Always allow auth-service login/logout logs through
+            return 1, timestamp, record
+        end
+    end
+    
+    -- For other services, extract path from message if not found in context
+    if (path == nil or path == "") then
+        local message = record["message"] or ""
+        if type(message) == "string" and message ~= "" then
+            -- Extract from "POST /api/v1/auth/login - 200"
+            local _, msg_path = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%.]+)")
+            if msg_path and msg_path:match("^/") then
+                path = msg_path
+            end
+        end
+    end
+    
+    -- CRITICAL: Always set path in record so it's indexed in OpenSearch
+    -- This must be done BEFORE the matching logic
+    if path ~= nil and path ~= "" then
+        record["path"] = path
+    end
     
     -- Check if service is in whitelist
     local allowed_endpoints = nil
@@ -411,7 +470,7 @@ function filter_dashboard_logs(tag, timestamp, record)
             break
         end
         
-        -- Match if path ends with allowed path (handles /api/v1/asr/inference matching /asr/inference)
+g        -- Match if path ends with allowed path (handles /api/v1/asr/inference matching /asr/inference)
         -- Escape special characters in allowed_path for pattern matching
         local escaped_allowed = allowed_normalized:gsub("([%-%.%+%[%]%(%)%^%$%%])", "%%%1")
         if path_normalized:match(escaped_allowed .. "$") then
@@ -429,8 +488,37 @@ function filter_dashboard_logs(tag, timestamp, record)
     
     -- Keep log only if both service AND path match whitelist
     if path_matches then
+        -- Ensure path is set in record for OpenSearch indexing (in case it wasn't set earlier)
+        if record["path"] == nil or record["path"] == "" then
+            record["path"] = path
+        end
         return 1, timestamp, record
     else
+        -- SAFETY: For auth-service, always allow logs with login/logout in message
+        -- This ensures logs aren't dropped due to path extraction or matching issues
+        if service_lower == "auth-service" then
+            local message = record["message"] or ""
+            if type(message) == "string" and (message:find("login") or message:find("logout")) then
+                -- Extract path from message and set it
+                local _, msg_path = message:match("(GET|POST|PUT|DELETE|PATCH)%s+([/%w%-%.]+)")
+                if msg_path and msg_path:match("^/") then
+                    record["path"] = msg_path
+                elseif path ~= nil and path ~= "" then
+                    -- Use the path we extracted earlier
+                    record["path"] = path
+                else
+                    -- Fallback: extract from context if available
+                    if record["context"] ~= nil and type(record["context"]) == "table" then
+                        local ctx_path = record["context"]["path"]
+                        if ctx_path then
+                            record["path"] = ctx_path
+                        end
+                    end
+                end
+                -- Always allow auth-service login/logout logs through
+                return 1, timestamp, record
+            end
+        end
         return -1, timestamp, record
     end
 end
