@@ -27,13 +27,13 @@ slowapi==0.1.9
 
 # Data processing
 beautifulsoup4==4.12.3
-requests==2.31.0
+requests==2.32.4
 ratelimit==2.2.1
 datasketch==1.6.4
 datasets==2.16.1
-tqdm==4.66.1
+tqdm==4.66.3
 
 # Utilities
-python-multipart==0.0.6
+python-multipart==0.0.22
 httpx==0.26.0
 
