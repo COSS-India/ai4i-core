@@ -17,6 +17,8 @@ export interface AlertDefinition {
   name: string;
   description: string | null;
   promql_expr: string;
+  threshold_value?: number | null;
+  threshold_unit?: string | null;
   category: string;
   severity: string;
   urgency: string;

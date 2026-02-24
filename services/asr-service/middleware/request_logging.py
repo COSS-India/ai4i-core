@@ -53,8 +53,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             self.allowed_log_levels = {logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR}
         
         # Log configuration at startup (only once per service instance)
-        # This is CRITICAL for debugging - verify env vars are being read
-        logger.info(
+        # Use DEBUG level to avoid cluttering OpenSearch with initialization logs
+        logger.debug(
             f"RequestLoggingMiddleware initialized: EXCLUDE_HEALTH_LOGS={self.exclude_health_logs} (env='{exclude_health_env}'), "
             f"EXCLUDE_METRICS_LOGS={self.exclude_metrics_logs} (env='{exclude_metrics_env}'), "
             f"ALLOWED_LOG_LEVELS={allowed_levels_str}",

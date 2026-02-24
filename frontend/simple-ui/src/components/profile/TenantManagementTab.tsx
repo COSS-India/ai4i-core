@@ -13,7 +13,9 @@ import {
   Heading,
   Input,
   InputGroup,
+  InputRightElement,
   Text,
+  FormErrorMessage,
   VStack,
   HStack,
   useColorModeValue,
@@ -60,6 +62,7 @@ import {
   Tooltip,
 } from "@chakra-ui/react";
 import { FiBriefcase, FiUsers, FiMoreVertical, FiEye, FiEdit2, FiUserPlus, FiPlayCircle, FiRefreshCw, FiPlus, FiSettings, FiArrowLeft, FiMail, FiPause, FiPower, FiTrash2 } from "react-icons/fi";
+import { ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
 import { useAuth } from "../../hooks/useAuth";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import { TENANT_USER_ROLE_OPTIONS } from "./types";
@@ -665,17 +668,17 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
       {/* Create New Tenant Modal */}
       <Modal isOpen={tm.isTenantModalOpen} onClose={tm.closeTenantModal} size="lg" isCentered>
         <ModalOverlay />
-        <ModalContent>
-          <ModalHeader>Create New Tenant</ModalHeader>
+        <ModalContent maxH="90vh" display="flex" flexDirection="column">
+          <ModalHeader flexShrink={0}>Create New Tenant</ModalHeader>
           <ModalCloseButton />
-          <Box px={6} pt={2} pb={2}>
+          <Box px={6} pt={2} pb={2} flexShrink={0}>
             <HStack spacing={2}>
               <Badge colorScheme={tm.tenantModalStep === 1 ? "blue" : "green"} borderRadius="full" px={2}>1</Badge>
               <Badge colorScheme={tm.tenantModalStep === 2 ? "blue" : "gray"} borderRadius="full" px={2}>2</Badge>
             </HStack>
             <Text fontSize="sm" color="gray.600" mt={1}>Step {tm.tenantModalStep} of 2</Text>
           </Box>
-          <ModalBody>
+          <ModalBody overflowY="auto" flex="1" minH={0}>
             {tm.tenantModalStep === 1 && (
               <VStack spacing={4} align="stretch">
                 <FormControl isRequired>
@@ -702,8 +705,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   <FormLabel>Description (optional)</FormLabel>
                   <Input placeholder="Brief description of the tenant organization" value={tm.tenantForm.description} onChange={(e) => tm.setTenantForm((f) => ({ ...f, description: e.target.value }))} bg="white" />
                 </FormControl>
-                <FormControl>
-                  <FormLabel>Requested subscriptions (optional)</FormLabel>
+                <FormControl isRequired>
+                  <FormLabel>Requested subscriptions</FormLabel>
                   {tm.availableServicesForCreate && tm.availableServicesForCreate.length > 0 ? (
                     <Box borderWidth="1px" borderRadius="md" p={3} bg="white" maxH="200px" overflowY="auto">
                       <Text fontSize="xs" color="gray.500" mb={2}>Select from loaded services:</Text>
@@ -758,17 +761,17 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <Alert status="info" borderRadius="md">
                   <AlertIcon />
                   <AlertDescription>
-                    A verification email will be sent to <strong>{tm.tenantForm.contact_email}</strong>. The tenant will remain in pending status until verified.
+                    A verification email needs to be sent to <strong>{tm.tenantForm.contact_email}</strong>. The tenant will remain in pending status until verified.
                   </AlertDescription>
                 </Alert>
               </VStack>
             )}
           </ModalBody>
-          <ModalFooter>
+          <ModalFooter flexShrink={0}>
             {tm.tenantModalStep === 1 && (
               <>
                 <Button variant="ghost" mr={3} onClick={tm.closeTenantModal}>Cancel</Button>
-                <Button colorScheme="blue" onClick={tm.handleTenantStepNext} isDisabled={!tm.tenantForm.organization_name.trim() || !tm.tenantForm.domain.trim() || !tm.tenantForm.contact_email.trim()}>
+                <Button colorScheme="blue" onClick={tm.handleTenantStepNext} isDisabled={!tm.tenantForm.organization_name.trim() || !tm.tenantForm.domain.trim() || !tm.tenantForm.contact_email.trim() || !tm.tenantForm.requested_subscriptions?.length}>
                   Next &rarr;
                 </Button>
               </>
@@ -778,7 +781,8 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                 <Button variant="ghost" mr={3} onClick={tm.handleTenantStepBack} isDisabled={tm.isSubmittingTenant}>&larr; Back</Button>
                 <Button variant="ghost" mr={3} onClick={tm.closeTenantModal} isDisabled={tm.isSubmittingTenant}>Cancel</Button>
                 <Button colorScheme="blue" onClick={tm.handleRegisterTenant} isLoading={tm.isSubmittingTenant} loadingText="Sending...">
-                  Send Verification to Tenant
+                  {/* Send Verification to Tenant */}
+                  Register Tenant
                 </Button>
               </>
             )}
@@ -956,11 +960,17 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
             <VStack spacing={4} align="stretch">
               <FormControl isRequired>
                 <FormLabel>Tenant</FormLabel>
-                <Select placeholder="Select tenant" value={tm.userForm.tenant_id} onChange={(e) => tm.setUserFormTenantId(e.target.value)} bg="white">
-                  {tm.tenants.map((t) => (
-                    <option key={t.tenant_id} value={t.tenant_id}>{t.organization_name} ({t.tenant_id})</option>
-                  ))}
-                </Select>
+                <Input
+                  value={tm.userForm.tenant_id ? (() => {
+                    const t = tm.tenants.find((x) => x.tenant_id === tm.userForm.tenant_id);
+                    return t ? `${t.organization_name || t.tenant_id} (${t.tenant_id})` : tm.userForm.tenant_id;
+                  })() : "Select a tenant first"}
+                  isReadOnly
+                  variant="filled"
+                  bg="gray.50"
+                  _readOnly={{ cursor: "default" }}
+                />
+           
               </FormControl>
               <FormControl isRequired>
                 <FormLabel>Full Name</FormLabel>
@@ -1002,10 +1012,10 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                       value={tm.userForm.services}
                       onChange={(values) => tm.setUserForm((f) => ({ ...f, services: values as string[] }))}
                     >
-                      <SimpleGrid columns={{ base: 2, sm: 3, md: 4 }} spacing={2}>
+                      <SimpleGrid columns={2} spacing={3} minChildWidth="140px">
                         {tenantServices.map((svc) => (
-                          <Checkbox key={svc} value={svc} colorScheme="blue" size="sm">
-                            <Text fontSize="sm" fontWeight="medium">{String(svc).toUpperCase()}</Text>
+                          <Checkbox key={svc} value={svc} colorScheme="blue" size="sm" whiteSpace="normal">
+                            <Text fontSize="sm" fontWeight="medium" whiteSpace="normal" wordBreak="break-word">{String(svc).toUpperCase()}</Text>
                           </Checkbox>
                         ))}
                       </SimpleGrid>

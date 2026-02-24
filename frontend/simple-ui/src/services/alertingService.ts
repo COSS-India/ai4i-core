@@ -122,9 +122,18 @@ class AlertingService {
   async createDefinition(
     data: AlertDefinitionCreate
   ): Promise<AlertDefinition> {
+    const raw = data as unknown as Record<string, unknown>;
+    const thresholdUnit =
+      typeof raw.threshold_unit === 'string' && raw.threshold_unit.trim() !== ''
+        ? raw.threshold_unit.trim()
+        : 'seconds';
+    const body = {
+      ...raw,
+      threshold_unit: thresholdUnit,
+    };
     return this.request<AlertDefinition>('/definitions', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(body),
     });
   }
 

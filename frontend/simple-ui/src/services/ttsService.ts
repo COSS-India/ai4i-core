@@ -28,7 +28,7 @@ export interface TTSServiceDetailsResponse {
 export const listTTSServices = async (): Promise<TTSServiceDetailsResponse[]> => {
   try {
     // Fetch services from model management service filtered by task_type='tts'
-    const services = await listServices('tts');
+    const services = await listServices('tts', true);
     const seen = new Set<string>();
 
     // Transform model management service response to TTSServiceDetailsResponse format

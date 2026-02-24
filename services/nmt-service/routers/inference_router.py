@@ -828,6 +828,12 @@ async def _enforce_tenant_and_service_checks(http_request: Request, service_name
       2) Ensure the service is globally active via /list/services
       3) If tenant context exists, ensure tenant.status == ACTIVE.
     """
+    # Skip tenant and service availability checks for anonymous Try-It requests.
+    # API Gateway forwards X-Try-It: true for /api/v1/try-it calls which proxy to NMT.
+    try_it_header = http_request.headers.get("X-Try-It") or http_request.headers.get("x-try-it")
+    if try_it_header and str(try_it_header).strip().lower() == "true":
+        return
+
     headers = {}
     auth_header = http_request.headers.get("Authorization") or http_request.headers.get("authorization")
     if auth_header:
@@ -885,10 +891,16 @@ async def _enforce_tenant_and_service_checks(http_request: Request, service_name
             raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant information"})
 
     # Next, ensure the service is globally active
+    # Multi-tenant endpoints only require Bearer token (not API key)
+    # Create headers with only Authorization for multi-tenant service check
+    service_check_headers = {}
+    if headers.get("Authorization") or headers.get("authorization"):
+        service_check_headers["Authorization"] = headers.get("Authorization") or headers.get("authorization")
+    # Don't forward X-API-Key or X-Auth-Source for multi-tenant endpoints
+    
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-    
-            svc_resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/list/services", headers=headers)
+            svc_resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/list/services", headers=service_check_headers)
             if svc_resp.status_code == 200:
                 services = svc_resp.json().get("services", [])
                 svc_entry = next((s for s in services if str(s.get("service_name")).lower() == service_name.lower()), None)
