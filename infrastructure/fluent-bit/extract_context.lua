@@ -405,6 +405,25 @@ function filter_dashboard_logs(tag, timestamp, record)
     -- Normalize service name for comparison
     local service_lower = service:lower()
     
+    -- EXPLICIT FILTER: Drop all apisix-related services (apisix, apisix-dashboard, apisix-gateway, etc.)
+    -- These are infrastructure services and should never appear in logs
+    if service_lower:match("apisix") then
+        return -1, timestamp, record
+    end
+    
+    -- EXPLICIT FILTER: Drop other infrastructure services that shouldn't appear
+    local infrastructure_services = {
+        "fluent-bit", "prometheus", "grafana", "jaeger", "opensearch", 
+        "opensearch-dashboards", "postgres", "redis", "influxdb", 
+        "alertmanager", "node-exporter", "kube-state", "cm-acme",
+        "opensearch-cleanup", "simple-ui", "kong", "konga", "kong-manager"
+    }
+    for _, infra_service in ipairs(infrastructure_services) do
+        if service_lower == infra_service:lower() or service_lower:match("^" .. infra_service:lower()) then
+            return -1, timestamp, record
+        end
+    end
+    
     -- EARLY EXIT: For auth-service with login/logout, always allow through
     -- This ensures logs are never dropped due to path extraction issues
     if service_lower == "auth-service" then
@@ -514,6 +533,12 @@ function filter_dashboard_logs(tag, timestamp, record)
     local path_normalized = path:gsub("%?.*$", ""):gsub("/+$", "")
     if path_normalized == "" then
         path_normalized = "/"
+    end
+    
+    -- EXPLICIT FILTER: Drop root path "/" - this is always infrastructure/health check traffic
+    -- Only allow specific inference/login/logout endpoints
+    if path_normalized == "/" then
+        return -1, timestamp, record
     end
     
     -- Filter out health checks and metrics endpoints

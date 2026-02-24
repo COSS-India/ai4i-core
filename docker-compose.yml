@@ -1234,6 +1234,8 @@ services:
   fluent-bit:
     image: fluent/fluent-bit:latest
     container_name: ai4v-fluent-bit
+    environment:
+      - EXCLUDE_INIT_LOGS=true  # Filter initialization/noise logs (startup messages)
     volumes:
       - ./infrastructure/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
       - ./infrastructure/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf
