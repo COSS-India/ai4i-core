@@ -156,7 +156,7 @@ async def send_verification_email(
     html_body = f"""
     <html>
       <body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
-        <h2 style="color:#1f2937;">Welcome to AI4I 🚀</h2>
+        <h2 style="color:#1f2937;">Welcome to AI4I </h2>
         <p style="color:#374151;">Please verify your email address to activate your account:</p>
         <p style="margin:24px 0;">
           <a href="{verification_link}"

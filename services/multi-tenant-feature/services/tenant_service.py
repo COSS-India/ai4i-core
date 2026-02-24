@@ -22,6 +22,7 @@ from utils.utils import (
     hash_password,
     encrypt_sensitive_data,
     decrypt_sensitive_data,
+    DecryptionError,
 )
 from models.db_models import (
     Tenant, 
@@ -753,7 +754,7 @@ async def create_new_tenant(
     # Encrypt sensitive data before saving
     encrypted_email = encrypt_sensitive_data(payload.contact_email) if payload.contact_email else None
     encrypted_phone = encrypt_sensitive_data(payload.phone_number) if payload.phone_number else None
-    
+
     tenant_data = {
         "tenant_id": tenant_id,
         "organization_name": payload.organization_name,
@@ -767,7 +768,7 @@ async def create_new_tenant(
         "usage": usage_dict,
         "status": TenantStatus.PENDING,
         "temp_admin_username": "",                 # Will be set upon email verification
-        "temp_admin_password_hash": "",            # Will be set upon email verification
+        "temp_admin_password_hash": "",            # No password at registration; generated on verification if needed
         "user_id": None,                           # Will be set upon email verification
     }
 
@@ -831,9 +832,7 @@ async def create_new_tenant(
         await db.rollback()
         raise HTTPException(status_code=500,detail="Failed to create tenant")
 
-    role_value = (getattr(payload, "role", None) or "").strip().upper() or "ADMIN"
-
-    resposne = TenantRegisterResponse(
+    response = TenantRegisterResponse(
         id=created.id,
         tenant_id=created.tenant_id,
         schema_name=created.schema_name,
@@ -841,10 +840,10 @@ async def create_new_tenant(
         quotas=created.quotas or {},
         usage_quota=created.usage or {},
         status=created.status.value if hasattr(created.status, "value") else str(created.status),
-        role=role_value if role_value in {"ADMIN", "USER", "GUEST", "MODERATOR"} else "ADMIN",
+        message="Tenant successfully created.Tenant remains pending until verified.",
     )
 
-    return resposne
+    return response
 
 
 async def send_initial_verification_email(
@@ -933,36 +932,41 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     verification.verified_at = now_utc()
     tenant.status = TenantStatus.ACTIVE
 
-    #generate username and password
-
+    # Use password from registration request instead of generating one
+    # Decrypt the password that was stored during tenant registration
     admin_username = f"admin@{tenant.tenant_id}"
     plain_password = generate_random_password(length = 8)
+    
 
-    # TODO: Add logging for password generation , Remove once done testing
-    # logger.debug(f"Password generated for Tenant(uuid):-{tenant.id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
-
-    # Store temp credentials on tenant for email / audit purposes
     hashed_password = hash_password(plain_password)
 
     tenant.temp_admin_username = admin_username
     tenant.temp_admin_password_hash = hashed_password
 
     # Create tenant admin user in auth-service via /api/v1/auth/register
+    # Store the password provided during registration so tenant admin can login with it
     try:
         async with httpx.AsyncClient(timeout=API_GATEWAY_TIMEOUT) as client:
             # Decrypt email and phone_number before sending to auth service
-            decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
-            decrypted_phone = decrypt_sensitive_data(tenant.phone_number) if tenant.phone_number else None
+            try:
+                decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+                decrypted_phone = decrypt_sensitive_data(tenant.phone_number) if tenant.phone_number else None
+            except DecryptionError as e:
+                logger.error(f"Decryption failed for tenant {tenant.tenant_id}: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to decrypt tenant contact data. Ensure API_KEY_ENCRYPTION_KEY / JWT_SECRET_KEY matches the key used to encrypt stored data."
+                )
             
             if not decrypted_email:
                 raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
-            
+
             auth_response = await client.post(
                 f"{API_GATEWAY_URL}/api/v1/auth/register",
                 json={
                     "email": decrypted_email,
                     "username": admin_username,
-                    "password": plain_password,
+                    "password": plain_password,  # Password from registration request
                     "confirm_password": plain_password,
                     "full_name": tenant.organization_name,
                     "phone_number": decrypted_phone,
@@ -1033,12 +1037,12 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
     if not decrypted_email:
         raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
     
+    logger.info(f"Tenant verified and activated: {tenant.tenant_id}")
+
     tenant_id_str = str(tenant.tenant_id)
     contact_email_str = decrypted_email
     admin_username_str = str(tenant.temp_admin_username) if tenant.temp_admin_username else admin_username
     password_str = str(plain_password)
-
-    logger.info(f"Tenant verified and activated: {tenant_id_str}")
 
     background_tasks.add_task(
         send_welcome_email,
@@ -1116,7 +1120,15 @@ async def resend_verification_email(
    
     # Extract values before adding background task to avoid detached object issues
     # Decrypt email before using it
-    decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+    try:
+        decrypted_email = decrypt_sensitive_data(tenant.contact_email) if tenant.contact_email else None
+    except DecryptionError as e:
+        logger.error(f"Decryption failed while preparing resend for tenant {tenant.tenant_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to decrypt tenant contact data for resend. Ensure API_KEY_ENCRYPTION_KEY / JWT_SECRET_KEY matches the key used to encrypt stored data."
+        )
+
     if not decrypted_email:
         raise HTTPException(status_code=400, detail="Tenant email not found or invalid")
     
@@ -1577,8 +1589,8 @@ async def register_user(
     if not payload.is_approved:
         raise HTTPException(status_code=400, detail="User must be approved by tenant admin to register")
 
-    # Generate password (if not provided). Hashing is handled by auth-service.
-    plain_password = generate_random_password(length=12)
+    # No password collected in create-user flow; generate one so user can set password later (e.g. via reset)
+    user_password = generate_random_password(length=12)
 
     # Create user in AUTH-SERVICE via /api/v1/auth/register
     try:
@@ -1588,8 +1600,8 @@ async def register_user(
                 json={
                     "email": payload.email,
                     "username": payload.username,
-                    "password": plain_password,
-                    "confirm_password": plain_password,
+                    "password": user_password,
+                    "confirm_password": user_password,
                     "full_name": payload.full_name,
                     "phone_number": payload.phone_number,
                     "timezone": "UTC",
@@ -1631,8 +1643,8 @@ async def register_user(
         if not assigned:
             logger.warning(f"Could not assign role {role_name} to user_id={user_id}; auth may use default.")
     
-    # TODO: Add logging for password generation , Remove once done testing
-    # logger.debug(f"Password generated for Userid:-{user_id} | Tenant:- {tenant.tenant_id} | password:- {plain_password}")
+    # Password is stored in auth-service, user can login with the password they provided
+    # No need to log or send password via email
     
     if payload.is_approved:
         #Create TenantUser entry only if user is approved
@@ -1696,13 +1708,16 @@ async def register_user(
         raise HTTPException(status_code=500, detail="Failed to register user")
 
 
+    # Commented out: Sending generated password over email
+    # Instead, password is provided by user in request and stored in auth-service
+    # User can login with the password they provided via auth/login endpoint
     background_tasks.add_task(
         send_user_welcome_email,
         user_id,
         payload.email,
         None,  # add subdomain if required
         payload.username,
-        plain_password,
+        user_password,
     )
 
     logger.info(
