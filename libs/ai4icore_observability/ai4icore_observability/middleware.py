@@ -62,12 +62,13 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             set_tenant_id(tenant_id)
             # Verify it was set correctly
             actual_tenant_id = get_tenant_id()
-            logger.error(f"[TENANT_DEBUG] Set tenant_id in logging context: {tenant_id}, verified: {actual_tenant_id}")
             if self.config.debug:
+                logger.debug(f"[TENANT_DEBUG] Set tenant_id in logging context: {tenant_id}, verified: {actual_tenant_id}")
                 logger.debug(f"Set organization in logging context: {organization}, tenant_id: {tenant_id}")
         except Exception as e:
             # Log error for debugging
-            logger.error(f"[TENANT_DEBUG] ❌ Failed to set tenant_id in context: {e}", exc_info=True)
+            if self.config.debug:
+                logger.debug(f"[TENANT_DEBUG] ❌ Failed to set tenant_id in context: {e}", exc_info=True)
             if self.config.debug:
                 logger.debug(f"Failed to set organization/tenant_id in context: {e}", exc_info=True)
             pass
@@ -214,7 +215,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             return decoded_token
         except Exception as e:
             # Always log JWT decoding failures with ERROR level for debugging
-            logger.error(f"[TENANT_DEBUG] ❌ JWT decoding failed: {type(e).__name__}: {e}", exc_info=True)
+            if self.config.debug:
+                logger.debug(f"[TENANT_DEBUG] ❌ JWT decoding failed: {type(e).__name__}: {e}", exc_info=True)
             return None
     
     @staticmethod
@@ -272,18 +274,23 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             tenant_id from JWT if present, otherwise resolved from user_id, 
             or default value only if resolution fails
         """
-        logger.error(f"[TENANT_DEBUG] _extract_tenant_id called for path: {request.url.path}")
+        if self.config.debug:
+            logger.debug(f"[TENANT_DEBUG] _extract_tenant_id called for path: {request.url.path}")
         auth_header = request.headers.get("authorization", "")
-        logger.error(f"[TENANT_DEBUG] Auth header present: {bool(auth_header)}, length: {len(auth_header) if auth_header else 0}")
+        if self.config.debug:
+            logger.debug(f"[TENANT_DEBUG] Auth header present: {bool(auth_header)}, length: {len(auth_header) if auth_header else 0}")
         
         if auth_header:
             decoded_token = self._decode_jwt_token(auth_header)
-            logger.error(f"[TENANT_DEBUG] JWT decoded: success={bool(decoded_token)}")
+            if self.config.debug:
+                logger.debug(f"[TENANT_DEBUG] JWT decoded: success={bool(decoded_token)}")
             if decoded_token:
-                logger.error(f"[TENANT_DEBUG] JWT payload keys: {list(decoded_token.keys())}")
+                if self.config.debug:
+                    logger.debug(f"[TENANT_DEBUG] JWT payload keys: {list(decoded_token.keys())}")
                 # Extract tenant_id from JWT token (highest priority)
                 tenant_id = decoded_token.get("tenant_id")
-                logger.error(f"[TENANT_DEBUG] Extracted tenant_id from JWT: {tenant_id} (type: {type(tenant_id)})")
+                if self.config.debug:
+                    logger.debug(f"[TENANT_DEBUG] Extracted tenant_id from JWT: {tenant_id} (type: {type(tenant_id)})")
                 if tenant_id:
                     if self.config.debug:
                         logger.debug(f"Extracted tenant_id from JWT: {tenant_id}")
@@ -291,8 +298,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 
                 # If tenant_id not in JWT, try to resolve from user_id
                 user_id = decoded_token.get("sub")
-                # Use ERROR level to ensure visibility (INFO might be filtered)
-                logger.error(f"[TENANT_DEBUG] JWT token has no tenant_id. Checking user_id from 'sub' field: {user_id} (type: {type(user_id)})")
+                if self.config.debug:
+                    logger.debug(f"[TENANT_DEBUG] JWT token has no tenant_id. Checking user_id from 'sub' field: {user_id} (type: {type(user_id)})")
                 
                 # Handle both string and int user_id from JWT
                 if user_id:
@@ -301,28 +308,37 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         if isinstance(user_id, str):
                             if user_id.isdigit():
                                 user_id_int = int(user_id)
-                                logger.error(f"[TENANT_DEBUG] Converted string user_id '{user_id}' to int: {user_id_int}")
+                                if self.config.debug:
+                                    logger.debug(f"[TENANT_DEBUG] Converted string user_id '{user_id}' to int: {user_id_int}")
                             else:
-                                logger.error(f"[TENANT_DEBUG] user_id '{user_id}' is not numeric, cannot resolve tenant")
+                                if self.config.debug:
+                                    logger.debug(f"[TENANT_DEBUG] user_id '{user_id}' is not numeric, cannot resolve tenant")
                                 user_id_int = None
                         else:
                             user_id_int = int(user_id)
-                            logger.error(f"[TENANT_DEBUG] Using integer user_id: {user_id_int}")
+                            if self.config.debug:
+                                logger.debug(f"[TENANT_DEBUG] Using integer user_id: {user_id_int}")
                         
                         if user_id_int:
-                            logger.error(f"[TENANT_DEBUG] Attempting to resolve tenant_id for user_id {user_id_int} via API")
+                            if self.config.debug:
+                                logger.debug(f"[TENANT_DEBUG] Attempting to resolve tenant_id for user_id {user_id_int} via API")
                             resolved_tenant_id = await self._resolve_tenant_from_user_id(user_id_int, request)
                             if resolved_tenant_id:
-                                logger.error(f"[TENANT_DEBUG] ✅ Successfully resolved tenant_id {resolved_tenant_id} for user_id {user_id_int}")
+                                if self.config.debug:
+                                    logger.debug(f"[TENANT_DEBUG] ✅ Successfully resolved tenant_id {resolved_tenant_id} for user_id {user_id_int}")
                                 return resolved_tenant_id
                             else:
-                                logger.error(f"[TENANT_DEBUG] ❌ Could not resolve tenant_id for user_id {user_id_int} via API, will use default")
+                                if self.config.debug:
+                                    logger.debug(f"[TENANT_DEBUG] ❌ Could not resolve tenant_id for user_id {user_id_int} via API, will use default")
                         else:
-                            logger.error(f"[TENANT_DEBUG] user_id_int is None, cannot resolve tenant")
+                            if self.config.debug:
+                                logger.debug(f"[TENANT_DEBUG] user_id_int is None, cannot resolve tenant")
                     except (ValueError, TypeError) as e:
-                        logger.error(f"[TENANT_DEBUG] Exception converting user_id to int: {user_id}, error: {e}", exc_info=True)
+                        if self.config.debug:
+                            logger.debug(f"[TENANT_DEBUG] Exception converting user_id to int: {user_id}, error: {e}", exc_info=True)
                 else:
-                    logger.error("[TENANT_DEBUG] JWT token has no 'sub' field, cannot resolve tenant from user_id")
+                    if self.config.debug:
+                        logger.debug("[TENANT_DEBUG] JWT token has no 'sub' field, cannot resolve tenant from user_id")
         
         # Last resort: use default value only if we truly can't determine tenant
         # This prevents logs without tenant_id, but logs a warning
@@ -385,41 +401,51 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(resolve_url, headers=headers)
                 
-                logger.error(f"[TENANT_DEBUG] API Response status: {response.status_code}")
+                if self.config.debug:
+                    logger.debug(f"[TENANT_DEBUG] API Response status: {response.status_code}")
                 
                 if response.status_code == 200:
                     tenant_data = response.json()
-                    logger.error(f"[TENANT_DEBUG] API Response data: {tenant_data}")
+                    if self.config.debug:
+                        logger.debug(f"[TENANT_DEBUG] API Response data: {tenant_data}")
                     tenant_id = tenant_data.get("tenant_id")
                     if tenant_id:
-                        logger.error(f"[TENANT_DEBUG] ✅ Extracted tenant_id {tenant_id} from API response")
+                        if self.config.debug:
+                            logger.debug(f"[TENANT_DEBUG] ✅ Extracted tenant_id {tenant_id} from API response")
                         return tenant_id
                     else:
-                        logger.error(f"[TENANT_DEBUG] ❌ Tenant data returned but no tenant_id field for user_id {user_id}: {tenant_data}")
+                        if self.config.debug:
+                            logger.debug(f"[TENANT_DEBUG] ❌ Tenant data returned but no tenant_id field for user_id {user_id}: {tenant_data}")
                         return None
                 elif response.status_code == 404:
                     # User not assigned to any tenant - this is expected for some users
-                    logger.error(f"[TENANT_DEBUG] ❌ Tenant not found for user_id {user_id} (404)")
+                    if self.config.debug:
+                        logger.debug(f"[TENANT_DEBUG] ❌ Tenant not found for user_id {user_id} (404)")
                     return None
                 else:
                     error_detail = response.text[:500] if hasattr(response, 'text') else str(response.content[:500])
-                    logger.error(
-                        f"[TENANT_DEBUG] ❌ Failed to resolve tenant for user_id {user_id}: "
-                        f"HTTP {response.status_code} - {error_detail}"
-                    )
+                    if self.config.debug:
+                        logger.debug(
+                            f"[TENANT_DEBUG] ❌ Failed to resolve tenant for user_id {user_id}: "
+                            f"HTTP {response.status_code} - {error_detail}"
+                        )
                     return None
                     
         except httpx.TimeoutException as e:
-            logger.error(f"[TENANT_DEBUG] ❌ Timeout resolving tenant for user_id {user_id} (exceeded 5s): {e}")
+            if self.config.debug:
+                logger.debug(f"[TENANT_DEBUG] ❌ Timeout resolving tenant for user_id {user_id} (exceeded 5s): {e}")
             return None
         except httpx.ConnectError as e:
-            logger.error(f"[TENANT_DEBUG] ❌ Connection error resolving tenant for user_id {user_id}: {e}")
+            if self.config.debug:
+                logger.debug(f"[TENANT_DEBUG] ❌ Connection error resolving tenant for user_id {user_id}: {e}")
             return None
         except httpx.RequestError as e:
-            logger.error(f"[TENANT_DEBUG] ❌ Request error resolving tenant for user_id {user_id}: {type(e).__name__}: {e}")
+            if self.config.debug:
+                logger.debug(f"[TENANT_DEBUG] ❌ Request error resolving tenant for user_id {user_id}: {type(e).__name__}: {e}")
             return None
         except Exception as e:
-            logger.error(f"[TENANT_DEBUG] ❌ Unexpected error resolving tenant from user_id {user_id}: {type(e).__name__}: {e}", exc_info=True)
+            if self.config.debug:
+                logger.debug(f"[TENANT_DEBUG] ❌ Unexpected error resolving tenant from user_id {user_id}: {type(e).__name__}: {e}", exc_info=True)
             return None
     
     def _extract_customer_app(self, request: Request) -> tuple:
