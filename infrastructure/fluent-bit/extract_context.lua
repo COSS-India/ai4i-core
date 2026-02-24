@@ -198,6 +198,18 @@ end
 -- Function to filter logs based on service and endpoint whitelist
 -- Only logs matching BOTH service AND endpoint are kept
 function filter_dashboard_logs(tag, timestamp, record)
+    -- ALWAYS filter out [TENANT_DEBUG] logs - these are debug logs from ObservabilityMiddleware
+    -- We only want RequestLoggingMiddleware logs (one per API call)
+    local message = record["message"] or ""
+    if type(message) == "string" and message:find("%[TENANT_DEBUG%]") then
+        return -1, timestamp, record
+    end
+    
+    -- ALWAYS filter out "RequestLoggingMiddleware initialized" logs - these are startup noise
+    if type(message) == "string" and message:find("RequestLoggingMiddleware initialized") then
+        return -1, timestamp, record
+    end
+    
     -- Read environment variables
     local exclude_init_logs = os.getenv("EXCLUDE_INIT_LOGS") or "false"
     
