@@ -26,7 +26,6 @@ import TextTranslator from "../components/nmt/TextTranslator";
 import TranslationResults from "../components/nmt/TranslationResults";
 import { useAuth } from "../hooks/useAuth";
 import { useNMT } from "../hooks/useNMT";
-import { INDICTRANS_ANONYMOUS_SERVICE_ID } from "../data/indictransAnonymousService";
 import {
   getSupportedLanguagePairsForService,
   listNMTServices,
@@ -59,14 +58,21 @@ const NMTPage: React.FC = () => {
     clearResults,
     swapLanguages,
   } = useNMT();
-  
-  // Set hardcoded service ID for anonymous users (try-it mode)
+
+  // Fetch available services (anonymous: try-it API with X-Try-It: true; logged-in: model management with auth)
+  const { data: services, isLoading: servicesLoading } = useQuery({
+    queryKey: ["nmt-services", isAuthenticated],
+    queryFn: listNMTServices,
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
+
+  // Set first available service for anonymous users when services load (try-it mode)
   useEffect(() => {
-    if (!authLoading && !isAuthenticated && !selectedServiceId) {
-      setSelectedServiceId(INDICTRANS_ANONYMOUS_SERVICE_ID);
+    if (!authLoading && !isAuthenticated && services && services.length > 0 && !selectedServiceId) {
+      setSelectedServiceId(services[0].service_id);
     }
-  }, [isAuthenticated, authLoading, selectedServiceId, setSelectedServiceId]);
-  
+  }, [isAuthenticated, authLoading, services, selectedServiceId, setSelectedServiceId]);
+
   // Check if user is anonymous and update rate limit info
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -74,7 +80,7 @@ const NMTPage: React.FC = () => {
       setRemainingRequests(getRemainingTryItRequests());
     }
   }, [isAuthenticated, authLoading, fetched]);
-  
+
   // Update remaining requests after each translation
   useEffect(() => {
     if (!isAuthenticated && fetched) {
@@ -82,13 +88,6 @@ const NMTPage: React.FC = () => {
       setShowRateLimitWarning(shouldWarnAboutRateLimit());
     }
   }, [isAuthenticated, fetched]);
-
-  // Fetch available services (key includes auth so we refetch after login and get published list, not cached anonymous IndicTrans)
-  const { data: services, isLoading: servicesLoading } = useQuery({
-    queryKey: ["nmt-services", isAuthenticated],
-    queryFn: listNMTServices,
-    staleTime: 10 * 60 * 1000, // 10 minutes
-  });
 
   // Fetch available language pairs for selected service
   const { data: languagePairs, isLoading: pairsLoading } = useQuery({
