@@ -44,9 +44,9 @@ async def list_models(
     created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the model."),
     db: AsyncSession = Depends(get_auth_db_session)
 ):
-    """List all models - GET /models. Requires 'model.read' permission (ADMIN or MODERATOR only)."""
-    # Check permission - only ADMIN and MODERATOR can read models
-    await require_permission("model.read", request, db)
+    """List all models - GET /models.
+    
+    Access: Any authenticated user role (ADMIN, MODERATOR, USER, GUEST)."""
     try:
         if not task_type or task_type.lower() == "none":
             task_type_enum = None
@@ -75,9 +75,9 @@ async def get_model_by_id(
     version: Optional[str] = Query(None, description="Optional version to get specific version"),
     db: AsyncSession = Depends(get_auth_db_session)
 ):
-    """Get model by ID - GET /models/{model_id}. Requires 'model.read' permission (ADMIN or MODERATOR only)."""
-    # Check permission - only ADMIN and MODERATOR can read models
-    await require_permission("model.read", request, db)
+    """Get model by ID - GET /models/{model_id}.
+    
+    Access: Any authenticated user role (ADMIN, MODERATOR, USER, GUEST)."""
     try:
         data = await get_model_details(model_id, version=version)
         if not data:
