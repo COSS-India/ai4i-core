@@ -601,9 +601,14 @@ async def call_smr_service(
     """
     try:
         headers = dict(http_request.headers)
-        latency_policy = headers.get("X-Latency-Policy") or headers.get("x-latency-policy")
-        cost_policy = headers.get("X-Cost-Policy") or headers.get("x-cost-policy")
-        accuracy_policy = headers.get("X-Accuracy-Policy") or headers.get("x-accuracy-policy")
+        
+        # Normalize headers to lowercase for case-insensitive lookup
+        # HTTP headers are case-insensitive, but FastAPI may preserve original case
+        lower_headers = {k.lower(): v for k, v in headers.items()}
+        
+        latency_policy = lower_headers.get("x-latency-policy")
+        cost_policy = lower_headers.get("x-cost-policy")
+        accuracy_policy = lower_headers.get("x-accuracy-policy")
 
         smr_payload = {
             "task_type": "asr",
@@ -612,11 +617,17 @@ async def call_smr_service(
             "tenant_id": str(tenant_id) if tenant_id else None,
         }
 
+        # Prepare headers for SMR call (forward auth headers, policy headers)
+        # Use normalized lowercase lookup but preserve proper header case in output
         smr_headers: Dict[str, str] = {}
-        if "Authorization" in headers:
-            smr_headers["Authorization"] = headers["Authorization"]
-        if "X-API-Key" in headers:
-            smr_headers["X-API-Key"] = headers["X-API-Key"]
+        if "authorization" in lower_headers:
+            smr_headers["Authorization"] = lower_headers["authorization"]
+        if "x-api-key" in lower_headers:
+            smr_headers["X-API-Key"] = lower_headers["x-api-key"]
+        if "x-auth-source" in lower_headers:
+            smr_headers["X-Auth-Source"] = lower_headers["x-auth-source"]
+        if "x-try-it" in lower_headers:
+            smr_headers["X-Try-It"] = lower_headers["x-try-it"]
         if latency_policy:
             smr_headers["X-Latency-Policy"] = latency_policy
         if cost_policy:
