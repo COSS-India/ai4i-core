@@ -314,6 +314,29 @@ Add or repeat similar groups for other services as needed.
    python infrastructure/databases/cli.py seed:all
    ```
 
+### InfluxDB not starting
+
+If InfluxDB fails to start or you see errors related to it, try resetting the container and volume:
+
+```bash
+docker stop ai4v-influxdb
+docker rm ai4v-influxdb
+
+docker volume ls | grep influxdb
+```
+
+Then remove the volume (replace `<VOLUME_NAME>` with the name you see, e.g. `ai4i-core_influxdb-data`):
+
+```bash
+docker volume rm <VOLUME_NAME>
+```
+
+Finally, bring InfluxDB back up:
+
+```bash
+docker compose -f docker-compose-local.yml up -d --build influxdb
+```
+
 ### Postgres volume or "no such file or directory" for pg_data
 
 The default `docker-compose-local.yml` uses a Docker-managed volume (no bind mount), so this error should not occur. If you see it, your compose file (or an override) likely uses a bind mount. Create the host directory that matches `volumes.postgres-data.driver_opts.device` in that file before starting Postgres, for example:
