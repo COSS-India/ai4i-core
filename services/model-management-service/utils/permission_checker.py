@@ -110,6 +110,13 @@ async def require_permission(
     Raises:
         HTTPException: 403 if permission is missing, 401 if not authenticated
     """
+    # Allow anonymous access for try-it requests (X-Try-It header)
+    # This enables read-only model/service usage for anonymous "try-it" flows
+    try_it_header = request.headers.get("X-Try-It") or request.headers.get("x-try-it")
+    if try_it_header and str(try_it_header).strip().lower() == "true":
+        # Skip auth/permission checks for try-it flows
+        return
+    
     # Get user info from request state (set by AuthProvider)
     user_id = getattr(request.state, 'user_id', None)
     is_authenticated = getattr(request.state, 'is_authenticated', False)
