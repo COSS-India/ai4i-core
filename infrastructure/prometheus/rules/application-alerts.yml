@@ -1,0 +1,16 @@
+groups:
+- name: application-alerts
+  interval: 30s
+  rules:
+  - alert: test_beml
+    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*", organization="beml"}[5m]))) > 50.0
+    for: 5m
+    labels:
+      organization: beml
+      severity: warning
+      urgency: medium
+      category: application
+      alert_type: Latency
+    annotations:
+      summary: test for beml
+      description: null
