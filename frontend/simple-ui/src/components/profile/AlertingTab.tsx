@@ -6,6 +6,7 @@ import {
   CardBody,
   CardHeader,
   FormControl,
+  FormErrorMessage,
   FormLabel,
   Heading,
   Input,
@@ -94,12 +95,12 @@ const ALERT_TYPES_BY_CATEGORY: Record<string, { value: string; label: string }[]
     { value: "error_rate", label: "Error Rate" },
   ],
   infrastructure: [
-    { value: "cpu", label: "CPU" },
-    { value: "memory", label: "Memory" },
-    { value: "gpu", label: "GPU" },
+    { value: "CPU", label: "CPU" },
+    { value: "Memory", label: "Memory" },
+    { value: "Disk", label: "Disk" },
   ],
 };
-const THRESHOLD_UNITS = ["Seconds", "Percentage"] as const;
+const THRESHOLD_UNITS = ["seconds", "percentage"] as const;
 
 function OptionSelector({
   options,
@@ -196,6 +197,18 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       if (found) return found.label;
     }
     return val.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  };
+
+  const formatThreshold = (d: { threshold_value?: number | null; threshold_unit?: string | null; promql_expr?: string }) => {
+    const val = d.threshold_value;
+    const unit = (d.threshold_unit || "").trim().toLowerCase();
+    if (typeof val === "number" && !Number.isNaN(val)) {
+      if (unit === "percentage") return `${val}%`;
+      if (unit === "seconds") return `${val} s`;
+      if (unit) return `${val} ${(d.threshold_unit || "").trim()}`;
+      return String(val);
+    }
+    return d.promql_expr || "—";
   };
 
   // ═══════════════════════════════════════════════
@@ -375,7 +388,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Box>
                 <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Identity</Text>
                 <VStack spacing={4} align="stretch">
-                  <FormControl isRequired>
+                  <FormControl isRequired isInvalid={!!defs.createErrors?.name}>
                     <FormLabel fontWeight="semibold" fontSize="sm">Alert Definition Name</FormLabel>
                     <Input
                       placeholder="e.g. HighLatency-ASR-Production"
@@ -383,6 +396,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       onChange={(e) => defs.setCreateForm({ ...defs.createForm, name: e.target.value })}
                       bg="white"
                     />
+                    <FormErrorMessage>{defs.createErrors?.name}</FormErrorMessage>
                   </FormControl>
                   <FormControl>
                     <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
@@ -394,21 +408,23 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       rows={3}
                     />
                   </FormControl>
-                  <FormControl isRequired>
+                  <FormControl isRequired isInvalid={!!defs.createErrors?.category}>
                     <FormLabel fontWeight="semibold" fontSize="sm">Category</FormLabel>
                     <OptionSelector
                       options={CATEGORIES}
                       value={defs.createForm.category ?? "application"}
                       onChange={(v) => defs.setCreateForm({ ...defs.createForm, category: v, alert_type: null })}
                     />
+                    <FormErrorMessage>{defs.createErrors?.category}</FormErrorMessage>
                   </FormControl>
-                  <FormControl isRequired>
+                  <FormControl isRequired isInvalid={!!defs.createErrors?.severity}>
                     <FormLabel fontWeight="semibold" fontSize="sm">Severity</FormLabel>
                     <OptionSelector
                       options={SEVERITIES}
                       value={defs.createForm.severity}
                       onChange={(v) => defs.setCreateForm({ ...defs.createForm, severity: v })}
                     />
+                    <FormErrorMessage>{defs.createErrors?.severity}</FormErrorMessage>
                   </FormControl>
                 </VStack>
               </Box>
@@ -419,7 +435,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Box>
                 <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Detection</Text>
                 <VStack spacing={4} align="stretch">
-                  <FormControl isRequired>
+                  <FormControl isRequired isInvalid={!!defs.createErrors?.alert_type}>
                     <FormLabel fontWeight="semibold" fontSize="sm">Alert Type</FormLabel>
                     <Select
                       value={defs.createForm.alert_type ?? ""}
@@ -431,8 +447,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                         <option key={t.value} value={t.value}>{t.label}</option>
                       ))}
                     </Select>
+                    <FormErrorMessage>{defs.createErrors?.alert_type}</FormErrorMessage>
                   </FormControl>
-                  <FormControl isRequired>
+                  <FormControl isRequired isInvalid={!!defs.createErrors?.threshold_value}>
                     <FormLabel fontWeight="semibold" fontSize="sm">Threshold Configuration</FormLabel>
                     <SimpleGrid columns={2} spacing={3}>
                       <NumberInput
@@ -447,10 +464,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                           <NumberDecrementStepper />
                         </NumberInputStepper>
                       </NumberInput>
-                      <Select value={defs.createForm.scope ?? "Seconds"} onChange={(e) => defs.setCreateForm({ ...defs.createForm, scope: e.target.value })} bg="white">
-                        {THRESHOLD_UNITS.map((u) => (<option key={u} value={u}>{u}</option>))}
+                      <Select value={defs.createForm.scope ?? "seconds"} onChange={(e) => defs.setCreateForm({ ...defs.createForm, scope: e.target.value })} bg="white">
+                        {THRESHOLD_UNITS.map((u) => (<option key={u} value={u}>{u.charAt(0).toUpperCase() + u.slice(1)}</option>))}
                       </Select>
                     </SimpleGrid>
+                    <FormErrorMessage>{defs.createErrors?.threshold_value}</FormErrorMessage>
                   </FormControl>
                   <SimpleGrid columns={2} spacing={4}>
                     <FormControl isRequired>
@@ -519,7 +537,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </Box>
                 <Box>
                   <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Category</Text>
-                  <Badge colorScheme="purple" textTransform="capitalize">{defs.viewItem.category}</Badge>
+                  <Text>{titleCase(defs.viewItem.category)}</Text>
                 </Box>
                 <Box>
                   <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Severity</Text>
@@ -530,19 +548,17 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   <Text>{alertTypeLabel(defs.viewItem.alert_type)}</Text>
                 </Box>
                 <Box>
-                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>PromQL Expression</Text>
-                  <Box bg="gray.50" p={3} borderRadius="md" fontFamily="mono" fontSize="sm" whiteSpace="pre-wrap" wordBreak="break-all">{defs.viewItem.promql_expr}</Box>
+                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Threshold</Text>
+                  <Text>{formatThreshold(defs.viewItem)}</Text>
                 </Box>
-                <SimpleGrid columns={2} spacing={4}>
-                  <Box>
-                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Eval Interval</Text>
-                    <Text fontFamily="mono">{defs.viewItem.evaluation_interval}</Text>
-                  </Box>
-                  <Box>
-                    <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>For Duration</Text>
-                    <Text fontFamily="mono">{defs.viewItem.for_duration}</Text>
-                  </Box>
-                </SimpleGrid>
+                <Box>
+                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Eval Interval</Text>
+                  <Text fontFamily="mono">{defs.viewItem.evaluation_interval}</Text>
+                </Box>
+                <Box>
+                  <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>For Duration</Text>
+                  <Text fontFamily="mono">{defs.viewItem.for_duration}</Text>
+                </Box>
                 <Box>
                   <Text fontWeight="semibold" color="gray.500" fontSize="xs" textTransform="uppercase" letterSpacing="wider" mb={1}>Status</Text>
                   <Badge colorScheme={defs.viewItem.enabled ? "green" : "gray"} variant="subtle" fontSize="sm" px={2} py={0.5} borderRadius="full">{defs.viewItem.enabled ? "Active" : "Inactive"}</Badge>
@@ -568,7 +584,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
           <DrawerCloseButton />
           <DrawerHeader borderBottomWidth="1px" borderColor="gray.200">
             <Text fontSize="lg" fontWeight="bold">Update Alert Definition</Text>
-            {defs.updateItem && <Text fontSize="sm" color="gray.500" mt={1}>{defs.updateItem.name}</Text>}
           </DrawerHeader>
           <DrawerBody py={6}>
             <VStack spacing={6} align="stretch">
@@ -576,6 +591,10 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Box>
                 <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Identity</Text>
                 <VStack spacing={4} align="stretch">
+                  <FormControl>
+                    <FormLabel fontWeight="semibold" fontSize="sm">Name</FormLabel>
+                    <Input value={defs.updateItem?.name ?? ""} isReadOnly bg="gray.50" cursor="not-allowed" />
+                  </FormControl>
                   <FormControl>
                     <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
                     <Textarea value={defs.updateForm.description ?? ""} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, description: e.target.value || null })} bg="white" rows={3} />
@@ -622,6 +641,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <FormLabel fontWeight="semibold" fontSize="sm">Threshold Configuration</FormLabel>
                     <SimpleGrid columns={2} spacing={3}>
                       <NumberInput
+                        value={defs.updateForm.promql_expr ?? ""}
                         onChange={(val) => defs.setUpdateForm({ ...defs.updateForm, promql_expr: val })}
                         min={0}
                         bg="white"
@@ -632,8 +652,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                           <NumberDecrementStepper />
                         </NumberInputStepper>
                       </NumberInput>
-                      <Select value={defs.updateForm.scope ?? "Seconds"} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, scope: e.target.value })} bg="white">
-                        {THRESHOLD_UNITS.map((u) => (<option key={u} value={u}>{u}</option>))}
+                      <Select value={defs.updateForm.scope ?? "seconds"} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, scope: e.target.value })} bg="white">
+                        {THRESHOLD_UNITS.map((u) => (<option key={u} value={u}>{u.charAt(0).toUpperCase() + u.slice(1)}</option>))}
                       </Select>
                     </SimpleGrid>
                   </FormControl>

@@ -38,9 +38,26 @@ import {
 } from "react-icons/io5";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
-import { useFeatureFlag } from "../../hooks/useFeatureFlag";
+import { useFeatureFlagsBulk, ALL_UI_FEATURE_FLAG_NAMES } from "../../hooks/useFeatureFlag";
 import { getTenantIdFromToken } from "../../utils/helpers";
 import DoubleMicrophoneIcon from "./DoubleMicrophoneIcon";
+
+// Defensive: use array fallback if ALL_UI_FEATURE_FLAG_NAMES is undefined (e.g. circular dep during init)
+const SIDEBAR_FLAG_NAMES = Array.isArray(ALL_UI_FEATURE_FLAG_NAMES)
+  ? [...ALL_UI_FEATURE_FLAG_NAMES]
+  : [
+      'asr-enabled', 'tts-enabled', 'nmt-enabled', 'llm-enabled', 'pipeline-enabled',
+      'model-management-enabled', 'services-management-enabled', 'ocr-enabled',
+      'transliteration-enabled', 'language-detection-enabled', 'speaker-diarization-enabled',
+      'language-diarization-enabled', 'audio-language-detection-enabled', 'ner-enabled',
+    ];
+
+// Fallback when useFeatureFlagsBulk is undefined (circular dep): return all flags as true
+function useFeatureFlagsBulkFallback(_opts: { flagNames: string[]; defaultValue?: boolean }) {
+  const flags = Object.fromEntries(SIDEBAR_FLAG_NAMES.map((n) => [n, true]));
+  return { flags, isLoading: false, error: null, refetch: () => {} };
+}
+const useBulkFlags = typeof useFeatureFlagsBulk === 'function' ? useFeatureFlagsBulk : useFeatureFlagsBulkFallback;
 
 const safeColorMap = {
   asr: { // Coral → Pastel Coral
@@ -369,38 +386,27 @@ const Sidebar: React.FC = () => {
   // Check if user is ADMIN
   const isAdmin = user?.roles?.includes('ADMIN') || false;
 
-  // Feature flags for each service
-  const asrEnabled = useFeatureFlag({ flagName: "asr-enabled" });
-  const ttsEnabled = useFeatureFlag({ flagName: "tts-enabled" });
-  const nmtEnabled = useFeatureFlag({ flagName: "nmt-enabled" });
-  const llmEnabled = useFeatureFlag({ flagName: "llm-enabled" });
-  const pipelineEnabled = useFeatureFlag({ flagName: "pipeline-enabled" });
-  const modelManagementEnabled = useFeatureFlag({ flagName: "model-management-enabled" });
-  const servicesManagementEnabled = useFeatureFlag({ flagName: "services-management-enabled" });
-  const ocrEnabled = useFeatureFlag({ flagName: "ocr-enabled" });
-  const transliterationEnabled = useFeatureFlag({ flagName: "transliteration-enabled" });
-  const languageDetectionEnabled = useFeatureFlag({ flagName: "language-detection-enabled" });
-  const speakerDiarizationEnabled = useFeatureFlag({ flagName: "speaker-diarization-enabled" });
-  const languageDiarizationEnabled = useFeatureFlag({ flagName: "language-diarization-enabled" });
-  const audioLanguageDetectionEnabled = useFeatureFlag({ flagName: "audio-language-detection-enabled" });
-  const nerEnabled = useFeatureFlag({ flagName: "ner-enabled" });
+  // Single bulk request shared with home page (same queryKey = one request for whole app)
+  const { flags: sidebarFlags } = useBulkFlags({
+    flagNames: SIDEBAR_FLAG_NAMES,
+    defaultValue: true,
+  });
 
-  // Map feature flags to service IDs
   const featureFlagMap: Record<string, boolean> = {
-    "asr-enabled": asrEnabled.isEnabled,
-    "tts-enabled": ttsEnabled.isEnabled,
-    "nmt-enabled": nmtEnabled.isEnabled,
-    "llm-enabled": llmEnabled.isEnabled,
-    "pipeline-enabled": pipelineEnabled.isEnabled,
-    "model-management-enabled": modelManagementEnabled.isEnabled,
-    "services-management-enabled": servicesManagementEnabled.isEnabled,
-    "ocr-enabled": ocrEnabled.isEnabled,
-    "transliteration-enabled": transliterationEnabled.isEnabled,
-    "language-detection-enabled": languageDetectionEnabled.isEnabled,
-    "speaker-diarization-enabled": speakerDiarizationEnabled.isEnabled,
-    "language-diarization-enabled": languageDiarizationEnabled.isEnabled,
-    "audio-language-detection-enabled": audioLanguageDetectionEnabled.isEnabled,
-    "ner-enabled": nerEnabled.isEnabled,
+    "asr-enabled": sidebarFlags["asr-enabled"] ?? true,
+    "tts-enabled": sidebarFlags["tts-enabled"] ?? true,
+    "nmt-enabled": sidebarFlags["nmt-enabled"] ?? true,
+    "llm-enabled": sidebarFlags["llm-enabled"] ?? true,
+    "pipeline-enabled": sidebarFlags["pipeline-enabled"] ?? true,
+    "model-management-enabled": sidebarFlags["model-management-enabled"] ?? true,
+    "services-management-enabled": sidebarFlags["services-management-enabled"] ?? true,
+    "ocr-enabled": sidebarFlags["ocr-enabled"] ?? true,
+    "transliteration-enabled": sidebarFlags["transliteration-enabled"] ?? true,
+    "language-detection-enabled": sidebarFlags["language-detection-enabled"] ?? true,
+    "speaker-diarization-enabled": sidebarFlags["speaker-diarization-enabled"] ?? true,
+    "language-diarization-enabled": sidebarFlags["language-diarization-enabled"] ?? true,
+    "audio-language-detection-enabled": sidebarFlags["audio-language-detection-enabled"] ?? true,
+    "ner-enabled": sidebarFlags["ner-enabled"] ?? true,
   };
 
   // Get tenant_id from JWT token

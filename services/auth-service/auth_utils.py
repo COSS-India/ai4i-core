@@ -22,7 +22,10 @@ logger = logging.getLogger(__name__)
 
 # Password hashing context
 # Support both bcrypt (legacy/seeded data) and argon2 (new registrations)
-pwd_context = CryptContext(schemes=["bcrypt", "argon2"], deprecated="auto")
+# Note: Using bcrypt as default for now since it's working reliably
+# Both schemes can be verified, but new passwords will use bcrypt
+# TODO: Investigate and fix argon2 verification issues, then switch back to argon2 as default
+pwd_context = CryptContext(schemes=["bcrypt", "argon2"], default="bcrypt")
 
 # JWT Configuration
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")

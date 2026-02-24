@@ -116,12 +116,18 @@ export const publishModel = async (modelId: string): Promise<any> => {
 /**
  * List services by task type
  * @param taskType - The task type to filter by (e.g., 'nmt', 'asr', 'tts')
+ * @param publishedOnly - If true, return only published services (for logged-in users)
  * @returns Promise with list of services
  */
-export const listServices = async (taskType?: string): Promise<any[]> => {
+export const listServices = async (
+  taskType?: string,
+  publishedOnly?: boolean
+): Promise<any[]> => {
   try {
     const url = '/api/v1/model-management/services';
-    const params = taskType ? { task_type: taskType } : {};
+    const params: Record<string, string> = {};
+    if (taskType) params.task_type = taskType;
+    if (publishedOnly === true) params.is_published = 'true';
     const response = await apiClient.get<any[]>(url, { params });
     return response.data;
   } catch (error: any) {

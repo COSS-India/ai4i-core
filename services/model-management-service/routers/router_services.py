@@ -52,9 +52,9 @@ async def list_services(
     created_by: Optional[str] = Query(None, description="Filter by user ID (string) who created the service."),
     db: AsyncSession = Depends(get_auth_db_session)
 ):
-    """List all services - GET /services. Requires 'service.read' permission (ADMIN or MODERATOR only)."""
-    # Check permission - only ADMIN and MODERATOR can read services
-    await require_permission("service.read", request, db)
+    """List all services - GET /services.
+    
+    Access: Any authenticated user role (ADMIN, MODERATOR, USER, GUEST)."""
     try:
         if not task_type or task_type.lower() == "none":
             task_type_enum = None
@@ -87,9 +87,9 @@ async def list_services_policies(
     task_type: Union[str, None] = Query(None, description="Filter by task type (asr, nmt, tts, etc.). Returns all services with their policies."),
     db: AsyncSession = Depends(get_auth_db_session)
 ):
-    """List all services with their policies - GET /services/policies. Requires 'service.read' permission (ADMIN or MODERATOR only)."""
-    # Check permission - only ADMIN and MODERATOR can read services
-    await require_permission("service.read", request, db)
+    """List all services with their policies - GET /services/policies.
+    
+    Access: Any authenticated user role (ADMIN, MODERATOR, USER, GUEST)."""
     try:
         if not task_type or task_type.lower() == "none":
             task_type_enum = None
