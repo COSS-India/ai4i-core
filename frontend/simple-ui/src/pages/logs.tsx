@@ -860,21 +860,6 @@ const LogsPage: React.FC = () => {
             </Alert>
           )}
 
-          {/* Show token debug info in development */}
-          {process.env.NODE_ENV === 'development' && isAuthenticated && typeof window !== 'undefined' && (
-            <Alert status="info" fontSize="xs">
-              <AlertIcon />
-              <AlertDescription>
-                <Text fontSize="xs">
-                  Debug: Auth={isAuthenticated ? '✅' : '❌'} | 
-                  Token={getJwtToken() ? `✅ (${getJwtToken()?.length || 0})` : '❌'} |
-                  Local={localStorage.getItem('access_token') ? '✅' : '❌'} | 
-                  Session={sessionStorage.getItem('access_token') ? '✅' : '❌'}
-                </Text>
-              </AlertDescription>
-            </Alert>
-          )}
-
           {/* Show error messages */}
           {logsError && (
             <Alert status="error">
