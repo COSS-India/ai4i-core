@@ -101,6 +101,16 @@ export function useCreateApiKeyTab({
       });
       return;
     }
+    if (apiKeyForUser.expires_days === "" || apiKeyForUser.expires_days < 1 || apiKeyForUser.expires_days > 365) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a valid expiry (days) between 1 and 365",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
     setIsCreatingApiKeyForUser(true);
     try {
       const createdKey = await authService.createApiKeyForUser({

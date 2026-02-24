@@ -235,34 +235,39 @@ export default function CreateApiKeyTab({
 
                 <FormControl>
                   <FormLabel fontWeight="semibold">Expiry (Days)</FormLabel>
-                  <Input
-                    type="number"
-                    value={perm.apiKeyForUser.expires_days === "" ? "" : perm.apiKeyForUser.expires_days}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      const next =
-                        raw === ""
-                          ? ""
-                          : (() => {
-                              const n = parseInt(raw, 10);
-                              return Number.isNaN(n) ? "" : n;
-                            })();
-                      perm.setApiKeyForUser({
-                        ...perm.apiKeyForUser,
-                        expires_days: next,
-                      });
-                    }}
-                    min={1}
-                    max={365}
-                    bg="white"
-                  />
-                  <Text fontSize="xs" color="gray.500" mt={1}>
-                    API key will expire after{" "}
-                    {perm.apiKeyForUser.expires_days === ""
-                      ? 30
-                      : perm.apiKeyForUser.expires_days}{" "}
-                    day(s)
-                  </Text>
+               <Input
+  type="number"
+  value={
+    perm.apiKeyForUser.expires_days === ""
+      ? ""
+      : perm.apiKeyForUser.expires_days
+  }
+  onChange={(e) => {
+    const raw = e.target.value;
+    const next =
+      raw === ""
+        ? ""
+        : (() => {
+            const n = parseInt(raw, 10);
+            return Number.isNaN(n) ? "" : n;
+          })();
+
+    perm.setApiKeyForUser({
+      ...perm.apiKeyForUser,
+      expires_days: next,
+    });
+  }}
+  min={1}
+  max={365}
+  bg="white"
+/>
+
+<Text fontSize="xs" color="gray.500" mt={1}>
+  API key will expire after{" "}
+  {perm.apiKeyForUser.expires_days === ""
+    ? "—"
+    : `${perm.apiKeyForUser.expires_days} day(s)`}
+</Text>
                 </FormControl>
 
                 <Button

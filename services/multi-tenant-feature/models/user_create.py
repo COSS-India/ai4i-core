@@ -21,7 +21,6 @@ class UserRegisterRequest(BaseModel):
     tenant_id: str = Field(..., example="acme-corp-5d448a")
     email: EmailStr
     username: str = Field(..., min_length=3, max_length=100)
-    password: str = Field(..., min_length=8, description="User password for login")
     full_name: str = Field(None, max_length=150)
     phone_number: Optional[str] = Field(None, max_length=20, description="User phone number")
     services: List[str] = Field(..., example=["tts", "asr"])

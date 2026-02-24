@@ -62,13 +62,15 @@ except ImportError:
 
 # Configure logging with ai4icore_logging
 try:
-    from ai4icore_logging import get_logger
+    from ai4icore_logging import get_logger, CorrelationMiddleware, RequestLoggingMiddleware
     logger = get_logger(__name__)
     logger.info("✅ Using ai4icore_logging for structured logging")
 except ImportError:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     logger.warning("⚠️ ai4icore_logging not available, using standard logging")
+    CorrelationMiddleware = None
+    RequestLoggingMiddleware = None
 
 # Import telemetry and tracing
 try:
@@ -116,6 +118,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Correlation middleware (MUST be before RequestLoggingMiddleware)
+# This extracts X-Correlation-ID from headers and sets it in logging context
+if CorrelationMiddleware:
+    app.add_middleware(CorrelationMiddleware)
+    logger.info("✅ CorrelationMiddleware added to auth-service")
+
+# Request logging middleware (logs all requests to OpenSearch)
+# This ensures login/logout endpoints are logged even though API Gateway skips successful requests
+if RequestLoggingMiddleware:
+    app.add_middleware(RequestLoggingMiddleware)
+    logger.info(
+        "✅ RequestLoggingMiddleware added to auth-service",
+        extra={"context": {
+            "service": "auth-service",
+            "middleware": "RequestLoggingMiddleware",
+            "endpoints": ["/api/v1/auth/login", "/api/v1/auth/logout"]
+        }}
+    )
+else:
+    logger.warning("⚠️ RequestLoggingMiddleware not available - login/logout requests will not be logged to OpenSearch")
+
 # Setup Distributed Tracing (Jaeger)
 # IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
 if TELEMETRY_AVAILABLE and TRACING_AVAILABLE:
@@ -160,15 +183,21 @@ async def get_db() -> AsyncSession:
 
 # Dependency to get multi-tenant database session
 async def get_multi_tenant_db():
-    """Get multi-tenant database session"""
+    """Get multi-tenant database session with graceful error handling"""
     if multi_tenant_db_session is None:
         yield None
         return
-    async with multi_tenant_db_session() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
+    try:
+        async with multi_tenant_db_session() as session:
+            try:
+                yield session
+            finally:
+                await session.close()
+    except Exception as e:
+        # Log error but don't fail the request - multi-tenant DB is optional
+        # This prevents authentication failures when tenant DB is unavailable
+        logger.warning(f"Failed to get multi-tenant database session: {e}")
+        yield None
 
 # Dependency to get current user from token
 async def get_current_user(
@@ -228,6 +257,8 @@ async def get_current_active_user(
 async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession], is_tenant: bool) -> Optional[Dict[str, Any]]:
     """
     Get tenant information for a user from multi-tenant database.
+    Returns None if database is unavailable or user has no tenant info (graceful degradation).
+    Includes timeout handling to prevent blocking authentication.
     """
     if multi_tenant_db is None:
         return None
@@ -246,7 +277,11 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
                 LIMIT 1
             """)
 
-            result = await multi_tenant_db.execute(tenant_admin_query, {"user_id": user_id})
+            # Add timeout to prevent blocking authentication
+            result = await asyncio.wait_for(
+                multi_tenant_db.execute(tenant_admin_query, {"user_id": user_id}),
+                timeout=5.0  # 5 second timeout to prevent blocking
+            )
             row = result.fetchone()
 
             if row:
@@ -273,7 +308,11 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
                 LIMIT 1
             """)
 
-            result = await multi_tenant_db.execute(tenant_user_query, {"user_id": user_id})
+            # Add timeout to prevent blocking authentication
+            result = await asyncio.wait_for(
+                multi_tenant_db.execute(tenant_user_query, {"user_id": user_id}),
+                timeout=5.0  # 5 second timeout to prevent blocking
+            )
             row = result.fetchone()
 
             if row:
@@ -286,11 +325,14 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
                     "user_subscriptions": row[4] if row[4] else [],
                 }
         
-        # User not found in either table
+        # User not found in either table (normal for non-tenant users)
         return None
         
+    except asyncio.TimeoutError:
+        logger.warning(f"Timeout getting tenant info for user {user_id} - continuing without tenant info")
+        return None
     except Exception as e:
-        logger.error(f"Error getting tenant info for user {user_id}: {e}", exc_info=True)
+        logger.warning(f"Error getting tenant info for user {user_id}: {e} - continuing without tenant info")
         return None
 
 @app.on_event("startup")

@@ -83,9 +83,9 @@ const NMTPage: React.FC = () => {
     }
   }, [isAuthenticated, fetched]);
 
-  // Fetch available services
+  // Fetch available services (key includes auth so we refetch after login and get published list, not cached anonymous IndicTrans)
   const { data: services, isLoading: servicesLoading } = useQuery({
-    queryKey: ["nmt-services"],
+    queryKey: ["nmt-services", isAuthenticated],
     queryFn: listNMTServices,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
