@@ -1536,7 +1536,7 @@ async def update_notification_receiver(receiver_id: int, organization: Optional[
             )
         
         # Trigger configuration sync to update YAML files and reload Prometheus/Alertmanager
-        await trigger_config_sync(actor=created_by, request=request)
+        await trigger_config_sync(actor=updated_by, request=request)
         
         return result
 
@@ -1758,7 +1758,7 @@ async def update_routing_rule(rule_id: int, organization: Optional[str], data: R
             )
         
         # Trigger configuration sync to update YAML files and reload Prometheus/Alertmanager
-        await trigger_config_sync(actor=created_by, request=request)
+        await trigger_config_sync(actor=updated_by, request=request)
         
         return result
 
