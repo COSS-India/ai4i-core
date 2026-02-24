@@ -43,7 +43,7 @@ export interface NERInferenceResponse {
  */
 export const listNERServices = async (): Promise<NERServiceDetailsResponse[]> => {
   try {
-    const services = await listServices('ner');
+    const services = await listServices('ner', true);
     
     // Transform to NERServiceDetailsResponse format
     const transformedServices = services.map((service: any) => {

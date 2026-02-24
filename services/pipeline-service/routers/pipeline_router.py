@@ -135,9 +135,16 @@ async def _enforce_tenant_and_service_checks(http_request: Request, service_name
             raise HTTPException(status_code=503, detail={"code": "TENANT_CHECK_FAILED", "message": "Failed to verify tenant information"})
 
     # Next, ensure the service is globally active
+    # Multi-tenant endpoints only require Bearer token (not API key)
+    # Create headers with only Authorization for multi-tenant service check
+    service_check_headers = {}
+    if headers and (headers.get("Authorization") or headers.get("authorization")):
+        service_check_headers["Authorization"] = headers.get("Authorization") or headers.get("authorization")
+    # Don't forward X-API-Key or X-Auth-Source for multi-tenant endpoints
+    
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            svc_resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/list/services", headers=headers if headers else None)
+            svc_resp = await client.get(f"{API_GATEWAY_URL}/api/v1/multi-tenant/list/services", headers=service_check_headers if service_check_headers else None)
             if svc_resp.status_code == 200:
                 services = svc_resp.json().get("services", [])
                 # Accept multiple enum variants for pipeline service registration
