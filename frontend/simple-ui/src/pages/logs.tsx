@@ -603,6 +603,50 @@ const LogsPage: React.FC = () => {
     refetchLogs();
   };
 
+  const handleRefresh = () => {
+    // Update time range to include latest logs
+    const now = new Date();
+    const formatDateTime = (date: Date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      return `${year}-${month}-${day}T${hours}:${minutes}`;
+    };
+
+    // If both startTime and endTime are set, maintain the time range but shift it to now
+    if (startTime && endTime) {
+      try {
+        const startDate = new Date(startTime);
+        const endDate = new Date(endTime);
+        const timeRangeMs = endDate.getTime() - startDate.getTime();
+        
+        // Set new endTime to now, and startTime to maintain the same range
+        const newEndTime = formatDateTime(now);
+        const newStartTime = formatDateTime(new Date(now.getTime() - timeRangeMs));
+        
+        setEndTime(newEndTime);
+        setStartTime(newStartTime);
+      } catch (error) {
+        // If parsing fails, just update endTime to now and keep startTime as is
+        console.warn('Error parsing time range, updating endTime only:', error);
+        setEndTime(formatDateTime(now));
+      }
+    } else {
+      // If time range is not set, set default 1 hour range
+      const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+      setEndTime(formatDateTime(now));
+      setStartTime(formatDateTime(oneHourAgo));
+    }
+    
+    // Reset to first page
+    // Note: React Query will automatically refetch when startTime/endTime change
+    // since they are part of the queryKey
+    setPage(1);
+    setClientPage(1);
+  };
+
   const handleClear = () => {
     setService("");
     setLevel("");
@@ -1154,7 +1198,7 @@ const LogsPage: React.FC = () => {
                 <IconButton
                   aria-label="Refresh"
                   icon={<RepeatIcon />}
-                  onClick={() => refetchLogs()}
+                  onClick={handleRefresh}
                   isLoading={logsLoading}
                   size="md"
                   variant="outline"
@@ -1191,7 +1235,7 @@ const LogsPage: React.FC = () => {
                   <Button
                     size="sm"
                     colorScheme="blue"
-                    onClick={() => refetchLogs()}
+                    onClick={handleRefresh}
                   >
                     Retry
                   </Button>
@@ -1363,7 +1407,7 @@ const LogsPage: React.FC = () => {
                       <Button size="xs" variant="outline" onClick={handleClear}>
                         Clear Filters
                       </Button>
-                      <Button size="xs" variant="outline" onClick={() => refetchLogs()}>
+                      <Button size="xs" variant="outline" onClick={handleRefresh}>
                         Refresh
                       </Button>
                     </HStack>
@@ -1380,7 +1424,7 @@ const LogsPage: React.FC = () => {
                       <Button size="xs" variant="outline" onClick={handleClear}>
                         Clear Filters
                       </Button>
-                      <Button size="xs" variant="outline" onClick={() => refetchLogs()}>
+                      <Button size="xs" variant="outline" onClick={handleRefresh}>
                         Refresh
                       </Button>
                     </HStack>
@@ -1398,7 +1442,7 @@ const LogsPage: React.FC = () => {
                     <Button size="xs" variant="outline" onClick={handleClear}>
                       Clear Filters
                     </Button>
-                    <Button size="xs" variant="outline" onClick={() => refetchLogs()}>
+                    <Button size="xs" variant="outline" onClick={handleRefresh}>
                       Refresh
                     </Button>
                   </HStack>
@@ -1413,7 +1457,7 @@ const LogsPage: React.FC = () => {
                       <Text fontSize="sm" color="gray.400" textAlign="center">
                         Make sure OpenSearch has logs indexed and your time range includes log entries.
                       </Text>
-                      <Button size="sm" variant="outline" onClick={() => refetchLogs()}>
+                      <Button size="sm" variant="outline" onClick={handleRefresh}>
                         Refresh
                       </Button>
                     </>
