@@ -128,10 +128,14 @@ AUTH_FAILED_NMT_MESSAGE = "Authentication failed. Please log in again."
 TENANT_SUSPENDED_NMT_MESSAGE = "Your account access has been suspended. Please contact support."
 
 # ============================================================================
+# Service publication (all AI/ML services)
+# ============================================================================
+SERVICE_UNPUBLISHED = "SERVICE_UNPUBLISHED"
+SERVICE_UNPUBLISHED_MESSAGE = "The requested service is unpublished. Please use a published service."
+
+# ============================================================================
 # Auth Service Error Codes
 # ============================================================================
-
-# Auth Service Error Codes
 AUTHENTICATION_REQUIRED = "AUTHENTICATION_REQUIRED"
 INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
 SESSION_EXPIRED = "SESSION_EXPIRED"
