@@ -616,8 +616,12 @@ class AuthUtils:
         db.add(oauth_provider)
         
         await db.commit()
-        await db.refresh(new_user)
-        
+        # Re-query user after commit to avoid refresh() InvalidRequestError in async/deployed envs
+        result = await db.execute(select(User).where(User.id == new_user.id))
+        loaded = result.scalar_one_or_none()
+        if loaded is not None:
+            new_user = loaded
+
         logger.info(f"Created new user from OAuth: {email} via {provider_name}")
         return new_user
     
@@ -637,7 +641,7 @@ class AuthUtils:
             existing_oauth.access_token = oauth_tokens.get("access_token")
             existing_oauth.refresh_token = oauth_tokens.get("refresh_token")
             await db.commit()
-            await db.refresh(existing_oauth)
+            # Skip refresh(existing_oauth) to avoid InvalidRequestError; we only need user for return
             user = await AuthUtils.get_user_by_id(db, user_id)
             logger.info(f"Updated OAuth tokens for user {user_id} via {provider_name}")
             return user
