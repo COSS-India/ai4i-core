@@ -56,8 +56,8 @@ def is_admin_user(request: Request) -> bool:
 
 @router.post("", response_model=AlertDefinitionResponse, status_code=201)
 async def create_alert_definition_endpoint(
-    payload: AlertDefinitionCreate = Body(..., embed=True),
     request: Request,
+    payload: AlertDefinitionCreate = Body(..., embed=True),
     organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
     _: None = Depends(require_alerts_create),
 ):
