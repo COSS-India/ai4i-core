@@ -311,6 +311,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     <Select size="sm" value={tm.tenantFilterStatus} onChange={(e) => tm.setTenantFilterStatus(e.target.value)} bg="white">
                       <option value="all">All Status</option>
                       <option value="ACTIVE">ACTIVE</option>
+                      <option value="PENDING">PENDING</option>
                       <option value="SUSPENDED">SUSPENDED</option>
                       <option value="DEACTIVATED">DEACTIVATED</option>
                     </Select>
@@ -338,9 +339,7 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                     <Select size="sm" value={tm.userFilterStatus} onChange={(e) => tm.setUserFilterStatus(e.target.value)} bg="white">
                       <option value="all">All Status</option>
                       <option value="ACTIVE">ACTIVE</option>
-                      <option value="PENDING">PENDING</option>
                       <option value="SUSPENDED">SUSPENDED</option>
-                      <option value="DEACTIVATED">DEACTIVATED</option>
                     </Select>
                   </FormControl>
                   <FormControl maxW="180px">
