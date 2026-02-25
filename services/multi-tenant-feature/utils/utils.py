@@ -207,3 +207,206 @@ class DecryptionError(Exception):
     """Raised when decryption of a Fernet token fails due to key mismatch or corruption."""
     pass
 
+
+
+ # Check for similar/duplicate domains across existing tenants
+def _normalize_domain(d: str) -> str:
+        if not d:
+            return ""
+        d = d.strip().lower()
+        # strip scheme if present
+        if d.startswith("http://") or d.startswith("https://"):
+            try:
+                from urllib.parse import urlparse
+                d = urlparse(d).netloc or urlparse(d).path
+            except Exception:
+                d = d.split("//", 1)[-1]
+        # remove path and port
+        d = d.split("/")[0].split(":")[0]
+        if d.startswith("www."):
+            d = d[4:]
+        if d.endswith("."):
+            d = d[:-1]
+        return d
+
+# def _registrable_domain(d: str) -> str:
+#         """
+#         Return the registrable (effective second-level) domain for d.
+#         Prefer tldextract (handles public suffix list like .co.uk). If unavailable, fall back
+#         to a small set of known two-level public suffixes and a simple heuristic.
+#         """
+#         if not d:
+#             return ""
+#         try:
+#             # Use tldextract if installed (handles public suffixes correctly)
+#             import tldextract
+
+#             extracted = tldextract.extract(d)
+#             rd = extracted.registered_domain
+#             if rd:
+#                 return rd.lower()
+#         except Exception:
+#             # tldextract not available or failed — fall back to heuristic below
+#             pass
+
+#         parts = d.split(".")
+#         if len(parts) < 2:
+#             return d.lower()
+
+#         last_two = ".".join(parts[-2:]).lower()
+#         return last_two
+
+
+
+def _registrable_domain(d: str) -> str:
+    """
+    Return the registrable domain (e.g. example.co.uk).
+    Uses tldextract (Public Suffix List aware).
+    """
+    # Defensive coercion: callers may pass ScalarResult or other container-like objects.
+    def _coerce_to_str(val):
+        if val is None:
+            return ""
+        # SQLAlchemy ScalarResult or similar: try to extract first element
+        try:
+            if hasattr(val, "all"):
+                items = val.all()
+                if items:
+                    val = items[0]
+                else:
+                    return ""
+        except Exception:
+            pass
+
+        if isinstance(val, str):
+            return val
+        try:
+            return str(val)
+        except Exception:
+            return ""
+
+    d = _coerce_to_str(d)
+    if not d:
+        return ""
+
+    try:
+        import tldextract
+
+        ext = tldextract.extract(d)
+        if ext.domain and ext.suffix:
+            return f"{ext.domain}.{ext.suffix}".lower()
+        return ext.domain.lower()
+
+    except Exception:
+        # Safe fallback (not PSL-aware, but avoids crashing)
+        parts = d.lower().split(".")
+        if len(parts) >= 2:
+            return ".".join(parts[-2:])
+        return d.lower()
+
+
+
+
+
+def _domains_similar(a: str, b: str, threshold: float = 0.90) -> bool:
+    """
+    Domains are considered similar if:
+    - Exact match
+    - Same registrable domain (example.co.uk)
+    - Base domain name is very similar (example vs examp1e)
+    """
+    # Coerce inputs to strings (handle ScalarResult or other wrappers)
+    def _coerce_input(x):
+        if x is None:
+            return ""
+        try:
+            if hasattr(x, "all"):
+                items = x.all()
+                if items:
+                    x = items[0]
+                else:
+                    return ""
+        except Exception:
+            pass
+        if isinstance(x, str):
+            return x
+        try:
+            return str(x)
+        except Exception:
+            return ""
+
+    a = _coerce_input(a)
+    b = _coerce_input(b)
+
+    if not a or not b:
+        return False
+
+    if a == b:
+        return True
+
+    a_reg = _registrable_domain(a)
+    b_reg = _registrable_domain(b)
+
+    if a_reg == b_reg:
+        return True
+
+    # Compare only the core domain name (not subdomains, not suffix)
+    try:
+        import tldextract
+        from difflib import SequenceMatcher
+
+        a_ext = tldextract.extract(a)
+        b_ext = tldextract.extract(b)
+
+        similarity = SequenceMatcher(
+            None,
+            a_ext.domain or "",
+            b_ext.domain or ""
+        ).ratio()
+
+        return similarity >= threshold
+
+    except Exception:
+        return False
+
+
+# -------------------------
+# Domain validation logic
+# -------------------------
+
+# requested_domain_norm = (
+#     _normalize_domain(payload.domain)
+#     if payload.domain else ""
+# )
+
+# if requested_domain_norm:
+
+#     # Fetch only domain column (lighter than loading full Tenant objects)
+#     existing_domains = (
+#         await db.scalars(select(Tenant.domain))
+#     ).all()
+
+#     requested_reg = _registrable_domain(requested_domain_norm)
+
+#     for existing_domain in existing_domains:
+#         if not existing_domain:
+#             continue
+
+#         existing_norm = _normalize_domain(existing_domain)
+
+#         # 1️⃣ Exact match
+#         if existing_norm == requested_domain_norm:
+#             raise ValueError("Domain already registered")
+
+#         # 2️⃣ Same registrable domain (handles .co.uk, .co.in, etc.)
+#         if _registrable_domain(existing_norm) == requested_reg:
+#             raise ValueError(
+#                 f"Domain '{payload.domain}' conflicts with existing domain '{existing_domain}'"
+#             )
+
+#         # 3️⃣ Fuzzy base-name similarity
+#         if _domains_similar(existing_norm, requested_domain_norm):
+#             raise ValueError(
+#                 f"Domain '{payload.domain}' is too similar to existing registered domain '{existing_domain}'"
+#             )
+
