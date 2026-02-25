@@ -389,10 +389,6 @@ async def call_smr_service(
         # Extract policy headers from the incoming request
         headers = dict(http_request.headers)
         
-        # Normalize headers to lowercase for case-insensitive lookup
-        # HTTP headers are case-insensitive, but FastAPI may preserve original case
-        lower_headers = {k.lower(): v for k, v in headers.items()}
-        
         # Log all X-* headers to debug
         x_headers = {k: v for k, v in headers.items() if k.startswith("X-") or k.startswith("x-")}
         logger.info(
@@ -403,9 +399,9 @@ async def call_smr_service(
             }
         )
         
-        latency_policy = lower_headers.get("x-latency-policy")
-        cost_policy = lower_headers.get("x-cost-policy")
-        accuracy_policy = lower_headers.get("x-accuracy-policy")
+        latency_policy = headers.get("X-Latency-Policy") or headers.get("x-latency-policy")
+        cost_policy = headers.get("X-Cost-Policy") or headers.get("x-cost-policy")
+        accuracy_policy = headers.get("X-Accuracy-Policy") or headers.get("x-accuracy-policy")
         
         # Prepare SMR request payload
         smr_payload = {
@@ -416,16 +412,11 @@ async def call_smr_service(
         }
         
         # Prepare headers for SMR call (forward auth headers, policy headers, and context-aware header)
-        # Use normalized lowercase lookup but preserve proper header case in output
         smr_headers = {}
-        if "authorization" in lower_headers:
-            smr_headers["Authorization"] = lower_headers["authorization"]
-        if "x-api-key" in lower_headers:
-            smr_headers["X-API-Key"] = lower_headers["x-api-key"]
-        if "x-auth-source" in lower_headers:
-            smr_headers["X-Auth-Source"] = lower_headers["x-auth-source"]
-        if "x-try-it" in lower_headers:
-            smr_headers["X-Try-It"] = lower_headers["x-try-it"]
+        if "Authorization" in headers:
+            smr_headers["Authorization"] = headers["Authorization"]
+        if "X-API-Key" in headers:
+            smr_headers["X-API-Key"] = headers["X-API-Key"]
         if latency_policy:
             smr_headers["X-Latency-Policy"] = latency_policy
         if cost_policy:
@@ -433,12 +424,12 @@ async def call_smr_service(
         if accuracy_policy:
             smr_headers["X-Accuracy-Policy"] = accuracy_policy
         # Forward context-aware header to SMR
-        context_aware_header = lower_headers.get("x-context-aware")
+        context_aware_header = headers.get("X-Context-Aware") or headers.get("x-context-aware")
         if context_aware_header:
             smr_headers["X-Context-Aware"] = context_aware_header
         
         # Forward request profiler header to SMR
-        request_profiler_header = lower_headers.get("x-request-profiler")
+        request_profiler_header = headers.get("X-Request-Profiler") or headers.get("x-request-profiler")
         if request_profiler_header:
             smr_headers["X-Request-Profiler"] = request_profiler_header
             logger.info(
@@ -464,9 +455,6 @@ async def call_smr_service(
                 "tenant_id": tenant_id,
                 "has_policy_headers": bool(latency_policy or cost_policy or accuracy_policy),
                 "has_request_profiler": bool(request_profiler_header),
-                "has_authorization": "Authorization" in smr_headers,
-                "has_api_key": "X-API-Key" in smr_headers,
-                "has_auth_source": "X-Auth-Source" in smr_headers,
                 "smr_headers": {k: v for k, v in smr_headers.items() if k.startswith("X-")},
             }
         )
