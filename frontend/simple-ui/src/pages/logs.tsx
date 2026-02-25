@@ -47,7 +47,6 @@ import { getTenantIdFromToken } from "../utils/helpers";
 import {
   searchLogs,
   getLogAggregations,
-  getServicesWithLogs,
   LogEntry,
   LogSearchResponse,
   LogAggregationResponse,
@@ -159,13 +158,28 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, authLoading, user, router, toast]);
 
-  // Fetch services list (only if authenticated)
-  const { data: services, isLoading: servicesLoading, error: servicesError } = useQuery({
-    queryKey: ["logs-services"],
-    queryFn: getServicesWithLogs,
-    enabled: isAuthenticated,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-  });
+  // Static list of all services (not dependent on OpenSearch logs)
+  // This ensures all services are always available in the dropdown
+  const ALL_SERVICES = [
+    'asr-service',
+    'audio-lang-detection-service',
+    'language-detection-service',
+    'language-diarization-service',
+    'llm-service',
+    'ner-service',
+    'nmt-service',
+    'ocr-service',
+    'pipeline-service',
+    'speaker-diarization-service',
+    'transliteration-service',
+    'tts-service',
+    'auth-service',
+  ];
+
+  // No longer fetching services from OpenSearch - using static list
+  const services = ALL_SERVICES;
+  const servicesLoading = false;
+  const servicesError = null;
 
   // Fetch tenants list (only for admins)
   const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } = useQuery({
@@ -244,72 +258,19 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, isAdmin, user, tenantsData, activeTenants, tenantsError]);
 
-  // Filter services to only show application services (exclude infrastructure services)
+  // Use static list of all services (already filtered to only application services)
   const filteredServices = useMemo(() => {
-    if (!services || !Array.isArray(services)) {
-      return [];
-    }
-
-    // Define allowed application services
-    const allowedServices = [
-      'ocr-service',
-      'ner-service',
-      'tts-service',
-      'nmt-service',
-      'pipeline-service',
-      'audio-lang',
-      'audio-lang-detection-service', // Support both naming conventions
-      'asr-service',
-      'speaker-diarization-service',
-      'transliteration-service',
-      'llm-service',
-      'language-detection-service',
-      'language-detection',
-      'language-diarization-service',
-      'language-diarization',
-      'auth-service',
-      'telemetry-service',
-    ];
-
-    // Also define patterns for infrastructure services to exclude
-    const infrastructurePatterns = [
-      /^apisix/i,
-      /^fluent-bit/i,
-      /^prometheus/i,
-      /^grafana/i,
-      /^jaeger/i,
-      /^opensearch/i,
-      /^postgres/i,
-      /^redis/i,
-      /^influxdb/i,
-      /^alertmanager/i,
-      /^node-exporter/i,
-      /^kube-state/i,
-      /^cm-acme/i,
-      /^opensearch-cleanup/i,
-      /^simple-ui/i,
-    ];
-
-    // Filter services: only include services in the allowed list
-    return services.filter((service: string) => {
-      // Only include services that are explicitly in the allowed list
-      return allowedServices.includes(service);
-    }).sort(); // Sort alphabetically for better UX
+    // Return all services from the static list, sorted alphabetically
+    const sorted = [...services].sort();
+    console.log('Filtered services for dropdown:', {
+      total: sorted.length,
+      services: sorted,
+      includesLanguageDiarization: sorted.includes('language-diarization-service'),
+    });
+    return sorted;
   }, [services]);
 
-  // Handle services error
-  useEffect(() => {
-    if (servicesError && (servicesError as any)?.response?.status === 401 || (servicesError as any)?.response?.status === 403) {
-      toast({
-        title: "Authentication Required",
-        description: "Please log in to view logs.",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
-      router.push("/auth");
-    }
-  }, [servicesError, router, toast]);
+  // No longer needed - services are static, no error handling required
 
   // Fetch aggregations (only if authenticated and ADMIN)
   const { data: aggregations, isLoading: aggregationsLoading, error: aggregationsError } = useQuery({
@@ -961,23 +922,6 @@ const LogsPage: React.FC = () => {
             </Alert>
           )}
 
-          {servicesError && !servicesLoading && (
-            <Alert status="warning">
-              <AlertIcon />
-              <AlertDescription>
-                Failed to load services: {(() => {
-                  const error = servicesError as any;
-                  if (error?.response?.data?.detail) {
-                    const detail = error.response.data.detail;
-                    if (typeof detail === 'string') return detail;
-                    if (typeof detail === 'object') return detail.message || detail.detail || JSON.stringify(detail);
-                    return String(detail);
-                  }
-                  return error?.message || 'Unknown error';
-                })()}
-              </AlertDescription>
-            </Alert>
-          )}
 
           {aggregationsError && !aggregationsLoading && (
             <Alert status="warning">
