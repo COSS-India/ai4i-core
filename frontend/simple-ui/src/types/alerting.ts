@@ -17,6 +17,8 @@ export interface AlertDefinition {
   name: string;
   description: string | null;
   promql_expr: string;
+  threshold_value?: number | null;
+  threshold_unit?: string | null;
   category: string;
   severity: string;
   urgency: string;
@@ -42,6 +44,7 @@ export interface AlertDefinitionCreate {
   scope?: string | null;
   evaluation_interval?: string;
   for_duration?: string;
+  enabled?: boolean;
   annotations?: AlertAnnotation[];
 }
 

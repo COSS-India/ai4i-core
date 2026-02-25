@@ -8,6 +8,37 @@ import type {
   AlertAnnotation,
 } from "../../../types/alerting";
 
+const DEFAULT_THRESHOLD_UNIT = "seconds";
+
+/** Map API alert_type (label or value) to form dropdown value */
+const ALERT_TYPE_FORM_VALUES: Record<string, { value: string; label: string }[]> = {
+  application: [
+    { value: "latency", label: "Latency" },
+    { value: "error_rate", label: "Error Rate" },
+  ],
+  infrastructure: [
+    { value: "CPU", label: "CPU" },
+    { value: "Memory", label: "Memory" },
+    { value: "Disk", label: "Disk" },
+  ],
+};
+
+function getAlertTypeFormValue(category: string, apiAlertType: string | null | undefined): string | null {
+  if (apiAlertType == null || apiAlertType === "") return null;
+  const types = ALERT_TYPE_FORM_VALUES[category] ?? ALERT_TYPE_FORM_VALUES.application;
+  const found = types.find(
+    (t) => t.value === apiAlertType || t.label === apiAlertType || t.value.toLowerCase() === apiAlertType.toLowerCase()
+  );
+  return found ? found.value : apiAlertType;
+}
+
+function getThresholdUnitFormValue(apiUnit: string | null | undefined): string {
+  const u = (apiUnit ?? "").trim().toLowerCase();
+  if (u === "seconds" || u === "percentage") return u;
+  if (u === "percent") return "percentage";
+  return DEFAULT_THRESHOLD_UNIT;
+}
+
 const EMPTY_CREATE_FORM: AlertDefinitionCreate = {
   name: "",
   promql_expr: "",
@@ -15,9 +46,10 @@ const EMPTY_CREATE_FORM: AlertDefinitionCreate = {
   severity: "warning",
   urgency: "medium",
   alert_type: null,
-  scope: null,
+  scope: DEFAULT_THRESHOLD_UNIT,
   evaluation_interval: "30s",
   for_duration: "5m",
+  enabled: true,
   annotations: [],
 };
 
@@ -41,6 +73,7 @@ export function useAlertDefinitions() {
   const [createAnnotations, setCreateAnnotations] = useState<AlertAnnotation[]>(
     []
   );
+  const [createErrors, setCreateErrors] = useState<Record<string, string>>({});
 
   // View modal
   const [isViewOpen, setIsViewOpen] = useState(false);
@@ -89,27 +122,65 @@ export function useAlertDefinitions() {
   const openCreate = () => {
     setCreateForm(EMPTY_CREATE_FORM);
     setCreateAnnotations([]);
+    setCreateErrors({});
     setIsCreateOpen(true);
   };
   const closeCreate = () => {
     setIsCreateOpen(false);
     setCreateForm(EMPTY_CREATE_FORM);
     setCreateAnnotations([]);
+    setCreateErrors({});
   };
+
+  /** Validate all required create-form fields; return errors keyed by field name */
+  const validateCreateForm = useCallback(
+    (form: AlertDefinitionCreate): Record<string, string> => {
+      const errors: Record<string, string> = {};
+      const nameTrimmed = (form.name ?? "").trim();
+      if (!nameTrimmed) errors.name = "Name is required";
+      const category = (form.category ?? "").trim();
+      if (!category) errors.category = "Category is required";
+      const severity = (form.severity ?? "").trim();
+      if (!severity) errors.severity = "Severity is required";
+      const alertType = (form.alert_type ?? "").trim();
+      if (!alertType) errors.alert_type = "Alert type is required";
+      const thresholdStr = (form.promql_expr ?? "").toString().trim();
+      if (!thresholdStr) {
+        errors.threshold_value = "Threshold value is required";
+      } else {
+        const num = Number(thresholdStr);
+        if (Number.isNaN(num)) errors.threshold_value = "Enter a valid number";
+        else if (num < 0) errors.threshold_value = "Must be 0 or greater";
+      }
+      return errors;
+    },
+    []
+  );
+
   const handleCreate = async () => {
-    const thresholdValue = Number(createForm.promql_expr);
-    if (!createForm.name.trim() || Number.isNaN(thresholdValue)) {
+    setCreateErrors({});
+    const errors = validateCreateForm(createForm);
+    if (Object.keys(errors).length > 0) {
+      setCreateErrors(errors);
       toast({
         title: "Validation Error",
-        description: "Name and threshold value are required",
+        description: "Please fix the required fields below.",
         status: "warning",
         duration: 3000,
         isClosable: true,
       });
       return;
     }
+
+    const thresholdValue = Number(createForm.promql_expr);
     setIsCreating(true);
     try {
+      const scope = createForm.scope;
+      const thresholdUnit =
+        typeof scope === "string" && scope.trim() !== ""
+          ? scope.trim()
+          : DEFAULT_THRESHOLD_UNIT;
+
       const payload = {
         name: createForm.name,
         description: createForm.description,
@@ -120,7 +191,8 @@ export function useAlertDefinitions() {
         evaluation_interval: createForm.evaluation_interval,
         for_duration: createForm.for_duration,
         threshold_value: thresholdValue,
-        threshold_unit: createForm.scope,
+        threshold_unit: thresholdUnit,
+        enabled: createForm.enabled !== false,
       };
       await alertingService.createDefinition(payload as any);
       toast({
@@ -158,16 +230,24 @@ export function useAlertDefinitions() {
   // ---- Update ----
   const openUpdate = (item: AlertDefinition) => {
     setUpdateItem(item);
+    const category = item.category ?? "application";
+    const thresholdValue =
+      item.threshold_value != null && item.threshold_value !== undefined && !Number.isNaN(Number(item.threshold_value))
+        ? String(item.threshold_value)
+        : (item.promql_expr ?? "");
+    const scope = getThresholdUnitFormValue(item.threshold_unit ?? item.scope);
+    const alertType = getAlertTypeFormValue(category, item.alert_type);
+
     setUpdateForm({
       description: item.description ?? "",
-      promql_expr: item.promql_expr,
-      category: item.category,
-      severity: item.severity,
-      urgency: item.urgency,
-      alert_type: item.alert_type,
-      scope: item.scope,
-      evaluation_interval: item.evaluation_interval,
-      for_duration: item.for_duration,
+      promql_expr: thresholdValue,
+      category,
+      severity: item.severity ?? "warning",
+      urgency: item.urgency ?? "medium",
+      alert_type: alertType,
+      scope,
+      evaluation_interval: item.evaluation_interval ?? "30s",
+      for_duration: item.for_duration ?? "5m",
       enabled: item.enabled,
     });
     setUpdateAnnotations(item.annotations ? [...item.annotations] : []);
@@ -346,6 +426,7 @@ export function useAlertDefinitions() {
     setCreateForm,
     createAnnotations,
     setCreateAnnotations,
+    createErrors,
     openCreate,
     closeCreate,
     handleCreate,

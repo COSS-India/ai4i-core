@@ -32,8 +32,21 @@ async def _get_shared_db_session(request: Request) -> AsyncGenerator[AsyncSessio
     session = db_session_factory()
     try:
         yield session
+    except GeneratorExit:
+        # Generator is being closed - this is normal cleanup
+        raise
+    except BaseException:
+        # Any exception thrown into generator - re-raise to stop generator properly
+        raise
     finally:
-        await session.close()
+        # Always close session in finally block
+        if session is not None:
+            try:
+                await session.close()
+            except Exception as cleanup_error:
+                # Log but don't re-raise - cleanup errors shouldn't mask original errors
+                logger.debug(f"Error closing shared session during cleanup: {cleanup_error}")
+                pass
 
 
 async def get_tenant_db_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
@@ -67,21 +80,55 @@ async def get_tenant_db_session(request: Request) -> AsyncGenerator[AsyncSession
                 )
             else:
                 # No tenant association → use shared auth_db
-                async for session in _get_shared_db_session(request):
-                    yield session
-                return
+                schema_name = None  # Force fallback to shared session
         except Exception as e:
             logger.error("Failed to extract tenant context: %s", e, exc_info=True)
             # On errors resolving tenant, also fall back to shared auth_db to keep TTS functional
-            async for session in _get_shared_db_session(request):
-                yield session
-            return
+            schema_name = None  # Force fallback to shared session
 
     # If schema still not set, fall back to shared auth_db
-    if not schema_name:
-        async for session in _get_shared_db_session(request):
+    # Check for None, empty string, or any falsy value
+    if not schema_name or schema_name is None:
+        db_session_factory = getattr(request.app.state, "db_session_factory", None)
+        if not db_session_factory:
+            raise HTTPException(
+                status_code=500,
+                detail="Database session factory not initialized",
+            )
+        session = db_session_factory()
+        try:
             yield session
-        return
+        except GeneratorExit:
+            # Generator is being closed - ensure session is closed
+            if session is not None:
+                try:
+                    await session.close()
+                except Exception:
+                    pass
+            raise
+        except BaseException:
+            # Any exception - close session and re-raise to stop generator
+            if session is not None:
+                try:
+                    await session.close()
+                except Exception:
+                    pass
+            raise
+        # Normal completion - close session
+        if session is not None:
+            try:
+                await session.close()
+            except Exception:
+                pass
+        return  # Explicitly return to prevent further execution
+
+    # Validate schema_name is not None before proceeding
+    if schema_name is None or not schema_name.strip():
+        logger.error(f"Invalid schema_name: {schema_name}")
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_SCHEMA", "message": "Invalid tenant schema: schema name cannot be None or empty"},
+        )
 
     # Get tenant schema router from app state (set by lifespan)
     tenant_router = getattr(request.app.state, "tenant_schema_router", None)
@@ -117,27 +164,37 @@ async def get_tenant_db_session(request: Request) -> AsyncGenerator[AsyncSession
             ) from db_error
         
         # Yield the session - FastAPI will manage lifecycle after this point
-        yield session
+        # When an exception is thrown into the generator via athrow(), it will be raised at the yield point
+        try:
+            yield session
+        except GeneratorExit:
+            # Generator is being closed - ensure session is closed
+            if session is not None:
+                try:
+                    await session.close()
+                except Exception:
+                    pass
+            raise
+        except BaseException:
+            # Any exception - close session and re-raise to stop generator immediately
+            if session is not None:
+                try:
+                    await session.close()
+                except Exception:
+                    pass
+            raise
+        # Normal completion - close session
+        if session is not None:
+            try:
+                await session.close()
+            except Exception:
+                pass
     except HTTPException:
         # Re-raise HTTPExceptions (already properly formatted)
-        # The finally block will still run to close the session
         raise
     except ValueError as e:
         logger.error(f"Invalid schema name: {e}")
-        # The finally block will still run to close the session
         raise HTTPException(
             status_code=400,
             detail={"code": "INVALID_SCHEMA", "message": f"Invalid tenant schema: {str(e)}"},
         )
-    finally:
-        # Always close session in finally block - this is critical for generator cleanup
-        # If yield succeeded: this runs when generator is closed by FastAPI
-        # If exception before yield: this runs immediately to clean up
-        if session is not None:
-            try:
-                await session.close()
-            except Exception as cleanup_error:
-                # Log but don't re-raise - cleanup errors shouldn't mask original errors
-                # This prevents "generator didn't stop after athrow()" errors
-                logger.debug(f"Error closing session during cleanup (this is normal if session already closed): {cleanup_error}")
-                pass

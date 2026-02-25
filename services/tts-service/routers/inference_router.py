@@ -75,7 +75,9 @@ from services.constants.error_messages import (
     INVALID_REQUEST,
     INVALID_REQUEST_TTS_MESSAGE,
     INTERNAL_SERVER_ERROR,
-    INTERNAL_SERVER_ERROR_MESSAGE
+    INTERNAL_SERVER_ERROR_MESSAGE,
+    SERVICE_UNPUBLISHED,
+    SERVICE_UNPUBLISHED_MESSAGE,
 )
 from middleware.exceptions import AuthenticationError, AuthorizationError
 from middleware.auth_provider import AuthProvider
@@ -235,6 +237,19 @@ async def resolve_service_id_if_needed(
                         )
                         http_request.state.model_management_error = (
                             f"Service {service_id} not found in Model Management database"
+                        )
+                    elif service_info.is_published is not True:
+                        logger.warning(
+                            "TTS inference rejected: service is unpublished",
+                            extra={"service_id": service_id},
+                        )
+                        raise HTTPException(
+                            status_code=403,
+                            detail={
+                                "code": SERVICE_UNPUBLISHED,
+                                "message": SERVICE_UNPUBLISHED_MESSAGE,
+                                "serviceId": service_id,
+                            },
                         )
                     elif not service_info.endpoint:
                         logger.error(
@@ -537,6 +552,19 @@ async def resolve_service_id_if_needed(
                     http_request.state.model_management_error = (
                         f"Service {service_id} not found in Model Management database"
                     )
+                elif service_info.is_published is not True:
+                    logger.warning(
+                        "TTS inference rejected: service is unpublished",
+                        extra={"service_id": service_id},
+                    )
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "code": SERVICE_UNPUBLISHED,
+                            "message": SERVICE_UNPUBLISHED_MESSAGE,
+                            "serviceId": service_id,
+                        },
+                    )
                 elif not service_info.endpoint:
                     logger.error(
                         "TTS service found but has no endpoint configured",
@@ -827,6 +855,15 @@ async def switch_to_fallback_service(
                 detail={
                     "code": "FALLBACK_SERVICE_UNAVAILABLE",
                     "message": f"Fallback service {fallback_service_id} not found or has no endpoint configured",
+                },
+            )
+        if service_info.is_published is not True:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": SERVICE_UNPUBLISHED,
+                    "message": SERVICE_UNPUBLISHED_MESSAGE,
+                    "serviceId": fallback_service_id,
                 },
             )
         
@@ -1535,33 +1572,39 @@ async def run_inference(
                         # Get database session for fallback service
                         # Use async for to properly manage the generator lifecycle
                         # The generator's finally block will close the session automatically
-                        async for fallback_db in get_tenant_db_session(http_request):
-                            fallback_repository = TTSRepository(fallback_db)
-                            fallback_audio_service = AudioService()
-                            fallback_text_service = TextService()
-                            fallback_tts_service = TTSService(
-                                fallback_repository,
-                                fallback_audio_service,
-                                fallback_text_service,
-                                fallback_triton_client,
-                                resolved_model_name=triton_model_name
-                            )
-                            
-                            # Retry inference with fallback service
-                            logger.info(
-                                "TTS: Retrying inference with fallback service",
-                                extra={"fallback_service_id": fallback_service_id}
-                            )
-                            
-                            response = await fallback_tts_service.run_inference(
-                                request=request,
-                                user_id=user_id,
-                                api_key_id=api_key_id,
-                                session_id=session_id,
-                                http_request_state=http_request.state
-                            )
-                            # Break after successful inference - generator will close session in finally block
-                            break
+                        try:
+                            async for fallback_db in get_tenant_db_session(http_request):
+                                fallback_repository = TTSRepository(fallback_db)
+                                fallback_audio_service = AudioService()
+                                fallback_text_service = TextService()
+                                fallback_tts_service = TTSService(
+                                    fallback_repository,
+                                    fallback_audio_service,
+                                    fallback_text_service,
+                                    fallback_triton_client,
+                                    resolved_model_name=triton_model_name
+                                )
+                                
+                                # Retry inference with fallback service
+                                logger.info(
+                                    "TTS: Retrying inference with fallback service",
+                                    extra={"fallback_service_id": fallback_service_id}
+                                )
+                                
+                                response = await fallback_tts_service.run_inference(
+                                    request=request,
+                                    user_id=user_id,
+                                    api_key_id=api_key_id,
+                                    session_id=session_id,
+                                    http_request_state=http_request.state
+                                )
+                                # Break after successful inference - generator will close session in finally block
+                                break
+                        except Exception as fallback_error:
+                            # Log the error but don't suppress it - let it propagate
+                            # The generator will properly clean up in its finally block
+                            logger.error(f"Fallback TTS service failed: {fallback_error}", exc_info=True)
+                            raise
                         
                         using_fallback = True
                         

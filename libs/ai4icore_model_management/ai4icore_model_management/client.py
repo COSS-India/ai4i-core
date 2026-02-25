@@ -27,6 +27,7 @@ class ServiceInfo(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     languages: Optional[List[Dict[str, Any]]] = None
+    is_published: Optional[bool] = None
     # Model information extracted from service response
     model_name: Optional[str] = None
     model_description: Optional[str] = None
@@ -115,15 +116,22 @@ class ModelManagementClient:
         
         # Use auth headers from incoming request if provided (preferred)
         if auth_headers:
-            # Forward all auth-related headers
+            # Forward all relevant headers
             for key, value in auth_headers.items():
                 key_lower = key.lower()
-                # Forward Authorization, X-API-Key, and X-Auth-Source headers
-                if key_lower in ["authorization", "x-api-key", "x-auth-source"]:
-                    # Use proper header case
-                    header_name = "Authorization" if key_lower == "authorization" else \
-                                 "X-API-Key" if key_lower == "x-api-key" else \
-                                 "X-Auth-Source" if key_lower == "x-auth-source" else key
+                # Forward Authorization, X-API-Key, X-Auth-Source, and X-Try-It headers
+                if key_lower in ["authorization", "x-api-key", "x-auth-source", "x-try-it"]:
+                    # Normalize header casing
+                    if key_lower == "authorization":
+                        header_name = "Authorization"
+                    elif key_lower == "x-api-key":
+                        header_name = "X-API-Key"
+                    elif key_lower == "x-auth-source":
+                        header_name = "X-Auth-Source"
+                    elif key_lower == "x-try-it":
+                        header_name = "X-Try-It"
+                    else:
+                        header_name = key
                     headers[header_name] = value
         
         # If Authorization is present but X-Auth-Source is missing, assume AUTH_TOKEN
@@ -327,6 +335,7 @@ class ModelManagementClient:
                 name=data.get("name"),
                 description=data.get("serviceDescription"),
                 languages=languages,
+                is_published=data.get("isPublished"),
                 model_name=model_data.get("name") if model_data else None,
                 model_description=model_data.get("description") if model_data else None,
                 model_domain=model_data.get("domain", []) if model_data else None,
