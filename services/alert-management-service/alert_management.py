@@ -339,6 +339,7 @@ class AlertDefinitionCreate(BaseModel):
     scope: Optional[str] = Field(None, description="Scope (e.g., 'all_services', 'per_service')")
     evaluation_interval: str = Field(default="30s", description="Prometheus evaluation interval")
     for_duration: str = Field(default="5m", description="Duration before alert fires")
+    enabled: Optional[bool] = Field(default=True, description="Whether the alert definition is enabled")
     annotations: Optional[List[AlertAnnotation]] = Field(default_factory=list, description="Alert annotations")
 
 class AlertDefinitionUpdate(BaseModel):
@@ -679,14 +680,16 @@ async def create_alert_definition(
             INSERT INTO alert_definitions (
                 organization, name, description, promql_expr, threshold_value, threshold_unit,
                 category, severity, urgency, alert_type, scope, evaluation_interval, for_duration,
-                created_by
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                enabled, created_by
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING *
             """,
             organization, data.name, data.description, promql_expr_with_org,
             data.threshold_value, data.threshold_unit,
             data.category, data.severity, data.urgency, alert_type_display, data.scope,
-            data.evaluation_interval, data.for_duration, created_by
+            data.evaluation_interval, data.for_duration,
+            data.enabled if data.enabled is not None else True,
+            created_by
         )
         
         alert_id = row['id']
