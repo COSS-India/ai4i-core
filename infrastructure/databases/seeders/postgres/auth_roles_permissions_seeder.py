@@ -277,7 +277,8 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.read',
-              'users.update'
+              'users.update',
+              'service.read'
             )
             WHERE r.name = 'USER'
             ON CONFLICT (role_id, permission_id) DO NOTHING;
@@ -299,7 +300,8 @@ class AuthRolesPermissionsSeeder(BaseSeeder):
             FROM roles r
             JOIN permissions p ON p.name IN (
               'users.read',
-              'users.update'
+              'users.update',
+              'service.read'
             )
             WHERE r.name = 'GUEST'
             ON CONFLICT (role_id, permission_id) DO NOTHING;
