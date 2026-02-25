@@ -4460,8 +4460,7 @@ async def create_alert_definition_endpoint(
     await check_permission("alerts.create", request, credentials)
     headers = await build_alert_headers(request, credentials, api_key, organization)
     headers["Content-Type"] = "application/json"
-    # Backend expects embed=True: {"payload": {...}}
-    body = json.dumps({"payload": payload.model_dump(mode="json", exclude_none=True)}).encode("utf-8")
+    body = json.dumps(payload.model_dump(mode="json", exclude_none=True)).encode("utf-8")
     return await proxy_to_service(
         None,
         "/alerts/definitions",
