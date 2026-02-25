@@ -49,6 +49,7 @@ const EMPTY_CREATE_FORM: AlertDefinitionCreate = {
   scope: DEFAULT_THRESHOLD_UNIT,
   evaluation_interval: "30s",
   for_duration: "5m",
+  enabled: true,
   annotations: [],
 };
 
@@ -191,6 +192,7 @@ export function useAlertDefinitions() {
         for_duration: createForm.for_duration,
         threshold_value: thresholdValue,
         threshold_unit: thresholdUnit,
+        enabled: createForm.enabled !== false,
       };
       await alertingService.createDefinition(payload as any);
       toast({
