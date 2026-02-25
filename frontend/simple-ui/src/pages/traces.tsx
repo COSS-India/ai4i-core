@@ -1217,14 +1217,12 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
     }
   });
 
-  // Find root spans (spans with no parent) - these are typically HTTP request handlers
+  // Find root spans (spans with no parent) - these are typically the main HTTP request handlers
   const rootSpans = trace.spans.filter(span => !spanToParent.has(span.spanID));
   
-  // Try to find HTTP status code - check root spans first, then all spans
-  // (HTTP status might be on the root span or on a request handler child span)
-  const spansToCheck = [...rootSpans, ...trace.spans.filter(span => spanToParent.has(span.spanID))];
-  
-  for (const span of spansToCheck) {
+  // Priority 1: Check root spans for HTTP status code FIRST (these match what's logged)
+  // Root spans represent the actual HTTP request/response that gets logged
+  for (const span of rootSpans) {
     const tags = span.tags || [];
     const httpStatusTag = tags.find(t => 
       t.key === "http.status_code" || 
@@ -1235,8 +1233,7 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
     if (httpStatusTag) {
       const statusCode = parseInt(String(httpStatusTag.value));
       if (!isNaN(statusCode)) {
-        // HTTP status code found - use it to determine success/failure
-        // This is the authoritative source - if HTTP says 200, it's success even if child spans have errors
+        // HTTP status code found on root span - this matches the log status
         if (statusCode >= 200 && statusCode < 300) {
           return { status: "success", message: "Success" };
         } else if (statusCode >= 400 && statusCode < 500) {
@@ -1248,7 +1245,72 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
     }
   }
 
-  // Fallback: Check root spans for errors (not all spans, to avoid false positives from handled child errors)
+  // Priority 2: Check API Gateway spans (if present) - these represent the actual HTTP response
+  // API Gateway spans are the authoritative source for HTTP status codes
+  const apiGatewaySpans = trace.spans.filter(span => {
+    const process = trace.processes?.[span.processID];
+    const serviceName = process?.serviceName || "";
+    return serviceName.toLowerCase().includes("api-gateway") || 
+           serviceName.toLowerCase().includes("gateway");
+  });
+
+  for (const span of apiGatewaySpans) {
+    const tags = span.tags || [];
+    const httpStatusTag = tags.find(t => 
+      t.key === "http.status_code" || 
+      t.key === "HTTP_STATUS_CODE" ||
+      t.key.toLowerCase() === "http.status_code"
+    );
+    
+    if (httpStatusTag) {
+      const statusCode = parseInt(String(httpStatusTag.value));
+      if (!isNaN(statusCode)) {
+        // HTTP status code from API Gateway - this is authoritative
+        if (statusCode >= 200 && statusCode < 300) {
+          return { status: "success", message: "Success" };
+        } else if (statusCode >= 400 && statusCode < 500) {
+          return { status: "error", message: `Client error (${statusCode})` };
+        } else if (statusCode >= 500) {
+          return { status: "error", message: `Server error (${statusCode})` };
+        }
+      }
+    }
+  }
+
+  // Priority 3: Check service-level request handler spans (like "asr.inference", "ocr.inference")
+  // These are the main endpoint handlers that set HTTP status codes
+  const requestHandlerSpans = trace.spans.filter(span => {
+    const opName = span.operationName.toLowerCase();
+    return (opName.includes("inference") || opName.includes("login") || opName.includes("auth")) &&
+           !opName.includes("triton") && 
+           !opName.includes("database") &&
+           !opName.includes("middleware");
+  });
+
+  for (const span of requestHandlerSpans) {
+    const tags = span.tags || [];
+    const httpStatusTag = tags.find(t => 
+      t.key === "http.status_code" || 
+      t.key === "HTTP_STATUS_CODE" ||
+      t.key.toLowerCase() === "http.status_code"
+    );
+    
+    if (httpStatusTag) {
+      const statusCode = parseInt(String(httpStatusTag.value));
+      if (!isNaN(statusCode)) {
+        // HTTP status code found on request handler - use it
+        if (statusCode >= 200 && statusCode < 300) {
+          return { status: "success", message: "Success" };
+        } else if (statusCode >= 400 && statusCode < 500) {
+          return { status: "error", message: `Client error (${statusCode})` };
+        } else if (statusCode >= 500) {
+          return { status: "error", message: `Server error (${statusCode})` };
+        }
+      }
+    }
+  }
+
+  // Priority 4: Check root spans for errors (if no HTTP status found)
   const rootSpanHasError = rootSpans.some(span => {
     const tags = span.tags || [];
     return tags.some(t => 
@@ -1261,35 +1323,20 @@ const getTraceStatus = (trace: Trace): { status: "success" | "error" | "warning"
     return { status: "error", message: "Failed" };
   }
 
-  // If no HTTP status and no root span errors, check if any span has critical errors
-  // (but only if it's not a handled error in a child span)
-  const hasCriticalError = trace.spans.some(span => {
+  // Priority 5: Check request handler spans for errors (if no HTTP status found)
+  const requestHandlerHasError = requestHandlerSpans.some(span => {
     const tags = span.tags || [];
-    const hasErrorTag = tags.some(t => 
+    return tags.some(t => 
       (t.key === "error" && t.value === true) || 
       (t.key === "otel.status_code" && String(t.value) === "ERROR")
     );
-    
-    // Only consider it critical if it's a root span or has HTTP status >= 400
-    if (hasErrorTag) {
-      const isRoot = !spanToParent.has(span.spanID);
-      const httpStatusTag = tags.find(t => 
-        t.key === "http.status_code" || 
-        t.key === "HTTP_STATUS_CODE" ||
-        t.key.toLowerCase() === "http.status_code"
-      );
-      const httpStatus = httpStatusTag ? parseInt(String(httpStatusTag.value)) : null;
-      
-      // Critical if: root span error OR HTTP status indicates failure
-      return isRoot || (httpStatus !== null && httpStatus >= 400);
-    }
-    return false;
   });
 
-  if (hasCriticalError) {
+  if (requestHandlerHasError) {
     return { status: "error", message: "Failed" };
   }
 
+  // Default: If we can't determine, assume success
   return { status: "success", message: "Success" };
 };
 
