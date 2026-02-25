@@ -44,6 +44,7 @@ export interface AlertDefinitionCreate {
   scope?: string | null;
   evaluation_interval?: string;
   for_duration?: string;
+  enabled?: boolean;
   annotations?: AlertAnnotation[];
 }
 

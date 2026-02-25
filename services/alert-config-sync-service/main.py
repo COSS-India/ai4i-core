@@ -220,19 +220,17 @@ def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], cat
     
     for alert in alert_definitions:
         alert_category = alert['category']
-        organization = alert['organization']
         alert_name = alert['name']
         
-        # Create unique alert name per organization: {alert_name}_{organization}
-        unique_alert_name = f"{alert_name}_{organization}"
+        # Use alert name as-is so alertname label does not expose organization
+        unique_alert_name = alert_name
         
-        # Build alert rule
+        # Build alert rule (no organization in labels; alerts are global)
         alert_rule = {
             'alert': unique_alert_name,
             'expr': alert['promql_expr'],
             'for': alert['for_duration'],
             'labels': {
-                'organization': organization,
                 'severity': alert['severity'],
                 'urgency': alert.get('urgency', 'medium'),
                 'category': alert_category,
@@ -254,7 +252,7 @@ def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], cat
         
         # Add default annotations if not present
         if 'summary' not in annotations:
-            annotations['summary'] = f"{alert_name} for {organization}"
+            annotations['summary'] = alert_name
         if 'description' not in annotations:
             annotations['description'] = alert.get('description', f"Alert {alert_name} is firing")
         
@@ -276,13 +274,12 @@ def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], cat
     
     return {'groups': groups}
 
-# Default email templates (must match API Gateway defaults)
-DEFAULT_EMAIL_SUBJECT_TEMPLATE = "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.organization }}"
+# Default email templates (no organization; route by severity/category only)
+DEFAULT_EMAIL_SUBJECT_TEMPLATE = "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }}{{ with (index .Alerts 0).Labels.endpoint }} - {{ . }}{{ end }}"
 DEFAULT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{ if eq .GroupLabels.severity \"critical\" }}#d32f2f{{ else if eq .GroupLabels.severity \"warning\" }}#f57c00{{ else }}#1976d2{{ end }};">
   {{ if eq .GroupLabels.severity "critical" }}🚨 CRITICAL{{ else if eq .GroupLabels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
 </h2>
 <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
-<p><strong>Organization:</strong> {{ .GroupLabels.organization }}</p>
 <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
 <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
 """
@@ -347,204 +344,108 @@ def generate_alertmanager_yaml(
     if not default_email_configs:
         logger.warning("Default receiver 'default-admin' has no email addresses; set DEFAULT_RECEIVER_EMAILS or ensure auth DB has ADMIN users")
 
-    # Build receivers from database (organization-specific)
-    receivers_by_organization = {}
+    # Build receivers from database: one receiver per (severity, category), merge emails from all orgs
+    # Receiver name = severity-category (e.g. warning-application), no organization
+    receivers_by_severity_category = {}  # (severity, category) -> list of email_configs to merge
     
     for receiver in receivers:
-        organization = receiver['organization']
         receiver_name = receiver['receiver_name']
+        # Parse receiver name: format severity-category (e.g. "warning-application")
+        parts = receiver_name.split('-', 1)
+        if len(parts) != 2:
+            logger.warning(f"Receiver name '{receiver_name}' doesn't follow pattern 'severity-category', skipping")
+            continue
+        severity, category = parts
+        key = (severity, category)
         
-        receiver_config = {
-            'name': f"{organization}-{receiver_name}"
-        }
-        
-        # Build email configuration
+        # Build email configs for this DB receiver
         email_configs = []
         if receiver.get('email_to'):
-            # Handle multiple emails (from RBAC role resolution or direct input)
             email_to = receiver['email_to']
-            
-            # Normalize to list format
             if isinstance(email_to, str):
-                # Single email as string, convert to list
                 email_list = [email_to]
             elif isinstance(email_to, list):
-                # Already a list
                 email_list = email_to
             else:
-                # Convert other types to list
                 email_list = list(email_to) if email_to else []
             
-            # Use default templates if not provided
             email_subject_template = receiver.get('email_subject_template') or DEFAULT_EMAIL_SUBJECT_TEMPLATE
             email_body_template = receiver.get('email_body_template') or DEFAULT_EMAIL_BODY_TEMPLATE
             
-            # Create one email_config per email address
-            # This ensures all users (from RBAC role) receive notifications
             for email in email_list:
                 if email and str(email).strip():
                     email_config = {
-                        'to': str(email).strip(),  # Single email per config
-                        'send_resolved': True
+                        'to': str(email).strip(),
+                        'send_resolved': True,
+                        'headers': {'Subject': email_subject_template},
+                        'html': email_body_template
                     }
-                    email_config['headers'] = {
-                        'Subject': email_subject_template
-                    }
-                    # Store HTML template - will be formatted as YAML literal block in post-processing
-                    email_config['html'] = email_body_template
                     email_configs.append(email_config)
-            
-            if not email_configs:
-                logger.warning(f"No valid email addresses found for receiver '{receiver_name}' (organization: {organization})")
         
-        receiver_config['email_configs'] = email_configs
-        receivers_config.append(receiver_config)
+        if not email_configs:
+            logger.warning(f"No valid email addresses for receiver '{receiver_name}' (org: {receiver.get('organization')})")
+            continue
         
-        # Track receivers by customer
-        if organization not in receivers_by_organization:
-            receivers_by_organization[organization] = []
-        receivers_by_organization[organization].append(f"{organization}-{receiver_name}")
+        if key not in receivers_by_severity_category:
+            receivers_by_severity_category[key] = []
+        receivers_by_severity_category[key].extend(email_configs)
     
-    # Build routing tree from database
-    # Structure: Each customer gets their own routes based on routing rules
-    # Hybrid mode: Use explicit routing rules where they exist, auto-generate for organizations without rules
+    # One Alertmanager receiver per (severity, category) with merged email_configs
+    for (severity, category), email_configs in receivers_by_severity_category.items():
+        receiver_name_alertmanager = f"{severity}-{category}"
+        receivers_config.append({
+            'name': receiver_name_alertmanager,
+            'email_configs': email_configs,
+        })
+    
+    # Build routing tree: one route per (severity, category), receiver = severity-category (no organization)
+    # Use explicit routing rules when available (custom group_wait, match_alert_type, etc.); else defaults
     root_routes = []
+    valid_receiver_names = {r['name'] for r in receivers_config}
     
-    # Group routing rules by organization
-    rules_by_organization = {}
+    # Build map (severity, category) -> best explicit rule (lowest priority wins; any org)
+    explicit_rule_by_key = {}
     if routing_rules:
-        for rule in routing_rules:
-            organization = rule['organization']
-            if organization not in rules_by_organization:
-                rules_by_organization[organization] = []
-            rules_by_organization[organization].append(rule)
+        # Sort by priority ascending (lower = higher priority)
+        for rule in sorted(routing_rules, key=lambda r: r.get('priority', 100)):
+            sev = rule.get('match_severity')
+            cat = rule.get('match_category')
+            if sev and cat:
+                key = (sev, cat)
+                if key not in explicit_rule_by_key:
+                    explicit_rule_by_key[key] = rule
     
-    # Group receivers by organization
-    receivers_by_organization = {}
-    for receiver in receivers:
-        organization = receiver['organization']
-        if organization not in receivers_by_organization:
-            receivers_by_organization[organization] = []
-        receivers_by_organization[organization].append(receiver)
-    
-    # Process each organization
-    # Hybrid mode: Use explicit rules where they exist, auto-generate for routes without explicit rules
-    for organization, org_receivers in receivers_by_organization.items():
-        # Build a set of explicit route matches for this organization
-        # Key format: (severity, category, alert_type) - None values mean "any"
-        explicit_route_keys = set()
-        explicit_rules_map = {}  # Maps (severity, category, alert_type) -> rule
-        
-        if organization in rules_by_organization:
-            org_rules = rules_by_organization[organization]
-            # Sort by priority (lower = higher priority)
-            org_rules.sort(key=lambda r: r.get('priority', 100))
-            
-            for rule in org_rules:
-                # Build match key for this rule
-                severity = rule.get('match_severity')
-                category = rule.get('match_category')
-                alert_type = rule.get('match_alert_type')
-                route_key = (severity, category, alert_type)
-                
-                explicit_route_keys.add(route_key)
-                explicit_rules_map[route_key] = rule
-        
-        # Process receivers: use explicit rules if available, otherwise auto-generate
-        for receiver in org_receivers:
-            receiver_name = receiver['receiver_name']
-            full_receiver_name = f"{organization}-{receiver_name}"
-            
-            # Parse receiver name to extract severity and category
-            # Format: {severity}-{category} (e.g., "critical-application")
-            parts = receiver_name.split('-', 1)
-            if len(parts) != 2:
-                logger.warning(f"Receiver name '{receiver_name}' doesn't follow pattern 'severity-category', skipping route generation for organization '{organization}'")
-                continue
-            
-            severity, category = parts
-            route_key = (severity, category, None)  # alert_type is None for auto-generated routes
-            
-            # Check if there's an explicit rule for this route
-            # Try exact match first, then try with None alert_type
-            explicit_rule = None
-            if route_key in explicit_rules_map:
-                explicit_rule = explicit_rules_map[route_key]
-            else:
-                # Try to find a rule that matches severity and category (alert_type can be None or match)
-                for key, rule in explicit_rules_map.items():
-                    rule_severity, rule_category, rule_alert_type = key
-                    if rule_severity == severity and rule_category == category:
-                        # Found a matching rule (alert_type might be None or specific)
-                        explicit_rule = rule
-                        route_key = key  # Use the actual key from the rule
-                        break
-            
-            if explicit_rule:
-                # Use explicit rule from database
-                receiver_id = explicit_rule['receiver_id']
-                # Verify receiver matches (should match, but double-check)
-                if receiver['id'] != receiver_id:
-                    logger.warning(f"Explicit rule for {organization}/{severity}/{category} references receiver {receiver_id}, but receiver '{receiver_name}' has ID {receiver['id']}. Using explicit rule's receiver.")
-                    # Find the correct receiver
-                    for r in receivers:
-                        if r['id'] == receiver_id:
-                            full_receiver_name = f"{organization}-{r['receiver_name']}"
-                            break
-                
-                # Build match conditions - organization is always included
-                match_conditions = {'organization': organization}
-                if explicit_rule.get('match_severity'):
-                    match_conditions['severity'] = explicit_rule['match_severity']
-                if explicit_rule.get('match_category'):
-                    match_conditions['category'] = explicit_rule['match_category']
-                if explicit_rule.get('match_alert_type'):
-                    match_conditions['alert_type'] = explicit_rule['match_alert_type']
-                
-                # Create route with match first, then receiver (correct order for Alertmanager)
-                route = {
-                    'match': match_conditions,
-                    'receiver': full_receiver_name,
-                    'group_wait': explicit_rule.get('group_wait', '10s'),
-                    'group_interval': explicit_rule.get('group_interval', '10s'),
-                    'repeat_interval': explicit_rule.get('repeat_interval', '12h'),
-                    'continue': explicit_rule.get('continue_routing', False)
-                }
-                
-                # Add group_by if specified
-                if explicit_rule.get('group_by'):
-                    route['group_by'] = explicit_rule['group_by']
-                
-                root_routes.append(route)
-                logger.debug(f"Using explicit routing rule for {organization}/{severity}/{category}")
-            else:
-                # No explicit rule - auto-generate route from receiver name
-                route = {
-                    'match': {
-                        'organization': organization,
-                        'severity': severity,
-                        'category': category
-                    },
-                    'receiver': full_receiver_name,
-                    'group_wait': '10s',
-                    'group_interval': '10s',
-                    'repeat_interval': '12h',
-                    'continue': False
-                }
-                root_routes.append(route)
-                logger.debug(f"Auto-generated routing rule for {organization}/{severity}/{category}")
+    for (severity, category) in receivers_by_severity_category.keys():
+        receiver_name_alertmanager = f"{severity}-{category}"
+        if receiver_name_alertmanager not in valid_receiver_names:
+            continue
+        explicit_rule = explicit_rule_by_key.get((severity, category))
+        match_conditions = {'severity': severity, 'category': category}
+        if explicit_rule and explicit_rule.get('match_alert_type'):
+            match_conditions['alert_type'] = explicit_rule['match_alert_type']
+        route = {
+            'match': match_conditions,
+            'receiver': receiver_name_alertmanager,
+            'group_wait': (explicit_rule or {}).get('group_wait') or '10s',
+            'group_interval': (explicit_rule or {}).get('group_interval') or '10s',
+            'repeat_interval': (explicit_rule or {}).get('repeat_interval') or '12h',
+            'continue': True
+        }
+        if explicit_rule and explicit_rule.get('group_by'):
+            route['group_by'] = explicit_rule['group_by']
+        root_routes.append(route)
+        logger.debug(f"Route for severity={severity} category={category} -> receiver {receiver_name_alertmanager}" + (" (explicit rule)" if explicit_rule else " (defaults)"))
     
     # Only include routes whose receiver exists in our config (remove stale routes for deleted receivers)
-    valid_receiver_names = {r['name'] for r in receivers_config}
     before_count = len(root_routes)
     root_routes = [r for r in root_routes if r.get('receiver') in valid_receiver_names]
     if len(root_routes) < before_count:
-        logger.warning(f"Removed {before_count - len(root_routes)} route(s) that referenced deleted or non-existent receivers")
+        logger.warning(f"Removed {before_count - len(root_routes)} route(s) that referenced non-existent receivers")
 
     # Build complete Alertmanager configuration
     # Only global config is preserved from file, everything else from database
     route_config = {
-        'group_by': ['alertname', 'category', 'severity', 'organization'],
+        'group_by': ['alertname', 'category', 'severity'],
         'group_wait': '10s',
         'group_interval': '10s',
         'repeat_interval': '12h'
@@ -555,7 +456,7 @@ def generate_alertmanager_yaml(
     
     # Routes: only include routes for receivers that exist in config
     if not root_routes:
-        logger.info("No organization routes; all alerts will go to default-admin receiver.")
+        logger.info("No severity/category routes; all alerts will go to default-admin receiver.")
     route_config['routes'] = root_routes
     
     config = {
@@ -569,7 +470,7 @@ def generate_alertmanager_yaml(
         {
             'source_match': {'severity': 'critical'},
             'target_match': {'severity': 'warning'},
-            'equal': ['alertname', 'organization', 'category']
+            'equal': ['alertname', 'category']
         }
     ]
     

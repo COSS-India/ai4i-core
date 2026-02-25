@@ -75,7 +75,9 @@ from services.constants.error_messages import (
     INVALID_REQUEST,
     INVALID_REQUEST_TTS_MESSAGE,
     INTERNAL_SERVER_ERROR,
-    INTERNAL_SERVER_ERROR_MESSAGE
+    INTERNAL_SERVER_ERROR_MESSAGE,
+    SERVICE_UNPUBLISHED,
+    SERVICE_UNPUBLISHED_MESSAGE,
 )
 from middleware.exceptions import AuthenticationError, AuthorizationError
 from middleware.auth_provider import AuthProvider
@@ -235,6 +237,19 @@ async def resolve_service_id_if_needed(
                         )
                         http_request.state.model_management_error = (
                             f"Service {service_id} not found in Model Management database"
+                        )
+                    elif service_info.is_published is not True:
+                        logger.warning(
+                            "TTS inference rejected: service is unpublished",
+                            extra={"service_id": service_id},
+                        )
+                        raise HTTPException(
+                            status_code=403,
+                            detail={
+                                "code": SERVICE_UNPUBLISHED,
+                                "message": SERVICE_UNPUBLISHED_MESSAGE,
+                                "serviceId": service_id,
+                            },
                         )
                     elif not service_info.endpoint:
                         logger.error(
@@ -537,6 +552,19 @@ async def resolve_service_id_if_needed(
                     http_request.state.model_management_error = (
                         f"Service {service_id} not found in Model Management database"
                     )
+                elif service_info.is_published is not True:
+                    logger.warning(
+                        "TTS inference rejected: service is unpublished",
+                        extra={"service_id": service_id},
+                    )
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "code": SERVICE_UNPUBLISHED,
+                            "message": SERVICE_UNPUBLISHED_MESSAGE,
+                            "serviceId": service_id,
+                        },
+                    )
                 elif not service_info.endpoint:
                     logger.error(
                         "TTS service found but has no endpoint configured",
@@ -827,6 +855,15 @@ async def switch_to_fallback_service(
                 detail={
                     "code": "FALLBACK_SERVICE_UNAVAILABLE",
                     "message": f"Fallback service {fallback_service_id} not found or has no endpoint configured",
+                },
+            )
+        if service_info.is_published is not True:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": SERVICE_UNPUBLISHED,
+                    "message": SERVICE_UNPUBLISHED_MESSAGE,
+                    "serviceId": fallback_service_id,
                 },
             )
         
