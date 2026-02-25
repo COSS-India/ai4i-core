@@ -67,7 +67,9 @@ from services.constants.error_messages import (
     INVALID_REQUEST,
     INVALID_REQUEST_NMT_MESSAGE,
     INTERNAL_SERVER_ERROR,
-    INTERNAL_SERVER_ERROR_MESSAGE
+    INTERNAL_SERVER_ERROR_MESSAGE,
+    SERVICE_UNPUBLISHED,
+    SERVICE_UNPUBLISHED_MESSAGE,
 )
 
 # Use get_logger from ai4icore_logging to ensure JSON formatting and proper handlers
@@ -228,6 +230,19 @@ async def resolve_service_id_if_needed(
                         extra={"service_id": service_id}
                     )
                     http_request.state.model_management_error = f"Service {service_id} not found in Model Management database"
+                elif service_info.is_published is not True:
+                    logger.warning(
+                        "NMT inference rejected: service is unpublished",
+                        extra={"service_id": service_id},
+                    )
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "code": SERVICE_UNPUBLISHED,
+                            "message": SERVICE_UNPUBLISHED_MESSAGE,
+                            "serviceId": service_id,
+                        },
+                    )
                 elif not service_info.endpoint:
                     logger.error(
                         "Service found but has no endpoint configured",
@@ -630,6 +645,15 @@ async def switch_to_fallback_service(
                     "message": f"Fallback service {fallback_service_id} not found or has no endpoint configured",
                 },
             )
+        if service_info.is_published is not True:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": SERVICE_UNPUBLISHED,
+                    "message": SERVICE_UNPUBLISHED_MESSAGE,
+                    "serviceId": fallback_service_id,
+                },
+            )
         
         triton_endpoint = service_info.endpoint
         triton_api_key = service_info.api_key or ""
@@ -828,6 +852,12 @@ async def _enforce_tenant_and_service_checks(http_request: Request, service_name
       2) Ensure the service is globally active via /list/services
       3) If tenant context exists, ensure tenant.status == ACTIVE.
     """
+    # Skip tenant and service availability checks for anonymous Try-It requests.
+    # API Gateway forwards X-Try-It: true for /api/v1/try-it calls which proxy to NMT.
+    try_it_header = http_request.headers.get("X-Try-It") or http_request.headers.get("x-try-it")
+    if try_it_header and str(try_it_header).strip().lower() == "true":
+        return
+
     headers = {}
     auth_header = http_request.headers.get("Authorization") or http_request.headers.get("authorization")
     if auth_header:
