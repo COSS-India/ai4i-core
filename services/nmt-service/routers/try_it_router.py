@@ -17,6 +17,10 @@ from utils.try_it_utils import (
     increment_try_it_count,
     is_try_it_rate_limit_exceeded
 )
+from services.constants.error_messages import (
+    SERVICE_UNPUBLISHED,
+    SERVICE_UNPUBLISHED_MESSAGE,
+)
 from routers.inference_router import (
     resolve_service_id_if_needed,
     get_nmt_service
@@ -156,6 +160,15 @@ async def try_it_inference(
             )
             
             if service_info and service_info.endpoint:
+                if service_info.is_published is not True:
+                    raise HTTPException(
+                        status_code=403,
+                        detail={
+                            "code": SERVICE_UNPUBLISHED,
+                            "message": SERVICE_UNPUBLISHED_MESSAGE,
+                            "serviceId": nmt_request.config.serviceId,
+                        },
+                    )
                 # Set endpoint in request state so get_nmt_service can use it
                 request.state.triton_endpoint = service_info.endpoint
                 request.state.triton_api_key = service_info.api_key or ""

@@ -8,7 +8,7 @@ import type {
   AlertAnnotation,
 } from "../../../types/alerting";
 
-const DEFAULT_THRESHOLD_UNIT = "seconds";
+const DEFAULT_THRESHOLD_UNIT = "percentage";
 
 /** Map API alert_type (label or value) to form dropdown value */
 const ALERT_TYPE_FORM_VALUES: Record<string, { value: string; label: string }[]> = {
@@ -39,6 +39,20 @@ function getThresholdUnitFormValue(apiUnit: string | null | undefined): string {
   return DEFAULT_THRESHOLD_UNIT;
 }
 
+/** Allowed for_duration per evaluation_interval (for_duration must be >= eval interval). */
+const FOR_DURATION_BY_EVAL: Record<string, string[]> = {
+  "30s": ["1m", "2m", "5m"],
+  "1m": ["2m", "5m", "10m"],
+  "5m": ["5m", "10m"],
+};
+
+function normalizeForDuration(evalInterval: string | null | undefined, forDuration: string | null | undefined): string {
+  const key = evalInterval ?? "30s";
+  const allowed = FOR_DURATION_BY_EVAL[key] ?? FOR_DURATION_BY_EVAL["30s"];
+  const cur = forDuration ?? "5m";
+  return allowed.includes(cur) ? cur : allowed[0];
+}
+
 const EMPTY_CREATE_FORM: AlertDefinitionCreate = {
   name: "",
   promql_expr: "",
@@ -49,6 +63,7 @@ const EMPTY_CREATE_FORM: AlertDefinitionCreate = {
   scope: DEFAULT_THRESHOLD_UNIT,
   evaluation_interval: "30s",
   for_duration: "5m",
+  enabled: true,
   annotations: [],
 };
 
@@ -191,6 +206,7 @@ export function useAlertDefinitions() {
         for_duration: createForm.for_duration,
         threshold_value: thresholdValue,
         threshold_unit: thresholdUnit,
+        enabled: createForm.enabled !== false,
       };
       await alertingService.createDefinition(payload as any);
       toast({
@@ -236,6 +252,8 @@ export function useAlertDefinitions() {
     const scope = getThresholdUnitFormValue(item.threshold_unit ?? item.scope);
     const alertType = getAlertTypeFormValue(category, item.alert_type);
 
+    const evalInterval = item.evaluation_interval ?? "30s";
+    const forDuration = normalizeForDuration(evalInterval, item.for_duration ?? "5m");
     setUpdateForm({
       description: item.description ?? "",
       promql_expr: thresholdValue,
@@ -244,8 +262,8 @@ export function useAlertDefinitions() {
       urgency: item.urgency ?? "medium",
       alert_type: alertType,
       scope,
-      evaluation_interval: item.evaluation_interval ?? "30s",
-      for_duration: item.for_duration ?? "5m",
+      evaluation_interval: evalInterval,
+      for_duration: forDuration,
       enabled: item.enabled,
     });
     setUpdateAnnotations(item.annotations ? [...item.annotations] : []);
