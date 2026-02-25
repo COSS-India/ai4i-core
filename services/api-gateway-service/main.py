@@ -2401,6 +2401,7 @@ class AlertDefinitionCreate(BaseModel):
     scope: Optional[str] = Field(None, description="Scope (e.g., 'all_services', 'per_service')")
     evaluation_interval: str = Field(default="30s", description="Prometheus evaluation interval")
     for_duration: str = Field(default="5m", description="Duration before alert fires")
+    enabled: Optional[bool] = Field(default=True, description="Whether the alert definition is enabled")
     annotations: Optional[List[AlertAnnotation]] = Field(default_factory=list, description="Alert annotations")
 
 class AlertDefinitionUpdate(BaseModel):
@@ -4453,7 +4454,7 @@ async def create_alert_definition_endpoint(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
 ):
     """Create a new alert definition - proxied to alert-management-service"""
     await check_permission("alerts.create", request, credentials)

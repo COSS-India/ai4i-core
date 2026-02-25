@@ -1613,7 +1613,7 @@ async def _run_nmt_inference_impl(
     else:
         response_dict["smr_response"] = None
     response = NMTInferenceResponse(**response_dict)
-    
+
     # Log removed - middleware handles request/response logging
     return response
  
