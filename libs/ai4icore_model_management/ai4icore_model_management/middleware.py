@@ -11,12 +11,25 @@ from typing import Optional, Dict, Tuple, Any
 
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
+from starlette.responses import Response, JSONResponse
 
 from .client import ModelManagementClient, ServiceInfo
 from .triton_client import TritonClient
 
 logger = logging.getLogger(__name__)
+
+# Error raised when a service is unpublished (inference not allowed)
+SERVICE_UNPUBLISHED_CODE = "SERVICE_UNPUBLISHED"
+SERVICE_UNPUBLISHED_MESSAGE = (
+    "The requested service is unpublished. Please use a published service."
+)
+
+
+class UnpublishedServiceError(Exception):
+    """Raised when the requested service is unpublished and inference is not allowed."""
+    def __init__(self, service_id: str):
+        self.service_id = service_id
+        super().__init__(f"Service {service_id} is unpublished")
 
 
 def extract_auth_headers(request: Request) -> Dict[str, str]:
@@ -278,6 +291,11 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
     
     async def _resolve_service(self, service_id: str, auth_headers: Dict[str, str]) -> Tuple[Optional[str], Optional[str], Optional[TritonClient]]:
         """Resolve serviceId to endpoint, model_name, and Triton client"""
+        # Check publish status first – do not allow inference for unpublished services
+        service_info = await self._get_service_info(service_id, auth_headers)
+        if service_info is not None and service_info.is_published is not True:
+            raise UnpublishedServiceError(service_id)
+
         # Get endpoint and model name
         service_entry = await self._get_service_registry_entry(service_id, auth_headers)
         if service_entry:
@@ -364,7 +382,14 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                                 f"A/B experiment active: using variant {variant.get('variant_name')} "
                                 f"(service_id={variant.get('service_id')})"
                             )
-                            request.state.service_id = variant["service_id"]
+                            variant_service_id = variant["service_id"]
+                            # Ensure variant service is published before allowing inference
+                            variant_info = await self._get_service_info(
+                                variant_service_id, extract_auth_headers(request)
+                            )
+                            if variant_info is not None and variant_info.is_published is not True:
+                                raise UnpublishedServiceError(variant_service_id)
+                            request.state.service_id = variant_service_id
                             request.state.experiment_info = variant
                             if variant.get("endpoint") and (variant.get("model_id") or variant.get("model_name")):
                                 request.state.triton_endpoint = (
@@ -414,6 +439,20 @@ class ModelResolutionMiddleware(BaseHTTPMiddleware):
                 await self._track_experiment_metric(request, response, start_time)
             return response
             
+        except UnpublishedServiceError as e:
+            logger.warning(f"Rejecting inference for unpublished service: {e.service_id}")
+            # Return 403 response directly; raising HTTPException from middleware often
+            # bypasses app exception handlers and results in 500 to the client.
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": {
+                        "code": SERVICE_UNPUBLISHED_CODE,
+                        "message": SERVICE_UNPUBLISHED_MESSAGE,
+                        "serviceId": e.service_id,
+                    }
+                },
+            )
         except HTTPException as e:
             logger.warning(f"HTTPException in Model Resolution Middleware: {e.detail}")
             raise
