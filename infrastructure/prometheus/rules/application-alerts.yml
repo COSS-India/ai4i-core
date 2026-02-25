@@ -1,0 +1,16 @@
+groups:
+- name: application-alerts
+  interval: 30s
+  rules:
+  - alert: HighMedianLatencyPerService
+    expr: histogram_quantile(0.5, sum by (le, endpoint) (rate(telemetry_obsv_request_duration_seconds_bucket{endpoint=~"/.*inference.*"}[5m]))) > 0.11
+    for: 2m
+    labels:
+      severity: warning
+      urgency: medium
+      category: application
+      alert_type: Latency
+      scope: per_endpoint
+    annotations:
+      summary: HighMedianLatencyPerService
+      description: High median latency for specific inference endpoints

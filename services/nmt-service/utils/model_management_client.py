@@ -26,6 +26,7 @@ class ServiceInfo(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     languages: Optional[List[Dict[str, Any]]] = None
+    is_published: Optional[bool] = None
     # Model information extracted from service response
     model_name: Optional[str] = None
     model_description: Optional[str] = None
@@ -368,6 +369,7 @@ class ModelManagementClient:
                 name=data.get("name"),
                 description=data.get("serviceDescription"),
                 languages=languages,
+                is_published=data.get("isPublished"),
                 # Extract model information from embedded model object
                 model_name=model_data.get("name") if model_data else None,
                 model_description=model_data.get("description") if model_data else None,

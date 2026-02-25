@@ -47,7 +47,6 @@ import { getTenantIdFromToken } from "../utils/helpers";
 import {
   searchLogs,
   getLogAggregations,
-  getServicesWithLogs,
   LogEntry,
   LogSearchResponse,
   LogAggregationResponse,
@@ -102,12 +101,22 @@ const LogsPage: React.FC = () => {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(10);
   const [clientPage, setClientPage] = useState(1); // Client-side pagination for filtered logs
+  
+  // Filter input values (what user types/selects - not applied until Search is clicked)
   const [service, setService] = useState<string>("");
   const [level, setLevel] = useState<string>("");
   const [searchText, setSearchText] = useState<string>("");
   const [startTime, setStartTime] = useState<string>("");
   const [endTime, setEndTime] = useState<string>("");
   const [selectedTenantId, setSelectedTenantId] = useState<string>(""); // Admin-only tenant filter
+  
+  // Applied filter values (what's actually used in the query)
+  const [appliedService, setAppliedService] = useState<string>("");
+  const [appliedLevel, setAppliedLevel] = useState<string>("");
+  const [appliedSearchText, setAppliedSearchText] = useState<string>("");
+  const [appliedStartTime, setAppliedStartTime] = useState<string>("");
+  const [appliedEndTime, setAppliedEndTime] = useState<string>("");
+  const [appliedTenantId, setAppliedTenantId] = useState<string>("");
   
   // Check if user is admin
   const isAdmin = user?.roles?.includes('ADMIN') || false;
@@ -149,13 +158,28 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, authLoading, user, router, toast]);
 
-  // Fetch services list (only if authenticated)
-  const { data: services, isLoading: servicesLoading, error: servicesError } = useQuery({
-    queryKey: ["logs-services"],
-    queryFn: getServicesWithLogs,
-    enabled: isAuthenticated,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-  });
+  // Static list of all services (not dependent on OpenSearch logs)
+  // This ensures all services are always available in the dropdown
+  const ALL_SERVICES = [
+    'asr-service',
+    'audio-lang-detection-service',
+    'language-detection-service',
+    'language-diarization-service',
+    'llm-service',
+    'ner-service',
+    'nmt-service',
+    'ocr-service',
+    'pipeline-service',
+    'speaker-diarization-service',
+    'transliteration-service',
+    'tts-service',
+    'auth-service',
+  ];
+
+  // No longer fetching services from OpenSearch - using static list
+  const services = ALL_SERVICES;
+  const servicesLoading = false;
+  const servicesError = null;
 
   // Fetch tenants list (only for admins)
   const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } = useQuery({
@@ -234,80 +258,27 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, isAdmin, user, tenantsData, activeTenants, tenantsError]);
 
-  // Filter services to only show application services (exclude infrastructure services)
+  // Use static list of all services (already filtered to only application services)
   const filteredServices = useMemo(() => {
-    if (!services || !Array.isArray(services)) {
-      return [];
-    }
-
-    // Define allowed application services
-    const allowedServices = [
-      'ocr-service',
-      'ner-service',
-      'tts-service',
-      'nmt-service',
-      'pipeline-service',
-      'audio-lang',
-      'audio-lang-detection-service', // Support both naming conventions
-      'asr-service',
-      'speaker-diarization-service',
-      'transliteration-service',
-      'llm-service',
-      'language-detection-service',
-      'language-detection',
-      'language-diarization-service',
-      'language-diarization',
-      'auth-service',
-      'telemetry-service',
-    ];
-
-    // Also define patterns for infrastructure services to exclude
-    const infrastructurePatterns = [
-      /^apisix/i,
-      /^fluent-bit/i,
-      /^prometheus/i,
-      /^grafana/i,
-      /^jaeger/i,
-      /^opensearch/i,
-      /^postgres/i,
-      /^redis/i,
-      /^influxdb/i,
-      /^alertmanager/i,
-      /^node-exporter/i,
-      /^kube-state/i,
-      /^cm-acme/i,
-      /^opensearch-cleanup/i,
-      /^simple-ui/i,
-    ];
-
-    // Filter services: only include services in the allowed list
-    return services.filter((service: string) => {
-      // Only include services that are explicitly in the allowed list
-      return allowedServices.includes(service);
-    }).sort(); // Sort alphabetically for better UX
+    // Return all services from the static list, sorted alphabetically
+    const sorted = [...services].sort();
+    console.log('Filtered services for dropdown:', {
+      total: sorted.length,
+      services: sorted,
+      includesLanguageDiarization: sorted.includes('language-diarization-service'),
+    });
+    return sorted;
   }, [services]);
 
-  // Handle services error
-  useEffect(() => {
-    if (servicesError && (servicesError as any)?.response?.status === 401 || (servicesError as any)?.response?.status === 403) {
-      toast({
-        title: "Authentication Required",
-        description: "Please log in to view logs.",
-        status: "error",
-        duration: 5000,
-        isClosable: true,
-      });
-      router.push("/auth");
-    }
-  }, [servicesError, router, toast]);
+  // No longer needed - services are static, no error handling required
 
   // Fetch aggregations (only if authenticated and ADMIN)
   const { data: aggregations, isLoading: aggregationsLoading, error: aggregationsError } = useQuery({
-    queryKey: ["logs-aggregations", startTime, endTime],
+    queryKey: ["logs-aggregations", appliedStartTime, appliedEndTime],
     queryFn: () => {
       // Convert datetime-local format to ISO format for API
-      const apiStartTime = startTime && startTime.trim() !== "" ? convertToISOFormat(startTime) : undefined;
-      const apiEndTime = endTime && endTime.trim() !== "" ? convertToISOFormat(endTime) : undefined;
+      const apiStartTime = appliedStartTime && appliedStartTime.trim() !== "" ? convertToISOFormat(appliedStartTime) : undefined;
+      const apiEndTime = appliedEndTime && appliedEndTime.trim() !== "" ? convertToISOFormat(appliedEndTime) : undefined;
       return getLogAggregations({
         start_time: apiStartTime,
         end_time: apiEndTime,
@@ -339,39 +310,39 @@ const LogsPage: React.FC = () => {
   } = useQuery({
     queryKey: [
       "logs-search",
-      service,
-      level,
-      searchText,
-      startTime,
-      endTime,
+      appliedService,
+      appliedLevel,
+      appliedSearchText,
+      appliedStartTime,
+      appliedEndTime,
       size, // Include size in query key since we use it for fetch size
-      selectedTenantId, // Include tenant_id for admin filtering
+      appliedTenantId, // Include tenant_id for admin filtering
     ],
     queryFn: async () => {
       // API has a maximum limit of 100 for size parameter
       // Fetch multiple pages to get all available logs, then filter and paginate client-side
       const fetchSize = 100; // API maximum limit
       
-      // Prepare API parameters
-      const apiService = service && service.trim() !== "" ? service : undefined;
-      const apiLevel = level && level.trim() !== "" ? level : undefined;
+      // Prepare API parameters (using applied values)
+      const apiService = appliedService && appliedService.trim() !== "" ? appliedService : undefined;
+      const apiLevel = appliedLevel && appliedLevel.trim() !== "" ? appliedLevel : undefined;
       
       console.log('Fetching logs with filters:', {
         service: apiService || 'All Services',
         level: apiLevel || 'All Levels',
         fetchSize,
-        startTime: startTime || 'not set',
-        endTime: endTime || 'not set',
+        startTime: appliedStartTime || 'not set',
+        endTime: appliedEndTime || 'not set',
       });
       
       // Convert datetime-local format to ISO format for API
-      const apiStartTime = startTime && startTime.trim() !== "" ? convertToISOFormat(startTime) : undefined;
-      const apiEndTime = endTime && endTime.trim() !== "" ? convertToISOFormat(endTime) : undefined;
+      const apiStartTime = appliedStartTime && appliedStartTime.trim() !== "" ? convertToISOFormat(appliedStartTime) : undefined;
+      const apiEndTime = appliedEndTime && appliedEndTime.trim() !== "" ? convertToISOFormat(appliedEndTime) : undefined;
       
       console.log('Time conversion:', {
-        startTime_local: startTime,
+        startTime_local: appliedStartTime,
         startTime_iso: apiStartTime,
-        endTime_local: endTime,
+        endTime_local: appliedEndTime,
         endTime_iso: apiEndTime,
       });
       
@@ -381,10 +352,10 @@ const LogsPage: React.FC = () => {
         size: fetchSize,
         service: apiService,
         level: apiLevel,
-        search_text: searchText && searchText.trim() !== "" ? searchText : undefined,
+        search_text: appliedSearchText && appliedSearchText.trim() !== "" ? appliedSearchText : undefined,
         start_time: apiStartTime,
         end_time: apiEndTime,
-        tenant_id: isAdmin && selectedTenantId && selectedTenantId.trim() !== "" ? selectedTenantId : undefined,
+        tenant_id: isAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
       });
       
       // Ensure logs is always an array
@@ -419,10 +390,10 @@ const LogsPage: React.FC = () => {
                   size: fetchSize,
                   service: apiService,
                   level: apiLevel,
-                  search_text: searchText && searchText.trim() !== "" ? searchText : undefined,
+                  search_text: appliedSearchText && appliedSearchText.trim() !== "" ? appliedSearchText : undefined,
                   start_time: apiStartTime,
                   end_time: apiEndTime,
-                  tenant_id: isAdmin && selectedTenantId && selectedTenantId.trim() !== "" ? selectedTenantId : undefined,
+                  tenant_id: isAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
                 }).catch((error) => {
                 console.error(`Error fetching page ${page}:`, error);
                 return { logs: [] }; // Return empty logs on error
@@ -548,7 +519,7 @@ const LogsPage: React.FC = () => {
         services: services,
       });
     }
-  }, [logsData, services, service]);
+  }, [logsData, services, appliedService]);
 
   // Debug: Log authentication state
   useEffect(() => {
@@ -579,7 +550,7 @@ const LogsPage: React.FC = () => {
   useEffect(() => {
     // Only set default if both startTime and endTime are empty
     // This ensures we set it once on initial load, but don't override user's manual selections
-    if (!startTime && !endTime) {
+    if (!startTime && !endTime && !appliedStartTime && !appliedEndTime) {
       const now = new Date();
       const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
       // Format as YYYY-MM-DDTHH:mm for datetime-local input
@@ -591,16 +562,29 @@ const LogsPage: React.FC = () => {
         const minutes = String(date.getMinutes()).padStart(2, '0');
         return `${year}-${month}-${day}T${hours}:${minutes}`;
       };
-      setEndTime(formatDateTime(now));
-      setStartTime(formatDateTime(oneHourAgo));
+      const formattedNow = formatDateTime(now);
+      const formattedOneHourAgo = formatDateTime(oneHourAgo);
+      setEndTime(formattedNow);
+      setStartTime(formattedOneHourAgo);
+      // Also set applied values so initial query runs
+      setAppliedEndTime(formattedNow);
+      setAppliedStartTime(formattedOneHourAgo);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSearch = () => {
+    // Apply all filter values to the query
+    setAppliedService(service);
+    setAppliedLevel(level);
+    setAppliedSearchText(searchText);
+    setAppliedStartTime(startTime);
+    setAppliedEndTime(endTime);
+    setAppliedTenantId(selectedTenantId);
+    // Reset pagination
     setPage(1);
     setClientPage(1);
-    refetchLogs();
+    // Note: React Query will automatically refetch when applied values change
   };
 
   const handleRefresh = () => {
@@ -615,11 +599,15 @@ const LogsPage: React.FC = () => {
       return `${year}-${month}-${day}T${hours}:${minutes}`;
     };
 
+    // Use applied time range if available, otherwise use current filter values
+    const currentStartTime = appliedStartTime || startTime;
+    const currentEndTime = appliedEndTime || endTime;
+
     // If both startTime and endTime are set, maintain the time range but shift it to now
-    if (startTime && endTime) {
+    if (currentStartTime && currentEndTime) {
       try {
-        const startDate = new Date(startTime);
-        const endDate = new Date(endTime);
+        const startDate = new Date(currentStartTime);
+        const endDate = new Date(currentEndTime);
         const timeRangeMs = endDate.getTime() - startDate.getTime();
         
         // Set new endTime to now, and startTime to maintain the same range
@@ -628,26 +616,36 @@ const LogsPage: React.FC = () => {
         
         setEndTime(newEndTime);
         setStartTime(newStartTime);
+        // Also update applied values to trigger immediate refresh
+        setAppliedEndTime(newEndTime);
+        setAppliedStartTime(newStartTime);
       } catch (error) {
         // If parsing fails, just update endTime to now and keep startTime as is
         console.warn('Error parsing time range, updating endTime only:', error);
-        setEndTime(formatDateTime(now));
+        const newEndTime = formatDateTime(now);
+        setEndTime(newEndTime);
+        setAppliedEndTime(newEndTime);
       }
     } else {
       // If time range is not set, set default 1 hour range
       const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-      setEndTime(formatDateTime(now));
-      setStartTime(formatDateTime(oneHourAgo));
+      const formattedNow = formatDateTime(now);
+      const formattedOneHourAgo = formatDateTime(oneHourAgo);
+      setEndTime(formattedNow);
+      setStartTime(formattedOneHourAgo);
+      // Also update applied values
+      setAppliedEndTime(formattedNow);
+      setAppliedStartTime(formattedOneHourAgo);
     }
     
     // Reset to first page
-    // Note: React Query will automatically refetch when startTime/endTime change
-    // since they are part of the queryKey
+    // Note: React Query will automatically refetch when applied values change
     setPage(1);
     setClientPage(1);
   };
 
   const handleClear = () => {
+    // Clear filter inputs
     setService("");
     setLevel("");
     setSearchText("");
@@ -663,8 +661,17 @@ const LogsPage: React.FC = () => {
       const minutes = String(date.getMinutes()).padStart(2, '0');
       return `${year}-${month}-${day}T${hours}:${minutes}`;
     };
-    setEndTime(formatDateTime(now));
-    setStartTime(formatDateTime(oneHourAgo));
+    const formattedNow = formatDateTime(now);
+    const formattedOneHourAgo = formatDateTime(oneHourAgo);
+    setEndTime(formattedNow);
+    setStartTime(formattedOneHourAgo);
+    // Also clear applied values and set default time range
+    setAppliedService("");
+    setAppliedLevel("");
+    setAppliedSearchText("");
+    setAppliedTenantId("");
+    setAppliedEndTime(formattedNow);
+    setAppliedStartTime(formattedOneHourAgo);
     setPage(1);
     setClientPage(1);
   };
@@ -749,8 +756,8 @@ const LogsPage: React.FC = () => {
     
     console.log('Filtering logs:', {
       totalFromAPI: logsData.logs.length,
-      service: service || 'All Services',
-      level: level || 'All Levels',
+      service: appliedService || 'All Services',
+      level: appliedLevel || 'All Levels',
     });
     
     const filtered = logsData.logs.filter((log: LogEntry) => !shouldFilterLog(log));
@@ -762,8 +769,8 @@ const LogsPage: React.FC = () => {
         originalCount: logsData.logs.length,
         filteredCount: filtered.length,
         noiseRemoved: filteredCount,
-        service: service || 'All Services',
-        level: level || 'All Levels',
+        service: appliedService || 'All Services',
+        level: appliedLevel || 'All Levels',
       });
       
       if (filtered.length === 0 && logsData.logs.length > 0) {
@@ -774,7 +781,7 @@ const LogsPage: React.FC = () => {
     }
     
     return filtered;
-  }, [logsData, service, level]);
+  }, [logsData, appliedService, appliedLevel]);
 
   // Calculate filtered statistics for display
   const filteredStats = useMemo(() => {
@@ -806,10 +813,10 @@ const LogsPage: React.FC = () => {
     return allFilteredLogs.slice(startIndex, endIndex);
   }, [allFilteredLogs, clientPage, size]);
 
-  // Reset client page when filters change
+  // Reset client page when applied filters change
   useEffect(() => {
     setClientPage(1);
-  }, [service, level, searchText, startTime, endTime, size, selectedTenantId]);
+  }, [appliedService, appliedLevel, appliedSearchText, appliedStartTime, appliedEndTime, size, appliedTenantId]);
 
   // Debug: Log filtered results
   useEffect(() => {
@@ -819,10 +826,10 @@ const LogsPage: React.FC = () => {
         totalLogs: logsData.logs.length,
         filteredLogs: filteredLogs.length,
         filteredOut: logsData.logs.length - filteredLogs.length,
-        service: service || 'All Services',
+        service: appliedService || 'All Services',
       });
     }
-  }, [logsData, filteredLogs, service]);
+  }, [logsData, filteredLogs, appliedService]);
 
   return (
     <>
@@ -915,23 +922,6 @@ const LogsPage: React.FC = () => {
             </Alert>
           )}
 
-          {servicesError && !servicesLoading && (
-            <Alert status="warning">
-              <AlertIcon />
-              <AlertDescription>
-                Failed to load services: {(() => {
-                  const error = servicesError as any;
-                  if (error?.response?.data?.detail) {
-                    const detail = error.response.data.detail;
-                    if (typeof detail === 'string') return detail;
-                    if (typeof detail === 'object') return detail.message || detail.detail || JSON.stringify(detail);
-                    return String(detail);
-                  }
-                  return error?.message || 'Unknown error';
-                })()}
-              </AlertDescription>
-            </Alert>
-          )}
 
           {aggregationsError && !aggregationsLoading && (
             <Alert status="warning">
@@ -1045,8 +1035,7 @@ const LogsPage: React.FC = () => {
                       onChange={(e) => {
                         const value = e.target.value;
                         setSelectedTenantId(value === "" ? "" : value);
-                        setPage(1);
-                        setClientPage(1); // Reset to first page when tenant changes
+                        // Don't reset pagination here - wait for Search button
                       }}
                       bg="white"
                       isDisabled={tenantsLoading}
@@ -1071,14 +1060,13 @@ const LogsPage: React.FC = () => {
 
                 <FormControl>
                   <FormLabel fontWeight="medium">Service</FormLabel>
-                  <Select
-                    value={service || ""}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setService(value === "" ? "" : value);
-                      setPage(1);
-                      setClientPage(1); // Reset to first page when service changes
-                    }}
+                    <Select
+                      value={service || ""}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setService(value === "" ? "" : value);
+                        // Don't reset pagination here - wait for Search button
+                      }}
                     bg="white"
                   >
                     <option value="">All Services</option>
@@ -1092,13 +1080,13 @@ const LogsPage: React.FC = () => {
 
                 <FormControl>
                   <FormLabel fontWeight="medium">Level</FormLabel>
-                  <Select
-                    value={level || ""}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setLevel(value === "" ? "" : value);
-                      setClientPage(1); // Reset to first page when level changes
-                    }}
+                    <Select
+                      value={level || ""}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setLevel(value === "" ? "" : value);
+                        // Don't reset pagination here - wait for Search button
+                      }}
                     bg="white"
                   >
                     <option value="">All Levels</option>
@@ -1144,13 +1132,14 @@ const LogsPage: React.FC = () => {
 
                 <FormControl>
                   <FormLabel fontWeight="medium">Page Size</FormLabel>
-                  <Select
-                    value={size}
-                    onChange={(e) => {
-                      setSize(Number(e.target.value));
-                      setPage(1);
-                      setClientPage(1);
-                    }}
+                    <Select
+                      value={size}
+                      onChange={(e) => {
+                        setSize(Number(e.target.value));
+                        setPage(1);
+                        setClientPage(1);
+                        // Page size change applies immediately (no need for Search button)
+                      }}
                     bg="white"
                   >
                     <option value={10}>10</option>
