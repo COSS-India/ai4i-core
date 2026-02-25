@@ -150,7 +150,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
   const [subTabIndex, setSubTabIndex] = useState(0);
-  const [createEnabled, setCreateEnabled] = useState(true);
   const [createRuleRole, setCreateRuleRole] = useState("");
   const [updateRuleRole, setUpdateRuleRole] = useState("");
   const [createRuleDef, setCreateRuleDef] = useState("");
@@ -495,7 +494,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Box>
                 <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Status</Text>
                 <FormControl isRequired>
-                  <RadioGroup value={createEnabled ? "active" : "inactive"} onChange={(val) => setCreateEnabled(val === "active")}>
+                  <RadioGroup value={(defs.createForm.enabled !== false) ? "active" : "inactive"} onChange={(val) => defs.setCreateForm({ ...defs.createForm, enabled: val === "active" })}>
                     <HStack spacing={4}>
                       <Radio value="active" colorScheme="green">
                         <Text fontSize="sm" fontWeight="medium">Active</Text>
