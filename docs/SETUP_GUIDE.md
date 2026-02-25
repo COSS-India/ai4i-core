@@ -61,6 +61,7 @@ cp services/language-diarization-service/env.template services/language-diarizat
 cp services/audio-lang-detection-service/env.template services/audio-lang-detection-service/.env
 cp services/speaker-diarization-service/env.template services/speaker-diarization-service/.env
 cp services/pipeline-service/env.template services/pipeline-service/.env
+cp services/smr-service/env.template services/smr-service/.env
 ```
 
  **Observability Services**
