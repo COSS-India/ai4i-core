@@ -241,8 +241,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </Select>
               <Select size="sm" maxW="120px" value={defs.filterEnabled} onChange={(e) => defs.setFilterEnabled(e.target.value)} bg="white">
                 <option value="all">Status</option>
-                <option value="enabled">Enabled</option>
-                <option value="disabled">Disabled</option>
+                <option value="enabled">Active</option>
+                <option value="disabled">Inactive</option>
               </Select>
               <Box flex="1" />
               <Button
