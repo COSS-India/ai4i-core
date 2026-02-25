@@ -87,8 +87,20 @@ import {
   RBAC_ROLES,
 } from "../../types/alerting";
 
-const EVAL_INTERVALS = ["15s", "30s", "1m", "5m"] as const;
+const EVAL_INTERVALS = ["30s", "1m", "5m"] as const;
 const FOR_DURATIONS = ["1m", "2m", "5m", "10m"] as const;
+
+/** Allowed "For Duration" options per "Evaluation Interval" (for_duration should be >= eval interval). */
+const FOR_DURATION_BY_EVAL_INTERVAL: Record<string, readonly string[]> = {
+  "30s": ["1m", "2m", "5m"],
+  "1m": ["2m", "5m", "10m"],
+  "5m": ["5m", "10m"],
+};
+
+function getAllowedForDurations(evalInterval: string | null | undefined): string[] {
+  const key = evalInterval ?? "30s";
+  return [...(FOR_DURATION_BY_EVAL_INTERVAL[key] ?? FOR_DURATION_BY_EVAL_INTERVAL["30s"])];
+}
 const ALERT_TYPES_BY_CATEGORY: Record<string, { value: string; label: string }[]> = {
   application: [
     { value: "latency", label: "Latency" },
@@ -101,6 +113,11 @@ const ALERT_TYPES_BY_CATEGORY: Record<string, { value: string; label: string }[]
   ],
 };
 const THRESHOLD_UNITS = ["seconds", "percentage"] as const;
+
+/** Threshold unit is fixed by alert type: Latency → seconds, all others → percentage. User should not change it. */
+function getThresholdUnitForAlertType(alertType: string | null | undefined): "seconds" | "percentage" {
+  return alertType === "latency" ? "seconds" : "percentage";
+}
 
 function OptionSelector({
   options,
@@ -150,7 +167,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   const cardBg = useColorModeValue("white", "gray.800");
   const cardBorder = useColorModeValue("gray.200", "gray.700");
   const [subTabIndex, setSubTabIndex] = useState(0);
-  const [createEnabled, setCreateEnabled] = useState(true);
   const [createRuleRole, setCreateRuleRole] = useState("");
   const [updateRuleRole, setUpdateRuleRole] = useState("");
   const [createRuleDef, setCreateRuleDef] = useState("");
@@ -242,8 +258,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </Select>
               <Select size="sm" maxW="120px" value={defs.filterEnabled} onChange={(e) => defs.setFilterEnabled(e.target.value)} bg="white">
                 <option value="all">Status</option>
-                <option value="enabled">Enabled</option>
-                <option value="disabled">Disabled</option>
+                <option value="enabled">Active</option>
+                <option value="disabled">Inactive</option>
               </Select>
               <Box flex="1" />
               <Button
@@ -413,7 +429,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <OptionSelector
                       options={CATEGORIES}
                       value={defs.createForm.category ?? "application"}
-                      onChange={(v) => defs.setCreateForm({ ...defs.createForm, category: v, alert_type: null })}
+                      onChange={(v) => defs.setCreateForm({ ...defs.createForm, category: v, alert_type: null, scope: "percentage" })}
                     />
                     <FormErrorMessage>{defs.createErrors?.category}</FormErrorMessage>
                   </FormControl>
@@ -439,7 +455,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <FormLabel fontWeight="semibold" fontSize="sm">Alert Type</FormLabel>
                     <Select
                       value={defs.createForm.alert_type ?? ""}
-                      onChange={(e) => defs.setCreateForm({ ...defs.createForm, alert_type: e.target.value || null })}
+                      onChange={(e) => {
+                        const newAlertType = e.target.value || null;
+                        const newScope = getThresholdUnitForAlertType(newAlertType);
+                        defs.setCreateForm({ ...defs.createForm, alert_type: newAlertType, scope: newScope });
+                      }}
                       bg="white"
                       placeholder="Select alert type..."
                     >
@@ -464,8 +484,17 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                           <NumberDecrementStepper />
                         </NumberInputStepper>
                       </NumberInput>
-                      <Select value={defs.createForm.scope ?? "seconds"} onChange={(e) => defs.setCreateForm({ ...defs.createForm, scope: e.target.value })} bg="white">
-                        {THRESHOLD_UNITS.map((u) => (<option key={u} value={u}>{u.charAt(0).toUpperCase() + u.slice(1)}</option>))}
+                      <Select
+                        value={getThresholdUnitForAlertType(defs.createForm.alert_type)}
+                        isDisabled
+                        bg="gray.200"
+                        color="gray.700"
+                        cursor="not-allowed"
+                        borderColor="gray.300"
+                      >
+                        <option value={getThresholdUnitForAlertType(defs.createForm.alert_type)}>
+                          {getThresholdUnitForAlertType(defs.createForm.alert_type).charAt(0).toUpperCase() + getThresholdUnitForAlertType(defs.createForm.alert_type).slice(1)}
+                        </option>
                       </Select>
                     </SimpleGrid>
                     <FormErrorMessage>{defs.createErrors?.threshold_value}</FormErrorMessage>
@@ -473,15 +502,35 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   <SimpleGrid columns={2} spacing={4}>
                     <FormControl isRequired>
                       <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
-                      <Select value={defs.createForm.evaluation_interval ?? "30s"} onChange={(e) => defs.setCreateForm({ ...defs.createForm, evaluation_interval: e.target.value })} bg="white">
+                      <Select
+                        value={defs.createForm.evaluation_interval ?? "30s"}
+                        onChange={(e) => {
+                          const newEval = e.target.value;
+                          const allowed = getAllowedForDurations(newEval);
+                          const currentFor = defs.createForm.for_duration ?? "5m";
+                          const newFor = allowed.includes(currentFor) ? currentFor : allowed[0];
+                          defs.setCreateForm({ ...defs.createForm, evaluation_interval: newEval, for_duration: newFor });
+                        }}
+                        bg="white"
+                      >
                         {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
                       </Select>
                       <Text fontSize="xs" color="gray.500" mt={1}>How often to check this condition</Text>
                     </FormControl>
                     <FormControl isRequired>
                       <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
-                      <Select value={defs.createForm.for_duration ?? "5m"} onChange={(e) => defs.setCreateForm({ ...defs.createForm, for_duration: e.target.value })} bg="white">
-                        {FOR_DURATIONS.map((v) => (<option key={v} value={v}>{v}</option>))}
+                      <Select
+                        value={(() => {
+                          const allowed = getAllowedForDurations(defs.createForm.evaluation_interval);
+                          const cur = defs.createForm.for_duration ?? "5m";
+                          return allowed.includes(cur) ? cur : allowed[0];
+                        })()}
+                        onChange={(e) => defs.setCreateForm({ ...defs.createForm, for_duration: e.target.value })}
+                        bg="white"
+                      >
+                        {getAllowedForDurations(defs.createForm.evaluation_interval).map((v) => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
                       </Select>
                       <Text fontSize="xs" color="gray.500" mt={1}>How long the condition must persist before triggering</Text>
                     </FormControl>
@@ -495,7 +544,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Box>
                 <Text fontSize="xs" fontWeight="bold" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={3}>Status</Text>
                 <FormControl isRequired>
-                  <RadioGroup value={createEnabled ? "active" : "inactive"} onChange={(val) => setCreateEnabled(val === "active")}>
+                  <RadioGroup value={(defs.createForm.enabled !== false) ? "active" : "inactive"} onChange={(val) => defs.setCreateForm({ ...defs.createForm, enabled: val === "active" })}>
                     <HStack spacing={4}>
                       <Radio value="active" colorScheme="green">
                         <Text fontSize="sm" fontWeight="medium">Active</Text>
@@ -604,7 +653,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <OptionSelector
                       options={CATEGORIES}
                       value={defs.updateForm.category ?? "application"}
-                      onChange={(v) => defs.setUpdateForm({ ...defs.updateForm, category: v, alert_type: null })}
+                      onChange={(v) => defs.setUpdateForm({ ...defs.updateForm, category: v, alert_type: null, scope: "percentage" })}
                     />
                   </FormControl>
                   <FormControl>
@@ -628,7 +677,11 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                     <FormLabel fontWeight="semibold" fontSize="sm">Alert Type</FormLabel>
                     <Select
                       value={defs.updateForm.alert_type ?? ""}
-                      onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, alert_type: e.target.value || null })}
+                      onChange={(e) => {
+                        const newAlertType = e.target.value || null;
+                        const newScope = getThresholdUnitForAlertType(newAlertType);
+                        defs.setUpdateForm({ ...defs.updateForm, alert_type: newAlertType, scope: newScope });
+                      }}
                       bg="white"
                       placeholder="Select alert type..."
                     >
@@ -652,23 +705,52 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                           <NumberDecrementStepper />
                         </NumberInputStepper>
                       </NumberInput>
-                      <Select value={defs.updateForm.scope ?? "seconds"} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, scope: e.target.value })} bg="white">
-                        {THRESHOLD_UNITS.map((u) => (<option key={u} value={u}>{u.charAt(0).toUpperCase() + u.slice(1)}</option>))}
+                      <Select
+                        value={getThresholdUnitForAlertType(defs.updateForm.alert_type)}
+                        isDisabled
+                        bg="gray.200"
+                        color="gray.700"
+                        cursor="not-allowed"
+                        borderColor="gray.300"
+                      >
+                        <option value={getThresholdUnitForAlertType(defs.updateForm.alert_type)}>
+                          {getThresholdUnitForAlertType(defs.updateForm.alert_type).charAt(0).toUpperCase() + getThresholdUnitForAlertType(defs.updateForm.alert_type).slice(1)}
+                        </option>
                       </Select>
                     </SimpleGrid>
                   </FormControl>
                   <SimpleGrid columns={2} spacing={4}>
                     <FormControl isRequired>
                       <FormLabel fontWeight="semibold" fontSize="sm">Evaluation Interval</FormLabel>
-                      <Select value={defs.updateForm.evaluation_interval ?? "30s"} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, evaluation_interval: e.target.value })} bg="white">
+                      <Select
+                        value={defs.updateForm.evaluation_interval ?? "30s"}
+                        onChange={(e) => {
+                          const newEval = e.target.value;
+                          const allowed = getAllowedForDurations(newEval);
+                          const currentFor = defs.updateForm.for_duration ?? "5m";
+                          const newFor = allowed.includes(currentFor) ? currentFor : allowed[0];
+                          defs.setUpdateForm({ ...defs.updateForm, evaluation_interval: newEval, for_duration: newFor });
+                        }}
+                        bg="white"
+                      >
                         {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
                       </Select>
                       <Text fontSize="xs" color="gray.500" mt={1}>How often to check this condition</Text>
                     </FormControl>
                     <FormControl isRequired>
                       <FormLabel fontWeight="semibold" fontSize="sm">For Duration</FormLabel>
-                      <Select value={defs.updateForm.for_duration ?? "5m"} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, for_duration: e.target.value })} bg="white">
-                        {FOR_DURATIONS.map((v) => (<option key={v} value={v}>{v}</option>))}
+                      <Select
+                        value={(() => {
+                          const allowed = getAllowedForDurations(defs.updateForm.evaluation_interval);
+                          const cur = defs.updateForm.for_duration ?? "5m";
+                          return allowed.includes(cur) ? cur : allowed[0];
+                        })()}
+                        onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, for_duration: e.target.value })}
+                        bg="white"
+                      >
+                        {getAllowedForDurations(defs.updateForm.evaluation_interval).map((v) => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
                       </Select>
                       <Text fontSize="xs" color="gray.500" mt={1}>How long the condition must persist before triggering</Text>
                     </FormControl>

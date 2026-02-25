@@ -2401,6 +2401,7 @@ class AlertDefinitionCreate(BaseModel):
     scope: Optional[str] = Field(None, description="Scope (e.g., 'all_services', 'per_service')")
     evaluation_interval: str = Field(default="30s", description="Prometheus evaluation interval")
     for_duration: str = Field(default="5m", description="Duration before alert fires")
+    enabled: Optional[bool] = Field(default=True, description="Whether the alert definition is enabled")
     annotations: Optional[List[AlertAnnotation]] = Field(default_factory=list, description="Alert annotations")
 
 class AlertDefinitionUpdate(BaseModel):
@@ -4453,7 +4454,7 @@ async def create_alert_definition_endpoint(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
     api_key: Optional[str] = Security(api_key_scheme),
-    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)")
+    organization: Optional[str] = Query(None, description="Organization (admin only - if not provided, uses organization from API key)"),
 ):
     """Create a new alert definition - proxied to alert-management-service"""
     await check_permission("alerts.create", request, credentials)
@@ -5213,17 +5214,26 @@ async def try_it_inference(
     NOTE: All Try-It business logic (rate limiting, default service selection,
     endpoint resolution, etc.) is implemented inside nmt-service.
     API Gateway simply proxies this request to nmt-service.
-    """
+    """ 
     import json
     body = json.dumps(payload.model_dump(mode="json")).encode()
-    # Forward as-is to nmt-service Try-It endpoint
+    # Forward as-is to nmt-service Try-It endpoint  
+    # Prepare headers without hop-by-hop and Content-Length/Host (httpx will set these)
+    headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in ["content-length", "host", "connection", "keep-alive", "transfer-encoding"]
+    }
+    headers["Content-Type"] = "application/json"
+    # Forward to nmt-service Try-It endpoint
     return await proxy_to_service(
         None,
         "/api/v1/try-it",
         "nmt-service",
         method="POST",
         body=body,
-        headers=request.headers,
+        #headers=request.headers,
+        headers=headers,
     )
 
 # NMT Service Endpoints (Proxy to NMT Service)

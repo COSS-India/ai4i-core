@@ -118,8 +118,8 @@ async def view_service(
     request: Request,
     db: AsyncSession = Depends(get_auth_db_session)
 ):
-    """View service details by ID - POST /services/{service_id}. Requires 'service.read' permission (ADMIN or MODERATOR only)."""
-    # Check permission - only ADMIN and MODERATOR can read services
+    """View service details by ID - POST /services/{service_id}. Requires 'service.read' (all authenticated roles, including USER and GUEST, for inference resolution)."""
+    # Check permission - any authenticated user can read service details (needed for inference resolution)
     await require_permission("service.read", request, db)
     try:
         data = await get_service_details(service_id)
