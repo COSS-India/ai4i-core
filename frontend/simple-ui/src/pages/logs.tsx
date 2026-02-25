@@ -261,7 +261,13 @@ const LogsPage: React.FC = () => {
   // Use static list of all services (already filtered to only application services)
   const filteredServices = useMemo(() => {
     // Return all services from the static list, sorted alphabetically
-    return [...services].sort();
+    const sorted = [...services].sort();
+    console.log('Filtered services for dropdown:', {
+      total: sorted.length,
+      services: sorted,
+      includesLanguageDiarization: sorted.includes('language-diarization-service'),
+    });
+    return sorted;
   }, [services]);
 
   // No longer needed - services are static, no error handling required
