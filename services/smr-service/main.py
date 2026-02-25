@@ -18,6 +18,9 @@ import httpx
 from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
 
+# Import DB operations for direct database access
+from db_operations import list_all_services, list_services_with_policies, get_model_details
+
 try:
     from ai4icore_logging import get_logger
 
@@ -153,70 +156,45 @@ async def fetch_candidate_services_for_task(
     task_type: str,
     headers: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
-    """Fetch candidate services for a given task type from model-management-service."""
-    params = {
-        "task_type": task_type,
-        "is_published": True,  # Send as boolean, not string
-    }
-
+    """Fetch candidate services for a given task type directly from database."""
     logger.info(
-        "SMR: Fetching candidate services from model-management",
+        "SMR: Fetching candidate services from database",
         extra={"context": {"task_type": task_type}},
     )
     try:
-        request_kwargs: Dict[str, Any] = {
-            "params": params,
-            "timeout": 15.0,
-        }
-        # Forward auth headers (Authorization / X-API-Key / X-Auth-Source / X-Try-It) to model-management
-        if headers:
-            request_kwargs["headers"] = headers
-
-        resp = await http_client.get(
-            f"{MODEL_MANAGEMENT_SERVICE_URL}/api/v1/model-management/services",
-            **request_kwargs,
+        # Direct database call - no HTTP request needed
+        data = await list_all_services(
+            task_type=task_type,
+            is_published=True,  # Only published services
+            created_by=None
         )
-    except httpx.RequestError as e:
-        logger.error(f"Model Management request failed: {e}")
+        
+        if data is None:
+            logger.warning(f"No services found for task_type={task_type}")
+            return []
+        
+        if not isinstance(data, list):
+            logger.error("Unexpected response format from database (expected list)")
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "DATABASE_BAD_RESPONSE",
+                    "message": "Database returned invalid response format.",
+                },
+            )
+
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Database query failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=503,
             detail={
-                "code": "MODEL_MANAGEMENT_UNAVAILABLE",
-                "message": "Model Management is temporarily unavailable. Please try again.",
+                "code": "DATABASE_UNAVAILABLE",
+                "message": "Database is temporarily unavailable. Please try again.",
             },
         )
-
-    if resp.status_code != 200:
-        error_body = resp.text[:500] if resp.text else "No response body"
-        logger.error(
-            "Model Management returned non-200 status",
-            extra={
-                "status_code": resp.status_code,
-                "body": error_body,
-                "url": f"{MODEL_MANAGEMENT_SERVICE_URL}/api/v1/model-management/services",
-                "params": params,
-            },
-        )
-        raise HTTPException(
-            status_code=resp.status_code,
-            detail={
-                "code": "MODEL_MANAGEMENT_ERROR",
-                "message": f"Failed to fetch candidate services for routing. Status: {resp.status_code}, Response: {error_body}",
-            },
-        )
-
-    data = resp.json()
-    if not isinstance(data, list):
-        logger.error("Unexpected response format from model-management (expected list)")
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "MODEL_MANAGEMENT_BAD_RESPONSE",
-                "message": "Model Management returned invalid response format.",
-            },
-        )
-
-    return data
 
 
 async def fetch_policies_for_task(
@@ -224,59 +202,38 @@ async def fetch_policies_for_task(
     task_type: str,
     headers: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """Fetch per-service policies for a given task type from model-management-service."""
-    params = {"task_type": task_type}
-
+    """Fetch per-service policies for a given task type directly from database."""
     try:
-        request_kwargs: Dict[str, Any] = {
-            "params": params,
-            "timeout": 10.0,
-        }
-        # Forward auth headers (Authorization / X-API-Key / X-Auth-Source / X-Try-It) to model-management
-        if headers:
-            request_kwargs["headers"] = headers
+        # Direct database call - no HTTP request needed
+        services_list = await list_services_with_policies(task_type=task_type)
+        
+        if not isinstance(services_list, list):
+            logger.warning("Unexpected policy response format from database")
+            return {}
 
-        resp = await http_client.get(
-            f"{MODEL_MANAGEMENT_SERVICE_URL}/api/v1/model-management/services/policies",
-            **request_kwargs,
+        policies_map: Dict[str, Dict[str, Any]] = {}
+        for entry in services_list:
+            try:
+                sid = entry.get("serviceId")
+                pol = entry.get("policy")
+                if sid and isinstance(pol, dict):
+                    policies_map[str(sid)] = pol
+            except AttributeError:
+                continue
+
+        logger.info(
+            "SMR: Loaded service policies from database",
+            extra={
+                "context": {
+                    "task_type": task_type,
+                    "policy_count": len(policies_map),
+                }
+            },
         )
-    except httpx.RequestError as e:
-        logger.warning(f"Model Management policy request failed: {e}")
+        return policies_map
+    except Exception as e:
+        logger.warning(f"Database policy query failed: {e}", exc_info=True)
         return {}
-
-    if resp.status_code != 200:
-        logger.warning(
-            "Model Management returned non-200 status for policies",
-            extra={"status_code": resp.status_code, "body": resp.text},
-        )
-        return {}
-
-    payload = resp.json()
-    services = payload.get("services") if isinstance(payload, dict) else None
-    if not isinstance(services, list):
-        logger.warning("Unexpected policy response format from model-management")
-        return {}
-
-    policies_map: Dict[str, Dict[str, Any]] = {}
-    for entry in services:
-        try:
-            sid = entry.get("serviceId")
-            pol = entry.get("policy")
-            if sid and isinstance(pol, dict):
-                policies_map[str(sid)] = pol
-        except AttributeError:
-            continue
-
-    logger.info(
-        "SMR: Loaded service policies",
-        extra={
-            "context": {
-                "task_type": task_type,
-                "policy_count": len(policies_map),
-            }
-        },
-    )
-    return policies_map
 
 
 def _compute_latency_score_for_service(
@@ -817,22 +774,21 @@ async def fetch_model_domain(
     model_id: str,
 ) -> Optional[List[str]]:
     """
-    Fetch model domain information from model management service.
+    Fetch model domain information directly from database.
     
     Args:
-        http_client: HTTP client for making requests
+        http_client: HTTP client (kept for compatibility, not used)
         model_id: Model ID to fetch domain for
         
     Returns:
         List of domain strings, or None if not found
     """
     try:
-        response = await http_client.get(
-            f"{MODEL_MANAGEMENT_SERVICE_URL}/api/v1/model-management/models/{model_id}",
-            timeout=10.0,
-        )
-        response.raise_for_status()
-        model_data = response.json()
+        # Direct database call - no HTTP request needed
+        model_data = await get_model_details(model_id, version=None)
+        
+        if not model_data:
+            return None
         
         domain = model_data.get("domain")
         if isinstance(domain, list):
