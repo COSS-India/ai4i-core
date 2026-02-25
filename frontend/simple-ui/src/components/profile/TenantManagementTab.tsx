@@ -692,9 +692,19 @@ export default function TenantManagementTab({ isActive = false }: TenantManageme
                   <FormLabel>Tenant Contact Name (optional)</FormLabel>
                   <Input placeholder="Enter contact person name (optional)" value={tm.tenantForm.contact_name} onChange={(e) => tm.setTenantForm((f) => ({ ...f, contact_name: e.target.value }))} bg="white" />
                 </FormControl>
-                <FormControl isRequired>
+                <FormControl isRequired isInvalid={!!tm.tenantFormErrors.contact_email}>
                   <FormLabel>Contact Email</FormLabel>
-                  <Input type="email" placeholder="contact@organization.com" value={tm.tenantForm.contact_email} onChange={(e) => tm.setTenantForm((f) => ({ ...f, contact_email: e.target.value }))} bg="white" />
+                  <Input
+                    type="email"
+                    placeholder="contact@organization.com"
+                    value={tm.tenantForm.contact_email}
+                    onChange={(e) => {
+                      tm.setTenantForm((f) => ({ ...f, contact_email: e.target.value }));
+                      if (tm.tenantFormErrors.contact_email) tm.setTenantFormErrors((prev) => ({ ...prev, contact_email: "" }));
+                    }}
+                    bg="white"
+                  />
+                  {tm.tenantFormErrors.contact_email && <FormErrorMessage>{tm.tenantFormErrors.contact_email}</FormErrorMessage>}
                 </FormControl>
                 <FormControl>
                   <FormLabel>Contact Phone (optional)</FormLabel>
