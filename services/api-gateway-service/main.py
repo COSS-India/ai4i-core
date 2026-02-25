@@ -5213,17 +5213,26 @@ async def try_it_inference(
     NOTE: All Try-It business logic (rate limiting, default service selection,
     endpoint resolution, etc.) is implemented inside nmt-service.
     API Gateway simply proxies this request to nmt-service.
-    """
+    """ 
     import json
     body = json.dumps(payload.model_dump(mode="json")).encode()
-    # Forward as-is to nmt-service Try-It endpoint
+    # Forward as-is to nmt-service Try-It endpoint  
+    # Prepare headers without hop-by-hop and Content-Length/Host (httpx will set these)
+    headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in ["content-length", "host", "connection", "keep-alive", "transfer-encoding"]
+    }
+    headers["Content-Type"] = "application/json"
+    # Forward to nmt-service Try-It endpoint
     return await proxy_to_service(
         None,
         "/api/v1/try-it",
         "nmt-service",
         method="POST",
         body=body,
-        headers=request.headers,
+        #headers=request.headers,
+        headers=headers,
     )
 
 # NMT Service Endpoints (Proxy to NMT Service)
