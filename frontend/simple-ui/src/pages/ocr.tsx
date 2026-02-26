@@ -376,7 +376,7 @@ const OCRPage: React.FC = () => {
               OCR - Optical Character Recognition
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              OCR service for Indic and English languages running on NVIDIA T4 GPU. Provides high-accuracy text extraction from images with bounding boxes, confidence scores, and line-by-line results.
+              Extract editable text from images and scanned documents.
             </Text>
           </Box>
 
