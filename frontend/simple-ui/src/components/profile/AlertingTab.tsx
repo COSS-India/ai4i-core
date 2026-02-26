@@ -1524,7 +1524,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
           </DrawerBody>
           <DrawerFooter borderTopWidth="1px" borderColor="gray.200">
             <Button variant="outline" mr={3} onClick={rules.closeUpdate} isDisabled={rules.isUpdating}>Cancel</Button>
-            <Button colorScheme="orange" onClick={rules.handleUpdate} isLoading={rules.isUpdating} loadingText="Saving...">Save Changes</Button>
+            <Button colorScheme="orange" onClick={() => rules.handleUpdate({ rbac_role: updateRuleRole })} isLoading={rules.isUpdating} loadingText="Saving...">Save Changes</Button>
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
