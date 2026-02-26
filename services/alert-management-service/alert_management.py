@@ -453,7 +453,7 @@ class RoutingRuleCreate(BaseModel):
     match_severity: Optional[str] = Field(None, description="Match severity: 'critical', 'warning', 'info', or null (all)")
     match_category: Optional[str] = Field(None, description="Match category: 'application', 'infrastructure', or null (all)")
     match_alert_type: Optional[str] = Field(None, description="Match alert type or null (all)")
-    group_by: Optional[List[str]] = Field(default_factory=lambda: ["alertname", "category", "severity", "organization"], description="Labels to group by")
+    group_by: Optional[List[str]] = Field(default_factory=lambda: ["alertname", "category", "severity"], description="Labels to group by")
     group_wait: str = Field(default="10s", description="Wait time before sending first notification")
     group_interval: str = Field(default="10s", description="Wait time before sending next notification")
     repeat_interval: str = Field(default="12h", description="Wait time before repeating notification")
@@ -551,13 +551,14 @@ def build_promql_from_threshold(
 ) -> str:
     """
     Build PromQL expression from alert type and threshold.
-    Application alerts get organization injected when provided.
+    No organization filter is applied; rules evaluate across all organizations.
     """
     category = (category or "application").lower()
     at = _normalize_alert_type(category, alert_type or "")
 
     if category == "application":
-        org_filter = f', organization="{organization}"' if organization else ""
+        # No organization filter: evaluate across all organizations
+        org_filter = ""
         if at == "latency":
             # Latency: threshold_value in seconds
             return (
@@ -663,13 +664,13 @@ async def create_alert_definition(
     """Create a new alert definition. PromQL is built from alert_type and threshold_value/unit."""
     validate_organization(organization)
     
-    # Build PromQL from threshold and alert_type (organization injected for application alerts inside builder)
+    # Build PromQL from threshold and alert_type (no organization filter; rules apply globally)
     promql_expr_with_org = build_promql_from_threshold(
         category=data.category,
         alert_type=data.alert_type,
         threshold_value=data.threshold_value,
         threshold_unit=data.threshold_unit,
-        organization=organization if data.category == "application" else None,
+        organization=None,
     )
     alert_type_display = _alert_type_to_display(data.alert_type, data.category)
     
@@ -897,7 +898,7 @@ async def update_alert_definition(alert_id: int, organization: Optional[str], da
                     alert_type=alert_type_to_use,
                     threshold_value=float(thresh_val),
                     threshold_unit=thresh_unit,
-                    organization=actual_organization if category_to_use == "application" else None,
+                    organization=None,
                 )
                 updates.append(f"promql_expr = ${param_idx}")
                 params.append(promql_expr_with_org)
@@ -1142,12 +1143,11 @@ async def toggle_alert_definition(alert_id: int, organization: Optional[str], en
 
 # Default email templates for notification receivers (Alertmanager Go template syntax)
 # Include inference endpoint when present (e.g. application latency alerts); .Alerts[0].Labels.endpoint
-DEFAULT_EMAIL_SUBJECT_TEMPLATE = "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.organization }}{{ with (index .Alerts 0).Labels.endpoint }} - {{ . }}{{ end }}"
+DEFAULT_EMAIL_SUBJECT_TEMPLATE = "[{{ if eq .GroupLabels.severity \"critical\" }}CRITICAL{{ else if eq .GroupLabels.severity \"warning\" }}WARNING{{ else }}INFO{{ end }}] {{ .GroupLabels.alertname }}{{ with (index .Alerts 0).Labels.endpoint }} - {{ . }}{{ end }}"
 DEFAULT_EMAIL_BODY_TEMPLATE = """<h2 style="color: {{ if eq .GroupLabels.severity \"critical\" }}#d32f2f{{ else if eq .GroupLabels.severity \"warning\" }}#f57c00{{ else }}#1976d2{{ end }};">
   {{ if eq .GroupLabels.severity "critical" }}🚨 CRITICAL{{ else if eq .GroupLabels.severity "warning" }}⚠️ WARNING{{ else }}ℹ️ INFO{{ end }}: {{ .GroupLabels.category | title }} Alert
 </h2>
 <p><strong>Alert:</strong> {{ .GroupLabels.alertname }}</p>
-<p><strong>Organization:</strong> {{ .GroupLabels.organization }}</p>
 <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
 <p><strong>Category:</strong> {{ .GroupLabels.category }}</p>
 <p><strong>Inference endpoint(s):</strong> {{ range $i, $a := .Alerts }}{{ if index $a.Labels "endpoint" }}{{ if $i }}, {{ end }}{{ $a.Labels.endpoint }}{{ end }}{{ end }}</p>
@@ -1163,7 +1163,8 @@ async def create_notification_receiver(
     """
     Create a new notification receiver and automatically create a routing rule.
     
-    Receiver name is auto-generated as: <organization>-<severity>-<category>
+    Receiver name is auto-generated as: <severity>-<category> (e.g. warning-application).
+    Alertmanager routes by severity and category only; no organization in receiver names.
     A routing rule is automatically created to match alerts with the specified
     category, severity, and optional alert_type.
     
@@ -1196,8 +1197,7 @@ async def create_notification_receiver(
             detail="Either 'email_to' or 'rbac_role' must be provided"
         )
     
-    # Auto-generate receiver name: <severity>-<category>
-    # Note: Organization prefix is added by the sync service when generating alertmanager.yml
+    # Auto-generate receiver name: <severity>-<category> (no organization; sync merges by this key)
     receiver_name = f"{data.severity}-{data.category}"
     
     # Use default templates if not provided
@@ -1233,32 +1233,28 @@ async def create_notification_receiver(
         
         receiver_id = receiver_row['id']
         
-        # Auto-create routing rule
-        # Rule name: <organization>-<severity>-<category>[-<alert_type>]
+        # Auto-create routing rule (rule_name = severity-category[-alert_type]). One rule per (severity, category, alert_type) globally.
         rule_name = receiver_name
         if data.alert_type:
             rule_name = f"{rule_name}-{data.alert_type}"
         
-        # Check if routing rule already exists
+        # Check if a routing rule already exists for this (severity, category, alert_type) — no organization; global uniqueness.
         existing_rule = await conn.fetchrow(
             """
             SELECT id FROM routing_rules 
-            WHERE organization = $1 
-            AND match_severity = $2 
-            AND match_category = $3 
-            AND (match_alert_type = $4 OR (match_alert_type IS NULL AND $4 IS NULL))
+            WHERE match_severity = $1 
+            AND match_category = $2 
+            AND (match_alert_type = $3 OR (match_alert_type IS NULL AND $3 IS NULL))
             """,
-            organization, data.severity, data.category, data.alert_type
+            data.severity, data.category, data.alert_type
         )
         
         if existing_rule:
             logger.warning(
-                f"Routing rule already exists for organization={organization}, "
-                f"severity={data.severity}, category={data.category}, alert_type={data.alert_type}. "
-                f"Receiver created but routing rule not created.",
+                f"Routing rule already exists for severity={data.severity}, category={data.category}, alert_type={data.alert_type}. "
+                f"Receiver created; skipping duplicate rule.",
                 extra={
                     "context": {
-                        "organization": organization,
                         "severity": data.severity,
                         "category": data.category,
                         "alert_type": data.alert_type,
@@ -1266,7 +1262,7 @@ async def create_notification_receiver(
                 }
             )
         else:
-            # Create routing rule with default values
+            # Create routing rule (organization stored for DB/audit only; routing is by severity/category only)
             await conn.execute(
                 """
                 INSERT INTO routing_rules (
@@ -1277,7 +1273,7 @@ async def create_notification_receiver(
                 """,
                 organization, rule_name, receiver_id, data.severity, data.category,
                 data.alert_type, 
-                ["alertname", "category", "severity", "organization"],  # Default group_by
+                ["alertname", "category", "severity"],  # Default group_by (no organization)
                 "10s",  # Default group_wait
                 "10s",  # Default group_interval
                 "12h",  # Default repeat_interval
@@ -1287,10 +1283,9 @@ async def create_notification_receiver(
             )
             logger.info(
                 f"Auto-created routing rule '{rule_name}' for receiver '{receiver_name}' "
-                f"(organization={organization}, severity={data.severity}, category={data.category}, alert_type={data.alert_type})",
+                f"(severity={data.severity}, category={data.category}, alert_type={data.alert_type})",
                 extra={
                     "context": {
-                        "organization": organization,
                         "receiver_name": receiver_name,
                         "rule_name": rule_name,
                         "severity": data.severity,
