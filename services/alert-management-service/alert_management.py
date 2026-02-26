@@ -1207,15 +1207,15 @@ async def create_notification_receiver(
     await ensure_db_pool()
     
     async with db_pool.acquire() as conn:
-        # Check if receiver with this name already exists
+        # Reject if receiver with this name already exists globally (no organization)
         existing = await conn.fetchrow(
-            "SELECT id FROM notification_receivers WHERE organization = $1 AND receiver_name = $2",
-            organization, receiver_name
+            "SELECT id FROM notification_receivers WHERE receiver_name = $1",
+            receiver_name
         )
         if existing:
             raise HTTPException(
                 status_code=409,
-                detail=f"Receiver with name '{receiver_name}' already exists for organization '{organization}'"
+                detail=f"Receiver with name '{receiver_name}' already exists."
             )
         
         # Create the receiver (store both email_to and rbac_role)
