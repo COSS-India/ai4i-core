@@ -63,7 +63,7 @@ export interface TryItRequest {
  */
 export const listTryItNMTServices = async (): Promise<any[]> => {
   const response = await tryItClient.get<any[]>('/api/v1/model-management/services', {
-    params: { task_type: 'nmt' },
+    params: { task_type: 'nmt', is_published: 'true' },
   });
   return Array.isArray(response.data) ? response.data : [];
 };
