@@ -270,6 +270,10 @@ Once all services are running, use the table below to find URLs and ports. The *
 - **Username**: `admin`
 - **Password**: `unleash4all`
 
+### Before running inference
+
+If you get a **SERVICE_UNAVAILABLE** error when calling inference (e.g. NMT, TTS, ASR), the multi-tenant service registry may not have the required services registered. See **[Multi-Tenant Service Registration](MULTI_TENANT_SERVICE_REGISTRATION.md)** for how to obtain an auth token, install curl (Windows/Linux/macOS), and register all services via the API.
+
 ## Troubleshooting
 
 ### Services not starting
@@ -379,6 +383,10 @@ If login still fails:
 ### Port conflicts
 
 If ports are already in use, you can modify the port mappings in `docker-compose-local.yml` or stop the conflicting services.
+
+### Inference returns SERVICE_UNAVAILABLE
+
+If inference calls return a response like `"code": "SERVICE_UNAVAILABLE"` (e.g. "NMT service is not active at the moment"), the multi-tenant services have not been registered. Follow **[Multi-Tenant Service Registration](MULTI_TENANT_SERVICE_REGISTRATION.md)** to register the required services (tts, asr, nmt, llm, pipeline, ocr, ner, etc.) using the Register Services API.
 
 ## Architecture Notes
 
