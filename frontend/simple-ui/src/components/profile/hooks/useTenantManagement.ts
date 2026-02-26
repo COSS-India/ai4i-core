@@ -334,9 +334,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const openUserModal = () => {
-    const defaultTenant = tenants[0];
+    // Tenant admin: use their tenant_id from /me so the field is never empty and always correct
+    const defaultTenant = user?.tenant_id?.trim()
+      ? tenants.find((t) => (t.tenant_id ?? "").trim().toLowerCase() === user!.tenant_id!.trim().toLowerCase()) ?? tenants[0]
+      : tenants[0];
     setUserForm({
-      tenant_id: defaultTenant?.tenant_id ?? "",
+      tenant_id: (user?.tenant_id?.trim() || defaultTenant?.tenant_id) ?? "",
       email: "",
       username: "",
       full_name: "",
