@@ -741,15 +741,15 @@ async def create_new_tenant(
             
     from utils.utils import _normalize_domain , _domains_similar
 
-    requested_domain_norm = _normalize_domain(payload.domain) if payload.domain else ""
-    if requested_domain_norm:
-        existing_domain_norm = await db.scalars(select(Tenant).where(Tenant.domain == requested_domain_norm))
-        existing_domain_norm = existing_domain_norm.first()
+    # requested_domain_norm = _normalize_domain(payload.domain) if payload.domain else ""
+    # if requested_domain_norm:
+    #     existing_domain_norm = await db.scalars(select(Tenant).where(Tenant.domain == requested_domain_norm))
+    #     existing_domain_norm = existing_domain_norm.first()
 
-        if existing_domain_norm.domain == requested_domain_norm:
-            raise ValueError("Domain already registered")
-        if _domains_similar(existing_domain_norm.domain, requested_domain_norm):
-            raise ValueError(f"Domain '{payload.domain}' is too similar to existing registered domain '{tenant.domain}'")
+    #     if existing_domain_norm.domain == requested_domain_norm:
+    #         raise ValueError("Domain already registered")
+    #     if _domains_similar(existing_domain_norm.domain, requested_domain_norm):
+    #         raise ValueError(f"Domain '{payload.domain}' is too similar to existing registered domain '{tenant.domain}'")
 
     if not payload.requested_subscriptions:
         raise HTTPException(
