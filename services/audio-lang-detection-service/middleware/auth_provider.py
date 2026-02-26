@@ -129,14 +129,91 @@ async def validate_api_key_permissions(
                     # Decision point: Check if API key is valid
                     with tracer.start_as_current_span("auth.decision.check_validity") as validity_span:
                         validity_span.set_attribute("auth.decision", "check_api_key_validity")
-                        # CRITICAL: Check valid=False FIRST - this means the API key doesn't belong to the user
-                        if not result.get("valid", False):
-                            # API key invalid - extract detailed reason
+
+                        api_key_user_id = result.get("user_id")
+                        is_valid = result.get("valid", False)
+
+                        # If auth-service reports invalid, decide if it's ownership vs permission
+                        if not is_valid:
                             error_msg = result.get("message", "Permission denied")
                             error_code = result.get("code", "PERMISSION_DENIED")
                             error_reason = result.get("reason", "unknown")
-                            logger.error(f"Auth-service returned valid=False: {error_msg}, user_id={result.get('user_id')}, requested_user_id={user_id}")
-                            
+
+                            logger.error(
+                                f"Auth-service returned valid=False: {error_msg}, "
+                                f"user_id={api_key_user_id}, requested_user_id={user_id}"
+                            )
+
+                            # Permission vs ownership decision is based on the auth-service message:
+                            # - If the message explicitly says "does not have access/permission to AUDIO_LANG_DETECTION service",
+                            #   treat it as a permission/invalid-key error and surface it as-is.
+                            # - All other AUDIO_LANG_DETECTION invalid-key cases are treated as ownership mismatches
+                            #   for BOTH mode, and we surface the canonical ownership message.
+                            error_msg_lower = error_msg.lower()
+                            is_explicit_permission_msg = (
+                                (
+                                    "does not have access" in error_msg_lower
+                                    or "does not have permission" in error_msg_lower
+                                )
+                                and (
+                                    "audio_lang_detection service" in error_msg_lower
+                                    or "audio-lang-detection service" in error_msg_lower
+                                )
+                            )
+
+                            if is_explicit_permission_msg:
+                                # Permission / generic invalid-key case – surface auth-service message
+                                validity_span.set_attribute("auth.decision.result", "rejected")
+                                validity_span.set_attribute("error", True)
+                                validity_span.set_attribute("error.type", "AuthorizationError")
+                                validity_span.set_attribute("error.reason", error_reason)
+                                validity_span.set_attribute("error.code", error_code)
+                                validity_span.set_attribute("error.message", error_msg)
+                                validity_span.set_status(Status(StatusCode.ERROR, error_msg))
+
+                                span.set_attribute("auth.valid", False)
+                                span.set_attribute("error", True)
+                                span.set_attribute("error.type", "AuthorizationError")
+                                span.set_attribute("error.reason", error_reason)
+                                span.set_attribute("error.code", error_code)
+                                span.set_attribute("error.message", error_msg)
+                                span.add_event("auth.validation.failed", {
+                                    "reason": error_reason,
+                                    "code": error_code,
+                                    "message": error_msg
+                                })
+                                span.set_status(Status(StatusCode.ERROR, error_msg))
+
+                                validate_span.set_attribute("auth.valid", False)
+                                validate_span.set_attribute("error", True)
+                                validate_span.set_attribute("error.type", "AuthorizationError")
+                                validate_span.set_attribute("error.reason", error_reason)
+                                validate_span.set_attribute("error.code", error_code)
+                                validate_span.set_status(Status(StatusCode.ERROR, error_msg))
+
+                                raise AuthorizationError(error_msg)
+
+                            # Ownership / other invalid-key case – surface canonical ownership message
+                            ownership_msg = "API key does not belong to the authenticated user"
+                            validity_span.set_attribute("auth.decision.result", "rejected")
+                            validity_span.set_attribute("error", True)
+                            validity_span.set_attribute("error.type", "AuthorizationError")
+                            validity_span.set_attribute("error.reason", "ownership_mismatch")
+                            validity_span.set_attribute("error.message", ownership_msg)
+                            validity_span.set_status(Status(StatusCode.ERROR, ownership_msg))
+
+                            span.set_attribute("auth.valid", False)
+                            span.set_attribute("error", True)
+                            span.set_attribute("error.type", "AuthorizationError")
+                            span.set_attribute("error.reason", "ownership_mismatch")
+                            span.set_attribute("error.message", ownership_msg)
+                            span.set_status(Status(StatusCode.ERROR, ownership_msg))
+
+                            validate_span.set_attribute("auth.valid", False)
+                            validate_span.set_attribute("error", True)
+                            validate_span.set_status(Status(StatusCode.ERROR, ownership_msg))
+
+                            raise AuthorizationError(ownership_msg)
                             validity_span.set_attribute("auth.decision.result", "rejected")
                             validity_span.set_attribute("error", True)
                             validity_span.set_attribute("error.type", "AuthorizationError")
@@ -144,7 +221,7 @@ async def validate_api_key_permissions(
                             validity_span.set_attribute("error.code", error_code)
                             validity_span.set_attribute("error.message", error_msg)
                             validity_span.set_status(Status(StatusCode.ERROR, error_msg))
-                            
+
                             span.set_attribute("auth.valid", False)
                             span.set_attribute("error", True)
                             span.set_attribute("error.type", "AuthorizationError")
@@ -157,36 +234,40 @@ async def validate_api_key_permissions(
                                 "message": error_msg
                             })
                             span.set_status(Status(StatusCode.ERROR, error_msg))
-                            
+
                             validate_span.set_attribute("auth.valid", False)
                             validate_span.set_attribute("error", True)
                             validate_span.set_attribute("error.type", "AuthorizationError")
                             validate_span.set_attribute("error.reason", error_reason)
                             validate_span.set_attribute("error.code", error_code)
                             validate_span.set_status(Status(StatusCode.ERROR, error_msg))
-                            
+
                             raise AuthorizationError(error_msg)
 
                         # API key is valid - check ownership if user_id provided
-                        if user_id is not None and result.get("user_id") is not None:
-                            if int(result.get("user_id")) != int(user_id):
-                                logger.error(f"API key ownership mismatch: requested_user_id={user_id}, api_key_user_id={result.get('user_id')}")
+                        if user_id is not None and api_key_user_id is not None:
+                            if int(api_key_user_id) != int(user_id):
+                                ownership_msg = "API key does not belong to the authenticated user"
+                                logger.error(
+                                    f"API key ownership mismatch: requested_user_id={user_id}, "
+                                    f"api_key_user_id={api_key_user_id}"
+                                )
                                 validity_span.set_attribute("auth.decision.result", "rejected")
                                 validity_span.set_attribute("error", True)
                                 validity_span.set_attribute("error.type", "AuthorizationError")
                                 validity_span.set_attribute("error.reason", "ownership_mismatch")
-                                validity_span.set_attribute("error.message", "API key does not belong to the authenticated user")
-                                validity_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
+                                validity_span.set_attribute("error.message", ownership_msg)
+                                validity_span.set_status(Status(StatusCode.ERROR, ownership_msg))
                                 span.set_attribute("auth.valid", False)
                                 span.set_attribute("error", True)
                                 span.set_attribute("error.type", "AuthorizationError")
                                 span.set_attribute("error.reason", "ownership_mismatch")
-                                span.set_attribute("error.message", "API key does not belong to the authenticated user")
-                                span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
+                                span.set_attribute("error.message", ownership_msg)
+                                span.set_status(Status(StatusCode.ERROR, ownership_msg))
                                 validate_span.set_attribute("auth.valid", False)
                                 validate_span.set_attribute("error", True)
-                                validate_span.set_status(Status(StatusCode.ERROR, "API key does not belong to the authenticated user"))
-                                raise AuthorizationError("API key does not belong to the authenticated user")
+                                validate_span.set_status(Status(StatusCode.ERROR, ownership_msg))
+                                raise AuthorizationError(ownership_msg)
 
                         # Success case
                         validity_span.set_attribute("auth.decision.result", "approved")
@@ -198,40 +279,6 @@ async def validate_api_key_permissions(
                         validate_span.set_attribute("auth.valid", True)
                         validate_span.set_status(Status(StatusCode.OK))
                         return result
-                        # API key invalid - extract detailed reason
-                        error_msg = result.get("message", "Permission denied")
-                        error_code = result.get("code", "PERMISSION_DENIED")
-                        error_reason = result.get("reason", "unknown")
-                        
-                        validity_span.set_attribute("auth.decision.result", "rejected")
-                        validity_span.set_attribute("error", True)
-                        validity_span.set_attribute("error.type", "AuthorizationError")
-                        validity_span.set_attribute("error.reason", error_reason)
-                        validity_span.set_attribute("error.code", error_code)
-                        validity_span.set_attribute("error.message", error_msg)
-                        validity_span.set_status(Status(StatusCode.ERROR, error_msg))
-                        
-                        span.set_attribute("auth.valid", False)
-                        span.set_attribute("error", True)
-                        span.set_attribute("error.type", "AuthorizationError")
-                        span.set_attribute("error.reason", error_reason)
-                        span.set_attribute("error.code", error_code)
-                        span.set_attribute("error.message", error_msg)
-                        span.add_event("auth.validation.failed", {
-                            "reason": error_reason,
-                            "code": error_code,
-                            "message": error_msg
-                        })
-                        span.set_status(Status(StatusCode.ERROR, error_msg))
-                        
-                        validate_span.set_attribute("auth.valid", False)
-                        validate_span.set_attribute("error", True)
-                        validate_span.set_attribute("error.type", "AuthorizationError")
-                        validate_span.set_attribute("error.reason", error_reason)
-                        validate_span.set_attribute("error.code", error_code)
-                        validate_span.set_status(Status(StatusCode.ERROR, error_msg))
-                        
-                        raise AuthorizationError(error_msg)
 
                 # Handle non-200 responses - extract error from detail or message field
                 try:
@@ -381,16 +428,56 @@ async def _validate_api_key_permissions_impl(
 
     if response.status_code == 200:
         result = response.json()
-        logger.info(f"Auth-service response: valid={result.get('valid')}, message={result.get('message')}, user_id={result.get('user_id')}, requested_user_id={user_id}")
-        if not result.get("valid", False):
-            # CRITICAL: Auth-service returned valid=False - this means the API key doesn't belong to the user
+        logger.info(
+            "Auth-service response: valid=%s, message=%s, user_id=%s, requested_user_id=%s",
+            result.get("valid"),
+            result.get("message"),
+            result.get("user_id"),
+            user_id,
+        )
+
+        api_key_user_id = result.get("user_id")
+        is_valid = result.get("valid", False)
+
+        # Handle invalid keys: decide between ownership and permission
+        if not is_valid:
             error_msg = result.get("message", "Permission denied")
-            logger.error(f"Auth-service returned valid=False: {error_msg}, requested_user_id={user_id}, api_key_user_id={result.get('user_id')}")
-            raise AuthorizationError(error_msg)
+            logger.error(
+                "Auth-service returned valid=False: %s, requested_user_id=%s, api_key_user_id=%s",
+                error_msg,
+                user_id,
+                api_key_user_id,
+            )
+
+            # Permission vs ownership decision is based on the auth-service message:
+            # - If the message explicitly says "does not have permission to AUDIO_LANG_DETECTION service",
+            #   treat it as a permission/invalid-key error and surface it as-is.
+            # - All other AUDIO_LANG_DETECTION invalid-key cases are treated as ownership mismatches
+            #   for BOTH mode, and we surface the canonical ownership message.
+            error_msg_lower = error_msg.lower()
+            is_explicit_permission_msg = (
+                "does not have permission" in error_msg_lower
+                and (
+                    "audio_lang_detection service" in error_msg_lower
+                    or "audio-lang-detection service" in error_msg_lower
+                )
+            )
+
+            if is_explicit_permission_msg:
+                # Permission / generic invalid-key case
+                raise AuthorizationError(error_msg)
+
+            # Ownership / other invalid-key case
+            raise AuthorizationError("API key does not belong to the authenticated user")
+
         # Additional check: if user_id was provided, verify the API key's user_id matches
-        if user_id is not None and result.get("user_id") is not None:
-            if int(result.get("user_id")) != int(user_id):
-                logger.error(f"API key ownership mismatch: requested_user_id={user_id}, api_key_user_id={result.get('user_id')}")
+        if user_id is not None and api_key_user_id is not None:
+            if int(api_key_user_id) != int(user_id):
+                logger.error(
+                    "API key ownership mismatch: requested_user_id=%s, api_key_user_id=%s",
+                    user_id,
+                    api_key_user_id,
+                )
                 raise AuthorizationError("API key does not belong to the authenticated user")
 
         return result

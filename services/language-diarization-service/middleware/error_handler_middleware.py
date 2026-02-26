@@ -115,31 +115,13 @@ def add_error_handlers(app: FastAPI) -> None:
                 },
             )
 
-        # PRIORITY 3: For invalid API key errors in BOTH mode, check if it's actually an ownership issue
-        # This matches language-detection / OCR / NMT behavior.
+        # PRIORITY 3: For invalid API key errors, always surface the actual
+        # "Invalid API key" style message from auth-service instead of converting
+        # it into an ownership error. This ensures that when an invalid/unknown
+        # API key is provided, clients see an "Invalid API key ..." message and
+        # not "API key does not belong to the authenticated user".
         error_msg_lower_check = (error_msg or "").lower()
         if "invalid api key" in error_msg_lower_check:
-            # Check if this is BOTH mode (request has Authorization header with Bearer token)
-            authorization_header = request.headers.get("authorization", "")
-            is_both_mode = authorization_header.startswith("Bearer ")
-
-            # In BOTH mode, when auth-service returns
-            #   "Invalid API key: This key does not have access to LANGUAGE_DIARIZATION service"
-            # for a key that belongs to a **different** user, we want to surface it as an
-            # ownership problem, not a permission problem – same as other services.
-            if is_both_mode and "does not have access" in error_msg_lower_check:
-                return JSONResponse(
-                    status_code=401,
-                    content={
-                        "detail": {
-                            "error": "AUTHORIZATION_ERROR",
-                            "message": "API key does not belong to the authenticated user",
-                        }
-                    },
-                )
-
-            # Otherwise (non‑BOTH mode or other invalid‑key messages), treat it as a
-            # regular permission error and preserve the original message.
             clean_message = _strip_status_prefix(error_msg or "Invalid API key")
             return JSONResponse(
                 status_code=401,

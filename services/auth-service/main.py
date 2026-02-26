@@ -1104,7 +1104,7 @@ async def validate_api_key(
     from services.constants import get_resource_name
     resource_name = get_resource_name(service)
     
-    # Validate API key
+    # Validate API key (existence, active/expired, permissions)
     is_valid, api_key_obj, error_message = await AuthUtils.validate_api_key(
         db=db,
         api_key=validation_data.api_key,
@@ -1112,23 +1112,29 @@ async def validate_api_key(
         action=action
     )
     
-    if not is_valid:
-        return APIKeyValidationResponse(
-            valid=False,
-            message=error_message,
-            permissions=[]
-        )
-    
     # Optional ownership enforcement: when caller provides user_id (BOTH mode),
-    # ensure the API key actually belongs to that user.
+    # ensure the API key actually belongs to that user. This MUST be checked
+    # BEFORE returning permission/invalid-key errors so that "wrong user"
+    # is always surfaced as an ownership error.
     requested_user_id = validation_data.user_id
     if requested_user_id is not None and api_key_obj and api_key_obj.user_id is not None:
         if api_key_obj.user_id != requested_user_id:
             return APIKeyValidationResponse(
                 valid=False,
                 message="API key does not belong to the authenticated user",
+                user_id=api_key_obj.user_id,
                 permissions=[]
             )
+    
+    # If key failed validation for any other reason (invalid, revoked, expired,
+    # or missing permissions), surface the underlying message from AuthUtils.
+    if not is_valid:
+        return APIKeyValidationResponse(
+            valid=False,
+            message=error_message,
+            user_id=api_key_obj.user_id if api_key_obj else None,
+            permissions=[]
+        )
     
     # Return success with permissions
     return APIKeyValidationResponse(
