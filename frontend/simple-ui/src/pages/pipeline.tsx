@@ -158,7 +158,7 @@ const PipelinePage: React.FC = () => {
         <title>Speech to Speech | AI4Inclusion Console</title>
         <meta
           name="description"
-          content="Speech-to-Speech translation pipeline combining ASR, NMT, and TTS"
+          content="Transform spoken input into translated speech output using chained AI models"
         />
       </Head>
 
@@ -178,8 +178,7 @@ const PipelinePage: React.FC = () => {
                   Speech to Speech
                 </Heading>
                 <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
-                  Chain Speech, Translation, and Voice models for end-to-end speech
-                  conversion.
+                  Transform spoken input into translated speech output using chained AI models.
                 </Text>
               </Box>
               <Button

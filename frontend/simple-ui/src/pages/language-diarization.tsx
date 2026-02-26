@@ -182,7 +182,7 @@ const LanguageDiarizationPage: React.FC = () => {
               Language Diarization
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Identify when language changes occur within spoken audio. Segment audio based on the language being spoken.
+              Detect language switches in real time within spoken audio.
             </Text>
           </Box>
 

@@ -185,7 +185,7 @@ const LanguageDetectionPage: React.FC = () => {
               Text Language Detection
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              A lightweight language identification service for detecting the language of input text across multiple Indian languages.
+              Automatically identify the language and script of any text input.
             </Text>
           </Box>
 

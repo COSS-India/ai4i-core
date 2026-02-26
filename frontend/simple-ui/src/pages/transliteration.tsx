@@ -167,7 +167,7 @@ const TransliterationPage: React.FC = () => {
               Transliteration Service
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Convert text from one script to another while keeping pronunciation intact
+              Convert text from one script to another while preserving pronunciation.
             </Text>
           </Box>
 
