@@ -697,28 +697,41 @@ async def create_new_tenant(
     """
 
     if payload.contact_email:
-        # Check for existing tenant by decrypting stored emails
-        # Note: This is not efficient for large datasets. Consider adding email_hash column for searching.
-        all_tenants = await db.scalars(select(Tenant).where(Tenant.domain == payload.domain))
+        # Check for existing tenant by decrypting stored emails.
+        # Enforce uniqueness of contact_email across all domains.
+        # TODO: This is not efficient for very large datasets. Will add an email_hash column for indexed searches.
+        """
+        email_hash = Column(String, index=True, unique=True)
+        email_hash = hash_email(payload.contact_email)
+
+        existing = await db.scalar(
+            select(Tenant).where(Tenant.email_hash == email_hash)
+        )
+         
+        """
         existing = None
-        for tenant in all_tenants:
+
+        tenants = await db.scalars(select(Tenant))
+        for tenant in tenants:
+            # skip tenants with no stored email
+            if not tenant.contact_email:
+                continue
             try:
                 decrypted_email = decrypt_sensitive_data(tenant.contact_email)
-                if decrypted_email == payload.contact_email:
-                    existing = tenant
-                    break
             except Exception:
-                # If decryption fails, compare directly (backward compatibility)
-                if tenant.contact_email == payload.contact_email:
-                    existing = tenant
-                    break
-        
+                # If decryption fails, fall back to raw comparison (backward compatibility)
+                decrypted_email = tenant.contact_email
+
+            if decrypted_email == payload.contact_email:
+                existing = tenant
+                break
+
         if existing:
-            # Check status
+            # Check status and raise appropriate errors
             if existing.status == TenantStatus.PENDING:
                 # Tenant already exists and is pending verification.
                 # Do NOT automatically resend verification email here to avoid confusion.
-                raise ValueError("Tenant registration already pending email verification")
+                raise ValueError("Tenant is already registered in pending state. Need email verification")
             elif existing.status in [TenantStatus.IN_PROGRESS]:
                 raise ValueError("Email already verified")
             elif existing.status == TenantStatus.ACTIVE:
@@ -726,6 +739,18 @@ async def create_new_tenant(
             elif existing.status == TenantStatus.SUSPENDED:
                 raise ValueError("Tenant is suspended. Contact support.")
             
+    from utils.utils import _normalize_domain , _domains_similar
+
+    # requested_domain_norm = _normalize_domain(payload.domain) if payload.domain else ""
+    # if requested_domain_norm:
+    #     existing_domain_norm = await db.scalars(select(Tenant).where(Tenant.domain == requested_domain_norm))
+    #     existing_domain_norm = existing_domain_norm.first()
+
+    #     if existing_domain_norm.domain == requested_domain_norm:
+    #         raise ValueError("Domain already registered")
+    #     if _domains_similar(existing_domain_norm.domain, requested_domain_norm):
+    #         raise ValueError(f"Domain '{payload.domain}' is too similar to existing registered domain '{tenant.domain}'")
+
     if not payload.requested_subscriptions:
         raise HTTPException(
             status_code=400,

@@ -31,6 +31,12 @@ const TENANT_SUBSCRIPTION_OPTIONS = [
   { value: "speech_to_speech_pipeline", label: "Speech-to-Speech Pipeline" },
 ];
 
+/** Check email has valid format (contains @ and domain with at least one dot). */
+function isValidEmailFormat(email: string): boolean {
+  const trimmed = (email || "").trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+}
+
 export interface UseTenantManagementOptions {
   /** Current user from useAuth(); used to set initial sub-view and to filter list users by tenant */
   user: { id?: number; is_superuser?: boolean; is_tenant?: boolean; tenant_id?: string | null } | null;
@@ -263,9 +269,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       return;
     }
     const errors: Record<string, string> = {};
+    if (!isValidEmailFormat(tenantForm.contact_email)) {
+      errors.contact_email = "Enter a valid email address (e.g. name@example.com).";
+    }
     setTenantFormErrors(errors);
     if (Object.keys(errors).length > 0) {
-      toast({ title: "Validation", description: "Please fix the errors below.", status: "error", isClosable: true });
+      toast({ title: "Validation", description: errors.contact_email ?? "Please fix the errors below.", status: "error", isClosable: true });
       return;
     }
     if (!tenantForm.requested_subscriptions?.length) {
@@ -325,9 +334,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   const openUserModal = () => {
-    const defaultTenant = tenants[0];
+    // Tenant admin: use their tenant_id from /me so the field is never empty and always correct
+    const defaultTenant = user?.tenant_id?.trim()
+      ? tenants.find((t) => (t.tenant_id ?? "").trim().toLowerCase() === user!.tenant_id!.trim().toLowerCase()) ?? tenants[0]
+      : tenants[0];
     setUserForm({
-      tenant_id: defaultTenant?.tenant_id ?? "",
+      tenant_id: (user?.tenant_id?.trim() || defaultTenant?.tenant_id) ?? "",
       email: "",
       username: "",
       full_name: "",
@@ -354,6 +366,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const handleRegisterUser = async () => {
     if (!userForm.tenant_id || !userForm.full_name?.trim() || !userForm.email.trim() || !userForm.username.trim()) {
       toast({ title: "Validation", description: "Tenant, full name, email, and username are required.", status: "error", isClosable: true });
+      return;
+    }
+    if (!isValidEmailFormat(userForm.email)) {
+      toast({ title: "Validation", description: "Enter a valid email address (e.g. name@example.com).", status: "error", isClosable: true });
       return;
     }
     if (userForm.username.trim().length < 3) {
