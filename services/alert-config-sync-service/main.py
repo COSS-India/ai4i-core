@@ -208,8 +208,7 @@ def generate_prometheus_alerts_yaml(alert_definitions: List[Dict[str, Any]], cat
     If category is specified, only generates alerts for that category.
     Otherwise generates all alerts grouped by category.
     
-    Key insight: Each customer gets their own alert rule, even if monitoring the same metric.
-    This ensures customer isolation and allows different thresholds per customer.
+    Alerts are global: no organization in labels or annotations; alertname is the definition name only.
     """
     # Filter by category if specified
     if category:
