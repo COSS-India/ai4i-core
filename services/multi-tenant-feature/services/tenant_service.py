@@ -2,7 +2,7 @@ from fastapi import BackgroundTasks, HTTPException
 from datetime import datetime, timezone , timedelta , date
 
 from typing import Optional, List
-from sqlalchemy import insert , select , update
+from sqlalchemy import insert , select , update , text , MetaData
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError , NoResultFound
 
@@ -33,25 +33,36 @@ from models.db_models import (
     TenantUser,
     UserBillingRecord,
 )
-from models.auth_models import UserDB
-from models.enum_tenant import  SubscriptionType, TenantStatus, AuditAction , BillingStatus , AuditActorType , TenantUserStatus
+
+from models.enum_tenant import  (
+    SubscriptionType, 
+    TenantStatus, 
+    AuditAction , 
+    BillingStatus , 
+    AuditActorType , 
+    TenantUserStatus
+    )
+
 from models.tenant_create import TenantRegisterRequest, TenantRegisterResponse
-from models.service_create import ServiceCreateRequest , ServiceResponse , ListServicesResponse
-from models.user_create import UserRegisterRequest, UserRegisterResponse
-from models.services_update import ServiceUpdateRequest , FieldChange , ServiceUpdateResponse
-from models.billing_update import BillingUpdateRequest, BillingUpdateResponse
-from models.tenant_email import TenantSendEmailVerificationResponse,TenantResendEmailVerificationResponse
 from models.tenant_subscription import TenantSubscriptionResponse
 from models.tenant_status import TenantStatusUpdateRequest , TenantStatusUpdateResponse
-from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
 from models.tenant_view import TenantViewResponse, ListTenantsResponse
+from models.tenant_update import TenantUpdateRequest, TenantUpdateResponse
+
+from models.service_create import ServiceCreateRequest , ServiceResponse , ListServicesResponse
+from models.service_update import ServiceUpdateRequest , FieldChange , ServiceUpdateResponse
+from models.service_delete import  ServiceDeleteRequest , ServiceDeleteResponse
+
+from models.user_create import UserRegisterRequest, UserRegisterResponse
+from models.user_status import TenantUserStatusUpdateRequest , TenantUserStatusUpdateResponse
 from models.user_view import TenantUserViewResponse, ListUsersResponse
 from models.user_subscription import UserSubscriptionResponse
-from models.tenant_update import TenantUpdateRequest, TenantUpdateResponse
 from models.user_update import TenantUserUpdateRequest, TenantUserUpdateResponse
 from models.user_delete import TenantUserDeleteRequest,TenantUserDeleteResponse
 
+from models.tenant_email import TenantSendEmailVerificationResponse,TenantResendEmailVerificationResponse
 from services.email_service import send_welcome_email, send_verification_email , send_user_welcome_email
+from models.billing_update import BillingUpdateRequest, BillingUpdateResponse
 
 from logger import logger
 from uuid import UUID
@@ -207,7 +218,6 @@ async def create_service_tables_for_subscriptions(schema_name: str, subscription
         db: Optional AsyncSession to use. If provided, uses existing transaction.
             If None, creates its own session.
     """
-    from sqlalchemy import text, MetaData
     from db_connection import TenantDBSessionLocal, ServiceSchemaBase
     from models.service_schema_models import (
         NMTRequestDB, NMTResultDB,
@@ -304,7 +314,6 @@ async def drop_service_tables_for_subscriptions(schema_name: str, subscriptions:
         db: Optional AsyncSession to use. If provided, uses existing transaction.
             If None, creates its own session.
     """
-    from sqlalchemy import text
     from db_connection import TenantDBSessionLocal, ServiceSchemaBase
     from models.service_schema_models import (
         NMTRequestDB, NMTResultDB,
@@ -384,7 +393,6 @@ async def provision_tenant_schema(schema_name: str, subscriptions: list[str]):
         schema_name: The schema name for the tenant (e.g., 'tenant_acme_corp_5d448a')
         subscriptions: List of service names to create tables for (e.g., ['asr', 'tts'])
     """
-    from sqlalchemy import text , MetaData
     from db_connection import TenantDBSessionLocal, ServiceSchemaBase
     # Import all models to ensure they're registered with metadata
     from models.service_schema_models import (
@@ -491,8 +499,6 @@ async def list_tenant_schemas(db: AsyncSession) -> list[dict]:
             ...
         ]
     """
-    from sqlalchemy import text
-    
     try:
         # 1. Verify we're in the correct database
         db_name_query = text("SELECT current_database()")
@@ -562,7 +568,6 @@ async def verify_tenant_schema(schema_name: str, db: AsyncSession) -> dict:
             "tables": [...]
         }
     """
-    from sqlalchemy import text
     from db_connection import ServiceSchemaBase
     from models.service_schema_models import (
         NMTRequestDB, NMTResultDB,  # Import to register with metadata
@@ -741,15 +746,16 @@ async def create_new_tenant(
             
     from utils.utils import _normalize_domain , _domains_similar
 
-    # requested_domain_norm = _normalize_domain(payload.domain) if payload.domain else ""
-    # if requested_domain_norm:
-    #     existing_domain_norm = await db.scalars(select(Tenant).where(Tenant.domain == requested_domain_norm))
-    #     existing_domain_norm = existing_domain_norm.first()
+    requested_domain_norm = _normalize_domain(payload.domain) if payload.domain else ""
+    if requested_domain_norm:
+        existing_domain_norm = await db.scalars(select(Tenant).where(Tenant.domain == requested_domain_norm))
+        existing_domain_norm = existing_domain_norm.first()
 
-    #     if existing_domain_norm.domain == requested_domain_norm:
-    #         raise ValueError("Domain already registered")
-    #     if _domains_similar(existing_domain_norm.domain, requested_domain_norm):
-    #         raise ValueError(f"Domain '{payload.domain}' is too similar to existing registered domain '{tenant.domain}'")
+        if existing_domain_norm:
+            if existing_domain_norm.domain == requested_domain_norm:
+                raise ValueError("Domain already registered")
+            if _domains_similar(existing_domain_norm.domain, requested_domain_norm):
+                raise ValueError(f"Domain '{payload.domain}' is too similar to existing registered domain '{tenant.domain}'")
 
     if not payload.requested_subscriptions:
         raise HTTPException(
@@ -1305,7 +1311,7 @@ async def update_service(payload: ServiceUpdateRequest,db: AsyncSession,) -> Ser
     logger.info(f"Service pricing updated. Service ID={service.id}, Changes={changes}")
 
     return ServiceUpdateResponse(
-        message="Service pricing updated successfully",
+        message="Service updated successfully",
         service=ServiceResponse(
             id=service.id,
             service_name=service.service_name,
@@ -1319,6 +1325,52 @@ async def update_service(payload: ServiceUpdateRequest,db: AsyncSession,) -> Ser
         changes=changes,
     )
 
+
+async def delete_service(
+    payload: ServiceDeleteRequest,
+    db: AsyncSession,
+) -> ServiceDeleteResponse:
+    """
+    Delete a service configuration by its ID.
+
+    Args:
+        payload: Service delete request payload
+        db: Database session
+
+    Returns:
+        ServiceDeleteResponse: Deletion confirmation
+    """
+
+    service = await db.get(ServiceConfig, payload.service_id)
+
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+
+    try:
+        await db.delete(service)
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(
+            f"Integrity error while deleting service | service_id={payload.service_id}: {e}"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Service deletion failed due to integrity constraint violation",
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.exception(
+            f"Error committing service deletion to database | service_id={payload.service_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail="Failed to delete service")
+
+    logger.info(f"Service deleted successfully | service_id={payload.service_id}")
+
+    return ServiceDeleteResponse(
+        service_id=payload.service_id,
+        message="Service deleted successfully",
+    )
 
 
 async def list_service(db: AsyncSession) -> ListServicesResponse:
@@ -1610,10 +1662,6 @@ async def register_user(
     if existing_tenant_user:
         raise HTTPException(status_code=409,detail="Email already registered , please use a different email")
     
-
-    if not payload.is_approved:
-        raise HTTPException(status_code=400, detail="User must be approved by tenant admin to register")
-
     # No password collected in create-user flow; generate one so user can set password later (e.g. via reset)
     user_password = generate_random_password(length=12)
 
@@ -1671,23 +1719,21 @@ async def register_user(
     # Password is stored in auth-service, user can login with the password they provided
     # No need to log or send password via email
     
-    if payload.is_approved:
-        #Create TenantUser entry only if user is approved
-        # Encrypt sensitive data before saving
-        encrypted_user_email = encrypt_sensitive_data(payload.email) if payload.email else None
-        encrypted_user_phone = encrypt_sensitive_data(payload.phone_number) if payload.phone_number else None
+    #Create TenantUser entry only if user is approved
+    # Encrypt sensitive data before saving
+    encrypted_user_email = encrypt_sensitive_data(payload.email) if payload.email else None
+    encrypted_user_phone = encrypt_sensitive_data(payload.phone_number) if payload.phone_number else None
         
-        tenant_user = TenantUser(
-                user_id=user_id,
-                tenant_uuid=tenant.id,
-                tenant_id=tenant.tenant_id,
-                username=payload.username,
-                email=encrypted_user_email,
-                phone_number=encrypted_user_phone,
-                subscriptions=list(requested_services),
-                status=TenantUserStatus.ACTIVE, 
-                is_approved=True,
-        )
+    tenant_user = TenantUser(
+        user_id=user_id,
+        tenant_uuid=tenant.id,
+        tenant_id=tenant.tenant_id,
+        username=payload.username,
+        email=encrypted_user_email,
+        phone_number=encrypted_user_phone,
+        subscriptions=list(requested_services),
+        status=TenantUserStatus.ACTIVE,
+    )
 
     tenant_db.add(tenant_user)
     await tenant_db.flush()
@@ -2061,23 +2107,23 @@ async def update_tenant_user(
             tenant_user.username = new_value
             updated_fields.append("username")
 
-    # Handle email update
+    # Handle email update (store encrypted)
     if "email" in update_data:
-        old_value = tenant_user.email
+        old_value = decrypt_sensitive_data(tenant_user.email)
         new_value = update_data["email"]
         if old_value != new_value:
             changes["email"] = FieldChange(old=old_value, new=new_value)
-            tenant_user.email = new_value
+            tenant_user.email = encrypt_sensitive_data(new_value) if new_value else None
             updated_fields.append("email")
 
-    # Handle is_approved update
-    if "is_approved" in update_data:
-        old_value = tenant_user.is_approved
-        new_value = update_data["is_approved"]
+    # Handle phone_number update (store encrypted)
+    if "phone_number" in update_data:
+        old_value = decrypt_sensitive_data(tenant_user.phone_number)
+        new_value = update_data["phone_number"]
         if old_value != new_value:
-            changes["is_approved"] = FieldChange(old=old_value, new=new_value)
-            tenant_user.is_approved = new_value
-            updated_fields.append("is_approved")
+            changes["phone_number"] = FieldChange(old=old_value, new=new_value)
+            tenant_user.phone_number = encrypt_sensitive_data(new_value) if new_value else None
+            updated_fields.append("phone_number")
 
     if not changes:
         raise HTTPException(
@@ -2323,14 +2369,23 @@ async def update_tenant(
             tenant.organization_name = new_value
             updated_fields.append("organization_name")
     
-    # Handle contact_email update
+    # Handle contact_email update (store encrypted)
     if "contact_email" in update_data:
-        old_value = tenant.contact_email
+        old_value = decrypt_sensitive_data(tenant.contact_email)
         new_value = update_data["contact_email"]
         if old_value != new_value:
             changes["contact_email"] = FieldChange(old=old_value, new=new_value)
-            tenant.contact_email = new_value
+            tenant.contact_email = encrypt_sensitive_data(new_value) if new_value else None
             updated_fields.append("contact_email")
+
+    # Handle phone_number update (store encrypted)
+    if "phone_number" in update_data:
+        old_value = decrypt_sensitive_data(tenant.phone_number)
+        new_value = update_data["phone_number"]
+        if old_value != new_value:
+            changes["phone_number"] = FieldChange(old=old_value, new=new_value)
+            tenant.phone_number = encrypt_sensitive_data(new_value) if new_value else None
+            updated_fields.append("phone_number")
     
     # Handle domain update
     if "domain" in update_data:
