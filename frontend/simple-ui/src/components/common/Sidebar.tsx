@@ -311,7 +311,7 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "transliteration",
-    label: "Transliteration Service",
+    label: "Transliteration",
     path: "/transliteration",
     icon: IoSwapHorizontalOutline,
     iconSize: 10,
@@ -321,7 +321,7 @@ const baseNavItems: NavItem[] = [
   },
   {
     id: "language-detection",
-    label: "Language Detection",
+    label: "Text Language Detection",
     path: "/language-detection",
     icon: IoGlobeOutline,
     iconSize: 10,

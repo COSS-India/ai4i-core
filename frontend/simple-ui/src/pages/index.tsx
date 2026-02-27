@@ -222,7 +222,7 @@ const HomePage: React.FC = () => {
     },
     {
       id: "transliteration",
-      title: "Transliteration Service",
+      title: "Transliteration",
       description: "Convert text from one script to another while preserving pronunciation.",
       icon: IoSwapHorizontalOutline,
       path: "/transliteration",
@@ -231,7 +231,7 @@ const HomePage: React.FC = () => {
     },
     {
       id: "language-detection",
-      title: "Language Detection",
+      title: "Text Language Detection",
       description: "Automatically identify the language and script of any text input.",
       icon: IoGlobeOutline,
       path: "/language-detection",
@@ -364,11 +364,12 @@ const HomePage: React.FC = () => {
                   opacity={isDisabledForAnonymous ? 0.3 : 1}
                 />
 
-                <CardHeader textAlign="center" pb={2} pt={4} px={4} flexShrink={0}>
+                <CardHeader textAlign="center" pb={1} pt={4} px={4} flexShrink={0}>
                   <VStack spacing={2} align="center" w="full">
                     <Box position="relative">
                       <Box
-                        p={3}
+                      // p={3}
+                        boxSize={14}
                         borderRadius="full"
                         bg={getColor(service, 50)}
                         _dark={{ bg: getColor(service, 600) }}
@@ -376,10 +377,11 @@ const HomePage: React.FC = () => {
                         alignItems="center"
                         justifyContent="center"
                         flexShrink={0}
+                        overflow="hidden"
                       >
-                        <Icon 
-                          as={service.icon} 
-                          boxSize={7} 
+                        <Icon
+                          as={service.icon}
+                          boxSize={service.id === "pipeline" ? 8 : 7}
                           color={getColor(service, 600)}
                           opacity={isDisabledForAnonymous ? 0.4 : 1}
                         />
