@@ -3231,7 +3231,7 @@ def custom_openapi():
         "/api/v1/multi-tenant/register/services",
         "/api/v1/multi-tenant/update/services",
         "/api/v1/multi-tenant/list/services",
-        "/api/v1/multi-tenant/resolve-tenant-from-user/{user_id}",
+        "/api/v1/multi-tenant/resolve/tenant/from/user/{user_id}",
     ])
 
     # Auto-tag operations by path prefix for better grouping in Swagger and inject header where applicable
