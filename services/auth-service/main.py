@@ -1455,9 +1455,15 @@ async def select_api_key(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Mark an API key as the selected key for the current user.
+    Mark an API key as the selected key for the current user, or clear selection if null.
+    Pass api_key_id: null to unselect any API key.
     Any authenticated user can select their own API keys without permission checks.
     """
+    if payload.api_key_id is None:
+        current_user.selected_api_key_id = None
+        await db.commit()
+        return {"selected_api_key_id": None}
+
     result = await db.execute(
         select(APIKey).where(
             APIKey.id == payload.api_key_id,
