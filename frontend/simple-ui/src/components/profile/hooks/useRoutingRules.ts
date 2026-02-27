@@ -268,9 +268,12 @@ export function useRoutingRules() {
     if (!deleteItem) return;
     setIsDeleting(true);
     try {
+      // First delete the routing rule, then delete the linked receiver
       await alertingService.deleteRoutingRule(deleteItem.id);
+      await alertingService.deleteReceiver(deleteItem.receiver_id);
       toast({
         title: "Routing Rule Deleted",
+        description: "Routing rule and its receiver have been removed.",
         status: "success",
         duration: 3000,
         isClosable: true,
@@ -283,7 +286,7 @@ export function useRoutingRules() {
         description:
           error instanceof Error
             ? error.message
-            : "Failed to delete routing rule",
+            : "Failed to delete routing rule or receiver",
         status: "error",
         duration: 5000,
         isClosable: true,
