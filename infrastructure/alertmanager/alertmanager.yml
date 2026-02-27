@@ -3,7 +3,7 @@ global:
   smtp_smarthost: smtp.gmail.com:587
   smtp_from: bharathia0704@gmail.com
   smtp_auth_username: bharathia0704@gmail.com
-  smtp_auth_password: ypuaofsbatebvwye
+  smtp_auth_password: vdctvvynklzeqvdv
   smtp_require_tls: true
 route:
   group_by:
