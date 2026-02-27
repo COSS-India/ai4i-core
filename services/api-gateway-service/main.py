@@ -1540,7 +1540,7 @@ class APIKeyUpdateBody(BaseModel):
     )
 
 class APIKeySelectBody(BaseModel):
-    api_key_id: int = Field(..., description="API key ID to mark as selected for the current user")
+    api_key_id: int | None = Field(default=None, description="API key ID to mark as selected for the current user")
 
 class AssignRoleBody(BaseModel):
     user_id: int = Field(..., description="ID of the user to assign role to")
