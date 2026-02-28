@@ -173,7 +173,7 @@ const SpeakerDiarizationPage: React.FC = () => {
               Speaker Diarization
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Separate conversations into segments based on who is speaking. Identify different speakers in audio recordings and segment the audio accordingly.
+              Separate audio into segments based on who is speaking.
             </Text>
           </Box>
 

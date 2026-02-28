@@ -169,7 +169,7 @@ const HomePage: React.FC = () => {
     {
       id: "asr",
       title: "Automatic Speech Recognition (ASR)",
-      description: "Convert spoken audio into accurate text in multiple Indic languages.",
+      description: "Convert spoken audio into accurate, readable text in Indic languages.",
       icon: FaMicrophone,
       path: "/asr",
       color: "orange",
@@ -178,7 +178,7 @@ const HomePage: React.FC = () => {
     {
       id: "tts",
       title: "Text-to-Speech (TTS)",
-      description: "Generate natural-sounding speech from text in various Indic languages.",
+      description: "Generate natural-sounding speech from text in Indic languages.",
       icon: IoVolumeHighOutline,
       path: "/tts",
       color: "blue",
@@ -187,7 +187,7 @@ const HomePage: React.FC = () => {
     {
       id: "nmt",
       title: "Neural Machine Translation (NMT)",
-      description: "Translate text instantly between 22+ Indic languages.",
+      description: "Translate text instantly across Indic languages.",
       icon: IoLanguageOutline,
       path: "/nmt",
       color: "green",
@@ -196,7 +196,7 @@ const HomePage: React.FC = () => {
     {
       id: "llm",
       title: "Large Language Model (LLM)",
-      description: "Use advanced AI models for contextual translation and language tasks.",
+      description: "Perform contextual translation and language tasks using advanced AI models.",
       icon: IoSparklesOutline,
       path: "/llm",
       color: "pink",
@@ -205,7 +205,7 @@ const HomePage: React.FC = () => {
     {
       id: "pipeline",
       title: "Speech to Speech\nPipeline",
-      description: "Create workflows by chaining together multiple AI language services.",
+      description: "Transform spoken input into translated speech output using chained AI models.",
       icon: DoubleMicrophoneIcon,
       path: "/pipeline",
       color: "purple",
@@ -214,7 +214,7 @@ const HomePage: React.FC = () => {
     {
       id: "ocr",
       title: "Optical Character Recognition (OCR)",
-      description: "Extract editable text from images, scanned documents, and photos.",
+      description: "Extract editable text from images and scanned documents.",
       icon: IoDocumentTextOutline,
       path: "/ocr",
       color: "indigo",
@@ -222,8 +222,8 @@ const HomePage: React.FC = () => {
     },
     {
       id: "transliteration",
-      title: "Transliteration Service",
-      description: "Convert text from one script to another while keeping pronunciation intact.",
+      title: "Transliteration",
+      description: "Convert text from one script to another while preserving pronunciation.",
       icon: IoSwapHorizontalOutline,
       path: "/transliteration",
       color: "cyan",
@@ -231,8 +231,8 @@ const HomePage: React.FC = () => {
     },
     {
       id: "language-detection",
-      title: "Language Detection",
-      description: "Automatically identify the language and script of any given text.",
+      title: "Text Language Detection",
+      description: "Automatically identify the language and script of any text input.",
       icon: IoGlobeOutline,
       path: "/language-detection",
       color: "teal",
@@ -241,7 +241,7 @@ const HomePage: React.FC = () => {
     {
       id: "speaker-diarization",
       title: "Speaker Diarization",
-      description: "Separate conversations into segments based on who is speaking.",
+      description: "Separate audio into segments based on who is speaking.",
       icon: IoPeopleOutline,
       path: "/speaker-diarization",
       color: "red",
@@ -250,7 +250,7 @@ const HomePage: React.FC = () => {
     {
       id: "language-diarization",
       title: "Language Diarization",
-      description: "Identify when language changes occur within spoken audio.",
+      description: "Detect language switches in real time within spoken audio.",
       icon: IoLanguageOutline,
       path: "/language-diarization",
       color: "yellow",
@@ -259,7 +259,7 @@ const HomePage: React.FC = () => {
     {
       id: "audio-language-detection",
       title: "Audio Language Detection",
-      description: "Detect the spoken language directly from an audio file.",
+      description: "Identify the spoken language directly from an audio file.",
       icon: IoRadioOutline,
       path: "/audio-language-detection",
       color: "gray",
@@ -268,7 +268,7 @@ const HomePage: React.FC = () => {
     {
       id: "ner",
       title: "Named Entity Recognition (NER)",
-      description: "Identify key entities like names, locations, and organizations in text.",
+      description: "Extract key entities like names, locations, and organizations from text.",
       icon: IoPricetagOutline,
       path: "/ner",
       color: "rose",
@@ -364,11 +364,12 @@ const HomePage: React.FC = () => {
                   opacity={isDisabledForAnonymous ? 0.3 : 1}
                 />
 
-                <CardHeader textAlign="center" pb={2} pt={4} px={4} flexShrink={0}>
+                <CardHeader textAlign="center" pb={1} pt={4} px={4} flexShrink={0}>
                   <VStack spacing={2} align="center" w="full">
                     <Box position="relative">
                       <Box
-                        p={3}
+                      // p={3}
+                        boxSize={14}
                         borderRadius="full"
                         bg={getColor(service, 50)}
                         _dark={{ bg: getColor(service, 600) }}
@@ -376,10 +377,11 @@ const HomePage: React.FC = () => {
                         alignItems="center"
                         justifyContent="center"
                         flexShrink={0}
+                        overflow="hidden"
                       >
-                        <Icon 
-                          as={service.icon} 
-                          boxSize={7} 
+                        <Icon
+                          as={service.icon}
+                          boxSize={service.id === "pipeline" ? 8 : 7}
                           color={getColor(service, 600)}
                           opacity={isDisabledForAnonymous ? 0.4 : 1}
                         />

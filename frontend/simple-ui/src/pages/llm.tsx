@@ -117,7 +117,7 @@ const LLMPage: React.FC = () => {
               Large Language Model
             </Heading>
             <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
-              Translate and generate text
+              Perform contextual translation and language tasks using advanced AI models.
             </Text>
           </Box>
 

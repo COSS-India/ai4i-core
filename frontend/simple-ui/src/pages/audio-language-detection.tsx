@@ -175,7 +175,7 @@ const AudioLanguageDetectionPage: React.FC = () => {
               Audio Language Detection
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Detect the spoken language directly from an audio file. Identify which language is being spoken in audio recordings.
+              Identify the spoken language directly from an audio file.
             </Text>
           </Box>
 

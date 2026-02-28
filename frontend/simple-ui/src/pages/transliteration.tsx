@@ -164,10 +164,10 @@ const TransliterationPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Transliteration Service
+              Transliteration
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Convert text from one script to another while keeping pronunciation intact
+              Convert text from one script to another while preserving pronunciation.
             </Text>
           </Box>
 
