@@ -199,11 +199,38 @@ export function useRoutingRules() {
     setUpdateItem(null);
     setUpdateForm({});
   };
-  const handleUpdate = async () => {
+  const handleUpdate = async (receiverFields?: { rbac_role?: string }) => {
     if (!updateItem) return;
     setIsUpdating(true);
     try {
-      await alertingService.updateRoutingRule(updateItem.id, updateForm);
+      // Rule name only: use routing-rule API
+      if (updateForm.rule_name !== undefined && updateForm.rule_name !== null) {
+        await alertingService.updateRoutingRule(updateItem.id, {
+          rule_name: updateForm.rule_name,
+        });
+      }
+      // Other details: use receivers API (only fields it supports: rbac_role, enabled)
+      const receiverPayload: { rbac_role?: string | null; enabled?: boolean } = {};
+      if (receiverFields?.rbac_role !== undefined) receiverPayload.rbac_role = receiverFields.rbac_role || null;
+      if (updateForm.enabled !== undefined) receiverPayload.enabled = updateForm.enabled;
+      if (Object.keys(receiverPayload).length > 0) {
+        await alertingService.updateReceiver(updateItem.receiver_id, receiverPayload);
+      }
+      // Remaining routing fields (match_*, group_*, priority, etc.): use routing-rule API
+      const routingOnlyPayload: RoutingRuleUpdate = {};
+      if (updateForm.match_severity !== undefined) routingOnlyPayload.match_severity = updateForm.match_severity ?? null;
+      if (updateForm.match_category !== undefined) routingOnlyPayload.match_category = updateForm.match_category ?? null;
+      if (updateForm.match_alert_type !== undefined) routingOnlyPayload.match_alert_type = updateForm.match_alert_type ?? null;
+      if (updateForm.group_by !== undefined) routingOnlyPayload.group_by = updateForm.group_by;
+      if (updateForm.group_wait !== undefined) routingOnlyPayload.group_wait = updateForm.group_wait ?? null;
+      if (updateForm.group_interval !== undefined) routingOnlyPayload.group_interval = updateForm.group_interval ?? null;
+      if (updateForm.repeat_interval !== undefined) routingOnlyPayload.repeat_interval = updateForm.repeat_interval ?? null;
+      if (updateForm.continue_routing !== undefined) routingOnlyPayload.continue_routing = updateForm.continue_routing;
+      if (updateForm.priority !== undefined) routingOnlyPayload.priority = updateForm.priority;
+      if (updateForm.enabled !== undefined) routingOnlyPayload.enabled = updateForm.enabled;
+      if (Object.keys(routingOnlyPayload).length > 0) {
+        await alertingService.updateRoutingRule(updateItem.id, routingOnlyPayload);
+      }
       toast({
         title: "Routing Rule Updated",
         status: "success",
@@ -241,9 +268,12 @@ export function useRoutingRules() {
     if (!deleteItem) return;
     setIsDeleting(true);
     try {
+      // First delete the routing rule, then delete the linked receiver
       await alertingService.deleteRoutingRule(deleteItem.id);
+      await alertingService.deleteReceiver(deleteItem.receiver_id);
       toast({
         title: "Routing Rule Deleted",
+        description: "Routing rule and its receiver have been removed.",
         status: "success",
         duration: 3000,
         isClosable: true,
@@ -256,7 +286,7 @@ export function useRoutingRules() {
         description:
           error instanceof Error
             ? error.message
-            : "Failed to delete routing rule",
+            : "Failed to delete routing rule or receiver",
         status: "error",
         duration: 5000,
         isClosable: true,
