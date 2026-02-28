@@ -16,7 +16,7 @@ class TenantRegisterRequest(BaseModel):
     organization_name: str = Field(..., min_length=2, max_length=255)
     domain: str = Field(..., min_length=3, max_length=255)  # user supplied domain
     contact_email: EmailStr
-    phone_number: Optional[str] = Field(None, max_length=20, description="Contact phone number")
+    phone_number: Optional[str] = Field(None, max_length=10, description="Contact phone number")
     requested_subscriptions: Optional[List[SubscriptionType]] = Field(default=[], description="List of requested service subscriptions, e.g. ['tts', 'asr']")
     requested_quotas: Optional[QuotaStructure] = Field(None, description="Requested quota limits for the tenant")
     usage_quota: Optional[QuotaStructure] = Field(None, description="Initial usage quota values")

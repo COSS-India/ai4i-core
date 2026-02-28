@@ -25,3 +25,5 @@ class ServiceUpdateResponse(BaseModel):
     message: str
     service: ServiceResponse
     changes: Dict[str, FieldChange]
+
+
