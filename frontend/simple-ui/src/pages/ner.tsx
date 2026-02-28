@@ -177,7 +177,7 @@ const NERPage: React.FC = () => {
               Named Entity Recognition (NER)
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Identify key entities like names, locations, and organizations in text
+              Extract key entities like names, locations, and organizations from text.
             </Text>
           </Box>
 

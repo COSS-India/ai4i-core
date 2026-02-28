@@ -101,7 +101,7 @@ const ASRPage: React.FC = () => {
               Automatic Speech Recognition
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Convert speech to text with support for 12+ Indic languages
+              Convert spoken audio into accurate, readable text in Indic languages.
             </Text>
           </Box>
 

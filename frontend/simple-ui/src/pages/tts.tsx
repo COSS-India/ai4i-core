@@ -101,7 +101,7 @@ const TTSPage: React.FC = () => {
         <title>TTS - Text-to-Speech | AI4Inclusion Console</title>
         <meta
           name="description"
-          content="Test Text-to-Speech with multiple voice options and audio formats"
+          content="Generate natural-sounding speech from text in Indic languages"
         />
       </Head>
 
@@ -113,8 +113,7 @@ const TTSPage: React.FC = () => {
               Text-to-Speech
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Convert text to natural-sounding speech with multiple voice
-              options
+              Generate natural-sounding speech from text in Indic languages.
             </Text>
           </Box>
 

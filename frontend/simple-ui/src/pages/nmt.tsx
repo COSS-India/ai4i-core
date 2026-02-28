@@ -122,7 +122,7 @@ const NMTPage: React.FC = () => {
         <title>NMT - Neural Machine Translation | AI4Inclusion Console</title>
         <meta
           name="description"
-          content="Test Neural Machine Translation between 22+ Indic languages"
+          content="Test Neural Machine Translation across Indic languages"
         />
       </Head>
 
@@ -134,7 +134,7 @@ const NMTPage: React.FC = () => {
               Neural Machine Translation
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Translate text between languages with high accuracy
+              Translate text instantly across Indic languages.
             </Text>
           </Box>
 
