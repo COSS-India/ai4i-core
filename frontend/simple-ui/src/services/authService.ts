@@ -598,9 +598,9 @@ class AuthService {
     }
   }
 
-  /** Persist the selected API key for the current user (used to restore selection on next login). */
-  async selectApiKey(apiKeyId: number): Promise<{ selected_api_key_id: number }> {
-    return this.request<{ selected_api_key_id: number }>('/api-keys/select', {
+  /** Persist the selected API key for the current user (used to restore selection on next login). Pass null to clear selection. */
+  async selectApiKey(apiKeyId: number | null): Promise<{ selected_api_key_id: number | null; message?: string }> {
+    return this.request<{ selected_api_key_id: number | null; message?: string }>('/api-keys/select', {
       method: 'POST',
       body: JSON.stringify({ api_key_id: apiKeyId }),
       headers: {

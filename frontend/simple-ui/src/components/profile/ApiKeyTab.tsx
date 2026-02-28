@@ -151,7 +151,7 @@ export default function ApiKeyTab({
                                     if (e.target.checked) {
                                       tab.handleSelectApiKey(key);
                                     } else {
-                                      setSelectedApiKeyId(null);
+                                      tab.handleUnselectApiKey();
                                     }
                                   }}
                                   colorScheme="blue"
