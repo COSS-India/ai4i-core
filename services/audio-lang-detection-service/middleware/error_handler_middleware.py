@@ -88,29 +88,13 @@ def add_error_handlers(app: FastAPI) -> None:
                 },
             )
 
-        # For invalid API key errors in BOTH mode, check if it's actually an ownership issue
-        # In BOTH mode, when user_id is provided and auth-service returns valid=false,
-        # it's an ownership issue even if the message says "does not have access"
+        # For invalid API key errors, always surface the actual "Invalid API key"
+        # style message from auth-service. Ownership mismatches are already
+        # raised explicitly from the auth provider with the canonical message
+        # "API key does not belong to the authenticated user", so we should NOT
+        # convert permission errors into ownership errors here.
         error_msg_lower_check = (error_msg or "").lower()
         if "invalid api key" in error_msg_lower_check:
-            # Check if this is BOTH mode (request has Authorization header with Bearer token)
-            # and the error is about access - in BOTH mode, this means ownership
-            authorization_header = request.headers.get("authorization", "")
-            is_both_mode = authorization_header.startswith("Bearer ")
-            logger.info(f"AuthenticationError handler: error_msg={error_msg}, is_both_mode={is_both_mode}, has_access_error={'does not have access' in error_msg_lower_check}")
-            if is_both_mode and "does not have access" in error_msg_lower_check:
-                # This is BOTH mode and the error is about access - treat as ownership
-                logger.info("Detected ownership error in BOTH mode, returning ownership message")
-                return JSONResponse(
-                    status_code=401,
-                    content={
-                        "detail": {
-                            "error": "AUTHORIZATION_ERROR",
-                            "message": "API key does not belong to the authenticated user",
-                        }
-                    },
-                )
-            # Otherwise, it's a regular permission error
             clean_message = _strip_status_prefix(error_msg or "Invalid API key")
             return JSONResponse(
                 status_code=401,
@@ -169,17 +153,15 @@ def add_error_handlers(app: FastAPI) -> None:
         message = _strip_status_prefix(exc.message)
         message_lower = message.lower()
         
-        # Check if this is an ownership error - in BOTH mode, permission errors are actually ownership
-        # Check if we're in BOTH mode (has Bearer token in Authorization header)
-        authorization_header = request.headers.get("authorization", "")
-        is_both_mode = authorization_header.startswith("Bearer ")
-        
-        # Ownership detection: explicit ownership message OR (BOTH mode + permission error)
-        # In BOTH mode, any "Invalid API key" error with "does not have access" is an ownership issue
+        # Ownership detection:
+        #   - explicit ownership wording ("does not belong", "ownership")
+        # Permission messages (including "does not have access/permission to
+        # audio-lang-detection service") should remain permission errors and
+        # must NOT be converted to ownership; explicit ownership messages are
+        # already raised from the auth provider.
         is_ownership = (
             "does not belong" in message_lower
             or "ownership" in message_lower
-            or (is_both_mode and "invalid api key" in message_lower and ("does not have access" in message_lower or "does not belong" in message_lower))
         )
         
         if is_ownership:
