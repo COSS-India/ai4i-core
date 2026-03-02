@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.nmt_request import TryItRequest, NMTInferenceRequest
 from models.nmt_response import NMTInferenceResponse
 from middleware.auth_provider import AuthProvider
-from middleware.tenant_db_dependency import get_tenant_db_session
+from ai4icore_multi_tenant import get_tenant_db_session_factory
+
+get_tenant_db_session = get_tenant_db_session_factory()
 from utils.try_it_utils import (
     get_try_it_key,
     increment_try_it_count,
