@@ -236,9 +236,12 @@ const LoginForm: React.FC<LoginFormProps> = ({
 
           <Button
             type="button"
-            colorScheme="red"
+            bg="orange.300"
+            color="gray.800"
             size="md"
             width="full"
+            _hover={{ bg: "orange.400" }}
+            _active={{ bg: "orange.500" }}
             onClick={() => {
               const apiBaseUrl =
                 API_BASE_URL || (typeof window !== "undefined"
