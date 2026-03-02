@@ -12,8 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy shared constants (includes static fallback responses)
+COPY services/constants /app/services/constants
 # Copy AI4ICore plugins from monorepo
 COPY libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
@@ -29,6 +32,7 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 RUN pip install --no-cache-dir --user packaging>=21.0
 # Install AI4ICore plugins (non-editable since we copy source to runtime)
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_observability
+RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_multi_tenant
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_logging
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_telemetry
 RUN pip install --no-cache-dir --user /app/libs/ai4icore_model_management
@@ -58,12 +62,14 @@ RUN pip install --no-cache-dir packaging>=21.0 && \
 
 # Copy AI4ICore plugins into runtime image
 COPY --from=builder /app/libs/ai4icore_observability /app/libs/ai4icore_observability
+COPY --from=builder /app/libs/ai4icore_multi_tenant /app/libs/ai4icore_multi_tenant
 COPY --from=builder /app/libs/ai4icore_logging /app/libs/ai4icore_logging
 COPY --from=builder /app/libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY --from=builder /app/libs/ai4icore_model_management /app/libs/ai4icore_model_management
 
-# Copy service code
+# Copy service code and shared constants
 COPY services/ner-service /app
+COPY services/constants /app/services/constants
 
 # Adjust ownership and permissions (must be done as root before switching user)
 RUN chown -R app:app /app /home/app/.local \

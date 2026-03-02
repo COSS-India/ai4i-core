@@ -38,8 +38,7 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
-from middleware.tenant_middleware import TenantMiddleware
-from middleware.tenant_schema_router import TenantSchemaRouter
+from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 
 from dotenv import load_dotenv
 
@@ -203,19 +202,7 @@ async def lifespan(app: FastAPI):
     app.state.db_engine = db_engine
     app.state.db_session_factory = db_session_factory
     
-    # Initialize tenant schema router for multi-tenant routing
-    # Use MULTI_TENANT_DB_URL for tenant schema routing (different from auth DATABASE_URL)
-    if not MULTI_TENANT_DB_URL:
-        logger.warning("MULTI_TENANT_DB_URL not configured. Tenant schema routing may not work correctly.")
-        # Fallback to DATABASE_URL but log warning
-        multi_tenant_db_url = DATABASE_URL
-    else:
-        multi_tenant_db_url = MULTI_TENANT_DB_URL
-    
-    logger.info(f"Using MULTI_TENANT_DB_URL: {multi_tenant_db_url.split('@')[0]}@***")  # Mask password in logs
-    tenant_schema_router = TenantSchemaRouter(database_url=multi_tenant_db_url)
-    app.state.tenant_schema_router = tenant_schema_router
-    logger.info("Tenant schema router initialized with multi-tenant database")
+    # Tenant schema router is created by MultiTenantPlugin at registration time
     
     # Triton endpoint/model resolved via Model Management middleware - no hardcoded fallback
     app.state.triton_api_key = TRITON_API_KEY
@@ -273,6 +260,11 @@ async def lifespan(app: FastAPI):
         if db_engine:
             await db_engine.dispose()
             logger.info("PostgreSQL connection closed")
+
+        tenant_router = getattr(app.state, "tenant_schema_router", None)
+        if tenant_router:
+            await tenant_router.close_all()
+            logger.info("Tenant schema router connections closed")
     except Exception as e:
         logger.error("Error during shutdown: %s", e)
 
@@ -320,9 +312,6 @@ app.add_middleware(CorrelationMiddleware)
 # FastAPI middleware runs in REVERSE order, so this will run AFTER ObservabilityMiddleware
 # This ensures organization is set in context before logging
 app.add_middleware(RequestLoggingMiddleware)
-
-# Tenant middleware (must be before rate limiting to mark tenant-aware endpoints)
-app.add_middleware(TenantMiddleware)
 
 # Observability (MUST be added AFTER RequestLoggingMiddleware)
 # FastAPI middleware runs in REVERSE order, so this will run FIRST
@@ -388,6 +377,14 @@ app.add_middleware(
 
 # Register error handlers
 add_error_handlers(app)
+
+# Multi-tenant plugin (tenant schema router + middleware)
+multi_tenant_db_url = MULTI_TENANT_DB_URL or DATABASE_URL
+multi_tenant_config = MultiTenantConfig.from_env()
+multi_tenant_config.tenant_paths = ["/api/v1/speaker-diarization"]
+multi_tenant_plugin = MultiTenantPlugin(multi_tenant_config)
+multi_tenant_plugin.register_plugin(app, multi_tenant_db_url=multi_tenant_db_url)
+logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for Speaker Diarization service")
 
 # Routers
 app.include_router(inference_router.inference_router)
