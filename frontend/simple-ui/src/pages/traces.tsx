@@ -451,6 +451,8 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     const batchSize = getTag("triton.batch_size");
     const status = getTag("triton.status");
     const outputCount = getTag("triton.output_count");
+    const parseErrors = getTag("triton.parse_errors");
+    const outputStatus = getTag("triton.output_status");
     displayName = "AI Model Inference";
     let descParts = ["Runs AI model"];
     if (modelName) descParts.push(`(${modelName})`);
@@ -458,6 +460,53 @@ const categorizeSpan = (span: Span, serviceName: string, traceStartTime: number)
     if (outputCount) descParts.push(`→ ${outputCount} result${parseInt(outputCount) !== 1 ? "s" : ""}`);
     if (status) descParts.push(`- ${status}`);
     description = descParts.join(" ");
+    
+    // Override error detection for triton spans: check triton.status explicitly
+    // Priority 1: If triton.status is "success", clear any error flags (definitive success)
+    if (status && String(status).trim().toLowerCase() === "success") {
+      hasError = false;
+      errorMessage = undefined;
+    }
+    // Priority 2: If triton.status is "failed", mark as error (definitive failure)
+    else if (status && String(status).trim().toLowerCase() === "failed") {
+      hasError = true;
+      if (!errorMessage) {
+        errorMessage = "Triton inference failed";
+      }
+    }
+    // Priority 3: If parse_errors exists and is > 0, mark as error
+    else if (parseErrors && parseInt(parseErrors) > 0) {
+      hasError = true;
+      if (!errorMessage) {
+        errorMessage = `Triton parsing errors: ${parseErrors}`;
+      }
+    }
+    // Priority 4: If output_status is "error" or "failed", mark as error
+    else if (outputStatus && (String(outputStatus).toLowerCase() === "error" || String(outputStatus).toLowerCase() === "failed")) {
+      hasError = true;
+      if (!errorMessage) {
+        errorMessage = `Triton output status: ${outputStatus}`;
+      }
+    }
+    // Priority 5: If triton.status is empty/missing but indicators suggest success:
+    // - parse_errors is 0 or missing
+    // - output_status is "parsed" or "success"
+    // - No explicit error tags from checkForErrors
+    // Then clear error flags (assume success)
+    else if ((!status || String(status).trim() === "") && 
+             (!parseErrors || parseInt(parseErrors) === 0) && 
+             outputStatus && 
+             (String(outputStatus).toLowerCase() === "parsed" || String(outputStatus).toLowerCase() === "success")) {
+      // Only clear error if there's no explicit error tag from OpenTelemetry
+      const hasExplicitError = tags.some(t => 
+        (t.key === "error" && t.value === true) ||
+        (t.key === "otel.status_code" && String(t.value) === "ERROR")
+      );
+      if (!hasExplicitError) {
+        hasError = false;
+        errorMessage = undefined;
+      }
+    }
   }
   // Batch processing - but exclude triton_batch (already handled above)
   else if (opName.includes("batch") && !opName.includes("triton")) {
@@ -1509,11 +1558,16 @@ const TracesPage: React.FC = () => {
   // Build span map and parent-child relationships for tag merging
   const spanRelationships = useMemo(() => {
     if (!traceDetails || !traceDetails.spans) {
-      return { spanMap: new Map<string, Span>(), spanToParent: new Map<string, string>() };
+      return { 
+        spanMap: new Map<string, Span>(), 
+        spanToParent: new Map<string, string>(),
+        childSpans: new Map<string, string[]>()
+      };
     }
     
     const spanMap = new Map<string, Span>();
     const spanToParent = new Map<string, string>();
+    const childSpans = new Map<string, string[]>(); // parentSpanID -> [childSpanIDs]
     
     traceDetails.spans.forEach((span: Span) => {
       spanMap.set(span.spanID, span);
@@ -1522,11 +1576,16 @@ const TracesPage: React.FC = () => {
         const parentRef = span.references.find(ref => ref.refType === "CHILD_OF");
         if (parentRef) {
           spanToParent.set(span.spanID, parentRef.spanID);
+          // Build child spans map
+          if (!childSpans.has(parentRef.spanID)) {
+            childSpans.set(parentRef.spanID, []);
+          }
+          childSpans.get(parentRef.spanID)!.push(span.spanID);
         }
       }
     });
     
-    return { spanMap, spanToParent };
+    return { spanMap, spanToParent, childSpans };
   }, [traceDetails]);
 
   // Extract primary error message from the most descriptive failed span
@@ -2079,6 +2138,7 @@ const TracesPage: React.FC = () => {
                                        tagKey.startsWith('ocr.') ||
                                        tagKey.startsWith('tts.') ||
                                        tagKey.startsWith('asr.') ||
+                                       tagKey.startsWith('triton.') ||
                                        tagKey === 'correlation.id' ||
                                        tagKey === 'organization' ||
                                        tagKey.startsWith('user.') ||
@@ -2130,8 +2190,49 @@ const TracesPage: React.FC = () => {
                               currentParentId = spanRelationships.spanToParent.get(currentParentId);
                             }
                             
+                            // Traverse down to child spans to collect triton.* and internal.* tags
+                            // This is important because triton tags might be on child spans (e.g., triton.inference under ocr.triton_batch)
+                            const collectTagsFromChildren = (spanId: string, visited: Set<string>) => {
+                              if (visited.has(spanId)) return; // Prevent infinite loops
+                              visited.add(spanId);
+                              
+                              const childSpanIds = spanRelationships.childSpans.get(spanId) || [];
+                              childSpanIds.forEach((childSpanId: string) => {
+                                const childSpan = spanRelationships.spanMap.get(childSpanId);
+                                if (childSpan && childSpan.tags) {
+                                  childSpan.tags.forEach((childTag: { key: string; value: any }) => {
+                                    const tagKey = childTag.key.toLowerCase();
+                                    // Always include triton.* and internal.* tags from children
+                                    if ((tagKey.startsWith("triton.") || tagKey.startsWith("internal.")) && 
+                                        !childTagKeys.has(tagKey)) {
+                                      allTags.push(childTag);
+                                      childTagKeys.add(tagKey);
+                                    }
+                                  });
+                                }
+                                // Recursively collect from grandchildren
+                                collectTagsFromChildren(childSpanId, visited);
+                              });
+                            };
+                            
+                            // Collect triton and internal tags from all child spans
+                            const visitedChildren = new Set<string>();
+                            collectTagsFromChildren(processed.span.spanID, visitedChildren);
+                            
                             const relevantTags = allTags.filter((t: { key: string; value: any }) => {
                               const key = t.key.toLowerCase();
+                              
+                              // PRIORITY: Always include triton.* tags FIRST (important for AI Model Inference spans)
+                              // This ensures they're never filtered out by other rules
+                              if (key.startsWith("triton.")) {
+                                return true;
+                              }
+                              
+                              // PRIORITY: Always include internal.* tags (span metadata)
+                              if (key.startsWith("internal.")) {
+                                return true;
+                              }
+                              
                               // Filter out truly irrelevant tags
                               if (key.includes("telemetry.") ||
                                   key.includes("http.flavor") ||
@@ -2193,8 +2294,8 @@ const TracesPage: React.FC = () => {
                                     key.includes("request.size") || key.startsWith("http.request")) return 1;
                                 // High priority: client IP (important for request tracking)
                                 if (key === "client.ip" || key === "http.client_ip") return 1.5;
-                                // High priority: service-specific tags
-                                if (key.startsWith("nmt.") || key.startsWith("ocr.") || key.startsWith("tts.") || key.startsWith("asr.")) return 2;
+                                // High priority: service-specific tags (including triton tags for AI Model Inference)
+                                if (key.startsWith("nmt.") || key.startsWith("ocr.") || key.startsWith("tts.") || key.startsWith("asr.") || key.startsWith("triton.")) return 2;
                                 if (key === "http.status_code" || key === "otel.status_code") return 3;
                                 if (key === "organization") return 4;
                                 if (key === "correlation.id") return 5;
