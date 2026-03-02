@@ -14,13 +14,14 @@ from opentelemetry.trace import Status, StatusCode
 from ai4icore_logging import get_correlation_id
 
 from models.ocr_request import OCRInferenceRequest
-from models.ocr_response import OCRInferenceResponse
+from models.ocr_response import OCRInferenceResponse, TextOutput
 from services.ocr_service import OCRService
 from repositories.ocr_repository import OCRRepository
 from utils.triton_client import TritonClient, TritonInferenceError
 from middleware.auth_provider import AuthProvider
-from middleware.tenant_db_dependency import get_tenant_db_session
-from middleware.tenant_context import try_get_tenant_context
+from ai4icore_multi_tenant import get_tenant_db_session_factory, try_get_tenant_context
+
+get_tenant_db_session = get_tenant_db_session_factory()
 from sqlalchemy.ext.asyncio import AsyncSession
 import os
 import httpx
@@ -359,6 +360,18 @@ async def run_inference(
                 detail=str(exc),
             ) from exc
         except TritonInferenceError as exc:
+            from services.constants.static_fallback_responses import (
+                is_static_fallback_enabled,
+                get_ocr_static_response,
+            )
+            if is_static_fallback_enabled():
+                num_inputs = len(request_body.image)
+                static_data = get_ocr_static_response(num_inputs)
+                output = [TextOutput(**o) for o in static_data["output"]]
+                span.add_event("ocr.inference.static_fallback", {"reason": "Triton unreachable"})
+                span.set_status(Status(StatusCode.OK))
+                logger.info("Returning static OCR fallback (Triton unreachable)")
+                return OCRInferenceResponse(output=output)
             span.set_attribute("error", True)
             span.set_attribute("error.type", "TritonInferenceError")
             span.set_attribute("error.message", str(exc))
@@ -441,12 +454,26 @@ async def _run_inference_impl(
 
     # Log removed - middleware handles request/response logging
 
-    response = await ocr_service.run_inference(
-        request_body,
-        user_id=user_id,
-        api_key_id=api_key_id,
-        session_id=session_id
-    )
+    try:
+        response = await ocr_service.run_inference(
+            request_body,
+            user_id=user_id,
+            api_key_id=api_key_id,
+            session_id=session_id
+        )
+    except TritonInferenceError as exc:
+        from services.constants.static_fallback_responses import (
+            is_static_fallback_enabled,
+            get_ocr_static_response,
+        )
+        if is_static_fallback_enabled():
+            num_inputs = len(request_body.image)
+            static_data = get_ocr_static_response(num_inputs)
+            from models.ocr_response import TextOutput
+            output = [TextOutput(**o) for o in static_data["output"]]
+            logger.info("Returning static OCR fallback (Triton unreachable)")
+            return OCRInferenceResponse(output=output)
+        raise
     # Log removed - middleware handles request/response logging
     return response
 
