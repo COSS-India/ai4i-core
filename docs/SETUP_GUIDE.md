@@ -6,7 +6,7 @@ This guide provides step-by-step instructions for setting up and running the AI4
 
 - **[Docker](https://docs.docker.com/get-started/get-docker/)** and **[Docker Compose](https://docs.docker.com/compose/install/)** installed
 - **[Git](https://git-scm.com/install/)** installed
-- **[Python 3](https://www.python.org/downloads/)** and **[pip3](https://pip.pypa.io/en/stable/installation/)** installed
+- **[Python](https://www.python.org/downloads/)** and **[pip](https://pip.pypa.io/en/stable/installation/)** installed
 - At least **8GB RAM** and **20GB disk space**
 
 ## Important Note
