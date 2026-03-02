@@ -1,6 +1,18 @@
 // Utility helper functions for Simple UI
 
 /**
+ * Masks phone for view mode: only last 4 digits visible, e.g. "+91 xxxxxx1234"
+ * Used consistently across user profile and tenant/contact views.
+ */
+export function maskPhoneForDisplay(phone: string | undefined): string {
+  if (!phone || !phone.trim()) return "—";
+  const digits = phone.replace(/\D/g, "");
+  const last4 = digits.slice(-4);
+  if (last4.length === 0) return "—";
+  return `+91 xxxxxx${last4}`;
+}
+
+/**
  * Decode JWT token and extract tenant_id
  * @returns tenant_id from JWT token or null if not found
  */
