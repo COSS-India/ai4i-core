@@ -23,6 +23,7 @@ import DualComparison from "../components/llm/DualComparison";
 import LanguageSelector from "../components/llm/LanguageSelector";
 import TextInput from "../components/llm/TextInput";
 import { LLM_SUPPORTED_LANGUAGES } from "../config/constants";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { useLLM } from "../hooks/useLLM";
 import { listLLMModels, listLLMServices } from "../services/llmService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
@@ -114,10 +115,10 @@ const LLMPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center" mb={2}>
             <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
-              Large Language Model
+              {getServiceTitle("llm")}
             </Heading>
             <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
-              Perform contextual translation and language tasks using advanced AI models.
+              {getServiceDescription("llm")}
             </Text>
           </Box>
 

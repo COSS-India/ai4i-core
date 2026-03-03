@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useToastWithDeduplication } from "../../../hooks/useToastWithDeduplication";
 import roleService, { Role } from "../../../services/roleService";
 import type { User } from "../../../types/auth";
@@ -24,6 +24,12 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
   const [isLoadingRoles, setIsLoadingRoles] = useState(false);
   const [isLoadingUserRoles, setIsLoadingUserRoles] = useState(false);
   const [isAssigningRole, setIsAssigningRole] = useState(false);
+  const [isAssignConfirmOpen, setIsAssignConfirmOpen] = useState(false);
+
+  // Reset role selection when user changes so dropdown shows no option pre-selected
+  useEffect(() => {
+    setSelectedRole("");
+  }, [selectedUser]);
 
   const isAdmin = Boolean(user?.roles?.includes("ADMIN") || user?.is_superuser);
   const isModeratorOnly = Boolean(
@@ -81,7 +87,7 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     }
   };
 
-  const handleAssignRole = async () => {
+  const openAssignConfirm = () => {
     if (!selectedUser || !selectedRole) {
       toast({
         title: "Validation Error",
@@ -92,12 +98,21 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
       });
       return;
     }
+    setIsAssignConfirmOpen(true);
+  };
+
+  const closeAssignConfirm = () => {
+    setIsAssignConfirmOpen(false);
+  };
+
+  const handleConfirmAssignRole = async () => {
+    if (!selectedUser || !selectedRole) return;
     setIsAssigningRole(true);
     try {
       await roleService.assignRole(selectedUser.id, selectedRole);
       toast({
         title: "Success",
-        description: `Role ${selectedRole} assigned to user ${selectedUser.username}`,
+        description: `Role ${selectedRole} has been assigned to ${selectedUser.username}.`,
         status: "success",
         duration: 3000,
         isClosable: true,
@@ -105,6 +120,7 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
       const userRolesData = await roleService.getUserRoles(selectedUser.id);
       setSelectedUserRoles(userRolesData.roles);
       setSelectedRole("");
+      closeAssignConfirm();
     } catch (error) {
       toast({
         title: "Error",
@@ -113,6 +129,7 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
         duration: 5000,
         isClosable: true,
       });
+      closeAssignConfirm();
     } finally {
       setIsAssigningRole(false);
     }
@@ -129,8 +146,11 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     isAssigningRole,
     isAdmin,
     isModeratorOnly,
+    isAssignConfirmOpen,
+    openAssignConfirm,
+    closeAssignConfirm,
+    handleConfirmAssignRole,
     handleLoadRoles,
     handleUserSelect,
-    handleAssignRole,
   };
 }

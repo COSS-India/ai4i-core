@@ -20,6 +20,7 @@ import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
 import React, { useState, useEffect } from "react";
 import ContentLayout from "../components/common/ContentLayout";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performTransliterationInference, listTransliterationServices } from "../services/transliterationService";
 import { TRANSLITERATION_ERRORS, MIN_TRANSLITERATION_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
 import { extractErrorInfo } from "../utils/errorHandler";
@@ -164,10 +165,10 @@ const TransliterationPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Transliteration
+              {getServiceTitle("transliteration")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Convert text from one script to another while preserving pronunciation.
+              {getServiceDescription("transliteration")}
             </Text>
           </Box>
 
