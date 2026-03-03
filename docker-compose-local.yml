@@ -180,42 +180,80 @@ services:
       start_period: 40s
     restart: unless-stopped
 
-  # Microservices
-  api-gateway-service:
-    build:
-      context: .
-      dockerfile: ./services/api-gateway-service/Dockerfile
-    container_name: ai4v-api-gateway
+  kong:
+    image: kong:3.4-ubuntu
+    container_name: ai4v-gateway
+    profiles:
+      - kong
     ports:
-      - "9000:8080"
+      - "8080:8080"
+      - "8443:8443"
+      - "8001:8001"
+      - "8444:8444"
     environment:
-      - ENV_FILE=.env
-      # Swagger/OpenAPI server URL used in the generated docs
-      # Prod: point Swagger to public API Gateway URL
-      - TRY_IT_LIMIT=5
-      - TRY_IT_TTL_SECONDS=3600
+      KONG_DATABASE: "off"
+      KONG_PROXY_LISTEN: 0.0.0.0:8080
+      KONG_DECLARATIVE_CONFIG: /tmp/kong-substituted.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_ADMIN_GUI_URL: http://localhost:8002
+      KONG_PLUGINS: token-validator
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      AI4VOICE_API_KEY: ${AI4VOICE_API_KEY}
+      ASR_API_KEY: ${ASR_API_KEY}
+      TTS_API_KEY: ${TTS_API_KEY}
+      NMT_API_KEY: ${NMT_API_KEY}
+      PIPELINE_API_KEY: ${PIPELINE_API_KEY}
+      DEVELOPER_API_KEY: ${DEVELOPER_API_KEY}
+      MODEL_MANAGEMENT_API_KEY: ${MODEL_MANAGEMENT_API_KEY}
+      LLM_API_KEY: ${LLM_API_KEY}
     env_file:
-      - ./services/api-gateway-service/.env
+      - ./.env
     volumes:
-      - ./services/api-gateway-service:/app
-      - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
-      - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
-      - ./infrastructure:/app/infrastructure
-      - ./shared:/app/shared
-    command: ["--reload"]
+      - ./services/api-gateway-service/gateways/kong/kong.yml:/kong/kong.yml:ro
+      - ./services/api-gateway-service/gateways/kong/substitute-env.sh:/kong/substitute-env.sh:ro
+      - ./services/Konga-API-manager/plugins/token-validator/kong/plugins:/usr/local/share/lua/5.1/kong/plugins:ro
+    command: >
+      sh -c "
+        sh /kong/substitute-env.sh &&
+        /docker-entrypoint.sh kong docker-start
+      "
+    networks:
+      microservices-network:
+        aliases:
+          - api-gateway-service
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks:
-      - microservices-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "kong", "health"]
       interval: 10s
       timeout: 10s
-      retries: 3
+      retries: 5
       start_period: 30s
+    restart: unless-stopped
+
+  apisix:
+    image: apache/apisix:latest
+    container_name: ai4v-gateway
+    profiles:
+      - apisix
+    ports:
+      - "8080:8080"
+    environment:
+      APISIX_STAND_ALONE: "true"
+    volumes:
+      - ./services/api-gateway-service/gateways/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./services/api-gateway-service/gateways/apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    networks:
+      microservices-network:
+        aliases:
+          - api-gateway-service
     restart: unless-stopped
 
   auth-service:
@@ -301,7 +339,6 @@ services:
     ports:
       - "8103:8103"
     environment:
-      - API_GATEWAY_URL=http://api-gateway-service:8080
       - USE_API_PROXY=true
       - SPECS_ROOT=/app/specs
       - SERVICE_DOCS_REGISTRY_PATH=/app/specs/service-docs-registry.yaml
@@ -1094,7 +1131,7 @@ services:
         # Browser talks directly to the API Gateway on host port 8080
         # NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
         
-        NEXT_PUBLIC_API_URL: http://localhost:9000
+        NEXT_PUBLIC_API_URL: http://localhost:90000
         # Service-specific API keys from .env file (no hardcoding)
         NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
         NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
@@ -1131,9 +1168,6 @@ services:
       - ./frontend/simple-ui:/app
       - /app/node_modules
       - /app/.next
-    depends_on:
-      api-gateway-service:
-        condition: service_healthy
     networks:
       - microservices-network
     healthcheck:
