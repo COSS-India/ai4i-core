@@ -1,4 +1,4 @@
-# APISIX standalone (file-driven) config; listen on 8080 to match api-gateway-service URL.
+# APISIX standalone (file-driven) config; listen on 8080.
 apisix:
   node_listen: 8080
   enable_ipv6: false
