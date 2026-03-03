@@ -36,6 +36,7 @@ import {
   MAX_RECORDING_DURATION,
   TTS_SUPPORTED_LANGUAGES,
 } from "../config/constants";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { useAuth } from "../hooks/useAuth";
 import { usePipeline } from "../hooks/usePipeline";
 import { listASRServices, ASRServiceDetails } from "../services/asrService";
@@ -175,10 +176,10 @@ const PipelinePage: React.FC = () => {
             >
               <Box flex={1} textAlign="center">
                 <Heading size="lg" color="gray.800" mb={1} userSelect="none" cursor="default" tabIndex={-1}>
-                  Speech to Speech
+                  {getServiceTitle("pipeline")}
                 </Heading>
                 <Text color="gray.600" fontSize="sm" userSelect="none" cursor="default">
-                  Transform spoken input into translated speech output using chained AI models.
+                  {getServiceDescription("pipeline")}
                 </Text>
               </Box>
               <Button
