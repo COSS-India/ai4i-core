@@ -181,14 +181,17 @@ services:
 
   kong:
     image: kong:3.4-ubuntu
-    container_name: ai4v-kong-gateway
+    container_name: ai4v-gateway
+    profiles:
+      - kong
     ports:
-      - "8000:8000"
+      - "8080:8080"
       - "8443:8443"
       - "8001:8001"
       - "8444:8444"
     environment:
       KONG_DATABASE: "off"
+      KONG_PROXY_LISTEN: 0.0.0.0:8080
       KONG_DECLARATIVE_CONFIG: /tmp/kong-substituted.yml
       KONG_PROXY_ACCESS_LOG: /dev/stdout
       KONG_ADMIN_ACCESS_LOG: /dev/stdout
@@ -210,8 +213,8 @@ services:
     env_file:
       - ./.env
     volumes:
-      - ./services/Konga-API-manager/kong-new-architecture.yml:/kong/kong-new-architecture.yml:ro
-      - ./services/Konga-API-manager/substitute-env.sh:/kong/substitute-env.sh:ro
+      - ./services/api-gateway-service/gateways/kong/kong.yml:/kong/kong.yml:ro
+      - ./services/api-gateway-service/gateways/kong/substitute-env.sh:/kong/substitute-env.sh:ro
       - ./services/Konga-API-manager/plugins/token-validator/kong/plugins:/usr/local/share/lua/5.1/kong/plugins:ro
     command: >
       sh -c "
@@ -219,7 +222,9 @@ services:
         /docker-entrypoint.sh kong docker-start
       "
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - api-gateway-service
     depends_on:
       postgres:
         condition: service_healthy
@@ -236,6 +241,8 @@ services:
   postgres-konga:
     image: postgres:11-alpine
     container_name: ai4v-postgres-konga
+    profiles:
+      - kong
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -257,6 +264,8 @@ services:
   kong-manager:
     image: pantsel/konga:latest
     container_name: ai4v-kong-manager
+    profiles:
+      - kong
     ports:
       - "8002:1337"
     environment:
@@ -278,38 +287,23 @@ services:
       - microservices-network
     restart: unless-stopped
 
-  # Microservices
-  api-gateway-service:
-    build:
-      context: .
-      dockerfile: ./services/api-gateway-service/Dockerfile
-    container_name: ai4v-api-gateway
+  apisix:
+    image: apache/apisix:latest
+    container_name: ai4v-gateway
+    profiles:
+      - apisix
     ports:
       - "8080:8080"
     environment:
-      - ENV_FILE=.env
-      # Swagger/OpenAPI server URL used in the generated docs
-      # Prod: point Swagger to public API Gateway URL
-      - TRY_IT_LIMIT=5
-      - TRY_IT_TTL_SECONDS=3600
-    env_file:
-      - ./services/api-gateway-service/.env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      APISIX_STAND_ALONE: "true"
+    volumes:
+      - ./services/api-gateway-service/gateways/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./services/api-gateway-service/gateways/apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
     networks:
-      - microservices-network
-    # healthcheck:
-      # test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      # interval: 30s
-      # timeout: 10s
-      # retries: 3
-      # start_period: 30s
+      microservices-network:
+        aliases:
+          - api-gateway-service
     restart: unless-stopped
-
-  auth-service:
     build:
       context: .
       dockerfile: ./services/auth-service/Dockerfile
@@ -958,9 +952,6 @@ services:
       - NEXT_PUBLIC_TELEMETRY_SERVICE_URL=https://core-v1.ai4inclusion.org
       - NEXT_PUBLIC_ASR_STREAM_URL=ws://asr-service:8087/socket.io/asr
       - NEXT_PUBLIC_TTS_STREAM_URL=ws://tts-service:8088/socket.io/tts
-    depends_on:
-      api-gateway-service:
-        condition: service_healthy
     networks:
       - microservices-network
     # healthcheck:

@@ -1,0 +1,9 @@
+# APISIX standalone (file-driven) config; listen on 8080 to match api-gateway-service URL.
+apisix:
+  node_listen: 8080
+  enable_ipv6: false
+
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml

@@ -1,0 +1,4 @@
+# APISIX declarative config (standalone mode). File must end with #END.
+# Add routes/upstreams here; see https://apisix.apache.org/docs/apisix/deployment-modes/#standalone
+routes: []
+#END
