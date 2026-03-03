@@ -247,13 +247,26 @@ services:
       - "8080:8080"
     environment:
       APISIX_STAND_ALONE: "true"
+      APISIX_PUBLIC_HOST: ${APISIX_PUBLIC_HOST:-localhost}
+      APISIX_PUBLIC_ORIGIN: ${APISIX_PUBLIC_ORIGIN:-http://localhost:3000}
+      APISIX_UPSTREAM_SUFFIX: ${APISIX_UPSTREAM_SUFFIX:-}
+    env_file:
+      - ./.env
     volumes:
       - ./services/api-gateway-service/gateways/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
-      - ./services/api-gateway-service/gateways/apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+      - ./services/api-gateway-service/gateways/apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml.template:ro
+      - ./services/api-gateway-service/gateways/apisix/substitute-env.sh:/usr/local/apisix/substitute-env.sh:ro
+    command: >
+      sh -c "
+        sh /usr/local/apisix/substitute-env.sh &&
+        /usr/bin/apisix init &&
+        exec /usr/local/openresty/bin/openresty -p /usr/local/apisix -g 'daemon off;'
+      "
     networks:
       microservices-network:
         aliases:
           - api-gateway-service
+    dns_search: []
     restart: unless-stopped
 
   auth-service:
@@ -1131,7 +1144,7 @@ services:
         # Browser talks directly to the API Gateway on host port 8080
         # NEXT_PUBLIC_API_URL: https://core-v1.ai4inclusion.org
         
-        NEXT_PUBLIC_API_URL: http://localhost:90000
+        NEXT_PUBLIC_API_URL: http://localhost:8080
         # Service-specific API keys from .env file (no hardcoding)
         NEXT_PUBLIC_API_KEY: ${AI4VOICE_API_KEY}
         NEXT_PUBLIC_ASR_API_KEY: ${ASR_API_KEY}
@@ -1151,7 +1164,7 @@ services:
       - HOSTNAME=0.0.0.0
       # Route all frontend API calls through the API Gateway on host
       # - NEXT_PUBLIC_API_URL=https://core-v1.ai4inclusion.org
-      - NEXT_PUBLIC_API_URL=http://localhost:9000
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
 
       - NEXT_PUBLIC_API_KEY=${AI4VOICE_API_KEY}
       # Service-specific API keys for API Gateway authentication / RBAC
