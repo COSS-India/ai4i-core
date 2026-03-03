@@ -55,6 +55,12 @@ RUN useradd --create-home --shell /bin/bash app
 
 COPY --from=builder /root/.local /home/app/.local
 ENV PATH=/home/app/.local/bin:$PATH
+# Ensure Python can see:
+# - service code at /app
+# - multi-tenant plugin source at /app/libs/ai4icore_multi_tenant
+# - user site-packages at /home/app/.local/lib/python3.11/site-packages
+ENV PYTHONPATH="/app:/app/libs/ai4icore_multi_tenant:/home/app/.local/lib/python3.11/site-packages"
+ENV PYTHONUNBUFFERED=1
 
 # Ensure packaging is available in runtime - install system-wide AND user-wide
 # This ensures it's available regardless of Python path resolution

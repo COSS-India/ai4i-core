@@ -29,15 +29,14 @@ from utils.validation_utils import (
 )
 from middleware.auth_provider import AuthProvider
 from middleware.exceptions import (
-    AuthenticationError, 
+    AuthenticationError,
     AuthorizationError,
     TritonInferenceError,
     ModelNotFoundError,
     ServiceUnavailableError,
     TextProcessingError,
-    ErrorDetail
+    ErrorDetail,
 )
-from middleware.exceptions import AuthenticationError, AuthorizationError
 from ai4icore_multi_tenant import get_tenant_db_session_factory, try_get_tenant_context
 
 get_tenant_db_session = get_tenant_db_session_factory()

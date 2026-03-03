@@ -40,7 +40,7 @@ async def resolve_tenant_from_user_id(
     All requests are routed through API Gateway for consistency.
     """
     try:
-        resolve_url = f"{api_gateway_url}/api/v1/multi-tenant/resolve-tenant-from-user/{user_id}"
+        resolve_url = f"{api_gateway_url}/api/v1/multi-tenant/resolve/tenant/from/user/{user_id}"
 
         auth_header = request.headers.get("Authorization")
         headers = {}

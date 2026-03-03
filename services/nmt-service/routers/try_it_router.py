@@ -11,9 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.nmt_request import TryItRequest, NMTInferenceRequest
 from models.nmt_response import NMTInferenceResponse
 from middleware.auth_provider import AuthProvider
-from ai4icore_multi_tenant import get_tenant_db_session_factory
 
-get_tenant_db_session = get_tenant_db_session_factory()
+from ai4icore_multi_tenant import get_tenant_db_session_factory
 from utils.try_it_utils import (
     get_try_it_key,
     increment_try_it_count,
@@ -30,6 +29,9 @@ from routers.inference_router import (
 from utils.auth_utils import extract_auth_headers
 
 logger = logging.getLogger(__name__)
+
+# Tenant-aware DB session dependency (shared multi-tenant plugin)
+get_tenant_db_session = get_tenant_db_session_factory()
 
 # Create router
 try_it_router = APIRouter(
