@@ -350,7 +350,7 @@ services:
       dockerfile: ./services/docs-manager/Dockerfile
     container_name: ai4v-docs-manager
     ports:
-      - "8103:8103"
+      - "8106:8103"
     environment:
       - USE_API_PROXY=true
       - SPECS_ROOT=/app/specs
@@ -460,6 +460,38 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    restart: unless-stopped
+
+  alert-management-service:
+    build:
+      context: .
+      dockerfile: ./services/alert-management-service/Dockerfile
+    container_name: ai4v-alert-management-service
+    ports:
+      - "8104:8098"
+    environment:
+      - SERVICE_NAME=alert-management-service
+      - AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://auth-service:8081}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - ALERT_CONFIG_SYNC_SERVICE_URL=http://alert-config-sync-service:8097
+      - ALERT_SYNC_ENABLED=true
+      - PORT=8098
+    env_file:
+      - ./.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8098/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   dashboard-service:
@@ -857,7 +889,7 @@ services:
       dockerfile: ./services/smr-service/Dockerfile
     container_name: ai4v-smr-service
     ports:
-      - "8104:8097"
+      - "8103:8097"
     environment:
       - ENV_FILE=.env
       - APP_DB_USER=${POSTGRES_USER}
