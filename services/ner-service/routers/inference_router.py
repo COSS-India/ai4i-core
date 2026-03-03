@@ -358,13 +358,30 @@ async def run_inference(
                 detail=str(exc),
             ) from exc
         except TritonInferenceError as exc:
-            from services.constants.static_fallback_responses import (
-                is_static_fallback_enabled,
-                get_ner_static_response,
-            )
+            try:
+                from services.constants.static_fallback_responses import (
+                    is_static_fallback_enabled,
+                    get_ner_static_response,
+                )
+            except Exception:
+                # If the shared constants package is not available in this
+                # runtime (e.g. not copied into the image or import is
+                # shadowed), gracefully disable static fallback rather than
+                # failing the entire request with an import error.
+                def is_static_fallback_enabled() -> bool:  # type: ignore[no-redef]
+                    return False
+
+                get_ner_static_response = None  # type: ignore[assignment]
+
             if is_static_fallback_enabled():
                 input_texts = [inp.source for inp in request_body.input]
-                static_data = get_ner_static_response(input_texts)
+                static_data = (
+                    get_ner_static_response(input_texts)
+                    if get_ner_static_response is not None
+                    else None
+                )
+                if static_data is None:
+                    raise
                 output = []
                 for item in static_data["output"]:
                     predictions = [

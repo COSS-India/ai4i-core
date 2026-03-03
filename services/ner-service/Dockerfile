@@ -78,7 +78,12 @@ RUN chown -R app:app /app /home/app/.local \
 USER app
 
 ENV PATH="/home/app/.local/bin:$PATH"
-ENV PYTHONPATH="/app:/app/libs"
+# Ensure Python can see:
+# - service code at /app
+# - multi-tenant plugin source at /app/libs/ai4icore_multi_tenant
+# - user site-packages at /home/app/.local/lib/python3.11/site-packages
+# ENV PYTHONPATH="/app:/app/libs"
+ENV PYTHONPATH="/app:/app/libs/ai4icore_multi_tenant:/home/app/.local/lib/python3.11/site-packages"
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 9001
