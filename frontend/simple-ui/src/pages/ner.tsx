@@ -21,6 +21,7 @@ import Head from "next/head";
 import React, { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performNERInference, listNERServices } from "../services/nerService";
 import { extractErrorInfo } from "../utils/errorHandler";
 import { NER_ERRORS, MIN_NER_TEXT_LENGTH, MAX_TEXT_LENGTH } from "../config/constants";
@@ -174,10 +175,10 @@ const NERPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Named Entity Recognition (NER)
+              {getServiceTitle("ner")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Extract key entities like names, locations, and organizations from text.
+              {getServiceDescription("ner")}
             </Text>
           </Box>
 

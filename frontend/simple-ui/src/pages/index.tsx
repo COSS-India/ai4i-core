@@ -33,6 +33,7 @@ import {
   IoPricetagOutline,
 } from "react-icons/io5";
 import ContentLayout from "../components/common/ContentLayout";
+import { getServiceDescription, getServiceTitle, type ServiceId } from "../config/serviceMetadata";
 import { useAuth } from "../hooks/useAuth";
 import { useFeatureFlagsBulk, ALL_UI_FEATURE_FLAG_NAMES } from "../hooks/useFeatureFlag";
 import DoubleMicrophoneIcon from "../components/common/DoubleMicrophoneIcon";
@@ -166,115 +167,23 @@ const HomePage: React.FC = () => {
   });
 
   const services = [
-    {
-      id: "asr",
-      title: "Automatic Speech Recognition (ASR)",
-      description: "Convert spoken audio into accurate, readable text in Indic languages.",
-      icon: FaMicrophone,
-      path: "/asr",
-      color: "orange",
-      enabled: flags["asr-enabled"] ?? true,
-    },
-    {
-      id: "tts",
-      title: "Text-to-Speech (TTS)",
-      description: "Generate natural-sounding speech from text in Indic languages.",
-      icon: IoVolumeHighOutline,
-      path: "/tts",
-      color: "blue",
-      enabled: flags["tts-enabled"] ?? true,
-    },
-    {
-      id: "nmt",
-      title: "Neural Machine Translation (NMT)",
-      description: "Translate text instantly across Indic languages.",
-      icon: IoLanguageOutline,
-      path: "/nmt",
-      color: "green",
-      enabled: flags["nmt-enabled"] ?? true,
-    },
-    {
-      id: "llm",
-      title: "Large Language Model (LLM)",
-      description: "Perform contextual translation and language tasks using advanced AI models.",
-      icon: IoSparklesOutline,
-      path: "/llm",
-      color: "pink",
-      enabled: flags["llm-enabled"] ?? true,
-    },
-    {
-      id: "pipeline",
-      title: "Speech to Speech\nPipeline",
-      description: "Transform spoken input into translated speech output using chained AI models.",
-      icon: DoubleMicrophoneIcon,
-      path: "/pipeline",
-      color: "purple",
-      enabled: flags["pipeline-enabled"] ?? true,
-    },
-    {
-      id: "ocr",
-      title: "Optical Character Recognition (OCR)",
-      description: "Extract editable text from images and scanned documents.",
-      icon: IoDocumentTextOutline,
-      path: "/ocr",
-      color: "indigo",
-      enabled: flags["ocr-enabled"] ?? true,
-    },
-    {
-      id: "transliteration",
-      title: "Transliteration",
-      description: "Convert text from one script to another while preserving pronunciation.",
-      icon: IoSwapHorizontalOutline,
-      path: "/transliteration",
-      color: "cyan",
-      enabled: flags["transliteration-enabled"] ?? true,
-    },
-    {
-      id: "language-detection",
-      title: "Text Language Detection",
-      description: "Automatically identify the language and script of any text input.",
-      icon: IoGlobeOutline,
-      path: "/language-detection",
-      color: "teal",
-      enabled: flags["language-detection-enabled"] ?? true,
-    },
-    {
-      id: "speaker-diarization",
-      title: "Speaker Diarization",
-      description: "Separate audio into segments based on who is speaking.",
-      icon: IoPeopleOutline,
-      path: "/speaker-diarization",
-      color: "red",
-      enabled: flags["speaker-diarization-enabled"] ?? true,
-    },
-    {
-      id: "language-diarization",
-      title: "Language Diarization",
-      description: "Detect language switches in real time within spoken audio.",
-      icon: IoLanguageOutline,
-      path: "/language-diarization",
-      color: "yellow",
-      enabled: flags["language-diarization-enabled"] ?? true,
-    },
-    {
-      id: "audio-language-detection",
-      title: "Audio Language Detection",
-      description: "Identify the spoken language directly from an audio file.",
-      icon: IoRadioOutline,
-      path: "/audio-language-detection",
-      color: "gray",
-      enabled: flags["audio-language-detection-enabled"] ?? true,
-    },
-    {
-      id: "ner",
-      title: "Named Entity Recognition (NER)",
-      description: "Extract key entities like names, locations, and organizations from text.",
-      icon: IoPricetagOutline,
-      path: "/ner",
-      color: "rose",
-      enabled: flags["ner-enabled"] ?? true,
-    },
-  ].filter((service) => flagsLoading || service.enabled);
+    { id: "asr" as ServiceId, icon: FaMicrophone, path: "/asr", color: "orange", enabled: flags["asr-enabled"] ?? true },
+    { id: "tts" as ServiceId, icon: IoVolumeHighOutline, path: "/tts", color: "blue", enabled: flags["tts-enabled"] ?? true },
+    { id: "nmt" as ServiceId, icon: IoLanguageOutline, path: "/nmt", color: "green", enabled: flags["nmt-enabled"] ?? true },
+    { id: "llm" as ServiceId, icon: IoSparklesOutline, path: "/llm", color: "pink", enabled: flags["llm-enabled"] ?? true },
+    { id: "pipeline" as ServiceId, icon: DoubleMicrophoneIcon, path: "/pipeline", color: "purple", enabled: flags["pipeline-enabled"] ?? true },
+    { id: "ocr" as ServiceId, icon: IoDocumentTextOutline, path: "/ocr", color: "indigo", enabled: flags["ocr-enabled"] ?? true },
+    { id: "transliteration" as ServiceId, icon: IoSwapHorizontalOutline, path: "/transliteration", color: "cyan", enabled: flags["transliteration-enabled"] ?? true },
+    { id: "language-detection" as ServiceId, icon: IoGlobeOutline, path: "/language-detection", color: "teal", enabled: flags["language-detection-enabled"] ?? true },
+    { id: "speaker-diarization" as ServiceId, icon: IoPeopleOutline, path: "/speaker-diarization", color: "red", enabled: flags["speaker-diarization-enabled"] ?? true },
+    { id: "language-diarization" as ServiceId, icon: IoLanguageOutline, path: "/language-diarization", color: "yellow", enabled: flags["language-diarization-enabled"] ?? true },
+    { id: "audio-language-detection" as ServiceId, icon: IoRadioOutline, path: "/audio-language-detection", color: "gray", enabled: flags["audio-language-detection-enabled"] ?? true },
+    { id: "ner" as ServiceId, icon: IoPricetagOutline, path: "/ner", color: "rose", enabled: flags["ner-enabled"] ?? true },
+  ].filter((service) => flagsLoading || service.enabled).map((s) => ({
+    ...s,
+    title: getServiceTitle(s.id),
+    description: getServiceDescription(s.id),
+  }));
 
 
   return (
