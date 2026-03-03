@@ -14,51 +14,121 @@ paths:
     post:
       tags: [Multi-Tenant]
       summary: Register Tenant
+      description: Register a new tenant. Returns tenant identifier and initial metadata.
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantRegisterRequest" }
       responses:
-        "201": { description: Tenant registered }
+        "201":
+          description: Tenant registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantRegisterResponse" }
   /api/v1/multi-tenant/admin/register/users:
     post:
       tags: [Multi-Tenant]
       summary: Register User For Multi Tenant
+      description: Register a new tenant user.
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserRegisterRequest" }
       responses:
-        "201": { description: User registered }
+        "201":
+          description: User registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserRegisterResponse" }
   /api/v1/multi-tenant/admin/update/tenants/status:
     patch:
       tags: [Multi-Tenant]
       summary: Update Tenant Status
+      description: Change tenant status (e.g., ACTIVE, SUSPENDED).
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantStatusUpdateRequest" }
       responses:
-        "200": { description: Updated }
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantStatusUpdateResponse" }
   /api/v1/multi-tenant/admin/update/tenant:
     patch:
       tags: [Multi-Tenant]
       summary: Update Tenant
+      description: Update tenant metadata and quotas (partial updates supported).
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantUpdateRequest" }
       responses:
-        "200": { description: Updated }
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantUpdateResponse" }
   /api/v1/multi-tenant/admin/delete/user:
     delete:
       tags: [Multi-Tenant]
       summary: Delete Tenant User
+      description: Delete a tenant user and related records.
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantUserDeleteRequest" }
       responses:
-        "200": { description: Deleted }
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantUserDeleteResponse" }
   /api/v1/multi-tenant/admin/update/users/status:
     patch:
       tags: [Multi-Tenant]
       summary: Update Tenant User Status
+      description: Update status of a tenant user (e.g., ACTIVE, SUSPENDED).
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantUserStatusUpdateRequest" }
       responses:
-        "200": { description: Updated }
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantUserStatusUpdateResponse" }
   /api/v1/multi-tenant/admin/update/user:
     patch:
       tags: [Multi-Tenant]
       summary: Update Tenant User For Multi Tenant
+      description: Update tenant user details (partial updates supported).
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantUserUpdateRequest" }
       responses:
-        "200": { description: Updated }
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantUserUpdateResponse" }
   /api/v1/multi-tenant/email/verify:
     get:
       tags: [Multi-Tenant]
@@ -68,102 +138,244 @@ paths:
           in: query
           schema: { type: string }
       responses:
-        "200": { description: Verification result }
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema: { type: string }
   /api/v1/multi-tenant/admin/view/tenant:
     get:
       tags: [Multi-Tenant]
       summary: View Tenant
+      description: View tenant details by tenant_id (provide Authorization to include admin role).
       security: [{ BearerAuth: [] }]
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema: { type: string }
       responses:
-        "200": { description: Tenant details }
+        "200":
+          description: Tenant details
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantViewResponse" }
   /api/v1/multi-tenant/admin/view/user:
     get:
       tags: [Multi-Tenant]
       summary: View Tenant User
+      description: View tenant user details by user_id.
       security: [{ BearerAuth: [] }]
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema: { type: integer }
       responses:
-        "200": { description: User details }
+        "200":
+          description: User details
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantUserViewResponse" }
   /api/v1/multi-tenant/admin/list/tenants:
     get:
       tags: [Multi-Tenant]
       summary: List Tenants
+      description: List all tenants with metadata. Authorization adds tenant admin role.
       security: [{ BearerAuth: [] }]
       responses:
-        "200": { description: List of tenants }
+        "200":
+          description: List of tenants
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListTenantsResponse" }
   /api/v1/multi-tenant/admin/list/users:
     get:
       tags: [Multi-Tenant]
       summary: List Users
+      description: List tenant users. Optional tenant_id query param filters results.
       security: [{ BearerAuth: [] }]
+      parameters:
+        - name: tenant_id
+          in: query
+          required: false
+          schema: { type: string }
       responses:
-        "200": { description: List of users }
+        "200":
+          description: List of users
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListUsersResponse" }
   /api/v1/multi-tenant/admin/email/send/verification:
     post:
       tags: [Multi-Tenant]
       summary: Send Verification Email
+      description: Send first-time verification email for a tenant.
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantSendEmailVerificationRequest" }
       responses:
-        "201": { description: Email sent }
+        "201":
+          description: Email sent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantSendEmailVerificationResponse" }
   /api/v1/multi-tenant/email/resend:
     post:
       tags: [Multi-Tenant]
       summary: Resend Verification Email
+      description: Resend email verification link for a tenant (public endpoint).
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantResendEmailVerificationRequest" }
       responses:
-        "201": { description: Email sent }
+        "201":
+          description: Email sent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantResendEmailVerificationResponse" }
   /api/v1/multi-tenant/tenant/subscriptions/add:
     post:
       tags: [Multi-Tenant]
       summary: Add Tenant Subscriptions
+      description: Add one or more subscriptions to a tenant.
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantSubscriptionAddRequest" }
       responses:
-        "201": { description: Subscriptions added }
+        "201":
+          description: Subscriptions added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantSubscriptionResponse" }
   /api/v1/multi-tenant/tenant/subscriptions/remove:
     post:
       tags: [Multi-Tenant]
       summary: Remove Tenant Subscriptions
+      description: Remove subscriptions from a tenant.
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TenantSubscriptionRemoveRequest" }
       responses:
-        "200": { description: Subscriptions removed }
+        "200":
+          description: Subscriptions removed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TenantSubscriptionResponse" }
   /api/v1/multi-tenant/user/subscriptions/add:
     post:
       tags: [Multi-Tenant]
       summary: Add User Subscriptions
+      description: Add subscriptions to a tenant user.
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserSubscriptionAddRequest" }
       responses:
-        "201": { description: Subscriptions added }
+        "201":
+          description: Subscriptions added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserSubscriptionResponse" }
   /api/v1/multi-tenant/user/subscriptions/remove:
     post:
       tags: [Multi-Tenant]
       summary: Remove User Subscriptions
+      description: Remove subscriptions from a tenant user.
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserSubscriptionRemoveRequest" }
       responses:
-        "200": { description: Subscriptions removed }
+        "200":
+          description: Subscriptions removed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserSubscriptionResponse" }
   /api/v1/multi-tenant/register/services:
     post:
       tags: [Multi-Tenant]
       summary: Register Service
+      description: Register service metadata (billing/pricing).
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServiceCreateRequest" }
       responses:
-        "201": { description: Service registered }
+        "201":
+          description: Service registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceResponse" }
   /api/v1/multi-tenant/update/services:
     post:
       tags: [Multi-Tenant]
       summary: Update Service
+      description: Update service metadata.
       security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServiceUpdateRequest" }
       responses:
-        "200": { description: Updated }
+        "201":
+          description: Service updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceUpdateResponse" }
   /api/v1/multi-tenant/list/services:
     get:
       tags: [Multi-Tenant]
       summary: List Services
+      description: List billing/service entries available for tenants.
       security: [{ BearerAuth: [] }]
       responses:
-        "200": { description: List of services }
+        "200":
+          description: List of services
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListServicesResponse" }
+  /api/v1/multi-tenant/delete/services:
+    delete:
+      tags: [Multi-Tenant]
+      summary: Delete Service
+      description: Delete a billing/service configuration by service_id.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServiceDeleteRequest" }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceDeleteResponse" }
   /api/v1/multi-tenant/resolve/tenant/from/user/{user_id}:
     get:
       tags: [Multi-Tenant]
       summary: Resolve Tenant From User
+      description: Resolve tenant context (tenant_id, tenant_uuid, schema_name, subscriptions) from an auth user id.
       security: [{ BearerAuth: [] }]
       parameters:
         - name: user_id
@@ -171,12 +383,346 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        "200": { description: Tenant ID for user }
+        "200":
+          description: Tenant ID for user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ResolveTenantResponse" }
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
       bearerFormat: API Key
+  schemas:
+    TenantRegisterRequest:
+      type: object
+      required: [organization_name, domain, contact_email]
+      properties:
+        organization_name: { type: string }
+        domain: { type: string }
+        contact_email: { type: string, format: email }
+        phone_number: { type: string }
+        requested_subscriptions:
+          type: array
+          items: { type: string }
+        requested_quotas:
+          type: object
+          properties:
+            characters_length: { type: integer }
+            audio_length_in_min: { type: integer }
+        usage_quota:
+          type: object
+          properties:
+            characters_length: { type: integer }
+            audio_length_in_min: { type: integer }
+    TenantRegisterResponse:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        schema_name: { type: string }
+        subscriptions: { type: array, items: { type: string } }
+        quotas: { type: object }
+        usage_quota: { type: object }
+        status: { type: string }
+        message: { type: string }
+    UserRegisterRequest:
+      type: object
+      required: [tenant_id, email, username, services]
+      properties:
+        tenant_id: { type: string }
+        email: { type: string, format: email }
+        username: { type: string }
+        full_name: { type: string }
+        phone_number: { type: string }
+        services: { type: array, items: { type: string } }
+        role: { type: string }
+    UserRegisterResponse:
+      type: object
+      properties:
+        user_id: { type: integer }
+        tenant_id: { type: string }
+        username: { type: string }
+        email: { type: string }
+        services: { type: array, items: { type: string } }
+        schema: { type: string }
+        created_at: { type: string }
+        role: { type: string }
+    TenantStatusUpdateRequest:
+      type: object
+      required: [tenant_id, status]
+      properties:
+        tenant_id: { type: string }
+        status: { type: string }
+        reason: { type: string }
+        suspended_until: { type: string, format: date }
+    TenantStatusUpdateResponse:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        old_status: { type: string }
+        new_status: { type: string }
+    TenantUpdateRequest:
+      type: object
+      required: [tenant_id]
+      properties:
+        tenant_id: { type: string }
+        organization_name: { type: string }
+        contact_email: { type: string }
+        phone_number: { type: string }
+        domain: { type: string }
+        requested_quotas:
+          type: object
+          properties:
+            characters_length: { type: integer }
+            audio_length_in_min: { type: integer }
+        usage_quota:
+          type: object
+          properties:
+            characters_length: { type: integer }
+            audio_length_in_min: { type: integer }
+        role: { type: string }
+    TenantUpdateResponse:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        message: { type: string }
+        changes: { type: object }
+        updated_fields: { type: array, items: { type: string } }
+        role: { type: string }
+    TenantUserDeleteRequest:
+      type: object
+      required: [tenant_id, user_id]
+      properties:
+        tenant_id: { type: string }
+        user_id: { type: integer }
+    TenantUserDeleteResponse:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        user_id: { type: integer }
+        message: { type: string }
+    TenantUserStatusUpdateRequest:
+      type: object
+      required: [tenant_id, user_id, status]
+      properties:
+        tenant_id: { type: string }
+        user_id: { type: integer }
+        status: { type: string }
+    TenantUserStatusUpdateResponse:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        user_id: { type: integer }
+        old_status: { type: string }
+        new_status: { type: string }
+    TenantUserUpdateRequest:
+      type: object
+      required: [tenant_id, user_id]
+      properties:
+        tenant_id: { type: string }
+        user_id: { type: integer }
+        username: { type: string }
+        email: { type: string }
+        phone_number : {type: string}
+        role: { type: string }
+    TenantUserUpdateResponse:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        user_id: { type: integer }
+        message: { type: string }
+        changes: { type: object }
+        updated_fields: { type: array, items: { type: string } }
+        role: { type: string }
+    TenantSendEmailVerificationRequest:
+      type: object
+      required: [tenant_id]
+      properties:
+        tenant_id: { type: string }
+    TenantSendEmailVerificationResponse:
+      type: object
+      properties:
+        tenant_uuid: { type: string }
+        tenant_id: { type: string }
+        token: { type: string }
+        message: { type: string }
+    TenantResendEmailVerificationRequest:
+      type: object
+      required: [tenant_id]
+      properties:
+        tenant_id: { type: string }
+    TenantResendEmailVerificationResponse:
+      type: object
+      properties:
+        tenant_uuid: { type: string }
+        tenant_id: { type: string }
+        token: { type: string }
+        message: { type: string }
+    TenantSubscriptionAddRequest:
+      type: object
+      required: [tenant_id, subscriptions]
+      properties:
+        tenant_id: { type: string }
+        subscriptions:
+          type: array
+          items: { type: string }
+    TenantSubscriptionRemoveRequest:
+      type: object
+      required: [tenant_id, subscriptions]
+      properties:
+        tenant_id: { type: string }
+        subscriptions:
+          type: array
+          items: { type: string }
+    TenantSubscriptionResponse:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        subscriptions: { type: array, items: { type: string } }
+    UserSubscriptionAddRequest:
+      type: object
+      required: [tenant_id, user_id, subscriptions]
+      properties:
+        tenant_id: { type: string }
+        user_id: { type: integer }
+        subscriptions:
+          type: array
+          items: { type: string }
+    UserSubscriptionRemoveRequest:
+      type: object
+      required: [tenant_id, user_id, subscriptions]
+      properties:
+        tenant_id: { type: string }
+        user_id: { type: integer }
+        subscriptions:
+          type: array
+          items: { type: string }
+    UserSubscriptionResponse:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        user_id: { type: integer }
+        subscriptions: { type: array, items: { type: string } }
+    ServiceCreateRequest:
+      type: object
+      required: [service_name, unit_type, price_per_unit, currency, is_active]
+      properties:
+        service_name: { type: string }
+        unit_type: { type: string }
+        price_per_unit: { type: number }
+        currency: { type: string }
+        is_active: { type: boolean }
+      example:
+        service_name: asr
+        unit_type: minute
+        price_per_unit: 0.0001
+        currency: INR
+        is_active: true
+    ServiceUpdateRequest:
+      type: object
+      required: [service_id]
+      properties:
+        service_id: { type: integer }
+        price_per_unit: { type: number }
+        unit_type: { type: string }
+        currency: { type: string }
+        is_active: { type: boolean }
+    ServiceResponse:
+      type: object
+      properties:
+        id: { type: integer }
+        service_name: { type: string }
+        unit_type: { type: string }
+        price_per_unit: { type: number }
+        currency: { type: string }
+        is_active: { type: boolean }
+        created_at: { type: string }
+        updated_at: { type: string }
+    ServiceUpdateResponse:
+      type: object
+      properties:
+        message: { type: string }
+        service: { $ref: "#/components/schemas/ServiceResponse" }
+        changes:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              old: { type: object }
+              new: { type: object }
+    ListServicesResponse:
+      type: object
+      properties:
+        count: { type: integer }
+        services:
+          type: array
+          items: { $ref: "#/components/schemas/ServiceResponse" }
+    ServiceDeleteRequest:
+      type: object
+      required: [service_id]
+      properties:
+        service_id: { type: integer }
+    ServiceDeleteResponse:
+      type: object
+      properties:
+        service_id: { type: integer }
+        message: { type: string }
+    TenantViewResponse:
+      type: object
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        user_id: { type: integer }
+        organization_name: { type: string }
+        email: { type: string }
+        phone_number: { type: string }
+        domain: { type: string }
+        schema_name: { type: string }
+        subscriptions: { type: array, items: { type: string } }
+        status: { type: string }
+        quotas: { type: object }
+        usage_quota: { type: object }
+        created_at: { type: string }
+        updated_at: { type: string }
+        role: { type: string }
+    ListTenantsResponse:
+      type: object
+      properties:
+        count: { type: integer }
+        tenants:
+          type: array
+          items: { $ref: "#/components/schemas/TenantViewResponse" }
+    TenantUserViewResponse:
+      type: object
+      properties:
+        id: { type: string }
+        user_id: { type: integer }
+        tenant_id: { type: string }
+        username: { type: string }
+        email: { type: string }
+        phone_number: { type: string }
+        subscriptions: { type: array, items: { type: string } }
+        status: { type: string }
+        created_at: { type: string }
+        updated_at: { type: string }
+        role: { type: string }
+    ListUsersResponse:
+      type: object
+      properties:
+        count: { type: integer }
+        users:
+          type: array
+          items: { $ref: "#/components/schemas/TenantUserViewResponse" }
+    ResolveTenantResponse:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        tenant_uuid: { type: string }
+        schema_name: { type: string }
+        subscriptions: { type: array, items: { type: string } }
+        user_subscriptions: { type: array, items: { type: string } }
+        status: { type: string }
 security:
   - BearerAuth: []
