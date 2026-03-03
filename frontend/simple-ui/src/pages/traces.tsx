@@ -658,53 +658,6 @@ const extractImportantSpans = (trace: Trace): ProcessedSpan[] => {
     return categorized;
   });
 
-  // Detect VAD fallback pattern: VAD failed but ASR preprocessing succeeded with single chunk
-  // This indicates graceful degradation - VAD failed but processing continued with fallback
-  const detectVadFallback = () => {
-    // Find failed VAD triton inference spans
-    const failedVadSpans = processed.filter(p => {
-      const opName = p.span.operationName.toLowerCase();
-      const tags = p.span.tags || [];
-      const modelName = tags.find(t => t.key.toLowerCase() === "triton.model_name");
-      return opName.includes("triton") && 
-             p.hasError && 
-             modelName && 
-             String(modelName.value).toLowerCase() === "vad";
-    });
-
-    if (failedVadSpans.length === 0) return;
-
-    // For each failed VAD span, check if its parent is a successful preprocessing span
-    failedVadSpans.forEach(vadSpan => {
-      const vadSpanId = vadSpan.span.spanID;
-      const parentId = spanToParent.get(vadSpanId);
-      
-      if (parentId) {
-        const parentSpan = processed.find(p => p.span.spanID === parentId);
-        
-        if (parentSpan) {
-          const parentOpName = parentSpan.span.operationName.toLowerCase();
-          const parentTags = parentSpan.span.tags || [];
-          const chunksCount = parentTags.find(t => t.key.toLowerCase() === "asr.chunks_count");
-          const isAsrPreprocess = (parentOpName.includes("preprocess") || parentOpName.includes("asr.preprocess")) &&
-                                  parentSpan.serviceName.toLowerCase().includes("asr");
-          
-          // If parent is ASR preprocessing that succeeded with single chunk, VAD error was handled
-          if (isAsrPreprocess && !parentSpan.hasError && chunksCount && parseInt(String(chunksCount.value)) === 1) {
-            // Mark VAD span as not important - it's a handled error, don't show it prominently
-            vadSpan.isImportant = false;
-            // Add note to parent preprocessing span about fallback
-            if (!parentSpan.description.includes("fallback")) {
-              parentSpan.description = `${parentSpan.description} (VAD fallback activated - processing continued with single chunk)`;
-            }
-          }
-        }
-      }
-    });
-  };
-
-  detectVadFallback();
-
   // Debug: Log how many spans are marked as important
   const importantCount = processed.filter(p => p.isImportant).length;
   console.log(`Processed ${processed.length} spans, ${importantCount} marked as important`);
