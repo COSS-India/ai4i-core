@@ -20,6 +20,7 @@ import Head from "next/head";
 import React, { useState, useEffect } from "react";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performSpeakerDiarizationInference, listSpeakerDiarizationServices } from "../services/speakerDiarizationService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { extractErrorInfo } from "../utils/errorHandler";
@@ -170,10 +171,10 @@ const SpeakerDiarizationPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Speaker Diarization
+              {getServiceTitle("speaker-diarization")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Separate audio into segments based on who is speaking.
+              {getServiceDescription("speaker-diarization")}
             </Text>
           </Box>
 

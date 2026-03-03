@@ -20,6 +20,7 @@ import Head from "next/head";
 import React, { useState, useEffect } from "react";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performLanguageDiarizationInference, listLanguageDiarizationServices } from "../services/languageDiarizationService";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
@@ -179,10 +180,10 @@ const LanguageDiarizationPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Language Diarization
+              {getServiceTitle("language-diarization")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Detect language switches in real time within spoken audio.
+              {getServiceDescription("language-diarization")}
             </Text>
           </Box>
 

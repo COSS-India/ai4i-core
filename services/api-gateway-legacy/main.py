@@ -1776,11 +1776,23 @@ class ServiceUpdateResponse(BaseModel):
     changes: Dict[str, FieldChange] = Field(..., description="Dictionary of field changes")
 
 
+class ServiceDeleteRequest(BaseModel):
+    """Request model for deleting a service."""
+    service_id: int = Field(..., description="Service ID")
+
+
+class ServiceDeleteResponse(BaseModel):
+    """Response model for service deletion."""
+    service_id: int = Field(..., description="Deleted service ID")
+    message: str = Field(..., description="Deletion message")
+
+
 class TenantUpdateRequest(BaseModel):
     """Request model for updating tenant information"""
     tenant_id: str = Field(..., description="Tenant identifier")
     organization_name: Optional[str] = Field(None, min_length=2, max_length=255, description="Organization name")
     contact_email: Optional[str] = Field(None, description="Contact email address")
+    phone_number: Optional[str] = Field(None, max_length=20, description="User phone number")
     domain: Optional[str] = Field(None, min_length=3, max_length=255, description="Domain name")
     requested_quotas: Optional[QuotaStructure] = Field(None, description="Requested quota limits (characters_length, audio_length_in_min)")
     usage_quota: Optional[QuotaStructure] = Field(None, description="Usage quota values (characters_length, audio_length_in_min)")
@@ -1850,7 +1862,7 @@ class TenantUserUpdateRequest(BaseModel):
     user_id: int = Field(..., description="Auth user id for tenant user")
     username: Optional[str] = Field(None,min_length=3,max_length=100,description="Username for the tenant user")
     email: Optional[EmailStr] = Field(None,description="Email address for the tenant user")
-    is_approved: Optional[bool] = Field(None,description="Whether the tenant user is approved by the tenant admin")
+    phone_number: Optional[str] = Field(None, max_length=20, description="User phone number")
     role: Optional[str] = Field(
         None,
         description="Role for the user (key-value: {'role': 'USER'}). Allowed: ADMIN, USER, GUEST, MODERATOR.",
@@ -3219,7 +3231,7 @@ def custom_openapi():
         "/api/v1/multi-tenant/register/services",
         "/api/v1/multi-tenant/update/services",
         "/api/v1/multi-tenant/list/services",
-        "/api/v1/multi-tenant/resolve-tenant-from-user/{user_id}",
+        "/api/v1/multi-tenant/resolve/tenant/from/user/{user_id}",
     ])
 
     # Auto-tag operations by path prefix for better grouping in Swagger and inject header where applicable
@@ -7441,6 +7453,28 @@ async def list_services(
         "multi-tenant-service",
         method="GET",
         headers=headers
+    )
+
+
+@app.delete("/api/v1/multi-tenant/delete/services", response_model=ServiceDeleteResponse, tags=["Multi-Tenant"])
+async def delete_service(
+    payload: ServiceDeleteRequest,
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Security(bearer_scheme),
+    api_key: Optional[str] = Security(api_key_scheme),
+):
+    """Delete a service configuration by service_id."""
+    await ensure_authenticated_for_request(request, credentials, api_key)
+    headers = build_auth_headers(request, credentials, api_key)
+    headers["Content-Type"] = "application/json"
+    body = json.dumps(payload.model_dump(mode="json", exclude_unset=False)).encode("utf-8")
+    return await proxy_to_service(
+        None,
+        "/delete/services",
+        "multi-tenant-service",
+        method="DELETE",
+        body=body,
+        headers=headers,
     )
 
 @app.get("/api/v1/multi-tenant/resolve/tenant/from/user/{user_id}", tags=["Multi-Tenant"])

@@ -41,7 +41,7 @@ async def resolve_tenant_from_user_id(
     """
     try:
         # Call API Gateway to resolve tenant from user_id
-        resolve_url = f"{API_GATEWAY_URL}/api/v1/multi-tenant/resolve-tenant-from-user/{user_id}"
+        resolve_url = f"{API_GATEWAY_URL}/api/v1/multi-tenant/resolve/tenant/from/user/{user_id}"
         
         # Get auth headers from request to forward
         auth_header = request.headers.get("Authorization")

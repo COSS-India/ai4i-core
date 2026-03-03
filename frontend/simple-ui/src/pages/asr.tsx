@@ -20,6 +20,7 @@ import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
 import LoadingSpinner from "../components/common/LoadingSpinner";
 import { ASR_SUPPORTED_LANGUAGES } from "../config/constants";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { useASR } from "../hooks/useASR";
 import { listASRServices, ASRServiceDetails } from "../services/asrService";
 import { useToastWithDeduplication } from "../hooks/useToastWithDeduplication";
@@ -98,10 +99,10 @@ const ASRPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Automatic Speech Recognition
+              {getServiceTitle("asr")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Convert spoken audio into accurate, readable text in Indic languages.
+              {getServiceDescription("asr")}
             </Text>
           </Box>
 
