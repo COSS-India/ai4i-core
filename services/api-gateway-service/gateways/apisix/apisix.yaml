@@ -51,7 +51,7 @@ routes:
     type: roundrobin
 - uri: /api/v1/alerts/*
   name: alerts-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 210
   methods:
   - GET
@@ -72,7 +72,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,PATCH,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token,X-Correlation-ID,X-Request-ID
       allow_credential: true
     proxy-rewrite:
@@ -99,7 +99,6 @@ routes:
       count: 200
 - uri: /api/v1/asr/*
   name: asr-route
-  host: ${APISIX_PUBLIC_HOST}
   priority: 10
   methods:
   - GET
@@ -119,7 +118,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -141,7 +140,7 @@ routes:
       allow_degradation: false
 - uri: /api/v1/audio-lang-detection/*
   name: audio-lang-detection-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -161,7 +160,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -183,7 +182,7 @@ routes:
       allow_degradation: false
 - uri: /api/v1/auth/*
   name: auth-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -204,12 +203,12 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
 - uri: /api/v1/config/*
   name: config-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -229,7 +228,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
     response-rewrite:
@@ -242,7 +241,7 @@ routes:
       use_real_request_uri_unsafe: false
 - uri: /api/v1/feature-flags/*
   name: feature-flags-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -262,12 +261,12 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
 - uri: /api/v1/language-detection/*
   name: language-detection-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -287,7 +286,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -309,7 +308,7 @@ routes:
       allow_degradation: false
 - uri: /api/v1/language-diarization/*
   name: language-diarization-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -333,7 +332,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -355,7 +354,7 @@ routes:
       allow_degradation: false
 - uri: /api/v1/llm/*
   name: llm-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -414,7 +413,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,X-API-Key,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-Anonymous-Session-Id,X-Try-It,sec-ch-ua,sec-ch-ua-mobile,sec-ch-ua-platform,Referer
       expose_headers: X-Auth-Token
       allow_credential: true
     response-rewrite:
@@ -434,7 +433,7 @@ routes:
       count: 120
 - uri: /api/v1/multi-tenant/*
   name: multi-tenant-catch-all-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 200
   methods:
   - GET
@@ -457,7 +456,7 @@ routes:
       max_age: 3600
       allow_credential: true
       expose_headers: X-Auth-Token
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
     proxy-rewrite:
       regex_uri:
       - ^/api/v1/multi-tenant/(.*)
@@ -480,7 +479,7 @@ routes:
       allow_degradation: false
 - uri: /api/v1/ner/*
   name: ner-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -500,7 +499,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -522,7 +521,7 @@ routes:
       allow_degradation: false
 - uri: /api/v1/nmt/*
   name: nmt-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -557,7 +556,7 @@ routes:
       allow_degradation: false
 - uri: /api/v1/observability/*
   name: telemetry-observability-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 10
   methods:
   - GET
@@ -577,12 +576,12 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,X-API-Key,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
 - uri: /api/v1/ocr/*
   name: ocr-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -617,7 +616,7 @@ routes:
       allow_degradation: false
 - uri: /api/v1/pipeline/*
   name: pipeline-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -652,7 +651,7 @@ routes:
       allow_degradation: false
 - uri: /api/v1/registry/*
   name: config-registry-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -672,7 +671,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
     response-rewrite:
@@ -685,7 +684,7 @@ routes:
       use_real_request_uri_unsafe: false
 - uri: /api/v1/speaker-diarization/*
   name: speaker-diarization-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -705,7 +704,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -727,7 +726,7 @@ routes:
       allow_degradation: false
 - uri: /api/v1/telemetry/*
   name: telemetry-ingestion-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -747,12 +746,12 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,X-API-Key,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
 - uri: /api/v1/transliteration/*
   name: transliteration-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -772,7 +771,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -794,7 +793,7 @@ routes:
       allow_degradation: false
 - uri: /api/v1/try-it*
   name: api-gateway-try-it-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 80
   methods:
   - POST
@@ -826,7 +825,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: POST,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-Anonymous-Session-Id
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,X-Anonymous-Session-Id,X-Try-It,sec-ch-ua,sec-ch-ua-mobile,sec-ch-ua-platform,Referer
       expose_headers: X-Auth-Token,X-Service,X-RateLimit-Limit,X-RateLimit-Remaining,X-RateLimit-Reset,RateLimit-Limit,RateLimit-Remaining,RateLimit-Reset
       allow_credential: true
     proxy-rewrite:
@@ -847,7 +846,7 @@ routes:
       time_window: 3600
 - uri: /api/v1/tts/*
   name: tts-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -867,7 +866,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,X-Language,X-Service-Id,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token,X-Service,X-Gateway
       allow_credential: true
     proxy-rewrite:
@@ -889,7 +888,7 @@ routes:
       allow_degradation: false
 - uri: /alerts-management
   name: frontend-alerts-management
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -902,7 +901,7 @@ routes:
     type: roundrobin
 - uri: /alerts-management/*
   name: frontend-alerts-management-prefix
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -915,7 +914,7 @@ routes:
     type: roundrobin
 - uri: /asr
   name: frontend-asr
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -928,7 +927,7 @@ routes:
     type: roundrobin
 - uri: /audio-lang-detection
   name: frontend-audio-lang-detection
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -941,7 +940,7 @@ routes:
     type: roundrobin
 - uri: /audio-language-detection
   name: frontend-audio-language-detection
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -954,7 +953,7 @@ routes:
     type: roundrobin
 - uri: /audio-language-detection/*
   name: frontend-audio-language-detection-prefix
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -967,7 +966,7 @@ routes:
     type: roundrobin
 - uri: /auth
   name: frontend-auth
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -980,7 +979,7 @@ routes:
     type: roundrobin
 - uri: /auth/callback
   name: auth-callback-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 10
   methods:
   - GET
@@ -997,12 +996,12 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,Cookie,Set-Cookie
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,Cookie,Set-Cookie
       expose_headers: X-Auth-Token,Set-Cookie
       allow_credential: true
 - uri: /dashboard/*
   name: dashboard-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -1022,7 +1021,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,Cookie,Set-Cookie
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,Cookie,Set-Cookie
       expose_headers: Set-Cookie
       allow_credential: true
     proxy-rewrite:
@@ -1032,7 +1031,7 @@ routes:
       use_real_request_uri_unsafe: false
 - uri: /docs*
   name: docs-manager-docs-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 90
   methods:
   - GET
@@ -1049,7 +1048,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
 - uris:
@@ -1070,7 +1069,7 @@ routes:
     type: roundrobin
 - uri: /feature-flags*
   name: unleash-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -1091,7 +1090,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,PATCH,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token,X-Service
       allow_credential: true
     proxy-rewrite:
@@ -1113,7 +1112,7 @@ routes:
       allow_degradation: false
 - uri: /grafana/*
   name: grafana-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -1133,7 +1132,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
     limit-count:
@@ -1159,7 +1158,7 @@ routes:
     type: roundrobin
 - uri: /jaeger*
   name: jaeger-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -1179,7 +1178,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
     proxy-rewrite:
@@ -1201,7 +1200,7 @@ routes:
       allow_degradation: false
 - uri: /language-detection
   name: frontend-language-detection
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -1214,7 +1213,7 @@ routes:
     type: roundrobin
 - uri: /language-diarization
   name: frontend-language-diarization
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -1227,7 +1226,7 @@ routes:
     type: roundrobin
 - uri: /llm
   name: frontend-llm
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -1240,7 +1239,7 @@ routes:
     type: roundrobin
 - uri: /logs
   name: frontend-logs
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -1253,7 +1252,7 @@ routes:
     type: roundrobin
 - uri: /model-management
   name: frontend-model-management
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -1266,7 +1265,7 @@ routes:
     type: roundrobin
 - uri: /ner
   name: frontend-ner
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -1279,7 +1278,7 @@ routes:
     type: roundrobin
 - uri: /nmt
   name: frontend-nmt
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -1292,7 +1291,7 @@ routes:
     type: roundrobin
 - uri: /ocr
   name: frontend-ocr
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -1305,7 +1304,7 @@ routes:
     type: roundrobin
 - uri: /openapi.json
   name: docs-manager-openapi-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 100
   methods:
   - GET
@@ -1322,12 +1321,12 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
 - uri: /opensearch*
   name: opensearch-dashboards-route
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 0
   methods:
   - GET
@@ -1347,7 +1346,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,kbn-version,kbn-xsrf
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,apikey,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime,kbn-version,kbn-xsrf
       expose_headers: X-Auth-Token,kbn-version
       allow_credential: true
     proxy-rewrite:
@@ -1369,7 +1368,7 @@ routes:
       allow_degradation: false
 - uri: /pipeline
   name: frontend-pipeline
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -1382,7 +1381,7 @@ routes:
     type: roundrobin
 - uri: /profile
   name: frontend-profile
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -1395,7 +1394,7 @@ routes:
     type: roundrobin
 - uri: /prometheus
   name: prometheus-redirect
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 100
   methods:
   - GET
@@ -1407,7 +1406,7 @@ routes:
       append_query_string: false
 - uri: /prometheus/
   name: prometheus-redirect-slash
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 100
   methods:
   - GET
@@ -1419,7 +1418,7 @@ routes:
       append_query_string: false
 - uri: /prometheus/*
   name: prometheus-proxy
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 10
   methods:
   - GET
@@ -1439,7 +1438,7 @@ routes:
       allow_origins: ${APISIX_PUBLIC_ORIGIN}
       allow_methods: GET,POST,PUT,DELETE,OPTIONS
       max_age: 3600
-      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
+      allow_headers: Accept,Accept-Version,Content-Length,Content-MD5,Content-Type,Date,X-Auth-Token,Authorization,X-API-Key,x-api-key,x-auth-source,X-Auth-Source,request-startTime,Request-StartTime,Request-Starttime
       expose_headers: X-Auth-Token
       allow_credential: true
     proxy-rewrite:
@@ -1458,7 +1457,7 @@ routes:
       count: 200
 - uri: /prometheus/query
   name: prometheus-query-page
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 50
   methods:
   - GET
@@ -1475,7 +1474,7 @@ routes:
       use_real_request_uri_unsafe: false
 - uri: /prometheus/query/*
   name: prometheus-query-assets
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 45
   methods:
   - GET
@@ -1495,7 +1494,7 @@ routes:
       use_real_request_uri_unsafe: false
 - uri: /services-management
   name: frontend-services-management
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -1508,7 +1507,7 @@ routes:
     type: roundrobin
 - uri: /speaker-diarization
   name: frontend-speaker-diarization
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -1521,7 +1520,7 @@ routes:
     type: roundrobin
 - uri: /traces
   name: frontend-traces
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -1534,7 +1533,7 @@ routes:
     type: roundrobin
 - uri: /transliteration
   name: frontend-transliteration
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
@@ -1547,7 +1546,7 @@ routes:
     type: roundrobin
 - uri: /tts
   name: frontend-tts
-  host: ${APISIX_PUBLIC_HOST}
+
   priority: 3
   methods:
   - GET
