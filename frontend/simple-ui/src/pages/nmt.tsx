@@ -21,6 +21,7 @@ import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import LoadingSpinner from "../components/common/LoadingSpinner";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import ModelLanguageSelector from "../components/nmt/ModelLanguageSelector";
 import TextTranslator from "../components/nmt/TextTranslator";
 import TranslationResults from "../components/nmt/TranslationResults";
@@ -131,10 +132,10 @@ const NMTPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Neural Machine Translation
+              {getServiceTitle("nmt")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Translate text instantly across Indic languages.
+              {getServiceDescription("nmt")}
             </Text>
           </Box>
 

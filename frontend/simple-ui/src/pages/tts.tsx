@@ -22,6 +22,7 @@ import React, { useState, useEffect } from "react";
 import { FaRegFileAudio } from "react-icons/fa";
 import ContentLayout from "../components/common/ContentLayout";
 import LoadingSpinner from "../components/common/LoadingSpinner";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import TextInput from "../components/tts/TextInput";
 import TTSResults from "../components/tts/TTSResults";
 import VoiceSelector from "../components/tts/VoiceSelector";
@@ -110,10 +111,10 @@ const TTSPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              Text-to-Speech
+              {getServiceTitle("tts")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Generate natural-sounding speech from text in Indic languages.
+              {getServiceDescription("tts")}
             </Text>
           </Box>
 
