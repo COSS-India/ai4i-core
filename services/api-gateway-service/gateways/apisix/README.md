@@ -8,7 +8,7 @@ The same **`apisix.yaml`** is used for local (Docker Compose) and production (e.
 
 | Variable | Description | Local (Docker) | Production (e.g. sandbox) |
 |----------|-------------|----------------|----------------------------|
-| **APISIX_PUBLIC_HOST** | Host for route matching and `Host` header | `localhost` | `sandbox.ai4inclusion.org` |
+| **APISIX_PUBLIC_HOST** | *(Reserved; not used in routes — matching is by URI/method so CORS works for any Host e.g. localhost:8080.)* | — | — |
 | **APISIX_PUBLIC_ORIGIN** | CORS `allow_origins` (scheme + host, no path) | `http://localhost:3000` | `https://sandbox.ai4inclusion.org` |
 | **APISIX_UPSTREAM_SUFFIX** | Suffix for upstream service hostnames | *(empty → script uses `.` so hostnames get trailing dot and bypass host DNS search domain)* | `.sandbox.svc.cluster.local` |
 
