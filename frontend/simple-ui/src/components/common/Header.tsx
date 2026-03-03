@@ -16,10 +16,26 @@ import {
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import React, { useEffect, useState } from "react";
+import { getServiceTitle, type ServiceId } from "../../config/serviceMetadata";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import AuthModal from "../auth/AuthModal";
 import ApiKeyViewerModal from "./ApiKeyViewerModal";
+
+const PATH_TO_SERVICE: Record<string, ServiceId> = {
+  "/asr": "asr",
+  "/tts": "tts",
+  "/nmt": "nmt",
+  "/llm": "llm",
+  "/pipeline": "pipeline",
+  "/ocr": "ocr",
+  "/transliteration": "transliteration",
+  "/language-detection": "language-detection",
+  "/speaker-diarization": "speaker-diarization",
+  "/language-diarization": "language-diarization",
+  "/audio-language-detection": "audio-language-detection",
+  "/ner": "ner",
+};
 
 const Header: React.FC = () => {
   const router = useRouter();
@@ -59,25 +75,15 @@ const Header: React.FC = () => {
     return () => clearInterval(intervalId);
   }, [isUserAuthenticated, isAuthLoading, checkSessionExpiry]);
 
-  // Update title based on route
+  // Update title based on route (service pages use serviceMetadata; others use fixed labels)
   useEffect(() => {
     const pathname = router.pathname;
+    const serviceId = PATH_TO_SERVICE[pathname];
+    if (serviceId) {
+      setTitle(getServiceTitle(serviceId));
+      return;
+    }
     switch (pathname) {
-      case "/asr":
-        setTitle("ASR – Automatic Speech Recognition");
-        break;
-      case "/tts":
-        setTitle("TTS – Text-to-Speech");
-        break;
-      case "/nmt":
-        setTitle("Text Translation");
-        break;
-      case "/llm":
-        setTitle("Large Language Model");
-        break
-      case "/pipeline":
-        setTitle("Speech-to-Speech Pipeline");
-        break;
       case "/pipeline-builder":
         setTitle("Pipeline Builder");
         break;

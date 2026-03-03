@@ -28,6 +28,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { CopyIcon, CheckIcon, AttachmentIcon, DeleteIcon } from "@chakra-ui/icons";
 import { useQuery } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
+import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
 import { performOCRInference, listOCRServices } from "../services/ocrService";
 import { OCR_ERRORS, MAX_IMAGE_FILE_SIZE } from "../config/constants";
 import { extractErrorInfo } from "../utils/errorHandler";
@@ -373,10 +374,10 @@ const OCRPage: React.FC = () => {
           {/* Page Header */}
           <Box textAlign="center">
             <Heading size="xl" color="gray.800" mb={2} userSelect="none" cursor="default" tabIndex={-1}>
-              OCR - Optical Character Recognition
+              {getServiceTitle("ocr")}
             </Heading>
             <Text color="gray.600" fontSize="lg" userSelect="none" cursor="default">
-              Extract editable text from images and scanned documents.
+              {getServiceDescription("ocr")}
             </Text>
           </Box>
 
