@@ -1,6 +1,6 @@
 # APISIX Routes Configuration (environment-agnostic)
 # Generated from apisix.yaml.template via substitute-env.sh at container start.
-# Configure: APISIX_PUBLIC_HOST, APISIX_PUBLIC_ORIGIN, APISIX_UPSTREAM_SUFFIX (see README).
+# Configure: APISIX_PUBLIC_ORIGIN, APISIX_UPSTREAM_SUFFIX (see README).
 #
 routes:
 - uri: /
