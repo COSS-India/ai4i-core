@@ -358,7 +358,9 @@ services:
       - ./services/docs-manager:/app
     command: ["--reload"]
     networks:
-      - microservices-network
+      microservices-network:
+        aliases:
+          - docs-manager-service
     restart: unless-stopped
 
   metrics-service:
