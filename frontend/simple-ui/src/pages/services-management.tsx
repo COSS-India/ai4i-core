@@ -90,7 +90,10 @@ const ServicesManagementPage: React.FC = () => {
 
   const { checkSessionExpiry } = useSessionExpiry();
 
-  
+  const { isOpen, onOpen, onClose } = useDisclosure();
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
+
   // Check if user is GUEST or USER and redirect if so
   useEffect(() => {
     if (user?.roles?.includes('GUEST') || user?.roles?.includes('USER')) {
@@ -104,9 +107,6 @@ const ServicesManagementPage: React.FC = () => {
       router.push('/');
     }
   }, [user, router, toast]);
-  const { isOpen, onOpen, onClose } = useDisclosure();
-  const cancelRef = useRef<HTMLButtonElement>(null);
-  const [serviceToDelete, setServiceToDelete] = useState<Service | null>(null);
   // Model fetched by ID when navigating from a deprecated model's "Create Service" (not in active list)
   const [preselectedModelFromQuery, setPreselectedModelFromQuery] = useState<any | null>(null);
 
@@ -620,9 +620,7 @@ const ServicesManagementPage: React.FC = () => {
   };
 
   const handleDeleteConfirm = async () => {
-    // Check session expiry before deleting
     if (!checkSessionExpiry()) return;
-    
     if (!serviceToDelete?.uuid) {
       toast({
         title: "Delete Failed",
@@ -634,12 +632,9 @@ const ServicesManagementPage: React.FC = () => {
       onClose();
       return;
     }
-
     setDeletingServiceUuid(serviceToDelete.uuid);
-
     try {
       await deleteService(serviceToDelete.uuid);
-
       toast({
         title: "Service Deleted",
         description: `Service ${serviceToDelete.name || serviceToDelete.service_id} has been deleted successfully`,
@@ -647,8 +642,6 @@ const ServicesManagementPage: React.FC = () => {
         duration: 3000,
         isClosable: true,
       });
-
-      // Invalidate all service-related queries to refresh service lists across all pages
       queryClient.invalidateQueries({ queryKey: ["asr-services"] });
       queryClient.invalidateQueries({ queryKey: ["tts-services"] });
       queryClient.invalidateQueries({ queryKey: ["ocr-services"] });
@@ -660,19 +653,14 @@ const ServicesManagementPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["language-detection-services"] });
       queryClient.invalidateQueries({ queryKey: ["language-diarization-services"] });
       queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
-
-      // Refresh services list
       const fetchedServices = await listServices();
       setServices(fetchedServices);
-
-      // If viewing the deleted service, close the view
       if (selectedService?.uuid === serviceToDelete.uuid) {
         setIsViewingService(false);
         setSelectedService(null);
         setActiveTab(0);
       }
     } catch (error: any) {
-      const errorMessage = error instanceof Error ? error.message : "Failed to delete service";
       const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
       toast({
         title: showOnlyMessage ? undefined : errorTitle,
@@ -762,6 +750,7 @@ const ServicesManagementPage: React.FC = () => {
                                   <Tr
                                     key={service.uuid || service.service_id}
                                     _hover={{ bg: tableRowHoverBg, cursor: "pointer" }}
+                                    onClick={() => handleViewService(service.serviceId || service.service_id || "")}
                                   >
                                     <Td>{service.serviceId || service.service_id || "N/A"}</Td>
                                     <Td>{service.name || "N/A"}</Td>
@@ -987,25 +976,9 @@ const ServicesManagementPage: React.FC = () => {
                     <TabPanel px={0} pt={6}>
                       <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                         <CardHeader>
-                          <HStack justify="space-between" align="center">
-                            <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-                              Service Details: {selectedService.name || selectedService.serviceId || selectedService.service_id}
-                            </Heading>
-                            <HStack spacing={2}>
-                              {/* Editing disabled for now */}
-                              <Button
-                                size="sm"
-                                colorScheme="red"
-                                variant="outline"
-                                onClick={() => handleDeleteClick(selectedService)}
-                                isLoading={deletingServiceUuid === selectedService.uuid}
-                                loadingText="Deleting..."
-                                isDisabled={deletingServiceUuid !== null}
-                              >
-                                Delete Service
-                              </Button>
-                            </HStack>
-                          </HStack>
+                          <Heading size="md" color="gray.700" userSelect="none" cursor="default">
+                            Service Details: {selectedService.name || selectedService.serviceId || selectedService.service_id}
+                          </Heading>
                         </CardHeader>
                         <CardBody>
                           {!isEditingService && (
@@ -1050,25 +1023,40 @@ const ServicesManagementPage: React.FC = () => {
                                   <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
                                     Status (Publish/Unpublish)
                                   </Text>
-                                  <Badge
-                                    colorScheme={getStatusColor(selectedService.healthStatus?.status || selectedService.status)}
-                                    fontSize="sm"
-                                    p={2}
-                                  >
-                                    {(() => {
-                                      const status = selectedService.healthStatus?.status || selectedService.status;
-                                      // Map status to Publish/Unpublish
-                                      if (status === 'active' || status === 'published') {
-                                        return 'PUBLISHED';
-                                      } else if (status === 'inactive' || status === 'unpublished') {
-                                        return 'UNPUBLISHED';
-                                      }
-                                      return status?.toUpperCase() || "N/A";
-                                    })()}
-                                  </Badge>
-                                  <Text fontSize="xs" color="gray.500" mt={1}>
-                                    System-controlled (shown only after creation)
-                                  </Text>
+                                  <HStack spacing={2} align="center" flexWrap="wrap">
+                                    <Badge
+                                      colorScheme={selectedService.isPublished === true ? "green" : "gray"}
+                                      fontSize="sm"
+                                      p={2}
+                                    >
+                                      {selectedService.isPublished === true ? "PUBLISHED" : "UNPUBLISHED"}
+                                    </Badge>
+                                    {selectedService.isPublished === true ? (
+                                      <Button
+                                        size="sm"
+                                        colorScheme="red"
+                                        variant="outline"
+                                        onClick={() => handleUnpublishService(selectedService)}
+                                        isLoading={unpublishingServiceUuid === selectedService.uuid}
+                                        loadingText="Unpublishing..."
+                                        isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
+                                      >
+                                        Unpublish
+                                      </Button>
+                                    ) : (
+                                      <Button
+                                        size="sm"
+                                        colorScheme="green"
+                                        variant="outline"
+                                        onClick={() => handlePublishService(selectedService)}
+                                        isLoading={publishingServiceUuid === selectedService.uuid}
+                                        loadingText="Publishing..."
+                                        isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
+                                      >
+                                        Publish
+                                      </Button>
+                                    )}
+                                  </HStack>
                                 </Box>
                               </SimpleGrid>
 
@@ -1154,24 +1142,16 @@ const ServicesManagementPage: React.FC = () => {
         </VStack>
       </ContentLayout>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog
-        isOpen={isOpen}
-        leastDestructiveRef={cancelRef}
-        onClose={onClose}
-      >
+      <AlertDialog isOpen={isOpen} leastDestructiveRef={cancelRef} onClose={onClose}>
         <AlertDialogOverlay>
           <AlertDialogContent>
             <AlertDialogHeader fontSize="lg" fontWeight="bold">
               Delete Service
             </AlertDialogHeader>
-
             <AlertDialogBody>
               Are you sure you want to delete the service{" "}
-              <strong>{serviceToDelete?.name || serviceToDelete?.service_id}</strong>? This action
-              cannot be undone.
+              <strong>{serviceToDelete?.name || serviceToDelete?.service_id}</strong>? This action cannot be undone.
             </AlertDialogBody>
-
             <AlertDialogFooter>
               <Button ref={cancelRef} onClick={onClose}>
                 Cancel

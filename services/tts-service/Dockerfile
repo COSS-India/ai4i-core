@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     curl \
     libpq-dev \
+    libffi-dev \
     libsndfile1-dev \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
@@ -30,6 +31,9 @@ COPY libs/ai4icore_telemetry /app/libs/ai4icore_telemetry
 COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
 # Copy constants folder
 COPY services/constants /app/services/constants
+
+# Install grpcio first so ai4icore_telemetry's OTLP gRPC exporter resolves without conflicts
+RUN pip install --no-cache-dir --user 'grpcio>=1.63.2,<2.0.0'
 
 # Install AI4ICore plugins
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability

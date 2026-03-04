@@ -1033,6 +1033,44 @@ async def verify_email_token(token: str, tenant_db: AsyncSession, auth_db: Async
             detail="Authentication service response missing user id for tenant admin",
         )
 
+
+
+    # Assign TENANT ADMIN role to the tenant admin user
+    # The register endpoint assigns USER role by default, so we need to replace it with TENANT ADMIN
+    try:
+        # Get TENANT ADMIN role ID from auth_db
+        role_result = await auth_db.execute(
+            text("SELECT id FROM roles WHERE name = 'TENANT ADMIN'")
+        )
+        tenant_admin_role_row = role_result.first()
+        
+        if tenant_admin_role_row:
+            tenant_admin_role_id = tenant_admin_role_row[0]
+            
+            # Delete any existing role assignments (auth-service only allows one role per user)
+            await auth_db.execute(
+                text("DELETE FROM user_roles WHERE user_id = :user_id"),
+                {"user_id": admin_user_id}
+            )
+            
+            # Insert TENANT ADMIN role assignment
+            await auth_db.execute(
+                text("""
+                    INSERT INTO user_roles (user_id, role_id, assigned_at)
+                    VALUES (:user_id, :role_id, CURRENT_TIMESTAMP)
+                    ON CONFLICT (user_id, role_id) DO NOTHING
+                """),
+                {"user_id": admin_user_id, "role_id": tenant_admin_role_id}
+            )
+            await auth_db.commit()
+            logger.info(f"Assigned TENANT ADMIN role to tenant admin user_id={admin_user_id} for tenant {tenant.tenant_id}")
+        else:
+            logger.warning(f"TENANT ADMIN role not found in auth_db. Tenant admin user_id={admin_user_id} will have default USER role.")
+    except Exception as e:
+        logger.error(f"Failed to assign TENANT ADMIN role to tenant admin user_id={admin_user_id} for tenant {tenant.tenant_id}: {e}")
+        # Don't fail the tenant registration if role assignment fails - user can still be assigned role later
+        await auth_db.rollback()
+
     audit = AuditLog(
         tenant_id=tenant.id,
         action=AuditAction.email_verified,
