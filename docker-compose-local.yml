@@ -351,7 +351,6 @@ services:
     ports:
       - "8106:8103"
     environment:
-      - USE_API_PROXY=true
       - SPECS_ROOT=/app/specs
       - SERVICE_DOCS_REGISTRY_PATH=/app/specs/service-docs-registry.yaml
     volumes:
