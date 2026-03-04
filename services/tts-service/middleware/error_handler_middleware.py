@@ -268,8 +268,8 @@ def add_error_handlers(app: FastAPI) -> None:
                 },
             )
 
-        # For permission/ownership issues, keep or normalize the message to a clear
-        # "Insufficient permission" format instead of prefixing with "Authorization error".
+        # For permission/ownership issues, keep or normalize the message to a clear format
+        # instead of prefixing with "Authorization error".
         if (
             "permission" in message.lower()
             or "does not have" in message.lower()
@@ -277,22 +277,42 @@ def add_error_handlers(app: FastAPI) -> None:
             or "tts service" in message.lower()
             or "api key does not belong to the authenticated user" in message.lower()
         ):
-            # Normalize to the desired format if this is the standard TTS access message
+            # Normalize to the desired format if this is the standard TTS access message.
+            # We intentionally use the "Invalid API key" prefix here so we can return the
+            # exact structure requested by the client for TTS permission failures.
             if "does not have access to tts service" in message.lower():
-                message = "Insufficient permission: This key does not have access to TTS service"
-            # Also handle cases where the message might be "Invalid API key: This key does not have access to TTS service"
+                message = "Invalid API key: This key does not have access to TTS service"
+            # Also handle cases where the message might already be in the desired format
             elif "invalid api key" in message.lower() and "does not have access to tts service" in message.lower():
-                message = "Insufficient permission: This key does not have access to TTS service"
+                message = "Invalid API key: This key does not have access to TTS service"
             # Else leave the permission-related message as-is
         else:
             # For non-permission-related authorization errors, keep a clear prefix
             if not message.startswith("Authorization error"):
                 message = f"Authorization error: {message}"
 
+        # For the specific case where the API key does not have permission to the TTS
+        # service, return the exact error structure requested:
+        # {
+        #   "detail": {
+        #       "error": "AUTHORIZATION_ERROR",
+        #       "message": "Invalid API key: This key does not have access to TTS service"
+        #   }
+        # }
+        if "invalid api key: this key does not have access to tts service" in message.lower():
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": {
+                        "error": "AUTHORIZATION_ERROR",
+                        "message": "Invalid API key: This key does not have access to TTS service",
+                    }
+                },
+            )
+
         error_detail = ErrorDetail(
             message=message,
             code="AUTHORIZATION_ERROR",
-            timestamp=time.time()
         )
         return JSONResponse(
             status_code=403,
