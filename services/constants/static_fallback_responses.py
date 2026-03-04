@@ -28,6 +28,21 @@ def get_nmt_static_response(input_texts: List[str]) -> Dict[str, Any]:
     }
 
 
+# ---------- TRANSLITERATION ----------
+
+def get_transliteration_static_response(input_texts: List[str]) -> Dict[str, Any]:
+    """
+    Return a minimal static Transliteration response matching the shape expected by routers.
+    Mirrors the NMT static response structure so callers can reuse parsing logic.
+    """
+    return {
+        "output": [
+            {"source": text, "target": text}
+            for text in input_texts
+        ]
+    }
+
+
 # ---------- ASR ----------
 
 def get_asr_static_response(num_inputs: int) -> Dict[str, Any]:
