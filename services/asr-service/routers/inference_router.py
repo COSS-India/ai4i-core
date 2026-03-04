@@ -18,7 +18,7 @@ from utils.triton_client import TritonClient
 from utils.audio_utils import get_audio_duration
 
 from models.asr_request import ASRInferenceRequest
-from models.asr_response import ASRInferenceResponse
+from models.asr_response import ASRInferenceResponse, TranscriptOutput
 from repositories.asr_repository import ASRRepository
 from services.asr_service import ASRService
 from services.audio_service import AudioService
@@ -52,8 +52,9 @@ from middleware.exceptions import (
     ServiceUnavailableError,
 )
 from middleware.auth_provider import AuthProvider
-from middleware.tenant_db_dependency import get_tenant_db_session
-from middleware.tenant_context import try_get_tenant_context
+from ai4icore_multi_tenant import get_tenant_db_session_factory, try_get_tenant_context
+
+get_tenant_db_session = get_tenant_db_session_factory()
 from services.constants.error_messages import (
     LANGUAGE_NOT_SUPPORTED,
     LANGUAGE_NOT_SUPPORTED_MESSAGE,
@@ -1280,8 +1281,7 @@ async def _run_asr_inference_internal(
                     from repositories.asr_repository import ASRRepository
                     from services.audio_service import AudioService
                     from utils.triton_client import TritonClient
-                    from middleware.tenant_db_dependency import get_tenant_db_session
-                    
+
                     triton_endpoint = getattr(http_request.state, "triton_endpoint")
                     triton_api_key = getattr(http_request.state, "triton_api_key", "")
                     triton_model_name = getattr(http_request.state, "triton_model_name", "unknown")
@@ -1386,15 +1386,37 @@ async def _run_asr_inference_internal(
                         },
                     }
                     
-                    # Re-raise with combined error message
-                    combined_error_message = (
-                        f"Primary service ({original_service_id}) failed: {primary_error_msg}. "
-                        f"Fallback service ({fallback_service_id}) also failed: {fallback_error_msg}"
+                    # Static fallback when Triton down (both primary and fallback failed)
+                    from services.constants.static_fallback_responses import (
+                        is_static_fallback_enabled,
+                        get_asr_static_response,
                     )
-                    raise TritonInferenceError(combined_error_message) from fallback_error
+                    if is_static_fallback_enabled():
+                        num_inputs = len(request.audio)
+                        static_data = get_asr_static_response(num_inputs)
+                        output = [TranscriptOutput(**o) for o in static_data["output"]]
+                        logger.info("Returning static ASR fallback (Triton unreachable)")
+                        response = ASRInferenceResponse(output=output)
+                    else:
+                        combined_error_message = (
+                            f"Primary service ({original_service_id}) failed: {primary_error_msg}. "
+                            f"Fallback service ({fallback_service_id}) also failed: {fallback_error_msg}"
+                        )
+                        raise TritonInferenceError(combined_error_message) from fallback_error
             else:
-                # No fallback available - re-raise original error
-                raise
+                # No fallback service available - use static fallback if enabled
+                from services.constants.static_fallback_responses import (
+                    is_static_fallback_enabled,
+                    get_asr_static_response,
+                )
+                if is_static_fallback_enabled():
+                    num_inputs = len(request.audio)
+                    static_data = get_asr_static_response(num_inputs)
+                    output = [TranscriptOutput(**o) for o in static_data["output"]]
+                    logger.info("Returning static ASR fallback (Triton unreachable)")
+                    response = ASRInferenceResponse(output=output)
+                else:
+                    raise
         
         # Calculate output metrics (character length and word count) for successful responses
         output_texts = [output.source for output in response.output]

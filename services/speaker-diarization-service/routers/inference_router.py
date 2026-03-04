@@ -20,8 +20,9 @@ from repositories.speaker_diarization_repository import SpeakerDiarizationReposi
 from services.speaker_diarization_service import SpeakerDiarizationService
 from utils.triton_client import TritonClient, TritonInferenceError
 from middleware.auth_provider import AuthProvider
-from middleware.tenant_db_dependency import get_tenant_db_session
-from middleware.tenant_context import try_get_tenant_context
+from ai4icore_multi_tenant import get_tenant_db_session_factory, try_get_tenant_context
+
+get_tenant_db_session = get_tenant_db_session_factory()
 import os
 import httpx
 from middleware.exceptions import ErrorDetail
@@ -340,6 +341,34 @@ async def run_inference(
                 detail=str(exc),
             ) from exc
         except TritonInferenceError as exc:
+            from services.constants.static_fallback_responses import (
+                is_static_fallback_enabled,
+                get_speaker_diarization_static_response,
+            )
+            if is_static_fallback_enabled():
+                num_inputs = len(request_body.audio)
+                static_data = get_speaker_diarization_static_response(num_inputs)
+                from models.speaker_diarization_response import (
+                    SpeakerDiarizationInferenceResponse,
+                    SpeakerDiarizationOutput,
+                    Segment,
+                )
+                output = []
+                for o in static_data["output"]:
+                    segments = [Segment(**s) for s in o["segments"]]
+                    output.append(SpeakerDiarizationOutput(
+                        total_segments=o["total_segments"],
+                        num_speakers=o["num_speakers"],
+                        speakers=o["speakers"],
+                        segments=segments,
+                    ))
+                if tracer:
+                    current_span = trace.get_current_span()
+                    if current_span:
+                        current_span.add_event("speaker-diarization.inference.static_fallback", {"reason": "Triton unreachable"})
+                        current_span.set_status(Status(StatusCode.OK))
+                logger.info("Returning static Speaker Diarization fallback (Triton unreachable)")
+                return SpeakerDiarizationInferenceResponse(output=output)
             service_id = getattr(http_request.state, "service_id", None)
             triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
             error_detail = str(exc)
@@ -430,6 +459,29 @@ async def _run_inference_impl(
             detail=str(exc),
         ) from exc
     except TritonInferenceError as exc:
+        from services.constants.static_fallback_responses import (
+            is_static_fallback_enabled,
+            get_speaker_diarization_static_response,
+        )
+        if is_static_fallback_enabled():
+            num_inputs = len(request_body.audio)
+            static_data = get_speaker_diarization_static_response(num_inputs)
+            from models.speaker_diarization_response import (
+                SpeakerDiarizationInferenceResponse,
+                SpeakerDiarizationOutput,
+                Segment,
+            )
+            output = []
+            for o in static_data["output"]:
+                segments = [Segment(**s) for s in o["segments"]]
+                output.append(SpeakerDiarizationOutput(
+                    total_segments=o["total_segments"],
+                    num_speakers=o["num_speakers"],
+                    speakers=o["speakers"],
+                    segments=segments,
+                ))
+            logger.info("Returning static Speaker Diarization fallback (Triton unreachable)")
+            return SpeakerDiarizationInferenceResponse(output=output)
         service_id = getattr(http_request.state, "service_id", None)
         triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
         error_detail = str(exc)

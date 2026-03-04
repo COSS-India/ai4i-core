@@ -30,8 +30,9 @@ from repositories.language_diarization_repository import LanguageDiarizationRepo
 from services.language_diarization_service import LanguageDiarizationService
 from utils.triton_client import TritonClient, TritonInferenceError
 from middleware.auth_provider import AuthProvider
-from middleware.tenant_db_dependency import get_tenant_db_session
-from middleware.tenant_context import try_get_tenant_context
+from ai4icore_multi_tenant import get_tenant_db_session_factory, try_get_tenant_context
+
+get_tenant_db_session = get_tenant_db_session_factory()
 import os
 import httpx
 from middleware.exceptions import ErrorDetail
@@ -385,6 +386,30 @@ async def run_inference(
                 detail=str(exc),
             ) from exc
         except TritonInferenceError as exc:
+            from services.constants.static_fallback_responses import (
+                is_static_fallback_enabled,
+                get_language_diarization_static_response,
+            )
+            if is_static_fallback_enabled():
+                num_inputs = len(request_body.audio)
+                static_data = get_language_diarization_static_response(num_inputs)
+                from models.language_diarization_response import (
+                    LanguageDiarizationInferenceResponse,
+                    LanguageDiarizationOutput,
+                    LanguageSegment,
+                )
+                output = []
+                for o in static_data["output"]:
+                    segments = [LanguageSegment(**s) for s in o["segments"]]
+                    output.append(LanguageDiarizationOutput(
+                        total_segments=o["total_segments"],
+                        segments=segments,
+                        target_language=o["target_language"],
+                    ))
+                span.add_event("language_diarization.inference.static_fallback", {"reason": "Triton unreachable"})
+                span.set_status(Status(StatusCode.OK))
+                logger.info("Returning static Language Diarization fallback (Triton unreachable)")
+                return LanguageDiarizationInferenceResponse(output=output)
             import traceback
             tb_str = traceback.format_exc()
             
@@ -505,12 +530,37 @@ async def _run_inference_impl(
     )
 
     # Run inference (Triton + Language Diarization)
-    response = await language_diarization_service.run_inference(
-        request_body,
-        user_id=user_id,
-        api_key_id=api_key_id,
-        session_id=session_id
-    )
+    try:
+        response = await language_diarization_service.run_inference(
+            request_body,
+            user_id=user_id,
+            api_key_id=api_key_id,
+            session_id=session_id
+        )
+    except TritonInferenceError as exc:
+        from services.constants.static_fallback_responses import (
+            is_static_fallback_enabled,
+            get_language_diarization_static_response,
+        )
+        if is_static_fallback_enabled():
+            num_inputs = len(request_body.audio)
+            static_data = get_language_diarization_static_response(num_inputs)
+            from models.language_diarization_response import (
+                LanguageDiarizationInferenceResponse,
+                LanguageDiarizationOutput,
+                LanguageSegment,
+            )
+            output = []
+            for o in static_data["output"]:
+                segments = [LanguageSegment(**s) for s in o["segments"]]
+                output.append(LanguageDiarizationOutput(
+                    total_segments=o["total_segments"],
+                    segments=segments,
+                    target_language=o["target_language"],
+                ))
+            logger.info("Returning static Language Diarization fallback (Triton unreachable)")
+            return LanguageDiarizationInferenceResponse(output=output)
+        raise
     
     # Calculate response metrics
     response_size = 0
