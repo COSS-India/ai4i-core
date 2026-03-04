@@ -112,7 +112,7 @@ async def get_audio_lang_detection_service(
     return AudioLangDetectionService(triton_client=triton_client, repository=repository)
 
 
-async def _enforce_tenant_and_service_checks(http_request: Request, service_name: str = "audio-lang-detection"):
+async def _enforce_tenant_and_service_checks(http_request: Request, service_name: str = "audio_language_detection"):
     """
     Enforce tenant subscription, tenant status (ACTIVE) and global service active flag.
     Execution order:
@@ -226,7 +226,7 @@ async def _enforce_tenant_and_service_checks(http_request: Request, service_name
 async def enforce_audio_lang_detection_checks(request: Request):
     """FastAPI dependency that enforces tenant and service checks for Audio Lang Detection before other dependencies run."""
     # the service name is coming from multitenant SubscriptionType enum
-    await _enforce_tenant_and_service_checks(request, service_name="audio-lang-detection")
+    await _enforce_tenant_and_service_checks(request, service_name="audio_language_detection")
 
 # Add as a router-level dependency so it runs before path-operation dependencies like get_audio_lang_detection_service
 inference_router.dependencies.append(Depends(enforce_audio_lang_detection_checks))
