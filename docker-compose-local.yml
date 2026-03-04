@@ -1070,6 +1070,7 @@ services:
       - ./services/audio-lang-detection-service/.env
     volumes:
       - ./services/audio-lang-detection-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
