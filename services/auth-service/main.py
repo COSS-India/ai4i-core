@@ -174,30 +174,25 @@ security = HTTPBearer()
 
 # Dependency to get database session
 async def get_db() -> AsyncSession:
-    """Get database session"""
+    """Get database session (FastAPI will manage lifecycle from this generator)."""
     async with db_session() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
+        # Let the context manager handle closing; avoid double-closing which can
+        # interfere with FastAPI's async dependency cleanup.
+        yield session
 
 # Dependency to get multi-tenant database session
 async def get_multi_tenant_db():
-    """Get multi-tenant database session with graceful error handling"""
+    """Get multi-tenant database session (or None if not configured)."""
     if multi_tenant_db_session is None:
+        # Multi-tenant DB is optional; downstream code must handle None.
         yield None
         return
-    try:
-        async with multi_tenant_db_session() as session:
-            try:
-                yield session
-            finally:
-                await session.close()
-    except Exception as e:
-        # Log error but don't fail the request - multi-tenant DB is optional
-        # This prevents authentication failures when tenant DB is unavailable
-        logger.warning(f"Failed to get multi-tenant database session: {e}")
-        yield None
+
+    # Let FastAPI manage the lifecycle via this generator; avoid catching
+    # exceptions from the request itself, per FastAPI's guidance for
+    # dependencies with yield.
+    async with multi_tenant_db_session() as session:
+        yield session
 
 # Dependency to get current user from token
 async def get_current_user(
@@ -211,7 +206,7 @@ async def get_current_user(
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
+            detail={"error": INVALID_CREDENTIALS.lower(), "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -219,7 +214,7 @@ async def get_current_user(
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
+            detail={"error": INVALID_CREDENTIALS.lower(), "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -333,6 +328,56 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
         return None
     except Exception as e:
         logger.warning(f"Error getting tenant info for user {user_id}: {e} - continuing without tenant info")
+        return None
+
+
+# Helper function to get all user IDs for a given tenant_id
+async def get_tenant_user_ids(tenant_id: str, multi_tenant_db: Optional[AsyncSession]) -> Optional[List[int]]:
+    """
+    Get all user IDs that belong to a given tenant_id.
+    Returns list of user_ids including both tenant admin and tenant users.
+    Returns None if multi_tenant_db is unavailable.
+    """
+    if multi_tenant_db is None:
+        return None
+    
+    try:
+        # Query to get all user_ids for a tenant:
+        # 1. Tenant admin: user_id from tenants table where tenant_id matches
+        # 2. Tenant users: user_ids from tenant_users table joined with tenants where tenant_id matches
+        tenant_users_query = text("""
+            SELECT DISTINCT user_id
+            FROM (
+                -- Tenant admin user
+                SELECT t.user_id
+                FROM tenants t
+                WHERE t.tenant_id = :tenant_id
+                AND t.user_id IS NOT NULL
+                
+                UNION
+                
+                -- Tenant users
+                SELECT tu.user_id
+                FROM tenant_users tu
+                JOIN tenants t ON tu.tenant_uuid = t.id
+                WHERE t.tenant_id = :tenant_id
+                AND tu.user_id IS NOT NULL
+            ) AS all_tenant_users
+        """)
+        
+        result = await asyncio.wait_for(
+            multi_tenant_db.execute(tenant_users_query, {"tenant_id": tenant_id}),
+            timeout=5.0
+        )
+        rows = result.fetchall()
+        user_ids = [row[0] for row in rows if row[0] is not None]
+        return user_ids if user_ids else []
+        
+    except asyncio.TimeoutError:
+        logger.warning(f"Timeout getting tenant user IDs for tenant_id {tenant_id}")
+        return None
+    except Exception as e:
+        logger.warning(f"Error getting tenant user IDs for tenant_id {tenant_id}: {e}")
         return None
 
 @app.on_event("startup")
@@ -733,12 +778,26 @@ async def login(
         # 🔍 Step 2: Retrieve user
         logger.debug(f"Fetching user from database: {login_data.email}")
         user = await AuthUtils.get_user_by_email(db, login_data.email)
-        
-        if not user or not AuthUtils.verify_password(login_data.password, user.password_hash):
+
+        # Handle invalid user or password in a way that can never crash,
+        # so we always return a clean 401 instead of a 500.
+        password_valid = False
+        if user:
+            try:
+                password_valid = AuthUtils.verify_password(login_data.password, user.password_hash)
+            except Exception as e:
+                # Log and treat any verification error as invalid credentials
+                logger.warning(
+                    f"Password verification error for email={login_data.email}: {e}",
+                    exc_info=True,
+                )
+                password_valid = False
+
+        if not user or not password_valid:
             logger.warning(f"❌ Login failed - invalid credentials: email={login_data.email}, ip={client_ip}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
+                detail={"error": INVALID_CREDENTIALS.lower(), "message": INVALID_CREDENTIALS_MESSAGE},
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
@@ -746,7 +805,7 @@ async def login(
             logger.warning(f"❌ Login failed - inactive user: email={login_data.email}, user_id={user.id}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
+                detail={"error": INVALID_CREDENTIALS.lower(), "message": INVALID_CREDENTIALS_MESSAGE},
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
@@ -921,19 +980,19 @@ async def refresh_token(
     """Refresh access token using refresh token"""
     payload = AuthUtils.verify_refresh_token(refresh_data.refresh_token)
     if payload is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": INVALID_CREDENTIALS.lower(), "message": INVALID_CREDENTIALS_MESSAGE},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
     
     user_id = payload.get("sub")
     if user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"error": INVALID_CREDENTIALS.lower(), "message": INVALID_CREDENTIALS_MESSAGE},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
     
     # Verify session exists and is active
     result = await db.execute(
@@ -1406,6 +1465,7 @@ async def create_api_key(
         key_value=api_key_value,  # Only returned on creation
         permissions=db_api_key.permissions,
         is_active=db_api_key.is_active,
+        is_revoked=getattr(db_api_key, "is_revoked", False),
         created_at=db_api_key.created_at,
         expires_at=db_api_key.expires_at,
         last_used=db_api_key.last_used
@@ -1445,6 +1505,7 @@ async def list_api_keys(
                 key_value=AuthUtils.decrypt_api_key(key.key_value_encrypted) or "***",  # Decrypt and return actual value
                 permissions=key.permissions,
                 is_active=key.is_active,
+                is_revoked=getattr(key, "is_revoked", False),
                 created_at=key.created_at,
                 expires_at=key.expires_at,
                 last_used=key.last_used
@@ -1496,20 +1557,62 @@ async def select_api_key(
     tags=["Admin"],
 )
 async def list_all_api_keys_with_users(
+    tenant_id: Optional[str] = Query(None, description="Filter API keys by tenant_id. For TENANT ADMIN users, this is derived from the token and the query parameter is ignored."),
     current_user: User = Depends(require_permission("apiKey", "read")),
     db: AsyncSession = Depends(get_db),
+    multi_tenant_db: Optional[AsyncSession] = Depends(get_multi_tenant_db)
 ):
     """
     List **all** API keys in the system (active and inactive), including basic
     user details (user_id, email) for each key.
 
     Intended for admin/moderator dashboards and audits.
+    
+    Authorization / scoping:
+    - ADMIN / superuser:
+        - If tenant_id is provided, only returns API keys for users belonging to that tenant.
+        - If tenant_id is not provided, returns all API keys (original behavior).
+    - TENANT ADMIN:
+        - Always restricted to API keys for users belonging to the tenant from the JWT/tenant mapping.
+        - Any tenant_id query parameter is ignored; backend enforces tenant scoping.
     """
-    result = await db.execute(
-        select(APIKey, User)
-        .join(User, APIKey.user_id == User.id)
-        .order_by(APIKey.created_at.desc())
-    )
+    # Determine caller roles for scoping
+    caller_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    is_admin = "ADMIN" in caller_roles or current_user.is_superuser
+    is_tenant_admin = "TENANT ADMIN" in caller_roles
+
+    query = select(APIKey, User).join(User, APIKey.user_id == User.id)
+
+    # Determine effective tenant scope (if any)
+    effective_tenant_id: Optional[str] = None
+
+    if is_tenant_admin:
+        tenant_info = await get_tenant_info(current_user.id, multi_tenant_db, current_user.is_tenant)
+        if not tenant_info or not tenant_info.get("tenant_id"):
+            logger.warning(
+                f"Could not resolve tenant context for TENANT ADMIN user_id={current_user.id}; returning no API keys."
+            )
+            return []
+        effective_tenant_id = tenant_info["tenant_id"]
+    elif is_admin and tenant_id:
+        effective_tenant_id = tenant_id
+
+    if effective_tenant_id:
+        tenant_user_ids = await get_tenant_user_ids(effective_tenant_id, multi_tenant_db)
+        if tenant_user_ids is None:
+            # Multi-tenant DB unavailable - return empty list to be safe
+            logger.warning(
+                f"Multi-tenant DB unavailable, cannot filter API keys by tenant_id {effective_tenant_id}"
+            )
+            return []
+        elif not tenant_user_ids:
+            # No users found for this tenant
+            return []
+        else:
+            # Filter API keys by tenant user IDs
+            query = query.where(User.id.in_(tenant_user_ids))
+    
+    result = await db.execute(query.order_by(APIKey.created_at.desc()))
     rows = result.all()
 
     api_keys: List[AdminAPIKeyWithUserResponse] = []
@@ -1521,6 +1624,7 @@ async def list_all_api_keys_with_users(
                 key_value=AuthUtils.decrypt_api_key(api_key.key_value_encrypted) or "***",
                 permissions=api_key.permissions,
                 is_active=api_key.is_active,
+                is_revoked=getattr(api_key, "is_revoked", False),
                 created_at=api_key.created_at,
                 expires_at=api_key.expires_at,
                 last_used=api_key.last_used,
@@ -1555,6 +1659,9 @@ async def revoke_api_key(
             detail="API key not found"
         )
     
+    # Hard revoke: mark as revoked and force inactive. This is irreversible
+    # (cannot be reactivated via the update API).
+    api_key.is_revoked = True
     api_key.is_active = False
     await db.commit()
     
@@ -1600,8 +1707,17 @@ async def update_api_key(
             if "pipeline.inference" not in updated_permissions:
                 updated_permissions.append("pipeline.inference")
         api_key.permissions = updated_permissions
-    # Allow toggling active status (soft-enable/soft-disable)
+    # Allow toggling active status (soft-enable/soft-disable) only for keys
+    # that have NOT been permanently revoked.
     if update_data.is_active is not None:
+        if getattr(api_key, "is_revoked", False) and update_data.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "api_key_revoked",
+                    "message": "This API key has been revoked and cannot be reactivated.",
+                },
+            )
         api_key.is_active = update_data.is_active
 
     await db.commit()
@@ -1616,6 +1732,7 @@ async def update_api_key(
         key_value="***",
         permissions=api_key.permissions,
         is_active=api_key.is_active,
+        is_revoked=getattr(api_key, "is_revoked", False),
         created_at=api_key.created_at,
         expires_at=api_key.expires_at,
         last_used=api_key.last_used,
@@ -2008,17 +2125,31 @@ async def remove_role(
 @app.get("/api/v1/auth/roles/user/{user_id}", response_model=UserRolesResponse, tags=["Role Management"])
 async def get_user_roles_endpoint(
     user_id: int,
+    tenant_id: Optional[str] = Query(None, description="Filter by tenant_id. For TENANT ADMIN users, this is derived from the token and the query parameter is ignored."),
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    multi_tenant_db: Optional[AsyncSession] = Depends(get_multi_tenant_db)
 ):
-    """Get roles for a user (Admin or self)"""
+    """Get roles for a user (Admin or self)
+    
+    Authorization / scoping:
+    - ADMIN / superuser:
+        - If tenant_id is provided, validates that the user belongs to that tenant.
+        - If tenant_id is not provided, returns roles regardless of tenant (original behavior).
+    - TENANT ADMIN:
+        - Always restricted to users belonging to the tenant from the JWT/tenant mapping.
+        - Any tenant_id query parameter is ignored; backend enforces tenant scoping.
+    """
     try:
-        # Check if current user is admin or viewing own profile
-        user_roles = await AuthUtils.get_user_roles(db, current_user.id)
-        if user_id != current_user.id and "ADMIN" not in user_roles and not current_user.is_superuser:
+        # Check if current user is admin, tenant admin, or viewing own profile
+        caller_roles = await AuthUtils.get_user_roles(db, current_user.id)
+        is_admin = "ADMIN" in caller_roles or current_user.is_superuser
+        is_tenant_admin = "TENANT ADMIN" in caller_roles
+
+        if user_id != current_user.id and not (is_admin or is_tenant_admin):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail={"code": UNAUTHORIZED, "message": "Only administrators can view other users' roles"}
+                detail={"code": UNAUTHORIZED, "message": "Only administrators can view other users' roles"},
             )
         
         target_user = await AuthUtils.get_user_by_id(db, user_id)
@@ -2027,6 +2158,39 @@ async def get_user_roles_endpoint(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
             )
+        
+        # Determine effective tenant scope (if any)
+        effective_tenant_id: Optional[str] = None
+
+        if is_tenant_admin:
+            tenant_info = await get_tenant_info(current_user.id, multi_tenant_db, current_user.is_tenant)
+            if not tenant_info or not tenant_info.get("tenant_id"):
+                logger.warning(
+                    f"Could not resolve tenant context for TENANT ADMIN user_id={current_user.id}; denying access."
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Tenant context missing for TENANT ADMIN user",
+                )
+            effective_tenant_id = tenant_info["tenant_id"]
+        elif is_admin and tenant_id:
+            effective_tenant_id = tenant_id
+
+        # Validate tenant scoping if applicable
+        if effective_tenant_id:
+            tenant_user_ids = await get_tenant_user_ids(effective_tenant_id, multi_tenant_db)
+            if tenant_user_ids is None:
+                # Multi-tenant DB unavailable - can't validate, return error
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Multi-tenant service unavailable, cannot validate tenant_id",
+                )
+            elif user_id not in tenant_user_ids:
+                # User doesn't belong to the specified tenant
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"User with ID {user_id} not found in tenant {effective_tenant_id}",
+                )
         
         # Clean up duplicate roles before getting roles (ensure only one role per user)
         user_roles_result = await db.execute(
@@ -2108,11 +2272,13 @@ async def list_roles(
 @app.get("/api/v1/auth/users/{user_id}", response_model=UserDetailResponse, tags=["Admin"])
 async def get_user_details(
     user_id: int,
-    current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    tenant_id: Optional[str] = Query(None, description="Filter by tenant_id. For TENANT ADMIN users, this is derived from the token and the query parameter is ignored."),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+    multi_tenant_db: Optional[AsyncSession] = Depends(get_multi_tenant_db)
 ):
     """
-    Get user details by user ID (Admin only)
+    Get user details by user ID.
     
     Returns user information including:
     - userid
@@ -2125,13 +2291,64 @@ async def get_user_details(
     - is_superuser
     - created_at
     - last_login
+    
+    Authorization / scoping:
+    - ADMIN / superuser:
+        - If tenant_id is provided, validates that the user belongs to that tenant.
+        - If tenant_id is not provided, returns user details regardless of tenant (original behavior).
+    - TENANT ADMIN:
+        - Always restricted to users belonging to the tenant from the JWT/tenant mapping.
+        - Any tenant_id query parameter is ignored; backend enforces tenant scoping.
     """
+    # Authorize: only ADMIN, TENANT ADMIN, or superuser can use this endpoint
+    caller_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    is_admin = "ADMIN" in caller_roles or current_user.is_superuser
+    is_tenant_admin = "TENANT ADMIN" in caller_roles
+
+    if not (is_admin or is_tenant_admin):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": UNAUTHORIZED, "message": "Only administrators can access this endpoint"},
+        )
     user = await AuthUtils.get_user_by_id(db, user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"User with ID {user_id} not found"
         )
+    
+    # Determine effective tenant scope (if any)
+    effective_tenant_id: Optional[str] = None
+
+    if is_tenant_admin:
+        tenant_info = await get_tenant_info(current_user.id, multi_tenant_db, current_user.is_tenant)
+        if not tenant_info or not tenant_info.get("tenant_id"):
+            logger.warning(
+                f"Could not resolve tenant context for TENANT ADMIN user_id={current_user.id}; denying access."
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Tenant context missing for TENANT ADMIN user",
+            )
+        effective_tenant_id = tenant_info["tenant_id"]
+    elif is_admin and tenant_id:
+        effective_tenant_id = tenant_id
+
+    # Validate tenant scoping if applicable
+    if effective_tenant_id:
+        tenant_user_ids = await get_tenant_user_ids(effective_tenant_id, multi_tenant_db)
+        if tenant_user_ids is None:
+            # Multi-tenant DB unavailable - can't validate, return error
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Multi-tenant service unavailable, cannot validate tenant_id"
+            )
+        elif user_id not in tenant_user_ids:
+            # User doesn't belong to the specified tenant
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with ID {user_id} not found in tenant {tenant_id}"
+            )
     
     return UserDetailResponse(
         id=user.id,
@@ -2198,19 +2415,63 @@ async def get_permission_list(
 
 @app.get("/api/v1/auth/users", response_model=List[UserListResponse], tags=["Admin"])
 async def get_all_users(
-    current_user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    tenant_id: Optional[str] = Query(None, description="Filter users by tenant_id. For TENANT ADMIN users, this is derived from the token and the query parameter is ignored."),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+    multi_tenant_db: Optional[AsyncSession] = Depends(get_multi_tenant_db)
 ):
     """
-    Get all users (Admin only)
+    Get all users.
     
-    Returns a list of all users with:
-    - userid
-    - username
-    - emailid
-    - phonenumber
+    - ADMIN / superuser:
+        - If tenant_id is provided, only returns users belonging to that tenant.
+        - If tenant_id is not provided, returns all users (original behavior).
+    - TENANT ADMIN:
+        - Always restricted to users belonging to the tenant from the JWT/tenant mapping.
+        - Any tenant_id query parameter is ignored; backend enforces tenant scoping.
     """
-    result = await db.execute(select(User).order_by(User.id))
+    # Authorize: only ADMIN, TENANT ADMIN, or superuser can use this endpoint
+    caller_roles = await AuthUtils.get_user_roles(db, current_user.id)
+    is_admin = "ADMIN" in caller_roles or current_user.is_superuser
+    is_tenant_admin = "TENANT ADMIN" in caller_roles
+
+    if not (is_admin or is_tenant_admin):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": UNAUTHORIZED, "message": "Only administrators can access this endpoint"},
+        )
+
+    query = select(User)
+
+    # Determine effective tenant scope
+    effective_tenant_id: Optional[str] = None
+
+    if is_tenant_admin:
+        # For TENANT ADMIN, derive tenant_id from multi-tenant DB and ignore query param.
+        tenant_info = await get_tenant_info(current_user.id, multi_tenant_db, current_user.is_tenant)
+        if not tenant_info or not tenant_info.get("tenant_id"):
+            # If we cannot resolve tenant context, do not return any users to avoid leaking data.
+            logger.warning(
+                f"Could not resolve tenant context for TENANT ADMIN user_id={current_user.id}; returning empty user list."
+            )
+            return []
+        effective_tenant_id = tenant_info["tenant_id"]
+    elif is_admin and tenant_id:
+        # For ADMIN, honor the tenant_id filter if provided
+        effective_tenant_id = tenant_id
+
+    if effective_tenant_id:
+        tenant_user_ids = await get_tenant_user_ids(effective_tenant_id, multi_tenant_db)
+        if tenant_user_ids is None:
+            logger.warning(
+                f"Multi-tenant DB unavailable, cannot filter users by tenant_id {effective_tenant_id}"
+            )
+            return []
+        if not tenant_user_ids:
+            return []
+        query = query.where(User.id.in_(tenant_user_ids))
+    
+    result = await db.execute(query.order_by(User.id))
     users = result.scalars().all()
     
     return [
