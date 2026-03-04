@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     curl \
     libpq-dev \
+    libffi-dev \
     libsndfile1-dev \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
