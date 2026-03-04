@@ -30,6 +30,9 @@ COPY libs/ai4icore_model_management /app/libs/ai4icore_model_management
 # Copy constants folder
 COPY services/constants /app/services/constants
 
+# Install grpcio first so ai4icore_telemetry's OTLP gRPC exporter resolves without conflicts
+RUN pip install --no-cache-dir --user 'grpcio>=1.63.2,<2.0.0'
+
 # Install AI4ICore plugins
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_observability
 RUN pip install --no-cache-dir --user -e /app/libs/ai4icore_logging
