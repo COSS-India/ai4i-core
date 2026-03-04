@@ -64,6 +64,10 @@ class APIKey(Base):
     key_value_encrypted = Column(Text, nullable=True)  # Encrypted API key value
     permissions = Column(JSON, default=list)
     is_active = Column(Boolean, default=True)
+    # When True, the key has been permanently revoked and cannot be reactivated.
+    # This is a separate flag from is_active so that we can support soft
+    # enable/disable via PATCH while keeping DELETE as an irreversible revoke.
+    is_revoked = Column(Boolean, default=False)
     last_used = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=True)
@@ -256,6 +260,7 @@ class APIKeyResponse(BaseModel):
     key_value: str  # Only returned on creation
     permissions: List[str]
     is_active: bool
+    is_revoked: bool = False
     created_at: datetime
     expires_at: Optional[datetime]
     last_used: Optional[datetime]
