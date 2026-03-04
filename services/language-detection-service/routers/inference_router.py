@@ -12,10 +12,11 @@ from models.language_detection_response import LanguageDetectionInferenceRespons
 from repositories.language_detection_repository import LanguageDetectionRepository
 from services.language_detection_service import LanguageDetectionService
 from services.text_service import TextService
-from utils.triton_client import TritonClient
+from utils.triton_client import TritonClient, TritonInferenceError
 from middleware.auth_provider import AuthProvider
-from middleware.tenant_db_dependency import get_tenant_db_session
-from middleware.tenant_context import try_get_tenant_context
+from ai4icore_multi_tenant import get_tenant_db_session_factory, try_get_tenant_context
+
+get_tenant_db_session = get_tenant_db_session_factory()
 import os
 import httpx
 from middleware.exceptions import ErrorDetail
@@ -332,6 +333,46 @@ async def run_inference(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(exc),
             ) from exc
+        except TritonInferenceError as exc:
+            from services.constants.static_fallback_responses import (
+                is_static_fallback_enabled,
+                get_language_detection_static_response,
+            )
+            if is_static_fallback_enabled():
+                input_texts = [inp.source for inp in request_body.input]
+                static_data = get_language_detection_static_response(input_texts)
+                from models.language_detection_response import (
+                    LanguageDetectionInferenceResponse,
+                    LanguageDetectionOutput,
+                    LanguagePrediction,
+                )
+                output = []
+                for item in static_data["output"]:
+                    preds = [LanguagePrediction(**p) for p in item["langPrediction"]]
+                    output.append(LanguageDetectionOutput(source=item["source"], langPrediction=preds))
+                if tracer:
+                    current_span = trace.get_current_span()
+                    if current_span:
+                        current_span.add_event("language-detection.inference.static_fallback", {"reason": "Triton unreachable"})
+                        current_span.set_status(Status(StatusCode.OK))
+                logger.info("Returning static Language Detection fallback (Triton unreachable)")
+                return LanguageDetectionInferenceResponse(output=output)
+            if tracer:
+                current_span = trace.get_current_span()
+                if current_span:
+                    current_span.set_attribute("error", True)
+                    current_span.set_attribute("error.type", type(exc).__name__)
+                    current_span.set_attribute("error.message", str(exc))
+                    current_span.set_status(Status(StatusCode.ERROR, str(exc)))
+                    current_span.record_exception(exc)
+            service_id = getattr(http_request.state, "service_id", None)
+            triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+            error_detail = (
+                f"Language Detection inference failed for serviceId '{service_id}' at endpoint '{triton_endpoint}': {str(exc)}. "
+                "Please verify the model is registered in Model Management and the Triton server is accessible."
+            )
+            logger.error("Language Detection inference failed: %s (serviceId=%s, endpoint=%s)", exc, service_id, triton_endpoint)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=error_detail) from exc
         except Exception as exc:
             service_id = getattr(http_request.state, "service_id", None)
             triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
@@ -399,6 +440,32 @@ async def _run_inference_impl(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+    except TritonInferenceError as exc:
+        from services.constants.static_fallback_responses import (
+            is_static_fallback_enabled,
+            get_language_detection_static_response,
+        )
+        if is_static_fallback_enabled():
+            input_texts = [inp.source for inp in request_body.input]
+            static_data = get_language_detection_static_response(input_texts)
+            from models.language_detection_response import (
+                LanguageDetectionInferenceResponse,
+                LanguageDetectionOutput,
+                LanguagePrediction,
+            )
+            output = []
+            for item in static_data["output"]:
+                preds = [LanguagePrediction(**p) for p in item["langPrediction"]]
+                output.append(LanguageDetectionOutput(source=item["source"], langPrediction=preds))
+            logger.info("Returning static Language Detection fallback (Triton unreachable)")
+            return LanguageDetectionInferenceResponse(output=output)
+        service_id = getattr(http_request.state, "service_id", None)
+        triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
+        error_detail = (
+            f"Language Detection inference failed for serviceId '{service_id}' at endpoint '{triton_endpoint}': {str(exc)}. "
+            "Please verify the model is registered in Model Management and the Triton server is accessible."
+        )
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=error_detail) from exc
     except Exception as exc:
         service_id = getattr(http_request.state, "service_id", None)
         triton_endpoint = getattr(http_request.state, "triton_endpoint", None)

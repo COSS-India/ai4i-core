@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.tts_request import TTSInferenceRequest
-from models.tts_response import TTSInferenceResponse
+from models.tts_response import TTSInferenceResponse, AudioOutput
 from repositories.tts_repository import TTSRepository
 from services.tts_service import TTSService
 from services.audio_service import AudioService
@@ -81,8 +81,9 @@ from services.constants.error_messages import (
 )
 from middleware.exceptions import AuthenticationError, AuthorizationError
 from middleware.auth_provider import AuthProvider
-from middleware.tenant_db_dependency import get_tenant_db_session
-from middleware.tenant_context import try_get_tenant_context
+from ai4icore_multi_tenant import get_tenant_db_session_factory, try_get_tenant_context
+
+get_tenant_db_session = get_tenant_db_session_factory()
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -1556,8 +1557,7 @@ async def run_inference(
                         from services.audio_service import AudioService
                         from services.text_service import TextService
                         from utils.triton_client import TritonClient
-                        from middleware.tenant_db_dependency import get_tenant_db_session
-                        
+
                         triton_endpoint = getattr(http_request.state, "triton_endpoint")
                         triton_api_key = getattr(http_request.state, "triton_api_key", "")
                         triton_model_name = getattr(http_request.state, "triton_model_name", "tts")
@@ -1570,41 +1570,37 @@ async def run_inference(
                         fallback_triton_client = TritonClient(triton_url, triton_api_key)
                         
                         # Get database session for fallback service
-                        # Use async for to properly manage the generator lifecycle
-                        # The generator's finally block will close the session automatically
+                        fallback_db = await get_tenant_db_session(http_request)
                         try:
-                            async for fallback_db in get_tenant_db_session(http_request):
-                                fallback_repository = TTSRepository(fallback_db)
-                                fallback_audio_service = AudioService()
-                                fallback_text_service = TextService()
-                                fallback_tts_service = TTSService(
-                                    fallback_repository,
-                                    fallback_audio_service,
-                                    fallback_text_service,
-                                    fallback_triton_client,
-                                    resolved_model_name=triton_model_name
-                                )
-                                
-                                # Retry inference with fallback service
-                                logger.info(
-                                    "TTS: Retrying inference with fallback service",
-                                    extra={"fallback_service_id": fallback_service_id}
-                                )
-                                
-                                response = await fallback_tts_service.run_inference(
-                                    request=request,
-                                    user_id=user_id,
-                                    api_key_id=api_key_id,
-                                    session_id=session_id,
-                                    http_request_state=http_request.state
-                                )
-                                # Break after successful inference - generator will close session in finally block
-                                break
+                            fallback_repository = TTSRepository(fallback_db)
+                            fallback_audio_service = AudioService()
+                            fallback_text_service = TextService()
+                            fallback_tts_service = TTSService(
+                                fallback_repository,
+                                fallback_audio_service,
+                                fallback_text_service,
+                                fallback_triton_client,
+                                resolved_model_name=triton_model_name
+                            )
+                            
+                            # Retry inference with fallback service
+                            logger.info(
+                                "TTS: Retrying inference with fallback service",
+                                extra={"fallback_service_id": fallback_service_id}
+                            )
+                            
+                            response = await fallback_tts_service.run_inference(
+                                request=request,
+                                user_id=user_id,
+                                api_key_id=api_key_id,
+                                session_id=session_id,
+                                http_request_state=http_request.state
+                            )
                         except Exception as fallback_error:
-                            # Log the error but don't suppress it - let it propagate
-                            # The generator will properly clean up in its finally block
                             logger.error(f"Fallback TTS service failed: {fallback_error}", exc_info=True)
                             raise
+                        finally:
+                            await fallback_db.close()
                         
                         using_fallback = True
                         
@@ -1672,15 +1668,37 @@ async def run_inference(
                             },
                         }
                         
-                        # Re-raise with combined error message
-                        combined_error_message = (
-                            f"Primary service ({original_service_id}) failed: {primary_error_msg}. "
-                            f"Fallback service ({fallback_service_id}) also failed: {fallback_error_msg}"
+                        # Static fallback when Triton down (both primary and fallback failed)
+                        from services.constants.static_fallback_responses import (
+                            is_static_fallback_enabled,
+                            get_tts_static_response,
                         )
-                        raise TritonInferenceError(combined_error_message) from fallback_error
+                        if is_static_fallback_enabled():
+                            num_outputs = len(request.input)
+                            static_data = get_tts_static_response(num_outputs)
+                            audio = [AudioOutput(**a) for a in static_data["audio"]]
+                            logger.info("Returning static TTS fallback (Triton unreachable)")
+                            response = TTSInferenceResponse(audio=audio)
+                        else:
+                            combined_error_message = (
+                                f"Primary service ({original_service_id}) failed: {primary_error_msg}. "
+                                f"Fallback service ({fallback_service_id}) also failed: {fallback_error_msg}"
+                            )
+                            raise TritonInferenceError(combined_error_message) from fallback_error
                 else:
-                    # No fallback available - re-raise original error
-                    raise
+                    # No fallback service available - use static fallback if enabled
+                    from services.constants.static_fallback_responses import (
+                        is_static_fallback_enabled,
+                        get_tts_static_response,
+                    )
+                    if is_static_fallback_enabled():
+                        num_outputs = len(request.input)
+                        static_data = get_tts_static_response(num_outputs)
+                        audio = [AudioOutput(**a) for a in static_data["audio"]]
+                        logger.info("Returning static TTS fallback (Triton unreachable)")
+                        response = TTSInferenceResponse(audio=audio)
+                    else:
+                        raise
             
             # Add response metadata
             span.set_attribute("tts.output_count", len(response.audio))

@@ -13,13 +13,14 @@ from opentelemetry.trace import Status, StatusCode
 from ai4icore_logging import get_correlation_id
 
 from models.ner_request import NerInferenceRequest
-from models.ner_response import NerInferenceResponse
+from models.ner_response import NerInferenceResponse, NerPrediction, NerTokenPrediction
 from services.ner_service import NerService, TritonInferenceError
 from repositories.ner_repository import NERRepository
 from utils.triton_client import TritonClient
 from middleware.auth_provider import AuthProvider
-from middleware.tenant_db_dependency import get_tenant_db_session
-from middleware.tenant_context import try_get_tenant_context
+from ai4icore_multi_tenant import get_tenant_db_session_factory, try_get_tenant_context
+
+get_tenant_db_session = get_tenant_db_session_factory()
 from sqlalchemy.ext.asyncio import AsyncSession
 import os
 import httpx
@@ -357,6 +358,40 @@ async def run_inference(
                 detail=str(exc),
             ) from exc
         except TritonInferenceError as exc:
+            try:
+                from services.constants.static_fallback_responses import (
+                    is_static_fallback_enabled,
+                    get_ner_static_response,
+                )
+            except Exception:
+                # If the shared constants package is not available in this
+                # runtime (e.g. not copied into the image or import is
+                # shadowed), gracefully disable static fallback rather than
+                # failing the entire request with an import error.
+                def is_static_fallback_enabled() -> bool:  # type: ignore[no-redef]
+                    return False
+
+                get_ner_static_response = None  # type: ignore[assignment]
+
+            if is_static_fallback_enabled():
+                input_texts = [inp.source for inp in request_body.input]
+                static_data = (
+                    get_ner_static_response(input_texts)
+                    if get_ner_static_response is not None
+                    else None
+                )
+                if static_data is None:
+                    raise
+                output = []
+                for item in static_data["output"]:
+                    predictions = [
+                        NerTokenPrediction(**p) for p in item["nerPrediction"]
+                    ]
+                    output.append(NerPrediction(source=item["source"], nerPrediction=predictions))
+                span.add_event("ner.inference.static_fallback", {"reason": "Triton unreachable"})
+                span.set_status(Status(StatusCode.OK))
+                logger.info("Returning static NER fallback (Triton unreachable)")
+                return NerInferenceResponse(output=output)
             service_id = getattr(http_request.state, "service_id", None)
             triton_endpoint = getattr(http_request.state, "triton_endpoint", None)
             model_name = getattr(http_request.state, "triton_model_name", None)
@@ -449,7 +484,10 @@ async def _run_ner_inference_impl(
     ner_service: NerService,
 ) -> NerInferenceResponse:
     """Fallback implementation when tracing is not available."""
-    # Extract auth context from request.state (if middleware is configured)
+    from services.constants.static_fallback_responses import (
+        is_static_fallback_enabled,
+        get_ner_static_response,
+    )
     user_id = getattr(http_request.state, "user_id", None)
     api_key_id = getattr(http_request.state, "api_key_id", None)
     session_id = getattr(http_request.state, "session_id", None)
@@ -463,14 +501,30 @@ async def _run_ner_inference_impl(
         session_id,
     )
 
-    response = await ner_service.run_inference(
-        request_body,
-        user_id=user_id,
-        api_key_id=api_key_id,
-        session_id=session_id
-    )
-    logger.info("NER inference completed successfully")
-    return response
+    try:
+        response = await ner_service.run_inference(
+            request_body,
+            user_id=user_id,
+            api_key_id=api_key_id,
+            session_id=session_id
+        )
+        logger.info("NER inference completed successfully")
+        return response
+    except TritonInferenceError as exc:
+        if is_static_fallback_enabled():
+            input_texts = [inp.source for inp in request_body.input]
+            static_data = get_ner_static_response(input_texts)
+            output = []
+            for item in static_data["output"]:
+                predictions = [NerTokenPrediction(**p) for p in item["nerPrediction"]]
+                output.append(NerPrediction(source=item["source"], nerPrediction=predictions))
+            logger.info("Returning static NER fallback (Triton unreachable)")
+            return NerInferenceResponse(output=output)
+        logger.error("NER Triton inference failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
 
 
 

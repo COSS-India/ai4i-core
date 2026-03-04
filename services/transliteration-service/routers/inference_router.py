@@ -14,7 +14,7 @@ from opentelemetry.trace import Status, StatusCode
 from ai4icore_logging import get_correlation_id
 
 from models.transliteration_request import TransliterationInferenceRequest
-from models.transliteration_response import TransliterationInferenceResponse
+from models.transliteration_response import TransliterationInferenceResponse, TransliterationOutput
 from repositories.transliteration_repository import TransliterationRepository
 from services.transliteration_service import TransliterationService
 from services.text_service import TextService
@@ -25,8 +25,9 @@ from utils.validation_utils import (
     InvalidLanguagePairError, InvalidServiceIdError, BatchSizeExceededError
 )
 from middleware.auth_provider import AuthProvider
-from middleware.tenant_db_dependency import get_tenant_db_session
-from middleware.tenant_context import try_get_tenant_context
+from ai4icore_multi_tenant import get_tenant_db_session_factory, try_get_tenant_context
+
+get_tenant_db_session = get_tenant_db_session_factory()
 from middleware.exceptions import (
     AuthenticationError, 
     AuthorizationError,
@@ -415,6 +416,18 @@ async def run_inference(
             ) from exc
 
         except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as exc:
+            from services.constants.static_fallback_responses import (
+                is_static_fallback_enabled,
+                get_transliteration_static_response,
+            )
+            if is_static_fallback_enabled():
+                input_texts = [inp.source for inp in request.input]
+                static_data = get_transliteration_static_response(input_texts)
+                output = [TransliterationOutput(**o) for o in static_data["output"]]
+                span.add_event("transliteration.inference.static_fallback", {"reason": "Triton unreachable"})
+                span.set_status(Status(StatusCode.OK))
+                logger.info("Returning static Transliteration fallback (Triton unreachable)")
+                return TransliterationInferenceResponse(output=output)
             span.set_attribute("error", True)
             span.set_attribute("error.type", type(exc).__name__)
             span.set_attribute("error.message", str(exc))
@@ -425,7 +438,6 @@ async def run_inference(
             })
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
-            # Re-raise service-specific errors (they will be handled by error handler middleware)
             raise
 
         except Exception as exc:
@@ -493,13 +505,27 @@ async def _run_transliteration_inference_impl(
 
     # Log removed - middleware handles request/response logging
 
-    response = await transliteration_service.run_inference(
-        request=request,
-        user_id=user_id,
-        api_key_id=api_key_id,
-        session_id=session_id,
-        auth_headers=extract_auth_headers(http_request)
-    )
+    try:
+        response = await transliteration_service.run_inference(
+            request=request,
+            user_id=user_id,
+            api_key_id=api_key_id,
+            session_id=session_id,
+            auth_headers=extract_auth_headers(http_request)
+        )
+    except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as exc:
+        from services.constants.static_fallback_responses import (
+            is_static_fallback_enabled,
+            get_transliteration_static_response,
+        )
+        if is_static_fallback_enabled():
+            input_texts = [inp.source for inp in request.input]
+            static_data = get_transliteration_static_response(input_texts)
+            from models.transliteration_response import TransliterationOutput
+            output = [TransliterationOutput(**o) for o in static_data["output"]]
+            logger.info("Returning static Transliteration fallback (Triton unreachable)")
+            return TransliterationInferenceResponse(output=output)
+        raise
     # Log removed - middleware handles request/response logging
     return response
 

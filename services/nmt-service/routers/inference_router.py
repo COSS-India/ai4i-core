@@ -16,7 +16,7 @@ from opentelemetry.trace import Status, StatusCode
 from ai4icore_logging import get_correlation_id, get_logger
 
 from models.nmt_request import NMTInferenceRequest
-from models.nmt_response import NMTInferenceResponse
+from models.nmt_response import NMTInferenceResponse, TranslationOutput
 from repositories.nmt_repository import NMTRepository
 from services.nmt_service import NMTService
 from services.text_service import TextService
@@ -29,17 +29,17 @@ from utils.validation_utils import (
 )
 from middleware.auth_provider import AuthProvider
 from middleware.exceptions import (
-    AuthenticationError, 
+    AuthenticationError,
     AuthorizationError,
     TritonInferenceError,
     ModelNotFoundError,
     ServiceUnavailableError,
     TextProcessingError,
-    ErrorDetail
+    ErrorDetail,
 )
-from middleware.exceptions import AuthenticationError, AuthorizationError
-from middleware.tenant_db_dependency import get_tenant_db_session
-from middleware.tenant_context import try_get_tenant_context
+from ai4icore_multi_tenant import get_tenant_db_session_factory, try_get_tenant_context
+
+get_tenant_db_session = get_tenant_db_session_factory()
 import os
 import httpx
 
@@ -1236,8 +1236,7 @@ async def run_inference(
                         # Get database session for fallback service
                         from repositories.nmt_repository import NMTRepository
                         from services.text_service import TextService
-                        from middleware.tenant_db_dependency import get_tenant_db_session
-                        
+
                         fallback_db = await get_tenant_db_session(http_request)
                         fallback_repository = NMTRepository(fallback_db)
                         fallback_text_service = TextService()
@@ -1481,6 +1480,18 @@ async def run_inference(
             ) from exc
 
         except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as exc:
+            from services.constants.static_fallback_responses import (
+                is_static_fallback_enabled,
+                get_nmt_static_response,
+            )
+            if is_static_fallback_enabled():
+                input_texts = [inp.source for inp in request.input]
+                static_data = get_nmt_static_response(input_texts)
+                output = [TranslationOutput(**o) for o in static_data["output"]]
+                span.add_event("nmt.inference.static_fallback", {"reason": "Triton unreachable"})
+                span.set_status(Status(StatusCode.OK))
+                logger.info("Returning static NMT fallback (Triton unreachable)")
+                return NMTInferenceResponse(output=output)
             span.set_attribute("error", True)
             span.set_attribute("error.type", type(exc).__name__)
             span.set_attribute("error.message", str(exc))
@@ -1491,7 +1502,6 @@ async def run_inference(
             })
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             span.record_exception(exc)
-            # Re-raise service-specific errors (they will be handled by error handler middleware)
             raise
 
         except Exception as exc:
@@ -1593,14 +1603,27 @@ async def _run_nmt_inference_impl(
 
     # Log removed - middleware handles request/response logging
 
-    response = await nmt_service.run_inference(
-        request=request,
-        user_id=user_id,
-        api_key_id=api_key_id,
-        session_id=session_id,
-        auth_headers=extract_auth_headers(http_request),
-        http_request=http_request,
-    )
+    try:
+        response = await nmt_service.run_inference(
+            request=request,
+            user_id=user_id,
+            api_key_id=api_key_id,
+            session_id=session_id,
+            auth_headers=extract_auth_headers(http_request),
+            http_request=http_request,
+        )
+    except (TritonInferenceError, ModelNotFoundError, ServiceUnavailableError, TextProcessingError) as exc:
+        from services.constants.static_fallback_responses import (
+            is_static_fallback_enabled,
+            get_nmt_static_response,
+        )
+        if is_static_fallback_enabled():
+            input_texts = [inp.source for inp in request.input]
+            static_data = get_nmt_static_response(input_texts)
+            output = [TranslationOutput(**o) for o in static_data["output"]]
+            logger.info("Returning static NMT fallback (Triton unreachable)")
+            return NMTInferenceResponse(output=output, smr_response=smr_response_data)
+        raise
     
     # Include SMR response in the final response (null if SMR was not called)
     response_dict = response.dict()

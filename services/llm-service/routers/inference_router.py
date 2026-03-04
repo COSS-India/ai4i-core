@@ -10,15 +10,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.llm_request import LLMInferenceRequest
-from models.llm_response import LLMInferenceResponse
+from models.llm_response import LLMInferenceResponse, LLMOutput
 from repositories.llm_repository import LLMRepository
 from services.llm_service import LLMService
 from utils.triton_client import TritonClient
 from middleware.auth_provider import AuthProvider
-from middleware.tenant_db_dependency import get_tenant_db_session
 import os
 import httpx
-from middleware.tenant_context import try_get_tenant_context
+from ai4icore_multi_tenant import get_tenant_db_session_factory, try_get_tenant_context
+
+get_tenant_db_session = get_tenant_db_session_factory()
 from middleware.exceptions import ErrorDetail
 from fastapi import Depends
 
@@ -206,6 +207,24 @@ async def run_inference(
         return response
         
     except Exception as e:
+        from utils.triton_client import TritonInferenceError
+        from services.constants.static_fallback_responses import (
+            is_static_fallback_enabled,
+            get_llm_static_response_batch,
+        )
+        # LLM may raise TritonInferenceError or wrap in TextProcessingError; also check message
+        is_triton_error = (
+            isinstance(e, TritonInferenceError)
+            or "triton" in str(e).lower()
+            or "connection" in str(e).lower()
+            or "timeout" in str(e).lower()
+        )
+        if is_triton_error and is_static_fallback_enabled():
+            input_texts = [inp.source for inp in request.input]
+            static_data = get_llm_static_response_batch(input_texts)
+            output = [LLMOutput(**o) for o in static_data["output"]]
+            logger.info("Returning static LLM fallback (Triton unreachable)")
+            return LLMInferenceResponse(output=output)
         logger.error(f"LLM inference failed: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
