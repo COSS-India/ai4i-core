@@ -994,6 +994,7 @@ services:
       - TRITON_ENDPOINT=http://65.1.35.3:8700
     volumes:
       - ./services/speaker-diarization-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
