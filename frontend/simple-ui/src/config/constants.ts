@@ -1196,8 +1196,10 @@ export const DEFAULT_TTS_CONFIG = {
 } as const;
 
 export const DEFAULT_NMT_CONFIG = {
-  sourceLanguage: "en",
-  targetLanguage: "hi",
+  sourceLanguage: "", // User must select; no default to avoid implicit preference
+  targetLanguage: "",
+  sourceScriptCode: "",
+  targetScriptCode: "",
 } as const;
 
 // API endpoints

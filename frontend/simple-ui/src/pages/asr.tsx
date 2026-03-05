@@ -106,11 +106,11 @@ const ASRPage: React.FC = () => {
             mx="auto"
           >
             {/* Configuration Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Inference Mode Selection */}
-                <FormControl>
-                  <FormLabel className="dview-service-try-option-title">
+                <FormControl mt={0} pt={0}>
+                  <FormLabel className="dview-service-try-option-title" mt={0}>
                     Inference Mode
                   </FormLabel>
                   <Select
@@ -232,8 +232,8 @@ const ASRPage: React.FC = () => {
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Progress Indicator */}
                 {fetching && (
                   <Box>
@@ -290,13 +290,6 @@ const ASRPage: React.FC = () => {
               </VStack>
             </GridItem>
           </Grid>
-
-          {/* Services Loading Indicator */}
-          {servicesLoading && (
-            <Box textAlign="center">
-              <LoadingSpinner label="Loading ASR services..." />
-            </Box>
-          )}
         </VStack>
       </ContentLayout>
     </>
