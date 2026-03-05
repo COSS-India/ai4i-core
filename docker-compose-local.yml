@@ -351,7 +351,6 @@ services:
     ports:
       - "8106:8103"
     environment:
-      - USE_API_PROXY=true
       - SPECS_ROOT=/app/specs
       - SERVICE_DOCS_REGISTRY_PATH=/app/specs/service-docs-registry.yaml
     volumes:
@@ -545,6 +544,7 @@ services:
       - ./services/asr-service/.env
     volumes:
       - ./services/asr-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -587,6 +587,7 @@ services:
       - ./services/tts-service/.env
     volumes:
       - ./services/tts-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -627,6 +628,7 @@ services:
       - ./services/nmt-service/.env
     volumes:
       - ./services/nmt-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -667,6 +669,7 @@ services:
       - ENV_FILE=.env
     volumes:
       - ./services/ocr-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -709,6 +712,7 @@ services:
       - ./services/ner-service/.env
     volumes:
       - ./services/ner-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -750,6 +754,7 @@ services:
       - ./services/llm-service/.env
     volumes:
       - ./services/llm-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -791,6 +796,7 @@ services:
       - ./services/pipeline-service/.env
     volumes:
       - ./services/pipeline-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -994,6 +1000,7 @@ services:
       - ./services/transliteration-service/.env
     volumes:
       - ./services/transliteration-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -1032,6 +1039,7 @@ services:
       - ./services/language-detection-service/.env
     volumes:
       - ./services/language-detection-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -1068,6 +1076,7 @@ services:
       - TRITON_ENDPOINT=http://65.1.35.3:8700
     volumes:
       - ./services/speaker-diarization-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -1106,6 +1115,7 @@ services:
       - ./services/language-diarization-service/.env
     volumes:
       - ./services/language-diarization-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
@@ -1144,6 +1154,7 @@ services:
       - ./services/audio-lang-detection-service/.env
     volumes:
       - ./services/audio-lang-detection-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_observability:/app/libs/ai4icore_observability
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry

@@ -210,9 +210,13 @@ class AuthUtils:
         if not api_key_obj:
             return False, None, "Invalid API key"
         
+        # Check if API key has been permanently revoked
+        if getattr(api_key_obj, "is_revoked", False):
+            return False, None, "API key has been revoked"
+        
         # Check if API key is active
         if not api_key_obj.is_active:
-            return False, None, "API key has been revoked"
+            return False, None, "API key is inactive"
         
         # Check if API key has expired (use timezone-aware comparison)
         now_utc = datetime.now(timezone.utc)
