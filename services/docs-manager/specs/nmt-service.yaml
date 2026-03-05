@@ -21,10 +21,17 @@ paths:
     post:
       tags: [NMT]
       summary: NMT inference
-      description: Translate one or more text inputs (max 90). Request body matches ULCA-style config.
+      description: Translate one or more text inputs (max 90).
       operationId: nmtInference
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
       security:
+        # NOTE: Auth is conditional based on x-auth-source.
+        # - x-auth-source=AUTH_TOKEN -> BearerAuth required
+        # - x-auth-source=API_KEY    -> XApiKeyAuth required
+        # - x-auth-source=BOTH       -> both required
         - BearerAuth: []
+        - XApiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -60,7 +67,23 @@ components:
     BearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: API Key
+      bearerFormat: JWT
+    XApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  parameters:
+    XAuthSource:
+      name: x-auth-source
+      in: header
+      required: false
+      description: >
+        Select which credential(s) the gateway/service should use for authentication.
+        Use BOTH when sending both Authorization (Bearer JWT) and X-API-Key.
+      schema:
+        type: string
+        enum: [API_KEY, AUTH_TOKEN, BOTH]
+        default: BOTH
   schemas:
     NMTLanguagePair:
       type: object
@@ -114,4 +137,6 @@ components:
       description: Service unavailable
 
 security:
+  # Default auth in Docs UI: BOTH (recommended for most inference endpoints)
   - BearerAuth: []
+  - XApiKeyAuth: []
