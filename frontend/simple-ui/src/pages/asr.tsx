@@ -57,15 +57,6 @@ const ASRPage: React.FC = () => {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  // Auto-select first available ASR service when list loads
-  React.useEffect(() => {
-    if (!asrServices || asrServices.length === 0) return;
-    if (!serviceId || serviceId === "asr_am_ensemble") {
-      // If no service selected or still using default, select first available
-      setServiceId(asrServices[0].service_id);
-    }
-  }, [asrServices, serviceId, setServiceId]);
-
   const handleRecordingChange = (isRecording: boolean) => {
     if (isRecording) {
       startRecording();
@@ -144,7 +135,7 @@ const ASRPage: React.FC = () => {
                     value={serviceId}
                     onChange={(e) => setServiceId(e.target.value)}
                     isDisabled={fetching || servicesLoading}
-                    placeholder={servicesLoading ? "Loading services..." : "Select a ASR service"}
+                    placeholder={servicesLoading ? "Loading..." : "Select"}
                   >
                     {asrServices?.map((service) => {
                       const version = service.modelVersion || service.model_version;
@@ -189,6 +180,7 @@ const ASRPage: React.FC = () => {
                   <Select
                     value={language}
                     onChange={(e) => setLanguage(e.target.value)}
+                    placeholder="Select"
                   >
                     {ASR_SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
@@ -211,7 +203,7 @@ const ASRPage: React.FC = () => {
                     isRecording={recording}
                     onRecordingChange={handleRecordingChange}
                     sampleRate={sampleRate}
-                    disabled={fetching}
+                    disabled={fetching || !serviceId || !language}
                     timer={timer}
                   />
                 </Box>
