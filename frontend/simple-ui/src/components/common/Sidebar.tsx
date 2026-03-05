@@ -428,6 +428,10 @@ const Sidebar: React.FC = () => {
     if (item.id === "alerts-management" && !isAdmin) {
       return false;
     }
+    // Hide logs for users with USER role (regardless of tenant_id)
+    if (item.id === "logs" && isUser) {
+      return false;
+    }
     // Hide logs for users without tenant_id (but allow admins to see it)
     if (item.id === "logs" && !tenantId && !isAdmin) {
       return false;
