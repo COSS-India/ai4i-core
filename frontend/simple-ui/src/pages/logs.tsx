@@ -120,6 +120,8 @@ const LogsPage: React.FC = () => {
   
   // Check if user is admin
   const isAdmin = user?.roles?.includes('ADMIN') || false;
+  // Check if user has USER role - hide logs UI for them
+  const isUser = user?.roles?.includes('USER') || false;
   
   const cardBg = useColorModeValue("white", "gray.800");
   const borderColor = useColorModeValue("gray.200", "gray.700");
@@ -140,11 +142,23 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, authLoading, router, toast]);
 
-  // Redirect if user doesn't have tenant_id (but allow admins)
+  // Redirect if user has USER role or doesn't have tenant_id (but allow admins)
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
+      // Hide logs for users with USER role
+      if (isUser) {
+        toast({
+          title: "Access Denied",
+          description: "You do not have permission to view logs.",
+          status: "error",
+          duration: 5000,
+          isClosable: true,
+        });
+        router.push("/");
+        return;
+      }
+      // Also check tenant_id for non-admin users
       const tenantId = getTenantIdFromToken();
-      const isAdmin = user?.roles?.includes('ADMIN') || false;
       if (!tenantId && !isAdmin) {
         toast({
           title: "Access Denied",
@@ -156,7 +170,7 @@ const LogsPage: React.FC = () => {
         router.push("/");
       }
     }
-  }, [isAuthenticated, authLoading, user, router, toast]);
+  }, [isAuthenticated, authLoading, user, isUser, isAdmin, router, toast]);
 
   // Static list of all services (not dependent on OpenSearch logs)
   // This ensures all services are always available in the dropdown
@@ -840,32 +854,48 @@ const LogsPage: React.FC = () => {
 
       <ContentLayout>
         <VStack spacing={6} w="full" align="stretch">
-          {/* Page Header */}
-          <Box textAlign="center" mb={2}>
-            <Heading size="lg" color="gray.800" mb={1}>
-              Logs Dashboard
-            </Heading>
-            <Text color="gray.600" fontSize="sm">
-              View and search logs from OpenSearch
-            </Text>
-          </Box>
+          {/* Hide logs UI for users with USER role */}
+          {!authLoading && isAuthenticated && isUser ? (
+            <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
+              <CardBody>
+                <Flex direction="column" align="center" justify="center" py={12}>
+                  <Text fontSize="lg" color="gray.500" fontWeight="medium" mb={2}>
+                    Access Denied
+                  </Text>
+                  <Text fontSize="sm" color="gray.400" textAlign="center">
+                    You do not have permission to view logs.
+                  </Text>
+                </Flex>
+              </CardBody>
+            </Card>
+          ) : (
+            <>
+              {/* Page Header */}
+              <Box textAlign="center" mb={2}>
+                <Heading size="lg" color="gray.800" mb={1}>
+                  Logs Dashboard
+                </Heading>
+                <Text color="gray.600" fontSize="sm">
+                  View and search logs from OpenSearch
+                </Text>
+              </Box>
 
-          {/* Show auth warning if not authenticated */}
-          {!authLoading && !isAuthenticated && (
-            <Alert status="warning">
-              <AlertIcon />
-              <AlertDescription>
-                Please log in to view logs. <Button
-                  size="sm"
-                  colorScheme="blue"
-                  ml={4}
-                  onClick={() => router.push("/auth")}
-                >
-                  Log In
-                </Button>
-              </AlertDescription>
-            </Alert>
-          )}
+              {/* Show auth warning if not authenticated */}
+              {!authLoading && !isAuthenticated && (
+                <Alert status="warning">
+                  <AlertIcon />
+                  <AlertDescription>
+                    Please log in to view logs. <Button
+                      size="sm"
+                      colorScheme="blue"
+                      ml={4}
+                      onClick={() => router.push("/auth")}
+                    >
+                      Log In
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              )}
 
           {/* Show error messages */}
           {logsError && (
@@ -1440,6 +1470,8 @@ const LogsPage: React.FC = () => {
               )}
             </CardBody>
           </Card>
+            </>
+          )}
         </VStack>
       </ContentLayout>
     </>
