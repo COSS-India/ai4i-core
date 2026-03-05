@@ -499,13 +499,26 @@ export const useASR = (): UseASRReturn => {
   // Perform inference
   const performInference = useCallback(async (audioContent: string) => {
     try {
+      const currentServiceId = serviceIdRef.current;
+      const currentLanguage = languageRef.current;
+      if (!currentServiceId || !currentLanguage) {
+        toast({
+          title: 'Selection required',
+          description: 'Please select an ASR service and language before recording or uploading.',
+          status: 'warning',
+          duration: 4000,
+          isClosable: true,
+        });
+        return;
+      }
+
       console.log('=== ASR Inference Start ===');
       console.log('performInference called with audio content length:', audioContent.length);
       console.log('Current language state:', language);
       console.log('Current language ref:', languageRef.current);
       
       // Track the language for this request BEFORE starting
-      const requestLanguage = languageRef.current;
+      const requestLanguage = currentLanguage;
       currentRequestLanguageRef.current = requestLanguage;
       console.log('Request language set to:', requestLanguage);
       
@@ -542,7 +555,7 @@ export const useASR = (): UseASRReturn => {
         console.log('Ignoring error - language changed during request');
       }
     }
-  }, [asrMutation, language]);
+  }, [asrMutation, language, toast]);
 
   // Stop recording
   const stopRecording = useCallback(() => {
