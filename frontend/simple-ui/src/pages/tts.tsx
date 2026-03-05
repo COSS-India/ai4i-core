@@ -205,11 +205,9 @@ const TTSPage: React.FC = () => {
                 </Box>
 
                 {/* Instruction above Generate Audio */}
-                <Box p={3} borderRadius="md" borderWidth="1px" borderColor="gray.200" bg="gray.50">
-                  <Text fontSize="sm" color="gray.600">
-                    Configure audio settings above and click Generate Audio to create speech synthesis.
-                  </Text>
-                </Box>
+                <Text fontSize="sm" color="gray.600">
+                  Enter text and click &quot;Generate Audio&quot; to create speech synthesis. You can adjust voice settings and audio format in the configuration panel.
+                </Text>
 
                 {/* Generate Button */}
                 <Button
