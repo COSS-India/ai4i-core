@@ -4,6 +4,7 @@ import {
   Alert,
   AlertDescription,
   AlertIcon,
+  Box,
   Button,
   FormControl,
   FormLabel,
@@ -11,7 +12,7 @@ import {
   Stack,
   Text,
 } from "@chakra-ui/react";
-import React, { useRef } from "react";
+import React, { useRef, useState } from "react";
 import { FaMicrophone, FaMicrophoneSlash, FaUpload } from "react-icons/fa";
 import { formatDuration, MAX_RECORDING_DURATION, MIN_RECORDING_DURATION, MAX_AUDIO_FILE_SIZE, UPLOAD_ERRORS } from "../../config/constants";
 import { AudioRecorderProps } from "../../types/asr";
@@ -27,6 +28,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const toast = useToastWithDeduplication();
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -185,6 +187,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
                 "File read successfully, base64 length:",
                 base64Data.length
               );
+              setUploadedFileName(file.name);
               onAudioReady(base64Data);
             } catch (err) {
               console.error("Error processing file result:", err);
@@ -245,6 +248,7 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
     if (isRecording) {
       onRecordingChange(false);
     } else {
+      setUploadedFileName(null); // Clear file display when starting to record
       onRecordingChange(true);
     }
   };
@@ -270,34 +274,60 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
         </Alert>
       )}
 
-      {/* Recording and Upload Buttons */}
-      <Stack direction="row" spacing={4}>
-        {/* Record Button */}
+      {/* Record: instruction block + button */}
+      <Box
+        p={3}
+        borderRadius="md"
+        borderWidth="1px"
+        borderColor="gray.200"
+        bg="gray.50"
+      >
+        <Text fontSize="sm" color="gray.600" mb={2}>
+          Click Record to record audio from your microphone (max{" "}
+          {MAX_RECORDING_DURATION} seconds).
+        </Text>
         <Button
           leftIcon={isRecording ? <FaMicrophoneSlash /> : <FaMicrophone />}
           colorScheme={isRecording ? "red" : "orange"}
           variant={isRecording ? "solid" : "outline"}
           onClick={handleRecordClick}
           disabled={disabled}
-          flex={1}
+          w="full"
           h="50px"
         >
           {isRecording ? "Stop" : "Record"}
         </Button>
+      </Box>
 
-        {/* Upload Button */}
+      {/* Upload: instruction block + button + file name display */}
+      <Box
+        p={3}
+        borderRadius="md"
+        borderWidth="1px"
+        borderColor="gray.200"
+        bg="gray.50"
+      >
+        <Text fontSize="sm" color="gray.600" mb={2}>
+          Click Upload to choose an audio file (MP3 or WAV, max{" "}
+          {MAX_RECORDING_DURATION} seconds).
+        </Text>
         <Button
           leftIcon={<FaUpload />}
           colorScheme="blue"
           variant="outline"
           onClick={handleUploadClick}
           disabled={disabled || isRecording}
-          flex={1}
+          w="full"
           h="50px"
         >
           Upload
         </Button>
-      </Stack>
+        {uploadedFileName && (
+          <Text fontSize="sm" color="gray.700" mt={2} noOfLines={1} title={uploadedFileName}>
+            Uploaded: {uploadedFileName}
+          </Text>
+        )}
+      </Box>
 
       {/* Hidden File Input */}
       <FormControl display="none">
@@ -309,13 +339,6 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({
           onChange={handleFileUpload}
         />
       </FormControl>
-
-      {/* Instructions */}
-      <Text fontSize="sm" color="gray.600" textAlign="center">
-        {isRecording
-          ? 'Click "Stop Recording" when finished'
-          : `Click "Start Recording" to record audio or "Choose File" to upload an audio file (max ${MAX_RECORDING_DURATION} seconds). Only MP3 and WAV files are supported.`}
-      </Text>
     </Stack>
   );
 };
