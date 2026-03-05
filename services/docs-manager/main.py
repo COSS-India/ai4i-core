@@ -130,6 +130,21 @@ def _merge_responses(
         base_resp[f"{prefix}_{name}"] = _rewrite_refs(resp, prefix, prefix)
 
 
+def _merge_parameters(
+    base: dict[str, Any],
+    incoming: dict[str, Any],
+    prefix: str,
+) -> None:
+    """Merge components/parameters from incoming into base with a prefix; rewrite $refs accordingly."""
+    inc_params = (incoming.get("components") or {}).get("parameters") or {}
+    if not inc_params:
+        return
+    base_components = base.setdefault("components", {})
+    base_params = base_components.setdefault("parameters", {})
+    for name, param in inc_params.items():
+        base_params[f"{prefix}_{name}"] = _rewrite_refs(param, prefix, prefix)
+
+
 def _rewrite_refs(obj: Any, schema_prefix: str, response_prefix: str) -> Any:
     """Return a copy of obj with $ref values updated to use prefixed component names."""
     if isinstance(obj, dict):
@@ -142,6 +157,9 @@ def _rewrite_refs(obj: Any, schema_prefix: str, response_prefix: str) -> Any:
                 elif v.startswith("#/components/responses/"):
                     name = v.split("/")[-1]
                     out[k] = f"#/components/responses/{response_prefix}_{name}"
+                elif v.startswith("#/components/parameters/"):
+                    name = v.split("/")[-1]
+                    out[k] = f"#/components/parameters/{schema_prefix}_{name}"
                 else:
                     out[k] = v
             else:
@@ -212,6 +230,7 @@ def _add_service_spec(
     prefix = service_name.replace("-", "_")
     _merge_schemas(merged, spec, prefix)
     _merge_responses(merged, spec, prefix)
+    _merge_parameters(merged, spec, prefix)
     _merge_paths(merged, spec, tag, prefix, prefix)
 
 
@@ -231,7 +250,7 @@ def _build_merged_spec() -> dict[str, Any]:
             {"url": _openapi_server_url(), "description": "API Gateway"}
         ],
         "paths": {},
-        "components": {"schemas": {}, "responses": {}, "securitySchemes": {}},
+        "components": {"schemas": {}, "responses": {}, "parameters": {}, "securitySchemes": {}},
         "tags": [],
         "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
     }
