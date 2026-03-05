@@ -17,12 +17,16 @@ import os
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
+_here = Path(__file__).resolve().parent
+load_dotenv(_here / ".env", override=True)
+
 logger = logging.getLogger(__name__)
 
-import httpx
 import yaml
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse, JSONResponse
 
 app = FastAPI(
     title="API Documentation",
@@ -33,11 +37,9 @@ app = FastAPI(
     openapi_url=None,
 )
 
-_here = Path(__file__).resolve().parent
 _specs_dir = _here / "specs"
 REGISTRY_ENV = "SERVICE_DOCS_REGISTRY_PATH"
 GATEWAY_URL_ENV = "API_GATEWAY_URL"
-USE_API_PROXY_ENV = "USE_API_PROXY"
 DEFAULT_GATEWAY_URL = "http://localhost:8080"
 DEFAULT_REGISTRY = _specs_dir / "service-docs-registry.yaml"
 SPECS_ROOT_ENV = "SPECS_ROOT"
@@ -65,22 +67,14 @@ def _gateway_url() -> str | None:
 
 
 def _gateway_base_url() -> str:
-    """Base URL for the API Gateway used by the proxy."""
+    """Base URL for the API Gateway (used as server URL in OpenAPI spec for Try it out)."""
+    load_dotenv(_here / ".env", override=True)  # Re-read .env so changes take effect without restart
     registry = _load_registry()
     return (_gateway_url() or registry.get("api_gateway_url") or DEFAULT_GATEWAY_URL).rstrip("/")
 
 
-def _use_api_proxy() -> bool:
-    """True if Swagger UI should use /api-proxy (same-origin proxy). False when deployed
-    behind a gateway (e.g. APISIX) with no /api-proxy route — then Try it out calls API_GATEWAY_URL directly."""
-    val = os.getenv(USE_API_PROXY_ENV, "true").strip().lower()
-    return val in ("true", "1", "yes")
-
-
 def _openapi_server_url() -> str:
     """Server URL shown in OpenAPI spec (for Try it out)."""
-    if _use_api_proxy():
-        return "/api-proxy"
     return _gateway_base_url()
 
 
@@ -281,51 +275,6 @@ def _get_merged_spec() -> dict[str, Any]:
     return _merged_spec
 
 
-_PROXY_SKIP_REQUEST_HEADERS = frozenset(
-    {"connection", "host", "transfer-encoding", "keep-alive", "te", "trailer", "upgrade"}
-)
-_PROXY_SKIP_RESPONSE_HEADERS = frozenset(
-    {"connection", "transfer-encoding", "keep-alive", "te", "trailer", "upgrade"}
-)
-
-
-@app.api_route("/api-proxy/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
-async def api_proxy(request: Request, path: str):
-    """Proxy requests to the API Gateway for same-origin Try it out in Swagger UI."""
-    base = _gateway_base_url()
-    url = f"{base}/{path}" if path else base
-    if request.url.query:
-        url = f"{url}?{request.url.query}"
-    headers = {
-        k: v for k, v in request.headers.items()
-        if k.lower() not in _PROXY_SKIP_REQUEST_HEADERS
-    }
-    body = await request.body()
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.request(
-                request.method,
-                url,
-                headers=headers,
-                content=body if body else None,
-            )
-    except httpx.ConnectError as e:
-        logger.warning("API Gateway unreachable at %s: %s", base, e)
-        return JSONResponse(
-            {"detail": "Upstream API Gateway is unavailable."},
-            status_code=502,
-        )
-    response_headers = [
-        (k, v) for k, v in resp.headers.items()
-        if k.lower() not in _PROXY_SKIP_RESPONSE_HEADERS
-    ]
-    return Response(
-        content=resp.content,
-        status_code=resp.status_code,
-        headers=dict(response_headers),
-    )
-
-
 @app.get("/health")
 def health():
     """Health check endpoint."""
@@ -335,7 +284,10 @@ def health():
 @app.get("/openapi.json")
 def openapi_json():
     """Return the merged OpenAPI 3.0 spec for all registered services."""
-    return JSONResponse(_get_merged_spec())
+    spec = _get_merged_spec()
+    # Always use current env for server URL (so .env changes show up after refresh)
+    spec = {**spec, "servers": [{"url": _openapi_server_url(), "description": "API Gateway"}]}
+    return JSONResponse(spec)
 
 
 @app.get("/docs", response_class=HTMLResponse)

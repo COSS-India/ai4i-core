@@ -24,7 +24,7 @@ from middleware.exceptions import (
 )
 import os
 import httpx
-from middleware.tenant_context import try_get_tenant_context
+from ai4icore_multi_tenant import try_get_tenant_context
 
 # API Gateway URL for multi-tenant checks
 API_GATEWAY_URL = os.getenv("API_GATEWAY_URL", "http://api-gateway-service:8080")

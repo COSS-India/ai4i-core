@@ -20,8 +20,9 @@ from repositories.audio_lang_detection_repository import AudioLangDetectionRepos
 from services.audio_lang_detection_service import AudioLangDetectionService
 from utils.triton_client import TritonClient, TritonInferenceError
 from middleware.auth_provider import AuthProvider
-from middleware.tenant_db_dependency import get_tenant_db_session
-from middleware.tenant_context import try_get_tenant_context
+from ai4icore_multi_tenant import get_tenant_db_session_factory, try_get_tenant_context
+
+get_tenant_db_session = get_tenant_db_session_factory()
 import os
 import httpx
 from middleware.exceptions import ErrorDetail
@@ -111,7 +112,7 @@ async def get_audio_lang_detection_service(
     return AudioLangDetectionService(triton_client=triton_client, repository=repository)
 
 
-async def _enforce_tenant_and_service_checks(http_request: Request, service_name: str = "audio-lang-detection"):
+async def _enforce_tenant_and_service_checks(http_request: Request, service_name: str = "audio_language_detection"):
     """
     Enforce tenant subscription, tenant status (ACTIVE) and global service active flag.
     Execution order:
@@ -225,7 +226,7 @@ async def _enforce_tenant_and_service_checks(http_request: Request, service_name
 async def enforce_audio_lang_detection_checks(request: Request):
     """FastAPI dependency that enforces tenant and service checks for Audio Lang Detection before other dependencies run."""
     # the service name is coming from multitenant SubscriptionType enum
-    await _enforce_tenant_and_service_checks(request, service_name="audio-lang-detection")
+    await _enforce_tenant_and_service_checks(request, service_name="audio_language_detection")
 
 # Add as a router-level dependency so it runs before path-operation dependencies like get_audio_lang_detection_service
 inference_router.dependencies.append(Depends(enforce_audio_lang_detection_checks))
@@ -344,6 +345,30 @@ async def run_inference(
                 detail=str(exc),
             ) from exc
         except TritonInferenceError as exc:
+            from services.constants.static_fallback_responses import (
+                is_static_fallback_enabled,
+                get_audio_lang_detection_static_response,
+            )
+            if is_static_fallback_enabled():
+                num_inputs = len(request_body.audio)
+                static_data = get_audio_lang_detection_static_response(num_inputs)
+                from models.audio_lang_detection_response import (
+                    AudioLangDetectionInferenceResponse,
+                    AudioLangDetectionOutput,
+                    AllScores,
+                )
+                output = []
+                for o in static_data["output"]:
+                    all_scores = AllScores(**o["all_scores"])
+                    output.append(AudioLangDetectionOutput(
+                        language_code=o["language_code"],
+                        confidence=o["confidence"],
+                        all_scores=all_scores,
+                    ))
+                span.add_event("audio-lang-detection.inference.static_fallback", {"reason": "Triton unreachable"})
+                span.set_status(Status(StatusCode.OK))
+                logger.info("Returning static Audio Lang Detection fallback (Triton unreachable)")
+                return AudioLangDetectionInferenceResponse(output=output)
             span.set_attribute("error", True)
             span.set_attribute("error.type", "TritonInferenceError")
             span.set_attribute("error.message", str(exc))
@@ -432,12 +457,37 @@ async def _run_inference_impl(
         session_id,
     )
 
-    response = await audio_lang_detection_service.run_inference(
-        request_body,
-        user_id=user_id,
-        api_key_id=api_key_id,
-        session_id=session_id
-    )
+    try:
+        response = await audio_lang_detection_service.run_inference(
+            request_body,
+            user_id=user_id,
+            api_key_id=api_key_id,
+            session_id=session_id
+        )
+    except TritonInferenceError as exc:
+        from services.constants.static_fallback_responses import (
+            is_static_fallback_enabled,
+            get_audio_lang_detection_static_response,
+        )
+        if is_static_fallback_enabled():
+            num_inputs = len(request_body.audio)
+            static_data = get_audio_lang_detection_static_response(num_inputs)
+            from models.audio_lang_detection_response import (
+                AudioLangDetectionInferenceResponse,
+                AudioLangDetectionOutput,
+                AllScores,
+            )
+            output = []
+            for o in static_data["output"]:
+                all_scores = AllScores(**o["all_scores"])
+                output.append(AudioLangDetectionOutput(
+                    language_code=o["language_code"],
+                    confidence=o["confidence"],
+                    all_scores=all_scores,
+                ))
+            logger.info("Returning static Audio Lang Detection fallback (Triton unreachable)")
+            return AudioLangDetectionInferenceResponse(output=output)
+        raise
     logger.info("Audio Language Detection inference completed successfully")
     return response
 
