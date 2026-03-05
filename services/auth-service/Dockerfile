@@ -18,6 +18,9 @@ COPY libs/ai4icore_logging /app/libs/ai4icore_logging
 # Copy requirements from build context
 COPY services/auth-service/requirements.txt .
 
+# Upgrade pip, setuptools, and wheel to latest versions before installing packages
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
 # Install Python dependencies (NO --user)
 RUN pip install --no-cache-dir -r requirements.txt
 
