@@ -1189,10 +1189,10 @@ export const DEFAULT_ASR_CONFIG = {
 } as const;
 
 export const DEFAULT_TTS_CONFIG = {
-  language: "en",
-  gender: "female",
+  language: "", // User must select; no default to avoid implicit preference
+  gender: "",
   sampleRate: 22050,
-  audioFormat: "wav",
+  audioFormat: "", // User must select; no default to avoid implicit preference
 } as const;
 
 export const DEFAULT_NMT_CONFIG = {
