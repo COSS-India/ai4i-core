@@ -122,6 +122,10 @@ const LogsPage: React.FC = () => {
   const isAdmin = user?.roles?.includes('ADMIN') || false;
   // Check if user has USER role - hide logs UI for them
   const isUser = user?.roles?.includes('USER') || false;
+  // Check if admin is super admin (no tenant_id) or tenant admin (has tenant_id)
+  const tenantIdFromToken = getTenantIdFromToken();
+  const isSuperAdmin = isAdmin && !tenantIdFromToken; // Super admin: admin without tenant_id
+  const isTenantAdmin = isAdmin && !!tenantIdFromToken; // Tenant admin: admin with tenant_id
   
   const cardBg = useColorModeValue("white", "gray.800");
   const borderColor = useColorModeValue("gray.200", "gray.700");
@@ -195,7 +199,7 @@ const LogsPage: React.FC = () => {
   const servicesLoading = false;
   const servicesError = null;
 
-  // Fetch tenants list (only for admins)
+  // Fetch tenants list (only for super admins - admins without tenant_id)
   const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } = useQuery({
     queryKey: ["tenants-list"],
     queryFn: async () => {
@@ -220,7 +224,7 @@ const LogsPage: React.FC = () => {
         throw error; // Re-throw to let React Query handle it
       }
     },
-    enabled: isAuthenticated && isAdmin,
+    enabled: isAuthenticated && isSuperAdmin, // Only fetch for super admins
     staleTime: 5 * 60 * 1000, // 5 minutes
     retry: 1, // Retry once on failure
   });
@@ -361,6 +365,8 @@ const LogsPage: React.FC = () => {
       });
       
       // First, fetch page 1 to get total count
+      // Only super admins (admin without tenant_id) can filter by tenant_id parameter
+      // Tenant admins are automatically filtered by their tenant_id from JWT
       const firstPage = await searchLogs({
         page: 1,
         size: fetchSize,
@@ -369,7 +375,7 @@ const LogsPage: React.FC = () => {
         search_text: appliedSearchText && appliedSearchText.trim() !== "" ? appliedSearchText : undefined,
         start_time: apiStartTime,
         end_time: apiEndTime,
-        tenant_id: isAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
+        tenant_id: isSuperAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
       });
       
       // Ensure logs is always an array
@@ -407,7 +413,7 @@ const LogsPage: React.FC = () => {
                   search_text: appliedSearchText && appliedSearchText.trim() !== "" ? appliedSearchText : undefined,
                   start_time: apiStartTime,
                   end_time: apiEndTime,
-                  tenant_id: isAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
+                  tenant_id: isSuperAdmin && appliedTenantId && appliedTenantId.trim() !== "" ? appliedTenantId : undefined,
                 }).catch((error) => {
                 console.error(`Error fetching page ${page}:`, error);
                 return { logs: [] }; // Return empty logs on error
@@ -1056,8 +1062,8 @@ const LogsPage: React.FC = () => {
             <CardBody>
               <Heading size="sm" mb={4} color="gray.700">Filters</Heading>
               <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4} w="full">
-                {/* Tenant Filter - Admin Only */}
-                {isAdmin && (
+                {/* Tenant Filter - Super Admin Only (admin without tenant_id) */}
+                {isSuperAdmin && (
                   <FormControl>
                     <FormLabel fontWeight="medium">Tenant</FormLabel>
                     <Select
