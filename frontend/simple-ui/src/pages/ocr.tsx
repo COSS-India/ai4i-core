@@ -26,6 +26,7 @@ import {
 import Head from "next/head";
 import React, { useState, useRef, useEffect } from "react";
 import { CopyIcon, CheckIcon, AttachmentIcon, DeleteIcon } from "@chakra-ui/icons";
+import { FaUpload } from "react-icons/fa";
 import { useQuery } from "@tanstack/react-query";
 import ContentLayout from "../components/common/ContentLayout";
 import { getServiceDescription, getServiceTitle } from "../config/serviceMetadata";
@@ -58,14 +59,10 @@ const OCRPage: React.FC = () => {
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
 
-  // Auto-select first available OCR service when list loads
-  useEffect(() => {
-    if (!ocrServices || ocrServices.length === 0) return;
-    if (!selectedServiceId) {
-      // If no service selected, select first available
-      setSelectedServiceId(ocrServices[0].service_id);
-    }
-  }, [ocrServices, selectedServiceId]);
+  const canExtract =
+    !!selectedServiceId?.trim() &&
+    (!!imageFile || !!imageUri?.trim()) &&
+    !fetching;
 
   /**
    * Validates if a URL is safe to use as an image source.
@@ -242,7 +239,18 @@ const OCRPage: React.FC = () => {
   };
 
   const handleProcess = async () => {
-    if (!imageFile && !imageUri) {
+    if (!selectedServiceId?.trim()) {
+      toast({
+        title: "Service Required",
+        description: "Please select an OCR service before extracting text.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    if (!imageFile && !imageUri?.trim()) {
       const err = OCR_ERRORS.FILE_REQUIRED;
       toast({
         title: err.title,
@@ -284,18 +292,6 @@ const OCRPage: React.FC = () => {
         }
       } else {
         imageUriValue = imageUri;
-      }
-
-      if (!selectedServiceId) {
-        toast({
-          title: "Service Required",
-          description: "Please select an OCR service.",
-          status: "warning",
-          duration: 3000,
-          isClosable: true,
-        });
-        setFetching(false);
-        return;
       }
 
       const startTime = Date.now();
@@ -394,7 +390,8 @@ const OCRPage: React.FC = () => {
                 {/* Service Selection */}
                 <FormControl>
                   <FormLabel fontSize="sm" fontWeight="semibold">
-                    OCR Service:
+                    OCR Service{" "}
+                    <Text as="span" color="red.500">*</Text>
                   </FormLabel>
                   {servicesLoading ? (
                     <HStack spacing={2} p={2}>
@@ -405,7 +402,7 @@ const OCRPage: React.FC = () => {
                     <Select
                       value={selectedServiceId}
                       onChange={(e) => setSelectedServiceId(e.target.value)}
-                      placeholder="Select a OCR service"
+                      placeholder={servicesLoading ? "Loading..." : "Select"}
                       disabled={fetching}
                       size="md"
                       borderColor="gray.300"
@@ -445,7 +442,8 @@ const OCRPage: React.FC = () => {
 
               <FormControl>
                 <FormLabel fontSize="sm" fontWeight="semibold">
-                  Upload Image for OCR:
+                  Upload Image for OCR{" "}
+                  <Text as="span" color="red.500">*</Text>
                 </FormLabel>
 
 
@@ -496,20 +494,17 @@ const OCRPage: React.FC = () => {
                               <Text fontSize="md" fontWeight="semibold" color="gray.700">
                                 {isDragging ? "Drop image here" : "Click to upload or drag and drop"}
                               </Text>
-                              <Text fontSize="sm" color="gray.500">
-                                Select an image file from your device
-                              </Text>
                             </VStack>
                             <Button
                               size="sm"
                               colorScheme="teal"
-                              leftIcon={<AttachmentIcon />}
+                              leftIcon={<FaUpload />}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleFileButtonClick();
                               }}
                             >
-                              Choose File
+                              Upload Image
                             </Button>
                           </VStack>
                         </Box>
@@ -586,17 +581,22 @@ const OCRPage: React.FC = () => {
                 </Box>
               )}
 
-                <Button
-                  colorScheme="orange"
-                  onClick={handleProcess}
-                  isLoading={fetching}
-                  loadingText="Processing..."
-                  size="md"
-                  w="full"
-                  isDisabled={!imageFile && !imageUri}
-                >
-                  Extract Text
-                </Button>
+              {/* Instruction above Extract button */}
+              <Text fontSize="sm" color="gray.600">
+                Upload an image or provide an image URL above, then click Extract Text to run OCR and view the extracted text.
+              </Text>
+
+              <Button
+                colorScheme="orange"
+                onClick={handleProcess}
+                isLoading={fetching}
+                loadingText="Processing..."
+                size="md"
+                w="full"
+                isDisabled={!canExtract}
+              >
+                Extract Text
+              </Button>
               </VStack>
             </GridItem>
 
