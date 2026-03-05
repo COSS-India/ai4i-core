@@ -117,11 +117,11 @@ const TTSPage: React.FC = () => {
             mx="auto"
           >
             {/* Configuration Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Service Selection */}
-                <FormControl>
-                  <FormLabel fontSize="sm" fontWeight="semibold">
+                <FormControl mt={0} pt={0}>
+                  <FormLabel fontSize="sm" fontWeight="semibold" mt={0}>
                     TTS Service{" "}
                     <Text as="span" color="red.500">*</Text>
                   </FormLabel>
@@ -225,8 +225,8 @@ const TTSPage: React.FC = () => {
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Progress Indicator */}
                 {fetching && (
                   <Box>
@@ -285,20 +285,6 @@ const TTSPage: React.FC = () => {
               </VStack>
             </GridItem>
           </Grid>
-
-          {/* Voices Loading / Error */}
-          {voicesLoading && (
-            <Box textAlign="center">
-              <LoadingSpinner label="Loading voice options..." />
-            </Box>
-          )}
-          {voicesError && !voicesLoading && (
-            <Box textAlign="center" p={3} bg="orange.50" borderRadius="md">
-              <Text color="orange.700" fontSize="sm">
-                Voice list unavailable (TTS service may be stopped). You can still generate speech if a TTS service is running.
-              </Text>
-            </Box>
-          )}
         </VStack>
       </ContentLayout>
     </>
