@@ -136,6 +136,8 @@ def map_subscription_to_service_name(subscription: str) -> str:
         "speaker_diarization": "speaker-diarization-service",
         "audio-lang-detection": "audio-lang-detection-service",
         "audio_lang_detection": "audio-lang-detection-service",
+        "audio-language-detection": "audio-lang-detection-service",
+        "audio_language_detection": "audio-lang-detection-service",
         "language-diarization": "language-diarization-service",
         "language_diarization": "language-diarization-service",
         "pipeline": "pipeline-service",
