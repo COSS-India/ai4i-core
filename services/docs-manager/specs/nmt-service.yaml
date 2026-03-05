@@ -77,9 +77,7 @@ components:
       name: x-auth-source
       in: header
       required: false
-      description: >
-        Select which credential(s) the gateway/service should use for authentication.
-        Use BOTH when sending both Authorization (Bearer JWT) and X-API-Key.
+      description: Auth mode. Use BOTH when sending both Bearer token and X-API-Key.
       schema:
         type: string
         enum: [API_KEY, AUTH_TOKEN, BOTH]
