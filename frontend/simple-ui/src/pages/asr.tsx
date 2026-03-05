@@ -2,6 +2,7 @@
 
 import {
   Box,
+  Button,
   FormControl,
   FormLabel,
   Grid,
@@ -15,6 +16,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
 import React from "react";
+import { FaFileAlt } from "react-icons/fa";
 import ASRResults from "../components/asr/ASRResults";
 import AudioRecorder from "../components/asr/AudioRecorder";
 import ContentLayout from "../components/common/ContentLayout";
@@ -40,9 +42,11 @@ const ASRPage: React.FC = () => {
     requestTime,
     timer,
     error,
+    pendingAudio,
+    setPendingAudio,
     startRecording,
     stopRecording,
-    performInference,
+    runTranscribe,
     setLanguage,
     setSampleRate,
     setServiceId,
@@ -66,14 +70,11 @@ const ASRPage: React.FC = () => {
   };
 
   const handleAudioReady = (audioBase64: string) => {
-    // Process the audio using the useASR hook
-    console.log(
-      "handleAudioReady called with audioBase64 length:",
-      audioBase64.length
-    );
-    console.log("Audio ready for processing, calling performInference...");
-    performInference(audioBase64);
+    setPendingAudio(audioBase64);
   };
+
+  const canTranscribe =
+    !!pendingAudio && !!serviceId?.trim() && !!language?.trim() && !fetching;
 
   return (
     <>
@@ -105,11 +106,11 @@ const ASRPage: React.FC = () => {
             mx="auto"
           >
             {/* Configuration Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Inference Mode Selection */}
-                <FormControl>
-                  <FormLabel className="dview-service-try-option-title">
+                <FormControl mt={0} pt={0}>
+                  <FormLabel className="dview-service-try-option-title" mt={0}>
                     Inference Mode
                   </FormLabel>
                   <Select
@@ -190,7 +191,7 @@ const ASRPage: React.FC = () => {
                   </Select>
                 </FormControl>
 
-                {/* Audio Recorder */}
+                {/* Audio Input */}
                 <Box>
                   <FormLabel className="dview-service-try-option-title" mb={4}>
                     Audio Input{" "}
@@ -207,12 +208,30 @@ const ASRPage: React.FC = () => {
                     timer={timer}
                   />
                 </Box>
+
+                {/* Instruction above Transcribe (same order as TTS: instruction then button) */}
+                <Text fontSize="sm" color="gray.600">
+                  Record or upload audio above, then click Transcribe to generate the transcript.
+                </Text>
+
+                {/* Transcribe Button - same UI order as TTS Generate Audio */}
+                <Button
+                  leftIcon={<FaFileAlt />}
+                  colorScheme="orange"
+                  size="lg"
+                  onClick={runTranscribe}
+                  isLoading={fetching}
+                  loadingText="Transcribing..."
+                  isDisabled={!canTranscribe}
+                >
+                  Transcribe
+                </Button>
               </VStack>
             </GridItem>
 
             {/* Results Panel */}
-            <GridItem>
-              <VStack spacing={6} align="stretch">
+            <GridItem pt={0} mt={0} alignSelf="flex-start">
+              <VStack spacing={6} align="stretch" pt={0} mt={0}>
                 {/* Progress Indicator */}
                 {fetching && (
                   <Box>
@@ -269,13 +288,6 @@ const ASRPage: React.FC = () => {
               </VStack>
             </GridItem>
           </Grid>
-
-          {/* Services Loading Indicator */}
-          {servicesLoading && (
-            <Box textAlign="center">
-              <LoadingSpinner label="Loading ASR services..." />
-            </Box>
-          )}
         </VStack>
       </ContentLayout>
     </>

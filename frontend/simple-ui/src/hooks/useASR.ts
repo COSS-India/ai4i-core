@@ -26,6 +26,7 @@ export const useASR = (): UseASRReturn => {
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
   const [timer, setTimer] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
+  const [pendingAudio, setPendingAudio] = useState<string | null>(null);
 
   // Refs
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -162,6 +163,7 @@ export const useASR = (): UseASRReturn => {
         setFetched(true);
         setFetching(false);
         setError(null);
+        setPendingAudio(null);
         // Mark that we just completed a request to prevent language change effect from clearing results
         justCompletedRequestRef.current = true;
         // Reset the flag after a short delay to allow language change effect to run if needed
@@ -286,6 +288,7 @@ export const useASR = (): UseASRReturn => {
 
     try {
       setError(null);
+      setPendingAudio(null);
       setRecording(true);
       setTimer(0);
       audioChunksRef.current = [];
@@ -420,12 +423,7 @@ export const useASR = (): UseASRReturn => {
               throw new Error('Failed to extract base64 data');
             }
             console.log(`${blobToSend.type} Base64 data length:`, base64Data.length);
-            console.log('Calling performInference...');
-            
-            // Use the same approach as file upload - call performInference directly
-            if (performInferenceRef.current) {
-              performInferenceRef.current(base64Data);
-            }
+            setPendingAudio(base64Data);
           };
           reader.onerror = (error) => {
             console.error('FileReader error:', error);
@@ -840,7 +838,13 @@ export const useASR = (): UseASRReturn => {
     setRequestTime('0');
     setFetched(false);
     setError(null);
+    setPendingAudio(null);
   }, []);
+
+  const runTranscribe = useCallback(() => {
+    if (!pendingAudio) return;
+    performInference(pendingAudio);
+  }, [performInference, pendingAudio]);
 
   // Reset timer
   const resetTimer = useCallback(() => {
@@ -942,12 +946,15 @@ export const useASR = (): UseASRReturn => {
     audioStream,
     timer,
     error,
-    
+    pendingAudio,
+
     // Methods
     startRecording,
     stopRecording,
     handleFileUpload,
     performInference,
+    setPendingAudio,
+    runTranscribe,
     setLanguage,
     setSampleRate,
     setServiceId,

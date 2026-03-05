@@ -89,9 +89,6 @@ export interface LanguageSelectorProps {
 export interface TextInputProps {
   inputText: string;
   onInputChange: (text: string) => void;
-  onProcess: () => void;
-  isLoading: boolean;
-  inputLanguage: string;
   maxLength?: number;
   disabled?: boolean;
 }
