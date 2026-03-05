@@ -18,6 +18,7 @@ export const usePipeline = () => {
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
   const [timer, setTimer] = useState<number>(0);
+  const [pendingAudio, setPendingAudio] = useState<string | null>(null);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
@@ -596,64 +597,22 @@ export const usePipeline = () => {
   /**
    * Process recorded audio through pipeline (internal version that takes base64)
    */
-  const processRecordedAudioInternal = useCallback(async (
-    base64Audio: string,
-    sourceLanguage: string,
-    targetLanguage: string,
-    asrServiceId: string,
-    nmtServiceId: string,
-    ttsServiceId: string
-  ) => {
-    const request: PipelineInferenceRequest = {
-      pipelineTasks: [
-        {
-          taskType: 'asr',
-          config: {
-            serviceId: asrServiceId,
-            language: { sourceLanguage },
-            audioFormat: 'wav',
-            preProcessors: ['vad', 'denoiser'],
-            postProcessors: ['lm', 'punctuation'],
-            transcriptionFormat: 'transcript',
-          },
-        },
-        {
-          taskType: 'translation',
-          config: {
-            serviceId: nmtServiceId,
-            language: { sourceLanguage, targetLanguage },
-          },
-        },
-        {
-          taskType: 'tts',
-          config: {
-            serviceId: ttsServiceId,
-            language: { sourceLanguage: targetLanguage },
-            gender: 'male',
-          },
-        },
-      ],
-      inputData: {
-        audio: [{ audioContent: base64Audio }],
-      },
-      controlConfig: {
-        dataTracking: false,
-      },
-    };
-
-    await executePipeline(request);
-  }, [executePipeline]);
+  const processRecordedAudioInternal = useCallback(async (base64Audio: string) => {
+    // Store audio for later execution when user clicks the Run Pipeline button
+    setPendingAudio(base64Audio);
+  }, []);
 
   // Expose a function to set the processing callback with config
   const setProcessRecordedAudioCallback = useCallback((
-    sourceLanguage: string,
-    targetLanguage: string,
-    asrServiceId: string,
-    nmtServiceId: string,
-    ttsServiceId: string
+    _sourceLanguage: string,
+    _targetLanguage: string,
+    _asrServiceId: string,
+    _nmtServiceId: string,
+    _ttsServiceId: string
   ) => {
+    // For recorded audio, just capture the base64 for later execution
     processRecordedAudioRef.current = async (base64Audio: string) => {
-      await processRecordedAudioInternal(base64Audio, sourceLanguage, targetLanguage, asrServiceId, nmtServiceId, ttsServiceId);
+      await processRecordedAudioInternal(base64Audio);
     };
   }, [processRecordedAudioInternal]);
 
@@ -679,7 +638,7 @@ export const usePipeline = () => {
     }
 
     const base64Audio = await blobToBase64(audioBlob);
-    await processRecordedAudioInternal(base64Audio, sourceLanguage, targetLanguage, asrServiceId, nmtServiceId, ttsServiceId);
+    await processRecordedAudioInternal(base64Audio);
   }, [audioBlob, processRecordedAudioInternal, toast]);
 
   /**
@@ -804,45 +763,8 @@ export const usePipeline = () => {
       }
 
       const base64Audio = await processAudioFile(file);
-
-      const request: PipelineInferenceRequest = {
-        pipelineTasks: [
-          {
-            taskType: 'asr',
-            config: {
-              serviceId: asrServiceId,
-              language: { sourceLanguage },
-              audioFormat: 'wav',
-              preProcessors: ['vad', 'denoiser'],
-              postProcessors: ['lm', 'punctuation'],
-              transcriptionFormat: 'transcript',
-            },
-          },
-          {
-            taskType: 'translation',
-            config: {
-              serviceId: nmtServiceId,
-              language: { sourceLanguage, targetLanguage },
-            },
-          },
-          {
-            taskType: 'tts',
-            config: {
-              serviceId: ttsServiceId,
-              language: { sourceLanguage: targetLanguage },
-              gender: 'male',
-            },
-          },
-        ],
-        inputData: {
-          audio: [{ audioContent: base64Audio }],
-        },
-        controlConfig: {
-          dataTracking: false,
-        },
-      };
-
-      await executePipeline(request);
+      // Store audio for later execution when user clicks the Run Pipeline button
+      setPendingAudio(base64Audio);
     } catch (error: any) {
       console.error('Error processing uploaded audio:', error);
       const err = error?.message === 'UPLOAD_TIMEOUT' 
@@ -858,7 +780,66 @@ export const usePipeline = () => {
         isClosable: true,
       });
     }
-  }, [executePipeline, toast]);
+  }, [toast]);
+
+  const runPipeline = useCallback(async (
+    sourceLanguage: string,
+    targetLanguage: string,
+    asrServiceId: string,
+    nmtServiceId: string,
+    ttsServiceId: string
+  ) => {
+    if (!pendingAudio) {
+      toast({
+        title: 'Audio Required',
+        description: 'Please record or upload an audio file before running the pipeline.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    const request: PipelineInferenceRequest = {
+      pipelineTasks: [
+        {
+          taskType: 'asr',
+          config: {
+            serviceId: asrServiceId,
+            language: { sourceLanguage },
+            audioFormat: 'wav',
+            preProcessors: ['vad', 'denoiser'],
+            postProcessors: ['lm', 'punctuation'],
+            transcriptionFormat: 'transcript',
+          },
+        },
+        {
+          taskType: 'translation',
+          config: {
+            serviceId: nmtServiceId,
+            language: { sourceLanguage, targetLanguage },
+          },
+        },
+        {
+          taskType: 'tts',
+          config: {
+            serviceId: ttsServiceId,
+            language: { sourceLanguage: targetLanguage },
+            gender: 'male',
+          },
+        },
+      ],
+      inputData: {
+        audio: [{ audioContent: pendingAudio }],
+      },
+      controlConfig: {
+        dataTracking: false,
+      },
+    };
+
+    await executePipeline(request);
+    setPendingAudio(null);
+  }, [executePipeline, pendingAudio, toast]);
 
   return {
     isLoading,
@@ -866,11 +847,13 @@ export const usePipeline = () => {
     isRecording,
     audioBlob,
     timer,
+    pendingAudio,
     startRecording,
     stopRecording,
     executePipeline,
     processRecordedAudio,
     processUploadedAudio,
     setProcessRecordedAudioCallback,
+    runPipeline,
   };
 };
