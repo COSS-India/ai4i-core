@@ -259,65 +259,55 @@ async def get_tenant_info(user_id: int, multi_tenant_db: Optional[AsyncSession],
         return None
     
     try:
+        # Import ORM models from shared multi-tenant library (mounted under /app/libs)
+        #Inside the auth-service container, the app root is /app (mapped from ./services/auth-service).
+        #The multi-tenant lib is mounted at /app/libs/ai4icore_multi_tenant.
+        #Python only sees packages that live directly under a directory on sys.path (e.g. /app), so:
+        #ai4icore_multi_tenant is not at /app/ai4icore_multi_tenant, it’s at /app/libs/ai4icore_multi_tenant.
+        from libs.ai4icore_multi_tenant.ai4icore_multi_tenant import Tenant, TenantUser
+
         if is_tenant:
-            tenant_admin_query = text("""
-                SELECT 
-                    t.tenant_id,
-                    t.id as tenant_uuid,
-                    t.schema_name,
-                    t.subscriptions as tenant_subscriptions,
-                    t.status
-                FROM tenants t
-                WHERE t.user_id = :user_id
-                LIMIT 1
-            """)
+            # Tenant admin: look up tenant by auth user_id
+            stmt = select(Tenant).where(Tenant.user_id == user_id)
 
-            # Add timeout to prevent blocking authentication
             result = await asyncio.wait_for(
-                multi_tenant_db.execute(tenant_admin_query, {"user_id": user_id}),
-                timeout=5.0  # 5 second timeout to prevent blocking
+                multi_tenant_db.execute(stmt),
+                timeout=5.0,  # 5 second timeout to prevent blocking
             )
-            row = result.fetchone()
+            tenant = result.scalars().first()
 
-            if row:
+            if tenant:
                 # User is a tenant admin — return tenant info regardless of tenant status
                 return {
-                    "tenant_id": row[0],
-                    "tenant_uuid": str(row[1]),
-                    "schema_name": row[2],
-                    "subscriptions": row[3] if row[3] else [],
+                    "tenant_id": tenant.tenant_id,
+                    "tenant_uuid": str(tenant.id),
+                    "schema_name": tenant.schema_name,
+                    "subscriptions": tenant.subscriptions or [],
                     "user_subscriptions": [],  # tenant admin has no per-user subscriptions
                 }
         else:
-            tenant_user_query = text("""
-                SELECT 
-                    t.tenant_id,
-                    t.id as tenant_uuid,
-                    t.schema_name,
-                    t.subscriptions as tenant_subscriptions,
-                    tu.subscriptions as user_subscriptions,
-                    t.status
-                FROM tenant_users tu
-                JOIN tenants t ON tu.tenant_uuid = t.id
-                WHERE tu.user_id = :user_id
-                LIMIT 1
-            """)
-
-            # Add timeout to prevent blocking authentication
-            result = await asyncio.wait_for(
-                multi_tenant_db.execute(tenant_user_query, {"user_id": user_id}),
-                timeout=5.0  # 5 second timeout to prevent blocking
+            # Tenant user: join TenantUser with Tenant
+            stmt = (
+                select(TenantUser, Tenant)
+                .join(Tenant, TenantUser.tenant_uuid == Tenant.id)
+                .where(TenantUser.user_id == user_id)
             )
-            row = result.fetchone()
+
+            result = await asyncio.wait_for(
+                multi_tenant_db.execute(stmt),
+                timeout=5.0,  # 5 second timeout to prevent blocking
+            )
+            row = result.first()
 
             if row:
+                tenant_user, tenant = row
                 # User is a tenant user — return tenant info regardless of tenant/user status
                 return {
-                    "tenant_id": row[0],
-                    "tenant_uuid": str(row[1]),
-                    "schema_name": row[2],
-                    "subscriptions": row[3] if row[3] else [],
-                    "user_subscriptions": row[4] if row[4] else [],
+                    "tenant_id": tenant.tenant_id,
+                    "tenant_uuid": str(tenant.id),
+                    "schema_name": tenant.schema_name,
+                    "subscriptions": tenant.subscriptions or [],
+                    "user_subscriptions": tenant_user.subscriptions or [],
                 }
         
         # User not found in either table (normal for non-tenant users)
