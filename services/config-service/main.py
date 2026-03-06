@@ -180,10 +180,12 @@ async def startup_event():
     
     try:
         # Initialize Redis connection
-        redis_client = redis.from_url(
-            f"redis://:{os.getenv('REDIS_PASSWORD')}@"
-            f"{os.getenv('REDIS_HOST')}:{os.getenv('REDIS_PORT')}"
+        redis_url = (
+            f"redis://:{os.getenv('REDIS_PASSWORD')}@{os.getenv('REDIS_HOST')}:{os.getenv('REDIS_PORT')}"
+            if os.getenv("REDIS_PASSWORD")
+            else f"redis://{os.getenv('REDIS_HOST')}:{os.getenv('REDIS_PORT')}"
         )
+        redis_client = redis.from_url(redis_url)
         await redis_client.ping()
         logger.info("Connected to Redis")
         
