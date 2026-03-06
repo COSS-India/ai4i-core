@@ -90,20 +90,18 @@ else:
     )
     logger = logging.getLogger(__name__)
 
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
-REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = int(os.getenv("REDIS_PORT"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 REDIS_TIMEOUT = int(os.getenv("REDIS_TIMEOUT", "10"))
 
 DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db",
+    "DATABASE_URL"
 )
 
 # Multi-tenant database URL (for tenant schema routing)
 MULTI_TENANT_DB_URL = os.getenv(
-    "MULTI_TENANT_DB_URL",
-    "postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/multi_tenant_db",
+    "MULTI_TENANT_DB_URL"
 )
 
 # NOTE: Triton endpoint/model MUST come from Model Management for inference.
@@ -342,9 +340,9 @@ else:
 # Initialize Redis client early for middleware (synchronous for Model Management Plugin)
 redis_client_sync = None
 try:
-    redis_host = os.getenv("REDIS_HOST", "redis")
-    redis_port = int(os.getenv("REDIS_PORT") or os.getenv("REDIS_PORT_NUMBER", "6379"))
-    redis_password = os.getenv("REDIS_PASSWORD", "redis_secure_password_2024")
+    redis_host = os.getenv("REDIS_HOST")
+    redis_port = int(os.getenv("REDIS_PORT"))
+    redis_password = os.getenv("REDIS_PASSWORD")
     
     redis_client_sync = redis_sync.Redis(
         host=redis_host,

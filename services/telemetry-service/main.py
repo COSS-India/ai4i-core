@@ -64,16 +64,15 @@ async def startup_event():
     try:
         # Initialize Redis connection
         redis_client = redis.from_url(
-            f"redis://:{os.getenv('REDIS_PASSWORD', 'redis_secure_password_2024')}@"
-            f"{os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', '6379')}"
+            f"redis://:{os.getenv('REDIS_PASSWORD')}@"
+            f"{os.getenv('REDIS_HOST')}:{os.getenv('REDIS_PORT')}"
         )
         await redis_client.ping()
         logger.info("Connected to Redis")
         
         # Initialize PostgreSQL connection
         database_url = os.getenv(
-            'DATABASE_URL', 
-            'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/telemetry_db'
+            'DATABASE_URL'
         )
         db_engine = create_async_engine(
             database_url,
@@ -90,8 +89,7 @@ async def startup_event():
         
         # Initialize Multi-tenant PostgreSQL connection
         multi_tenant_db_url = os.getenv(
-            'MULTI_TENANT_DATABASE_URL',
-            'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/multi_tenant_db'
+            'MULTI_TENANT_DATABASE_URL'
         )
         multi_tenant_db_engine = create_async_engine(
             multi_tenant_db_url,
@@ -107,9 +105,9 @@ async def startup_event():
         logger.info("Connected to Multi-tenant PostgreSQL")
         
         # Initialize Elasticsearch client
-        es_url = os.getenv('ELASTICSEARCH_URL', 'http://elasticsearch:9200')
-        es_username = os.getenv('ELASTICSEARCH_USERNAME', 'elastic')
-        es_password = os.getenv('ELASTICSEARCH_PASSWORD', 'elastic_secure_password_2024')
+        es_url = os.getenv('ELASTICSEARCH_URL')
+        es_username = os.getenv('ELASTICSEARCH_USERNAME')
+        es_password = os.getenv('ELASTICSEARCH_PASSWORD')
         
         es_client = AsyncElasticsearch(
             [es_url],
@@ -121,9 +119,9 @@ async def startup_event():
         
         # Initialize OpenSearch query client (for observability endpoints)
         opensearch_query_client = OpenSearchQueryClient(
-            url=os.getenv("OPENSEARCH_URL", "http://opensearch:9200"),
-            username=os.getenv("OPENSEARCH_USERNAME", "admin"),
-            password=os.getenv("OPENSEARCH_PASSWORD", "admin"),
+            url=os.getenv("OPENSEARCH_URL"),
+            username=os.getenv("OPENSEARCH_USERNAME"),
+            password=os.getenv("OPENSEARCH_PASSWORD"),
             verify_certs=False
         )
         # Set global in router module
@@ -133,7 +131,7 @@ async def startup_event():
         
         # Initialize Jaeger query client (for observability endpoints)
         jaeger_query_client = JaegerQueryClient(
-            url=os.getenv("JAEGER_QUERY_URL", "http://jaeger:16686")
+            url=os.getenv("JAEGER_QUERY_URL")
         )
         observability_router.jaeger_client = jaeger_query_client
         logger.info("Jaeger query client initialized")
@@ -155,8 +153,7 @@ async def startup_event():
             
             # Try auth database first (where roles/permissions are stored)
             auth_db_url = os.getenv(
-                'AUTH_DATABASE_URL',
-                'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/dhruva_db'
+                'AUTH_DATABASE_URL'
             )
             auth_db_engine = create_async_engine(auth_db_url, echo=False)
             auth_db_session = sessionmaker(auth_db_engine, class_=AsyncSession, expire_on_commit=False)

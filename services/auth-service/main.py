@@ -387,9 +387,9 @@ async def startup_event():
     
     try:
         # Initialize Redis connection
-        redis_host = os.getenv('REDIS_HOST', 'redis')
-        redis_port = os.getenv('REDIS_PORT', '6379')
-        redis_password = os.getenv('REDIS_PASSWORD', '')
+        redis_host = os.getenv('REDIS_HOST')
+        redis_port = os.getenv('REDIS_PORT')
+        redis_password = os.getenv('REDIS_PASSWORD')
         
         # Build Redis URL - only include password if it's set
         if redis_password:
@@ -424,8 +424,7 @@ async def startup_event():
         
         # Initialize PostgreSQL connection
         database_url = os.getenv(
-            'DATABASE_URL', 
-            'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/auth_db'
+            'DATABASE_URL'
         )
         db_engine = create_async_engine(
             database_url,

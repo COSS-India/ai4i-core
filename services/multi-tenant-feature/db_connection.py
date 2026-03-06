@@ -11,18 +11,18 @@ load_dotenv()
 
 
 
-DB_USER     = str(os.getenv("APP_DB_USER", "dhruva_user"))
-DB_PASSWORD = str(os.getenv("APP_DB_PASSWORD", "dhruva_password"))
-DB_HOST     = str(os.getenv("APP_DB_HOST", "localhost"))
-DB_PORT     = int(os.getenv("APP_DB_PORT",5434))
-DB_NAME     = str(os.getenv("APP_DB_NAME", "multi_tenant_db"))
+DB_USER     = str(os.getenv("APP_DB_USER"))
+DB_PASSWORD = str(os.getenv("APP_DB_PASSWORD"))
+DB_HOST     = str(os.getenv("APP_DB_HOST"))
+DB_PORT     = int(os.getenv("APP_DB_PORT"))
+DB_NAME     = str(os.getenv("APP_DB_NAME"))
 
 
-AUTH_DB_USER     = os.getenv("AUTH_DB_USER", "auth_user")
-AUTH_DB_PASSWORD = os.getenv("AUTH_DB_PASSWORD", "auth_pass")
-AUTH_DB_HOST     = os.getenv("AUTH_DB_HOST", "localhost")
-AUTH_DB_PORT     = os.getenv("AUTH_DB_PORT", 5433)
-AUTH_DB_NAME     = os.getenv("AUTH_DB_NAME", "auth_db")
+AUTH_DB_USER     = os.getenv("AUTH_DB_USER")
+AUTH_DB_PASSWORD = os.getenv("AUTH_DB_PASSWORD")
+AUTH_DB_HOST     = os.getenv("AUTH_DB_HOST")
+AUTH_DB_PORT     = os.getenv("AUTH_DB_PORT")
+AUTH_DB_NAME     = os.getenv("AUTH_DB_NAME")
 
 
 # PostgreSQL connection engines
