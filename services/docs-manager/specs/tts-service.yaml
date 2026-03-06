@@ -23,6 +23,8 @@ paths:
       summary: TTS inference
       description: Convert text to speech for one or more text inputs.
       operationId: ttsInference
+      parameters:
+        - $ref: "#/components/parameters/XAuthSource"
       security:
         - BearerAuth: []
       requestBody:
@@ -61,6 +63,16 @@ components:
       type: http
       scheme: bearer
       bearerFormat: API Key
+  parameters:
+    XAuthSource:
+      name: x-auth-source
+      in: header
+      required: false
+      description: Auth mode. Use BOTH when sending both Bearer token and X-API-Key.
+      schema:
+        type: string
+        enum: [API_KEY, AUTH_TOKEN, BOTH]
+        default: BOTH
   schemas:
     TTSTextInput:
       type: object
