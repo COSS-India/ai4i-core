@@ -22,8 +22,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from ai4icore_observability import ObservabilityPlugin, PluginConfig
 from ai4icore_logging import (
     get_logger,
-    CorrelationMiddleware,
-    configure_logging,
+    register_logging_plugin,
+    LoggingConfig,
 )
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -38,28 +38,20 @@ from repositories.asr_repository import ASRRepository
 # Import middleware components
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.request_logging import RequestLoggingMiddleware
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
 
-# Configure structured logging (to OpenSearch, with correlation IDs)
-configure_logging(
-    service_name=os.getenv("SERVICE_NAME", "asr-service"),
-    use_kafka=os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true",
-)
-
 # Aggressively disable uvicorn access logger BEFORE uvicorn starts
 # This must happen before uvicorn imports/creates its loggers
-
 uvicorn_access = logging.getLogger("uvicorn.access")
 uvicorn_access.handlers.clear()
 uvicorn_access.propagate = False
 uvicorn_access.disabled = True
 uvicorn_access.setLevel(logging.CRITICAL + 1)
 
-# Get logger instance
+# Get logger instance (will be properly configured by LoggingPlugin)
 logger = get_logger(__name__)
 
 # Global variables for database and Redis connections
@@ -298,6 +290,8 @@ app = FastAPI(
     
 # Initialize AI4ICore Observability Plugin
 # Plugin automatically extracts metrics from request bodies - no manual recording needed!
+# IMPORTANT: ObservabilityPlugin must be registered BEFORE LoggingPlugin
+# (FastAPI middleware runs in reverse order, so Observability runs first and sets tenant_id)
 config = PluginConfig.from_env()
 config.enabled = True  # Enable plugin
 if not config.customers:
@@ -305,9 +299,18 @@ if not config.customers:
 if not config.apps:
     config.apps = ["asr"]  # Service name
 
-plugin = ObservabilityPlugin(config)
-plugin.register_plugin(app)
+observability_plugin = ObservabilityPlugin(config)
+observability_plugin.register_plugin(app)
 logger.info("✅ AI4ICore Observability Plugin initialized for ASR service")
+
+# Initialize AI4ICore Logging Plugin
+# Registers CorrelationMiddleware and ServiceRequestLoggingMiddleware
+# IMPORTANT: Must be registered AFTER ObservabilityPlugin so tenant_id is available
+logging_config = LoggingConfig.from_env()
+logging_config.service_name = os.getenv("SERVICE_NAME", "asr-service")
+logging_config.use_kafka = os.getenv("USE_KAFKA_LOGGING", "false").lower() == "true"
+register_logging_plugin(app, config=logging_config)
+logger.info("✅ AI4ICore Logging Plugin initialized for ASR service")
 
 # Model Management Plugin - registered AFTER Observability
 # so that Model Management runs first and Observability can use cached body
@@ -384,11 +387,8 @@ multi_tenant_plugin.register_plugin(
 )
 logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for ASR service")
 
-# Add middleware after FastAPI app creation
-# Correlation middleware (MUST be before RequestLoggingMiddleware)
-app.add_middleware(CorrelationMiddleware)
-# Structured request logging middleware (logs to OpenSearch)
-app.add_middleware(RequestLoggingMiddleware)
+# Logging middleware is now registered via LoggingPlugin above
+# No need to manually add CorrelationMiddleware or RequestLoggingMiddleware
 
 # Add rate limiting middleware (if Redis is available)
 if redis_client:

@@ -18,7 +18,6 @@ from utils.service_registry_client import ServiceRegistryHttpClient
 # Import middleware components
 from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.error_handler_middleware import add_error_handlers
-from middleware.request_logging import RequestLoggingMiddleware
 
 # Import AI4ICore libraries for observability, logging, and tracing
 try:
@@ -33,6 +32,7 @@ try:
         get_logger,
         CorrelationMiddleware,
         configure_logging,
+        ServiceRequestLoggingMiddleware,
     )
     LOGGING_AVAILABLE = True
 except ImportError:
@@ -263,7 +263,7 @@ if LOGGING_AVAILABLE:
     
     # Request logging middleware (MUST be after CorrelationMiddleware)
     # This logs API requests and errors to OpenSearch
-    app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(ServiceRequestLoggingMiddleware)
     logger.info("✅ Request logging middleware added for API request tracking")
 
 # Add rate limiting middleware

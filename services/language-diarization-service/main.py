@@ -37,7 +37,7 @@ configure_logging = None
 get_logger = None
 CorrelationMiddleware = None
 try:
-    from ai4icore_logging import configure_logging, get_logger, CorrelationMiddleware
+    from ai4icore_logging import configure_logging, get_logger, CorrelationMiddleware, ServiceRequestLoggingMiddleware
     LOGGING_AVAILABLE = True
 except ImportError:
     pass
@@ -57,7 +57,6 @@ from routers import inference_router
 from models import database_models, auth_models
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from utils.triton_client import TritonClient
@@ -347,7 +346,7 @@ app.add_middleware(
 )
 
 # Request logging
-app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(ServiceRequestLoggingMiddleware)
 
 # Rate limiting (Redis client will be picked from app.state)
 rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))

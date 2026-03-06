@@ -62,7 +62,7 @@ except ImportError:
 
 # Configure logging with ai4icore_logging
 try:
-    from ai4icore_logging import get_logger, CorrelationMiddleware, RequestLoggingMiddleware
+    from ai4icore_logging import get_logger, CorrelationMiddleware, ServiceRequestLoggingMiddleware
     logger = get_logger(__name__)
     logger.info("✅ Using ai4icore_logging for structured logging")
 except ImportError:
@@ -70,7 +70,7 @@ except ImportError:
     logger = logging.getLogger(__name__)
     logger.warning("⚠️ ai4icore_logging not available, using standard logging")
     CorrelationMiddleware = None
-    RequestLoggingMiddleware = None
+    ServiceRequestLoggingMiddleware = None
 
 # Import telemetry and tracing
 try:
@@ -118,7 +118,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Correlation middleware (MUST be before RequestLoggingMiddleware)
+# Correlation middleware (MUST be before ServiceRequestLoggingMiddleware)
 # This extracts X-Correlation-ID from headers and sets it in logging context
 if CorrelationMiddleware:
     app.add_middleware(CorrelationMiddleware)
@@ -126,18 +126,18 @@ if CorrelationMiddleware:
 
 # Request logging middleware (logs all requests to OpenSearch)
 # This ensures login/logout endpoints are logged even though API Gateway skips successful requests
-if RequestLoggingMiddleware:
-    app.add_middleware(RequestLoggingMiddleware)
+if ServiceRequestLoggingMiddleware:
+    app.add_middleware(ServiceRequestLoggingMiddleware)
     logger.info(
-        "✅ RequestLoggingMiddleware added to auth-service",
+        "✅ ServiceRequestLoggingMiddleware added to auth-service",
         extra={"context": {
             "service": "auth-service",
-            "middleware": "RequestLoggingMiddleware",
+            "middleware": "ServiceRequestLoggingMiddleware",
             "endpoints": ["/api/v1/auth/login", "/api/v1/auth/logout"]
         }}
     )
 else:
-    logger.warning("⚠️ RequestLoggingMiddleware not available - login/logout requests will not be logged to OpenSearch")
+    logger.warning("⚠️ ServiceRequestLoggingMiddleware not available - login/logout requests will not be logged to OpenSearch")
 
 # Setup Distributed Tracing (Jaeger)
 # IMPORTANT: Setup tracing BEFORE instrumenting FastAPI
