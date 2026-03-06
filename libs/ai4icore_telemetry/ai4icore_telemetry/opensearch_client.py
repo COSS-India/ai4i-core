@@ -39,9 +39,9 @@ class OpenSearchQueryClient:
             verify_certs: Whether to verify SSL certificates
             index_pattern: Index pattern to search (default: "logs-*")
         """
-        self.url = url or os.getenv("OPENSEARCH_URL")
-        self.username = username or os.getenv("OPENSEARCH_USERNAME")
-        self.password = password or os.getenv("OPENSEARCH_PASSWORD")
+        self.url = url or os.getenv("OPENSEARCH_URL", "http://opensearch:9200")
+        self.username = username or os.getenv("OPENSEARCH_USERNAME", "admin")
+        self.password = password or os.getenv("OPENSEARCH_PASSWORD", "admin")
         self.index_pattern = index_pattern
         self.verify_certs = verify_certs
         
@@ -429,4 +429,3 @@ class OpenSearchQueryClient:
         except Exception as e:
             logger.error(f"Error getting services with logs: {e}", exc_info=True)
             raise
-
