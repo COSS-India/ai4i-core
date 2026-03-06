@@ -26,6 +26,7 @@ from ai4icore_logging import (
     get_logger,
     CorrelationMiddleware,
     configure_logging,
+    ServiceRequestLoggingMiddleware,
 )
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -35,7 +36,6 @@ from routers import inference_router
 from models import database_models, auth_models
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from utils.triton_client import TritonClient
@@ -367,7 +367,7 @@ app.add_middleware(CorrelationMiddleware)
 # Request logging (added BEFORE ObservabilityMiddleware)
 # FastAPI middleware runs in REVERSE order, so this will run AFTER ObservabilityMiddleware
 # This ensures organization is set in context before logging
-app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(ServiceRequestLoggingMiddleware)
 
 # Multi-tenant plugin (tenant schema router + middleware)
 multi_tenant_db_url = MULTI_TENANT_DB_URL or DATABASE_URL

@@ -22,6 +22,7 @@ from ai4icore_logging import (
     get_logger,
     CorrelationMiddleware,
     configure_logging,
+    ServiceRequestLoggingMiddleware,
 )
 from ai4icore_telemetry import setup_tracing
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -49,7 +50,6 @@ except ImportError:
 # Import middleware components
 from middleware.auth_provider import AuthProvider
 from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
 from utils.service_registry_client import ServiceRegistryHttpClient
@@ -377,7 +377,7 @@ app.add_middleware(CorrelationMiddleware)
 # Request logging (added BEFORE ObservabilityMiddleware)
 # FastAPI middleware runs in REVERSE order, so this will run AFTER ObservabilityMiddleware
 # This ensures organization is set in context before logging
-app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(ServiceRequestLoggingMiddleware)
 
 # Synchronous Redis client for Model Management middleware (A/B testing, service resolution)
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
