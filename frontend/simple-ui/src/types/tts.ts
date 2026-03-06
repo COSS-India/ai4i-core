@@ -94,8 +94,8 @@ export interface TTSHealthResponse {
 // TTS Hook State
 export interface TTSHookState {
   language: string;
-  gender: Gender;
-  audioFormat: AudioFormat;
+  gender: string; // Form state: "" | Gender
+  audioFormat: string; // Form state: "" | AudioFormat
   samplingRate: SampleRate;
   modelId: string;
   inputText: string;
@@ -137,8 +137,8 @@ export interface TextInputProps {
 
 export interface VoiceSelectorProps {
   language: string;
-  gender: Gender;
-  audioFormat: AudioFormat;
+  gender: string; // Form state; "" for unselected, "male" | "female" when selected
+  audioFormat: string; // Form state; "" for unselected, AudioFormat when selected
   samplingRate: SampleRate;
   onLanguageChange: (language: string) => void;
   onGenderChange: (gender: Gender) => void;

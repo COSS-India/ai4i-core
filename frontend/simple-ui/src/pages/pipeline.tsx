@@ -28,7 +28,7 @@ import { useQuery } from "@tanstack/react-query";
 import Head from "next/head";
 import { useRouter } from "next/router";
 import React, { useState } from "react";
-import { FaMicrophone, FaMicrophoneSlash } from "react-icons/fa";
+import { FaMicrophone, FaMicrophoneSlash, FaUpload } from "react-icons/fa";
 import ContentLayout from "../components/common/ContentLayout";
 import {
   ASR_SUPPORTED_LANGUAGES,
@@ -48,11 +48,12 @@ const PipelinePage: React.FC = () => {
   const toast = useToastWithDeduplication();
   const router = useRouter();
   const { isAuthenticated } = useAuth();
-  const [sourceLanguage, setSourceLanguage] = useState("hi");
-  const [targetLanguage, setTargetLanguage] = useState("mr");
+  const [sourceLanguage, setSourceLanguage] = useState("");
+  const [targetLanguage, setTargetLanguage] = useState("");
   const [asrServiceId, setAsrServiceId] = useState<string>("");
   const [nmtServiceId, setNmtServiceId] = useState<string>("");
   const [ttsServiceId, setTtsServiceId] = useState<string>("");
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
 
   const {
     isLoading,
@@ -61,9 +62,11 @@ const PipelinePage: React.FC = () => {
     timer,
     startRecording,
     stopRecording,
+    pendingAudio,
     processRecordedAudio,
     processUploadedAudio,
     setProcessRecordedAudioCallback,
+    runPipeline,
   } = usePipeline();
 
   // Fetch available services
@@ -85,34 +88,49 @@ const PipelinePage: React.FC = () => {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Auto-select first available ASR service when list loads
-  React.useEffect(() => {
-    if (!asrServices || asrServices.length === 0) return;
-    if (!asrServiceId) {
-      setAsrServiceId(asrServices[0].service_id);
-    }
-  }, [asrServices, asrServiceId]);
+  const hasRequiredConfig = () =>
+    !!sourceLanguage?.trim() &&
+    !!targetLanguage?.trim() &&
+    !!asrServiceId?.trim() &&
+    !!nmtServiceId?.trim() &&
+    !!ttsServiceId?.trim();
 
-  // Auto-select first available NMT service when list loads
-  React.useEffect(() => {
-    if (!nmtServices || nmtServices.length === 0) return;
-    if (!nmtServiceId) {
-      setNmtServiceId(nmtServices[0].service_id);
+  const ensureConfigOrToast = () => {
+    if (!sourceLanguage?.trim() || !targetLanguage?.trim()) {
+      toast({
+        title: "Language Required",
+        description: "Please select both source and target languages before recording or uploading audio.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return false;
     }
-  }, [nmtServices, nmtServiceId]);
+    if (!asrServiceId?.trim() || !nmtServiceId?.trim() || !ttsServiceId?.trim()) {
+      toast({
+        title: "Service Selection Required",
+        description: "Please select ASR, NMT, and TTS services before recording or uploading audio.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return false;
+    }
+    return true;
+  };
 
-  // Auto-select first available TTS service when list loads
-  React.useEffect(() => {
-    if (!ttsServices || ttsServices.length === 0) return;
-    if (!ttsServiceId) {
-      setTtsServiceId(ttsServices[0].service_id);
-    }
-  }, [ttsServices, ttsServiceId]);
+  const canRunPipeline = hasRequiredConfig() && !isLoading;
+  const canSubmit = hasRequiredConfig() && !!pendingAudio && !isLoading;
 
   const handleRecordClick = async () => {
+    if (!ensureConfigOrToast()) {
+      return;
+    }
+
     if (isRecording) {
       stopRecording();
     } else {
+      setUploadedFileName(null);
       // Set the callback with current config before starting recording
       setProcessRecordedAudioCallback(
         sourceLanguage,
@@ -131,7 +149,13 @@ const PipelinePage: React.FC = () => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    if (!ensureConfigOrToast()) {
+      event.target.value = "";
+      return;
+    }
+
     try {
+      setUploadedFileName(file.name);
       await processUploadedAudio(
         file,
         sourceLanguage,
@@ -151,6 +175,30 @@ const PipelinePage: React.FC = () => {
   // Get word count helper
   const getWordCount = (text: string): number => {
     return text.trim().split(/\s+/).filter(Boolean).length;
+  };
+
+  const handleRunPipeline = () => {
+    if (!ensureConfigOrToast()) {
+      return;
+    }
+    if (!pendingAudio) {
+      toast({
+        title: "Audio Required",
+        description: "Please record or upload an audio file before running the pipeline.",
+        status: "warning",
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
+    runPipeline(
+      sourceLanguage,
+      targetLanguage,
+      asrServiceId,
+      nmtServiceId,
+      ttsServiceId
+    );
   };
 
   return (
@@ -217,11 +265,13 @@ const PipelinePage: React.FC = () => {
                 {/* Source Language */}
                 <FormControl>
                   <FormLabel className="dview-service-try-option-title">
-                    Source Language
+                    Source Language{" "}
+                    <Text as="span" color="red.500">*</Text>
                   </FormLabel>
                   <Select
                     value={sourceLanguage}
                     onChange={(e) => setSourceLanguage(e.target.value)}
+                    placeholder="Select"
                   >
                     {ASR_SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
@@ -234,11 +284,13 @@ const PipelinePage: React.FC = () => {
                 {/* Target Language */}
                 <FormControl>
                   <FormLabel className="dview-service-try-option-title">
-                    Target Language
+                    Target Language{" "}
+                    <Text as="span" color="red.500">*</Text>
                   </FormLabel>
                   <Select
                     value={targetLanguage}
                     onChange={(e) => setTargetLanguage(e.target.value)}
+                    placeholder="Select"
                   >
                     {TTS_SUPPORTED_LANGUAGES.map((lang) => (
                       <option key={lang.code} value={lang.code}>
@@ -251,12 +303,13 @@ const PipelinePage: React.FC = () => {
                 {/* ASR Service */}
                 <FormControl>
                   <FormLabel className="dview-service-try-option-title">
-                    ASR Service
+                    ASR Service{" "}
+                    <Text as="span" color="red.500">*</Text>
                   </FormLabel>
                   <Select
                     value={asrServiceId}
                     onChange={(e) => setAsrServiceId(e.target.value)}
-                    placeholder="Select a ASR service"
+                    placeholder="Select"
                   >
                     {asrServices?.map((service) => (
                       <option key={service.service_id} value={service.service_id}>
@@ -289,12 +342,13 @@ const PipelinePage: React.FC = () => {
                 {/* NMT Service */}
                 <FormControl>
                   <FormLabel className="dview-service-try-option-title">
-                    NMT Service
+                    NMT Service{" "}
+                    <Text as="span" color="red.500">*</Text>
                   </FormLabel>
                   <Select
                     value={nmtServiceId}
                     onChange={(e) => setNmtServiceId(e.target.value)}
-                    placeholder="Select a NMT service"
+                    placeholder="Select"
                   >
                     {nmtServices
                       ?.filter(
@@ -335,12 +389,13 @@ const PipelinePage: React.FC = () => {
                 {/* TTS Service */}
                 <FormControl>
                   <FormLabel className="dview-service-try-option-title">
-                    TTS Service
+                    TTS Service{" "}
+                    <Text as="span" color="red.500">*</Text>
                   </FormLabel>
                   <Select
                     value={ttsServiceId}
                     onChange={(e) => setTtsServiceId(e.target.value)}
-                    placeholder="Select a TTS service"
+                    placeholder="Select"
                   >
                     {ttsServices?.map((service) => (
                       <option key={service.service_id} value={service.service_id}>
@@ -370,46 +425,118 @@ const PipelinePage: React.FC = () => {
                   )}
                 </FormControl>
 
-                {/* Recording Timer Display */}
-                {isRecording && (
-                  <Alert status="info" borderRadius="md">
-                    <AlertIcon />
-                    <AlertDescription>
-                      Recording Time: {formatDuration(timer)} /{" "}
-                      {formatDuration(MAX_RECORDING_DURATION)} seconds
-                    </AlertDescription>
-                  </Alert>
-                )}
+                {/* Audio Input - grouped like ASR */}
+                <Box>
+                  <FormLabel className="dview-service-try-option-title" mb={4}>
+                    Audio Input{" "}
+                    <Text as="span" color="red.500">
+                      *
+                    </Text>
+                  </FormLabel>
 
-                {/* Recording Button */}
-                <Button
-                  leftIcon={
-                    isRecording ? <FaMicrophoneSlash /> : <FaMicrophone />
-                  }
-                  colorScheme={isRecording ? "red" : "orange"}
-                  variant={isRecording ? "solid" : "outline"}
-                  onClick={handleRecordClick}
-                  disabled={isLoading}
-                  w="full"
-                  h="50px"
-                >
-                  {isRecording ? "Stop" : "Record"}
-                </Button>
+                  {/* Recording Timer Display */}
+                  {isRecording && (
+                    <Alert status="info" borderRadius="md">
+                      <AlertIcon />
+                      <AlertDescription>
+                        Recording Time: {formatDuration(timer)} /{" "}
+                        {formatDuration(MAX_RECORDING_DURATION)} seconds
+                      </AlertDescription>
+                    </Alert>
+                  )}
 
-                {/* File Upload */}
-                <Button
-                  as="label"
-                  cursor="pointer"
-                  disabled={isLoading || isRecording}
-                >
-                  Upload
-                  <input
-                    type="file"
-                    accept="audio/*"
-                    onChange={handleFileUpload}
-                    style={{ display: "none" }}
-                  />
-                </Button>
+                  <VStack spacing={4} mt={4} align="stretch">
+                    {/* Record Instruction + Button (boxed, like ASR AudioRecorder) */}
+                    <Box
+                      p={3}
+                      borderRadius="md"
+                      borderWidth="1px"
+                      borderColor="gray.200"
+                      bg="gray.50"
+                    >
+                      <Text fontSize="sm" color="gray.600" mb={2}>
+                        Click Record to capture speech using your microphone (max{" "}
+                        {formatDuration(MAX_RECORDING_DURATION)} seconds).
+                      </Text>
+                      <Button
+                        leftIcon={
+                          isRecording ? <FaMicrophoneSlash /> : <FaMicrophone />
+                        }
+                        colorScheme={isRecording ? "red" : "orange"}
+                        variant={isRecording ? "solid" : "outline"}
+                        onClick={handleRecordClick}
+                        disabled={!canRunPipeline || isLoading}
+                        w="full"
+                        h="50px"
+                      >
+                        {isRecording ? "Stop" : "Record"}
+                      </Button>
+                    </Box>
+
+                    {/* Upload Instruction + Button (boxed, like ASR AudioRecorder) */}
+                    <Box
+                      p={3}
+                      borderRadius="md"
+                      borderWidth="1px"
+                      borderColor="gray.200"
+                      bg="gray.50"
+                    >
+                      <Text fontSize="sm" color="gray.600" mb={2}>
+                        Click Upload to choose an audio file (MP3 or WAV) from your
+                        device to run through the pipeline.
+                      </Text>
+                      <Button
+                        as="label"
+                        leftIcon={<FaUpload />}
+                        colorScheme="blue"
+                        variant="outline"
+                        cursor="pointer"
+                        disabled={!canRunPipeline || isLoading || isRecording}
+                        w="full"
+                        h="50px"
+                      >
+                        Upload
+                        <input
+                          type="file"
+                          accept="audio/*"
+                          onChange={handleFileUpload}
+                          style={{ display: "none" }}
+                        />
+                      </Button>
+                      {uploadedFileName && (
+                        <Text
+                          fontSize="sm"
+                          color="gray.700"
+                          mt={2}
+                          noOfLines={1}
+                          title={uploadedFileName}
+                        >
+                          Uploaded: {uploadedFileName}
+                        </Text>
+                      )}
+                    </Box>
+
+                    {/* Instruction above Run Pipeline */}
+                    <Text fontSize="sm" color="gray.600">
+                      After recording or uploading audio, click Run Pipeline to
+                      generate the transcribed text, translated text, and synthesized
+                      speech.
+                    </Text>
+
+                    {/* Run Pipeline Button */}
+                    <Button
+                      colorScheme="orange"
+                      size="lg"
+                      onClick={handleRunPipeline}
+                      isLoading={isLoading}
+                      loadingText="Running..."
+                      isDisabled={!canSubmit}
+                      w="full"
+                    >
+                      Run Pipeline
+                    </Button>
+                  </VStack>
+                </Box>
               </VStack>
             </GridItem>
 
@@ -452,43 +579,45 @@ const PipelinePage: React.FC = () => {
                 )}
 
                 {/* Source Text */}
-                <Box>
-                  <FormLabel
-                    mb={2}
-                    fontSize="sm"
-                    fontWeight="semibold"
-                    color="gray.700"
-                  >
-                    Transcribed Text (Source)
-                  </FormLabel>
-                  <Textarea
-                    readOnly
-                    value={result?.sourceText || ""}
-                    placeholder="Transcribed text will appear here..."
-                    rows={4}
-                  />
-                </Box>
+                {result && (
+                  <Box>
+                    <FormLabel
+                      mb={2}
+                      fontSize="sm"
+                      fontWeight="semibold"
+                      color="gray.700"
+                    >
+                      Transcribed Text (Source)
+                    </FormLabel>
+                    <Textarea
+                      readOnly
+                      value={result.sourceText}
+                      rows={4}
+                    />
+                  </Box>
+                )}
 
                 {/* Target Text */}
-                <Box>
-                  <FormLabel
-                    mb={2}
-                    fontSize="sm"
-                    fontWeight="semibold"
-                    color="gray.700"
-                  >
-                    Translated Text (Target)
-                  </FormLabel>
-                  <Textarea
-                    readOnly
-                    value={result?.targetText || ""}
-                    placeholder="Translated text will appear here..."
-                    rows={4}
-                  />
-                </Box>
+                {result && (
+                  <Box>
+                    <FormLabel
+                      mb={2}
+                      fontSize="sm"
+                      fontWeight="semibold"
+                      color="gray.700"
+                    >
+                      Translated Text (Target)
+                    </FormLabel>
+                    <Textarea
+                      readOnly
+                      value={result.targetText}
+                      rows={4}
+                    />
+                  </Box>
+                )}
 
                 {/* Audio Player */}
-                {result?.audio && (
+                {result && result.audio && (
                   <Box>
                     <FormLabel
                       mb={2}

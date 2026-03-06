@@ -93,7 +93,38 @@ export const useNMT = (): UseNMTReturn => {
   // Perform inference
   const performInference = useCallback(async (text: string) => {
     const trimmed = text?.trim() ?? '';
-    
+
+    if (!selectedServiceId?.trim()) {
+      toast({
+        title: 'Selection required',
+        description: 'Please select a translation service.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (!languagePair.sourceLanguage?.trim()) {
+      toast({
+        title: 'Selection required',
+        description: 'Please select a source language.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+    if (!languagePair.targetLanguage?.trim()) {
+      toast({
+        title: 'Selection required',
+        description: 'Please select a target language.',
+        status: 'warning',
+        duration: 3000,
+        isClosable: true,
+      });
+      return;
+    }
+
     if (!text) {
       const err = NMT_ERRORS.NO_TEXT_INPUT;
       toast({
@@ -160,18 +191,6 @@ export const useNMT = (): UseNMTReturn => {
         title: err.title,
         description: err.description,
         status: 'error',
-        duration: 3000,
-        isClosable: true,
-      });
-      return;
-    }
-
-    // Require a model/service to be selected before translating
-    if (!selectedServiceId) {
-      toast({
-        title: 'Select a model',
-        description: 'Please select a translation model before testing.',
-        status: 'warning',
         duration: 3000,
         isClosable: true,
       });

@@ -218,7 +218,9 @@ services:
       - ./services/Konga-API-manager/plugins/token-validator/kong/plugins:/usr/local/share/lua/5.1/kong/plugins:ro
     command: >
       sh -c "
-        sh /kong/substitute-env.sh &&
+        CR=$(printf '\\r') &&
+        tr -d \"$$CR\" < /kong/substitute-env.sh > /tmp/kong-substitute-env.sh &&
+        sh /tmp/kong-substitute-env.sh &&
         /docker-entrypoint.sh kong docker-start
       "
     networks:
@@ -306,7 +308,10 @@ services:
       - ./services/api-gateway-service/gateways/apisix/substitute-env.sh:/usr/local/apisix/substitute-env.sh:ro
     command: >
       sh -c "
-        sh /usr/local/apisix/substitute-env.sh &&
+        CR=$(printf '\\r') &&
+        tr -d \"$$CR\" < /usr/local/apisix/substitute-env.sh > /tmp/substitute-env.sh &&
+        tr -d \"$$CR\" < /usr/local/apisix/conf/apisix.yaml.template > /tmp/apisix.yaml.template &&
+        APISIX_CONFIG_TEMPLATE=/tmp/apisix.yaml.template sh /tmp/substitute-env.sh &&
         /usr/bin/apisix init &&
         exec /usr/local/openresty/bin/openresty -p /usr/local/apisix -g 'daemon off;'
       "
