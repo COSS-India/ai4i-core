@@ -10,6 +10,8 @@ import {
   FormLabel,
   Heading,
   Input,
+  InputGroup,
+  InputLeftElement,
   Select,
   Table,
   Thead,
@@ -39,9 +41,10 @@ import {
   useDisclosure,
 } from "@chakra-ui/react";
 import Head from "next/head";
+import { SearchIcon } from "@chakra-ui/icons";
 import { useRouter } from "next/router";
 import { useQueryClient } from "@tanstack/react-query";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import {
   listServices,
@@ -82,8 +85,104 @@ const ServicesManagementPage: React.FC = () => {
   const [publishingServiceUuid, setPublishingServiceUuid] = useState<string | null>(null);
   const [unpublishingServiceUuid, setUnpublishingServiceUuid] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
+  const [listPage, setListPage] = useState(1);
+  const [listPageSize, setListPageSize] = useState(25);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterStatus, setFilterStatus] = useState<string>("");
+  const [filterTaskType, setFilterTaskType] = useState<string>("");
+  const [confirmPublishService, setConfirmPublishService] = useState<Service | null>(null);
+  const [confirmUnpublishService, setConfirmUnpublishService] = useState<Service | null>(null);
+  const { isOpen: isPublishConfirmOpen, onOpen: onPublishConfirmOpen, onClose: onPublishConfirmClose } = useDisclosure();
+  const { isOpen: isUnpublishConfirmOpen, onOpen: onUnpublishConfirmOpen, onClose: onUnpublishConfirmClose } = useDisclosure();
+  const cancelPublishRef = useRef<HTMLButtonElement>(null);
+  const cancelUnpublishRef = useRef<HTMLButtonElement>(null);
   const toast = useToastWithDeduplication();
   const { user } = useAuth();
+
+  const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+
+  /** Sort by latest update (publishedAt/unpublishedAt) then fallback to publishedOn/created_at; for list ordering */
+  const getServiceSortTime = (s: Service): number => {
+    if (s.isPublished === true && s.publishedAt) {
+      const t = new Date(s.publishedAt).getTime();
+      if (!Number.isNaN(t)) return t;
+    }
+    if (s.isPublished === false && s.unpublishedAt) {
+      const t = new Date(s.unpublishedAt).getTime();
+      if (!Number.isNaN(t)) return t;
+    }
+    if (s.versionStatusUpdatedAt) {
+      const t = new Date(s.versionStatusUpdatedAt).getTime();
+      if (!Number.isNaN(t)) return t;
+    }
+    if (s.updated_at) {
+      const t = new Date(s.updated_at).getTime();
+      if (!Number.isNaN(t)) return t;
+    }
+    if (s.created_at) {
+      const t = new Date(s.created_at).getTime();
+      if (!Number.isNaN(t)) return t;
+    }
+    if (s.publishedOn != null && s.publishedOn > 0) {
+      const n = Number(s.publishedOn);
+      return n > 1e12 ? n : n * 1000;
+    }
+    return 0;
+  };
+
+  const taskTypeOptions = useMemo(() => {
+    const types = new Set<string>();
+    services.forEach((s) => {
+      const t = s.model?.task?.type || s.task?.type || s.task_type;
+      if (t) types.add(String(t).toUpperCase());
+    });
+    return Array.from(types).sort();
+  }, [services]);
+
+  const filteredServices = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const filtered = services.filter((s) => {
+      if (q) {
+        const nameMatch = (s.name ?? "").toLowerCase().includes(q);
+        const taskMatch = (s.model?.task?.type ?? s.task?.type ?? s.task_type ?? "").toString().toLowerCase().includes(q);
+        if (!nameMatch && !taskMatch) return false;
+      }
+      if (filterStatus) {
+        const published = s.isPublished === true;
+        if (filterStatus === "published" && !published) return false;
+        if (filterStatus === "unpublished" && published) return false;
+      }
+      if (filterTaskType) {
+        const task = (s.model?.task?.type ?? s.task?.type ?? s.task_type ?? "").toString().toUpperCase();
+        if (task !== filterTaskType) return false;
+      }
+      return true;
+    });
+    return [...filtered].sort((a, b) => {
+      const timeA = getServiceSortTime(a);
+      const timeB = getServiceSortTime(b);
+      if (timeB !== timeA) return timeB - timeA;
+      return (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
+    });
+  }, [services, searchQuery, filterStatus, filterTaskType]);
+
+  const totalServices = filteredServices.length;
+  const totalPages = Math.max(1, Math.ceil(totalServices / listPageSize));
+  const startRow = totalServices === 0 ? 0 : (listPage - 1) * listPageSize + 1;
+  const endRow = Math.min(listPage * listPageSize, totalServices);
+  const paginatedServices = filteredServices.slice((listPage - 1) * listPageSize, listPage * listPageSize);
+
+  useEffect(() => {
+    if (listPage > totalPages && totalPages >= 1) setListPage(totalPages);
+  }, [totalServices, listPageSize, listPage, totalPages]);
+
+  const hasActiveFilters = filterStatus !== "" || filterTaskType !== "" || searchQuery.trim() !== "";
+  const clearAllFilters = () => {
+    setSearchQuery("");
+    setFilterStatus("");
+    setFilterTaskType("");
+    setListPage(1);
+  };
 
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -161,6 +260,14 @@ const ServicesManagementPage: React.FC = () => {
 
     fetchModels();
   }, []);
+
+  // Sync URL tab param to activeTab (e.g. when header back clears tab=2, show list)
+  useEffect(() => {
+    const t = router.query.tab;
+    if (t === "2") setActiveTab(2);
+    else if (t === "1" || t === "create") setActiveTab(1);
+    else if (t !== "1" && t !== "2") setActiveTab(0);
+  }, [router.query.tab]);
 
   // Handle query parameters for pre-selecting model from model-management page
   useEffect(() => {
@@ -354,10 +461,10 @@ const ServicesManagementPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ["audioLanguageDetectionServices"] });
 
       toast({
-        title: "Service Created",
-        description: "Service has been created successfully",
+        title: "Service created",
+        description: "Service has been created successfully.",
         status: "success",
-        duration: 3000,
+        duration: 5000,
         isClosable: true,
       });
 
@@ -404,6 +511,7 @@ const ServicesManagementPage: React.FC = () => {
       setUpdateFormData(service);
       setIsViewingService(true);
       setActiveTab(2);
+      router.replace({ pathname: "/services-management", query: { ...router.query, tab: "2" } }, undefined, { shallow: true });
     } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : "Failed to fetch service details";
       const { title: errorTitle, message: errorMsg, showOnlyMessage } = extractErrorInfo(error);
@@ -484,6 +592,22 @@ const ServicesManagementPage: React.FC = () => {
     }
   };
 
+  const handlePublishConfirm = async () => {
+    if (!confirmPublishService) return;
+    const svc = confirmPublishService;
+    onPublishConfirmClose();
+    setConfirmPublishService(null);
+    await handlePublishService(svc);
+  };
+
+  const handleUnpublishConfirm = async () => {
+    if (!confirmUnpublishService) return;
+    const svc = confirmUnpublishService;
+    onUnpublishConfirmClose();
+    setConfirmUnpublishService(null);
+    await handleUnpublishService(svc);
+  };
+
   const handlePublishService = async (service: Service) => {
     if (!service.serviceId) {
       toast({
@@ -506,10 +630,10 @@ const ServicesManagementPage: React.FC = () => {
       });
 
       toast({
-        title: "Service Published",
-        description: `Service ${service.name || service.serviceId} has been published successfully`,
+        title: "Service published",
+        description: `${service.name || service.serviceId} has been published successfully.`,
         status: "success",
-        duration: 3000,
+        duration: 5000,
         isClosable: true,
       });
 
@@ -571,10 +695,10 @@ const ServicesManagementPage: React.FC = () => {
       });
 
       toast({
-        title: "Service Unpublished",
-        description: `Service ${service.name || service.serviceId} has been unpublished successfully`,
+        title: "Service unpublished",
+        description: `${service.name || service.serviceId} has been unpublished successfully.`,
         status: "success",
-        duration: 3000,
+        duration: 5000,
         isClosable: true,
       });
 
@@ -636,10 +760,10 @@ const ServicesManagementPage: React.FC = () => {
     try {
       await deleteService(serviceToDelete.uuid);
       toast({
-        title: "Service Deleted",
-        description: `Service ${serviceToDelete.name || serviceToDelete.service_id} has been deleted successfully`,
+        title: "Service deleted",
+        description: `${serviceToDelete.name || serviceToDelete.service_id} has been deleted successfully.`,
         status: "success",
-        duration: 3000,
+        duration: 5000,
         isClosable: true,
       });
       queryClient.invalidateQueries({ queryKey: ["asr-services"] });
@@ -707,10 +831,14 @@ const ServicesManagementPage: React.FC = () => {
                     setIsViewingService(false);
                     setSelectedService(null);
                   }
+                  const q = { ...router.query } as Record<string, string>;
+                  if (index === 0) delete q.tab;
+                  else q.tab = String(index);
+                  router.replace({ pathname: "/services-management", query: q }, undefined, { shallow: true });
                 }}
               >
                 <TabList>
-                  <Tab fontWeight="semibold">List Services</Tab>
+                  <Tab fontWeight="semibold">Service Registry</Tab>
                   <Tab fontWeight="semibold">Create Service</Tab>
                   {isViewingService && (
                     <Tab fontWeight="semibold">View Service</Tab>
@@ -718,12 +846,12 @@ const ServicesManagementPage: React.FC = () => {
                 </TabList>
 
                 <TabPanels>
-                  {/* List Services Tab */}
+                  {/* Service Registry Tab */}
                   <TabPanel px={0} pt={6}>
                     <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                       <CardHeader>
                         <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-                          All Services
+                          Service Registry
                         </Heading>
                       </CardHeader>
                       <CardBody>
@@ -732,32 +860,104 @@ const ServicesManagementPage: React.FC = () => {
                             <Text color="gray.500">Loading services...</Text>
                           </Box>
                         ) : (
-                          <Box overflowX="auto">
-                            <Table variant="simple" bg={tableBg}>
+                          <>
+                          <VStack align="stretch" spacing={4} mb={4}>
+                            <HStack flexWrap="wrap" gap={3} align="flex-end">
+                              <FormControl w={{ base: "full", md: "280px" }}>
+                                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>Search</FormLabel>
+                                <InputGroup>
+                                  <InputLeftElement pointerEvents="none">
+                                    <SearchIcon color="gray.400" />
+                                  </InputLeftElement>
+                                  <Input
+                                    placeholder="Search by name or task type..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    bg={cardBg}
+                                    pl={10}
+                                    size="sm"
+                                  />
+                                </InputGroup>
+                              </FormControl>
+                              <FormControl w={{ base: "full", sm: "140px" }}>
+                                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>Status</FormLabel>
+                                <Select
+                                  size="sm"
+                                  value={filterStatus}
+                                  onChange={(e) => { setFilterStatus(e.target.value); setListPage(1); }}
+                                  bg={cardBg}
+                                >
+                                  <option value="">All</option>
+                                  <option value="published">Published</option>
+                                  <option value="unpublished">Unpublished</option>
+                                </Select>
+                              </FormControl>
+                              <FormControl w={{ base: "full", sm: "160px" }}>
+                                <FormLabel fontSize="sm" fontWeight="medium" mb={1}>Task type</FormLabel>
+                                <Select
+                                  size="sm"
+                                  value={filterTaskType}
+                                  onChange={(e) => { setFilterTaskType(e.target.value); setListPage(1); }}
+                                  bg={cardBg}
+                                >
+                                  <option value="">All</option>
+                                  {taskTypeOptions.map((t) => (
+                                    <option key={t} value={t}>{t}</option>
+                                  ))}
+                                </Select>
+                              </FormControl>
+                              {hasActiveFilters && (
+                                <Button size="sm" variant="outline" onClick={clearAllFilters}>Clear all</Button>
+                              )}
+                            </HStack>
+                            {hasActiveFilters && (
+                              <HStack spacing={2} flexWrap="wrap">
+                                {searchQuery.trim() && (
+                                  <Badge colorScheme="blue" fontSize="xs" px={2} py={1} cursor="pointer" onClick={() => { setSearchQuery(""); setListPage(1); }} _hover={{ opacity: 0.8 }}>
+                                    Search: &quot;{searchQuery.trim()}&quot; ×
+                                  </Badge>
+                                )}
+                                {filterStatus && (
+                                  <Badge colorScheme="gray" fontSize="xs" px={2} py={1} cursor="pointer" onClick={() => { setFilterStatus(""); setListPage(1); }} _hover={{ opacity: 0.8 }}>
+                                    Status: {filterStatus === "published" ? "Published" : "Unpublished"} ×
+                                  </Badge>
+                                )}
+                                {filterTaskType && (
+                                  <Badge colorScheme="gray" fontSize="xs" px={2} py={1} cursor="pointer" onClick={() => { setFilterTaskType(""); setListPage(1); }} _hover={{ opacity: 0.8 }}>
+                                    Task: {filterTaskType} ×
+                                  </Badge>
+                                )}
+                              </HStack>
+                            )}
+                          </VStack>
+
+                          {filteredServices.length === 0 ? (
+                            <Box textAlign="center" py={8}>
+                              <Text color="gray.500">
+                                No results found.
+                                {services.length === 0 ? " No services in the registry yet." : " Try adjusting your search or filters."}
+                              </Text>
+                            </Box>
+                          ) : (
+                          <Box maxH="60vh" overflowY="auto" overflowX="hidden">
+                            <Table variant="simple" bg={tableBg} size="sm" w="100%">
                               <Thead bg={tableHeaderBg}>
                                 <Tr>
-                                  <Th>Service ID</Th>
                                   <Th>Name</Th>
-                                  <Th>Description</Th>
                                   <Th>Task Type</Th>
-                                  <Th>Model ID</Th>
                                   <Th>Status</Th>
                                   <Th>Actions</Th>
                                 </Tr>
                               </Thead>
                               <Tbody>
-                                {services.map((service) => (
+                                {paginatedServices.map((service) => (
                                   <Tr
                                     key={service.uuid || service.service_id}
                                     _hover={{ bg: tableRowHoverBg, cursor: "pointer" }}
                                     onClick={() => handleViewService(service.serviceId || service.service_id || "")}
                                   >
-                                    <Td>{service.serviceId || service.service_id || "N/A"}</Td>
-                                    <Td>{service.name || "N/A"}</Td>
                                     <Td>
-                                      <Text noOfLines={2} maxW="300px">
-                                        {service.serviceDescription || service.description || "N/A"}
-                                      </Text>
+                                      <Text fontSize="sm" noOfLines={1} title={service.name}>{service.name || "N/A"}</Text>
                                     </Td>
                                     <Td>
                                       <Badge
@@ -768,14 +968,13 @@ const ServicesManagementPage: React.FC = () => {
                                         {(service.model?.task?.type || service.task?.type || service.task_type)?.toUpperCase() || "N/A"}
                                       </Badge>
                                     </Td>
-                                    <Td>{service.modelId || service.model_id || "N/A"}</Td>
                                     <Td>
                                       <Badge
                                         colorScheme={service.isPublished === true ? "green" : "gray"}
                                         fontSize="sm"
                                         p={1}
                                       >
-                                        {service.isPublished === true ? "PUBLISHED" : "UNPUBLISHED"}
+                                        {service.isPublished === true ? "Published" : "Unpublished"}
                                       </Badge>
                                     </Td>
                                     <Td onClick={(e) => e.stopPropagation()}>
@@ -793,7 +992,7 @@ const ServicesManagementPage: React.FC = () => {
                                             size="sm"
                                             colorScheme="red"
                                             variant="outline"
-                                            onClick={() => handleUnpublishService(service)}
+                                            onClick={() => { setConfirmUnpublishService(service); onUnpublishConfirmOpen(); }}
                                             isLoading={unpublishingServiceUuid === service.uuid}
                                             loadingText="Unpublishing..."
                                             isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
@@ -805,7 +1004,7 @@ const ServicesManagementPage: React.FC = () => {
                                             size="sm"
                                             colorScheme="green"
                                             variant="outline"
-                                            onClick={() => handlePublishService(service)}
+                                            onClick={() => { setConfirmPublishService(service); onPublishConfirmOpen(); }}
                                             isLoading={publishingServiceUuid === service.uuid}
                                             loadingText="Publishing..."
                                             isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
@@ -831,11 +1030,82 @@ const ServicesManagementPage: React.FC = () => {
                               </Tbody>
                             </Table>
                           </Box>
+                          )}
+                        </>
                         )}
-                        {!isLoading && services.length === 0 && (
-                          <Box textAlign="center" py={8}>
-                            <Text color="gray.500">No services found</Text>
-                          </Box>
+                        {!isLoading && filteredServices.length > 0 && (
+                          <HStack
+                            mt={4}
+                            justify="space-between"
+                            align="center"
+                            flexWrap="wrap"
+                            gap={2}
+                            borderTopWidth="1px"
+                            borderColor={cardBorder}
+                            pt={4}
+                          >
+                            <Text fontSize="sm" color="gray.600">
+                              {startRow}–{endRow} of {totalServices}
+                            </Text>
+                            <HStack spacing={2} align="center" flexWrap="wrap">
+                              <Text fontSize="sm" color="gray.600" whiteSpace="nowrap">Rows per page</Text>
+                              <Select
+                                size="sm"
+                                w="70px"
+                                value={listPageSize}
+                                onChange={(e) => {
+                                  setListPageSize(Number(e.target.value));
+                                  setListPage(1);
+                                }}
+                                bg={cardBg}
+                              >
+                                {PAGE_SIZE_OPTIONS.map((n) => (
+                                  <option key={n} value={n}>{n}</option>
+                                ))}
+                              </Select>
+                              <HStack spacing={1}>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setListPage(1)}
+                                  isDisabled={listPage <= 1}
+                                  aria-label="First page"
+                                >
+                                  First
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setListPage((p) => Math.max(1, p - 1))}
+                                  isDisabled={listPage <= 1}
+                                  aria-label="Previous page"
+                                >
+                                  Previous
+                                </Button>
+                                <Text fontSize="sm" color="gray.600" px={2}>
+                                  Page {listPage} of {totalPages}
+                                </Text>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setListPage((p) => Math.min(totalPages, p + 1))}
+                                  isDisabled={listPage >= totalPages}
+                                  aria-label="Next page"
+                                >
+                                  Next
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setListPage(totalPages)}
+                                  isDisabled={listPage >= totalPages}
+                                  aria-label="Last page"
+                                >
+                                  Last
+                                </Button>
+                              </HStack>
+                            </HStack>
+                          </HStack>
                         )}
                       </CardBody>
                     </Card>
@@ -905,34 +1175,31 @@ const ServicesManagementPage: React.FC = () => {
                               </FormControl>
                             </SimpleGrid>
 
-                            {/* Auto-populated fields (read-only) */}
+                            {/* Auto-generated fields (read-only labels) */}
                             {formData.modelId && (
                               <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                                <FormControl>
-                                  <FormLabel fontWeight="semibold">Model ID</FormLabel>
-                                  <Input
-                                    value={formData.modelId || ""}
-                                    isReadOnly
-                                    bg="gray.50"
-                                    fontSize="sm"
-                                  />
-                                  <Text fontSize="xs" color="gray.500" mt={1}>
-                                    Automatically populated from selected model
+                                <Box>
+                                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                    Model ID
                                   </Text>
-                                </FormControl>
-
-                                <FormControl>
-                                  <FormLabel fontWeight="semibold">Task Type</FormLabel>
-                                  <Input
-                                    value={formData.task_type || ""}
-                                    isReadOnly
-                                    bg="gray.50"
-                                    fontSize="sm"
-                                  />
+                                  <Box px={3} py={2} bg="gray.50" borderRadius="md" borderWidth="1px" borderColor="gray.200">
+                                    <Text fontSize="sm" color="gray.700">{formData.modelId || "—"}</Text>
+                                  </Box>
                                   <Text fontSize="xs" color="gray.500" mt={1}>
-                                    Automatically derived from selected model
+                                    Auto-generated from selected model
                                   </Text>
-                                </FormControl>
+                                </Box>
+                                <Box>
+                                  <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                    Task type
+                                  </Text>
+                                  <Box px={3} py={2} bg="gray.50" borderRadius="md" borderWidth="1px" borderColor="gray.200">
+                                    <Text fontSize="sm" color="gray.700">{formData.task_type || "—"}</Text>
+                                  </Box>
+                                  <Text fontSize="xs" color="gray.500" mt={1}>
+                                    Auto-derived from selected model
+                                  </Text>
+                                </Box>
                               </SimpleGrid>
                             )}
 
@@ -977,7 +1244,7 @@ const ServicesManagementPage: React.FC = () => {
                       <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                         <CardHeader>
                           <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-                            Service Details: {selectedService.name || selectedService.serviceId || selectedService.service_id}
+                            {selectedService.name || selectedService.serviceId || selectedService.service_id}
                           </Heading>
                         </CardHeader>
                         <CardBody>
@@ -1029,14 +1296,14 @@ const ServicesManagementPage: React.FC = () => {
                                       fontSize="sm"
                                       p={2}
                                     >
-                                      {selectedService.isPublished === true ? "PUBLISHED" : "UNPUBLISHED"}
+                                      {selectedService.isPublished === true ? "Published" : "Unpublished"}
                                     </Badge>
                                     {selectedService.isPublished === true ? (
                                       <Button
                                         size="sm"
                                         colorScheme="red"
                                         variant="outline"
-                                        onClick={() => handleUnpublishService(selectedService)}
+                                        onClick={() => { setConfirmUnpublishService(selectedService); onUnpublishConfirmOpen(); }}
                                         isLoading={unpublishingServiceUuid === selectedService.uuid}
                                         loadingText="Unpublishing..."
                                         isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
@@ -1048,7 +1315,7 @@ const ServicesManagementPage: React.FC = () => {
                                         size="sm"
                                         colorScheme="green"
                                         variant="outline"
-                                        onClick={() => handlePublishService(selectedService)}
+                                        onClick={() => { setConfirmPublishService(selectedService); onPublishConfirmOpen(); }}
                                         isLoading={publishingServiceUuid === selectedService.uuid}
                                         loadingText="Publishing..."
                                         isDisabled={unpublishingServiceUuid !== null || publishingServiceUuid !== null}
@@ -1146,7 +1413,7 @@ const ServicesManagementPage: React.FC = () => {
         <AlertDialogOverlay>
           <AlertDialogContent>
             <AlertDialogHeader fontSize="lg" fontWeight="bold">
-              Delete Service
+              Delete service
             </AlertDialogHeader>
             <AlertDialogBody>
               Are you sure you want to delete the service{" "}
@@ -1163,7 +1430,61 @@ const ServicesManagementPage: React.FC = () => {
                 isLoading={deletingServiceUuid === serviceToDelete?.uuid}
                 loadingText="Deleting..."
               >
-                Delete
+                Confirm
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialogOverlay>
+      </AlertDialog>
+
+      <AlertDialog isOpen={isPublishConfirmOpen} leastDestructiveRef={cancelPublishRef} onClose={() => { onPublishConfirmClose(); setConfirmPublishService(null); }}>
+        <AlertDialogOverlay>
+          <AlertDialogContent>
+            <AlertDialogHeader fontSize="lg" fontWeight="bold">
+              Publish service
+            </AlertDialogHeader>
+            <AlertDialogBody>
+              Are you sure you want to publish <strong>{confirmPublishService?.name || confirmPublishService?.serviceId}</strong>? The service will be available for use.
+            </AlertDialogBody>
+            <AlertDialogFooter>
+              <Button ref={cancelPublishRef} onClick={() => { onPublishConfirmClose(); setConfirmPublishService(null); }}>
+                Cancel
+              </Button>
+              <Button
+                colorScheme="green"
+                onClick={handlePublishConfirm}
+                ml={3}
+                isLoading={publishingServiceUuid === confirmPublishService?.uuid}
+                loadingText="Publishing..."
+              >
+                Confirm
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialogOverlay>
+      </AlertDialog>
+
+      <AlertDialog isOpen={isUnpublishConfirmOpen} leastDestructiveRef={cancelUnpublishRef} onClose={() => { onUnpublishConfirmClose(); setConfirmUnpublishService(null); }}>
+        <AlertDialogOverlay>
+          <AlertDialogContent>
+            <AlertDialogHeader fontSize="lg" fontWeight="bold">
+              Unpublish service
+            </AlertDialogHeader>
+            <AlertDialogBody>
+              Are you sure you want to unpublish <strong>{confirmUnpublishService?.name || confirmUnpublishService?.serviceId}</strong>? The service will no longer be available for use.
+            </AlertDialogBody>
+            <AlertDialogFooter>
+              <Button ref={cancelUnpublishRef} onClick={() => { onUnpublishConfirmClose(); setConfirmUnpublishService(null); }}>
+                Cancel
+              </Button>
+              <Button
+                colorScheme="red"
+                onClick={handleUnpublishConfirm}
+                ml={3}
+                isLoading={unpublishingServiceUuid === confirmUnpublishService?.uuid}
+                loadingText="Unpublishing..."
+              >
+                Confirm
               </Button>
             </AlertDialogFooter>
           </AlertDialogContent>

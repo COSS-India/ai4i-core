@@ -1,6 +1,12 @@
 // Model Management page with list and create functionality
 
 import {
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogOverlay,
   Box,
   Button,
   Card,
@@ -10,6 +16,8 @@ import {
   FormLabel,
   Heading,
   Input,
+  InputGroup,
+  InputLeftElement,
   Select,
   Table,
   Thead,
@@ -22,6 +30,7 @@ import {
   VStack,
   HStack,
   useColorModeValue,
+  useDisclosure,
   Tabs,
   TabList,
   TabPanels,
@@ -39,8 +48,9 @@ import {
   Center
 } from "@chakra-ui/react";
 import Head from "next/head";
+import { SearchIcon } from "@chakra-ui/icons";
 import { useRouter } from "next/router";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import ContentLayout from "../components/common/ContentLayout";
 import { getAllModels, createModel, getModelById, updateModel } from "../services/modelManagementService";
 import { listServices as listServicesForModels } from "../services/servicesManagementService";
@@ -99,6 +109,12 @@ interface Model {
   version?: string;
   versionStatus?: "active" | "deprecated" | "ACTIVE" | "DEPRECATED";
   refUrl?: string;
+  /** ISO timestamp when version status was last updated; used for list ordering */
+  versionStatusUpdatedAt?: string;
+  /** Epoch (seconds or ms) when model was created; fallback for ordering */
+  submittedOn?: number;
+  /** Epoch (seconds or ms) when model was last updated; fallback for ordering */
+  updatedOn?: number;
 }
 
 const ModelManagementPage: React.FC = () => {
@@ -121,6 +137,8 @@ const ModelManagementPage: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
+  const [listPage, setListPage] = useState(1);
+  const [listPageSize, setListPageSize] = useState(25);
   const [uploadedModelData, setUploadedModelData] = useState<any>(null);
   const [parsedModelData, setParsedModelData] = useState<any>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
@@ -129,6 +147,13 @@ const ModelManagementPage: React.FC = () => {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [updatingModelId, setUpdatingModelId] = useState<string | null>(null);
   const [modelIdsWithService, setModelIdsWithService] = useState<Set<string>>(new Set());
+  const [modelToConfirm, setModelToConfirm] = useState<Model | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"deprecate" | "activate" | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterVersionStatus, setFilterVersionStatus] = useState<string>("");
+  const [filterTaskType, setFilterTaskType] = useState<string>("");
+  const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure();
+  const cancelConfirmRef = React.useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const toast = useToastWithDeduplication();
   const {  user } = useAuth();
@@ -149,6 +174,14 @@ const ModelManagementPage: React.FC = () => {
       router.push('/');
     }
   }, [user, router, toast]);
+
+  // Sync URL tab param to activeTab (e.g. when header back clears tab=2, show list)
+  useEffect(() => {
+    const t = router.query.tab;
+    if (t === "2") setActiveTab(2);
+    else if (t === "1") setActiveTab(1);
+    else if (t !== "1" && t !== "2") setActiveTab(0);
+  }, [router.query.tab]);
 
   // Fetch models on component mount
   useEffect(() => {
@@ -203,6 +236,73 @@ const ModelManagementPage: React.FC = () => {
   const tableBg = useColorModeValue("white", "gray.800");
   const tableHeaderBg = useColorModeValue("gray.50", "gray.700");
   const tableRowHoverBg = useColorModeValue("gray.50", "gray.700");
+
+  const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+
+  // Unique task types from models (for filter dropdown)
+  const taskTypeOptions = useMemo(() => {
+    const types = new Set<string>();
+    models.forEach((m) => {
+      if (m.task?.type) types.add(m.task.type.toUpperCase());
+    });
+    return Array.from(types).sort();
+  }, [models]);
+
+  // Sort key: prefer versionStatusUpdatedAt (latest update), fallback to submittedOn/updatedOn (created/updated)
+  const getModelSortTime = (m: Model): number => {
+    if (m.versionStatusUpdatedAt) {
+      const t = new Date(m.versionStatusUpdatedAt).getTime();
+      if (!Number.isNaN(t)) return t;
+    }
+    const submitted = m.submittedOn != null ? (m.submittedOn > 1e12 ? m.submittedOn : m.submittedOn * 1000) : 0;
+    const updated = m.updatedOn != null ? (m.updatedOn > 1e12 ? m.updatedOn : m.updatedOn * 1000) : 0;
+    return updated || submitted;
+  };
+
+  // Apply search (name, task type) and filters (version status, task type), then sort by latest update then name
+  const filteredModels = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const filtered = models.filter((m) => {
+      if (q) {
+        const nameMatch = (m.name ?? "").toLowerCase().includes(q);
+        const taskMatch = (m.task?.type ?? "").toLowerCase().includes(q);
+        if (!nameMatch && !taskMatch) return false;
+      }
+      if (filterVersionStatus) {
+        const status = m.versionStatus?.toLowerCase() || "active";
+        if (filterVersionStatus === "active" && status !== "active") return false;
+        if (filterVersionStatus === "deprecated" && status === "active") return false;
+      }
+      if (filterTaskType && (m.task?.type ?? "").toUpperCase() !== filterTaskType) return false;
+      return true;
+    });
+    // Order by latest update/edit (versionStatusUpdatedAt) first, then created; secondary by name
+    return [...filtered].sort((a, b) => {
+      const timeA = getModelSortTime(a);
+      const timeB = getModelSortTime(b);
+      if (timeB !== timeA) return timeB - timeA; // newest first
+      return (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
+    });
+  }, [models, searchQuery, filterVersionStatus, filterTaskType]);
+
+  const totalModels = filteredModels.length;
+  const totalPages = Math.max(1, Math.ceil(totalModels / listPageSize));
+  const startRow = totalModels === 0 ? 0 : (listPage - 1) * listPageSize + 1;
+  const endRow = Math.min(listPage * listPageSize, totalModels);
+  const paginatedModels = filteredModels.slice((listPage - 1) * listPageSize, listPage * listPageSize);
+
+  // Keep page in valid range when list length changes (e.g. after search/filter)
+  useEffect(() => {
+    if (listPage > totalPages && totalPages >= 1) setListPage(totalPages);
+  }, [totalModels, listPageSize, listPage, totalPages]);
+
+  const hasActiveFilters = filterVersionStatus !== "" || filterTaskType !== "" || searchQuery.trim() !== "";
+  const clearAllFilters = () => {
+    setSearchQuery("");
+    setFilterVersionStatus("");
+    setFilterTaskType("");
+    setListPage(1);
+  };
 
   const getTaskColor = (taskType: string) => {
     switch (taskType.toLowerCase()) {
@@ -540,6 +640,7 @@ const ModelManagementPage: React.FC = () => {
       });
       setIsViewingModel(true);
       setActiveTab(2); // Switch to View Model tab
+      router.replace({ pathname: "/model-management", query: { ...router.query, tab: "2" } }, undefined, { shallow: true });
     } catch (error) {
       toast({
         title: "Failed to Load Model",
@@ -626,10 +727,10 @@ const ModelManagementPage: React.FC = () => {
       });
 
       toast({
-        title: "Model Deprecated",
-        description: `Model ${model.name || model.modelId} has been deprecated successfully`,
+        title: "Model deprecated",
+        description: `${model.name || model.modelId} has been deprecated successfully.`,
         status: "success",
-        duration: 3000,
+        duration: 5000,
         isClosable: true,
       });
       
@@ -680,10 +781,10 @@ const ModelManagementPage: React.FC = () => {
       });
 
       toast({
-        title: "Model Activated",
-        description: `Model ${model.name || model.modelId} has been activated successfully`,
+        title: "Model activated",
+        description: `${model.name || model.modelId} has been activated successfully.`,
         status: "success",
-        duration: 3000,
+        duration: 5000,
         isClosable: true,
       });
 
@@ -709,6 +810,29 @@ const ModelManagementPage: React.FC = () => {
     }
   };
 
+  const openConfirmDialog = (action: "deprecate" | "activate", model: Model) => {
+    setModelToConfirm(model);
+    setConfirmAction(action);
+    onConfirmOpen();
+  };
+
+  const handleConfirmAction = async () => {
+    if (!modelToConfirm || !confirmAction) return;
+    onConfirmClose();
+    if (confirmAction === "deprecate") {
+      await handleDeprecateModel(modelToConfirm);
+    } else {
+      await handleActivateModel(modelToConfirm);
+    }
+    setModelToConfirm(null);
+    setConfirmAction(null);
+  };
+
+  const closeConfirmDialog = () => {
+    onConfirmClose();
+    setModelToConfirm(null);
+    setConfirmAction(null);
+  };
 
   return (
     <>
@@ -745,10 +869,14 @@ const ModelManagementPage: React.FC = () => {
                   setIsViewingModel(false);
                   setSelectedModel(null);
                 }
+                const q = { ...router.query } as Record<string, string>;
+                if (index === 0) delete q.tab;
+                else q.tab = String(index);
+                router.replace({ pathname: "/model-management", query: q }, undefined, { shallow: true });
               }}
             >
               <TabList>
-                <Tab fontWeight="semibold">List Models</Tab>
+                <Tab fontWeight="semibold">Model Registry</Tab>
                 <Tab fontWeight="semibold">Create Model</Tab>
                 {isViewingModel && selectedModel && (
                   <Tab fontWeight="semibold">View Model</Tab>
@@ -756,12 +884,12 @@ const ModelManagementPage: React.FC = () => {
               </TabList>
 
               <TabPanels>
-                {/* List Models Tab */}
+                {/* Model Registry Tab */}
                 <TabPanel px={0} pt={6}>
                   <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
                     <CardHeader>
                       <Heading size="md" color="gray.700" userSelect="none" cursor="default">
-                        All Models
+                        Model Registry
                       </Heading>
                     </CardHeader>
                     <CardBody>
@@ -770,36 +898,152 @@ const ModelManagementPage: React.FC = () => {
                           <Text color="gray.500">Loading models...</Text>
                         </Box>
                       ) : (
-                        <Box overflowX="auto">
-                          <Table variant="simple" bg={tableBg}>
+                        <>
+                        {/* Search and filters - consistent with portal patterns */}
+                        <VStack align="stretch" spacing={4} mb={4}>
+                          <HStack flexWrap="wrap" gap={3} align="flex-end">
+                            <FormControl w={{ base: "full", md: "280px" }}>
+                              <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
+                                Search
+                              </FormLabel>
+                              <InputGroup>
+                                <InputLeftElement pointerEvents="none">
+                                  <SearchIcon color="gray.400" />
+                                </InputLeftElement>
+                                <Input
+                                  placeholder="Search by name or task type..."
+                                  value={searchQuery}
+                                  onChange={(e) => setSearchQuery(e.target.value)}
+                                  bg={cardBg}
+                                  pl={10}
+                                  size="sm"
+                                />
+                              </InputGroup>
+                            </FormControl>
+                            <FormControl w={{ base: "full", sm: "140px" }}>
+                              <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
+                                Version status
+                              </FormLabel>
+                              <Select
+                                size="sm"
+                                value={filterVersionStatus}
+                                onChange={(e) => {
+                                  setFilterVersionStatus(e.target.value);
+                                  setListPage(1);
+                                }}
+                                bg={cardBg}
+                              >
+                                <option value="">All</option>
+                                <option value="active">Active</option>
+                                <option value="deprecated">Deactivated</option>
+                              </Select>
+                            </FormControl>
+                            <FormControl w={{ base: "full", sm: "160px" }}>
+                              <FormLabel fontSize="sm" fontWeight="medium" mb={1}>
+                                Task type
+                              </FormLabel>
+                              <Select
+                                size="sm"
+                                value={filterTaskType}
+                                onChange={(e) => {
+                                  setFilterTaskType(e.target.value);
+                                  setListPage(1);
+                                }}
+                                bg={cardBg}
+                              >
+                                <option value="">All</option>
+                                {taskTypeOptions.map((t) => (
+                                  <option key={t} value={t}>{t}</option>
+                                ))}
+                              </Select>
+                            </FormControl>
+                            {hasActiveFilters && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={clearAllFilters}
+                              >
+                                Clear all
+                              </Button>
+                            )}
+                          </HStack>
+                          {hasActiveFilters && (
+                            <HStack spacing={2} flexWrap="wrap">
+                              {searchQuery.trim() && (
+                                <Badge
+                                  colorScheme="blue"
+                                  fontSize="xs"
+                                  px={2}
+                                  py={1}
+                                  cursor="pointer"
+                                  onClick={() => { setSearchQuery(""); setListPage(1); }}
+                                  _hover={{ opacity: 0.8 }}
+                                >
+                                  Search: &quot;{searchQuery.trim()}&quot; ×
+                                </Badge>
+                              )}
+                              {filterVersionStatus && (
+                                <Badge
+                                  colorScheme="gray"
+                                  fontSize="xs"
+                                  px={2}
+                                  py={1}
+                                  cursor="pointer"
+                                  onClick={() => { setFilterVersionStatus(""); setListPage(1); }}
+                                  _hover={{ opacity: 0.8 }}
+                                >
+                                  Status: {filterVersionStatus === "active" ? "Active" : "Deactivated"} ×
+                                </Badge>
+                              )}
+                              {filterTaskType && (
+                                <Badge
+                                  colorScheme="gray"
+                                  fontSize="xs"
+                                  px={2}
+                                  py={1}
+                                  cursor="pointer"
+                                  onClick={() => { setFilterTaskType(""); setListPage(1); }}
+                                  _hover={{ opacity: 0.8 }}
+                                >
+                                  Task: {filterTaskType} ×
+                                </Badge>
+                              )}
+                            </HStack>
+                          )}
+                        </VStack>
+
+                        {filteredModels.length === 0 ? (
+                          <Box textAlign="center" py={8}>
+                            <Text color="gray.500">
+                              No results found.
+                              {models.length === 0
+                                ? " No models in the registry yet."
+                                : " Try adjusting your search or filters."}
+                            </Text>
+                          </Box>
+                        ) : (
+                        <Box maxH="60vh" overflowY="auto" overflowX="hidden">
+                          <Table variant="simple" bg={tableBg} size="sm" w="100%">
                             <Thead bg={tableHeaderBg}>
                               <Tr>
-                                <Th>Model ID</Th>
-                                <Th>Name</Th>
+                                <Th>Model Name</Th>
                                 <Th>Model Version</Th>
                                 <Th>Version Status</Th>
-                                <Th>Description</Th>
                                 <Th>Task Type</Th>
-                                <Th>License</Th>
-                                <Th>Source</Th>
-                                <Th>Domain</Th>
                                 <Th>Actions</Th>
                               </Tr>
                             </Thead>
                             <Tbody>
-                              {models.map((model) => (
+                              {paginatedModels.map((model) => (
                               <Tr 
                                 key={model.modelId} 
                                 _hover={{ bg: tableRowHoverBg, cursor: "pointer" }}
                                 onClick={() => handleViewModel(model.modelId)}
                               >
                                 <Td>
-                                  <Text fontWeight="medium" fontSize="sm">
-                                    {model.modelId}
+                                  <Text fontSize="sm" noOfLines={1} title={model.name}>
+                                    {model.name}
                                   </Text>
-                                </Td>
-                                <Td>
-                                  <Text fontSize="sm">{model.name}</Text>
                                 </Td>
                                 <Td>
                                   <Text fontSize="sm" fontWeight="medium">
@@ -815,39 +1059,12 @@ const ModelManagementPage: React.FC = () => {
                                   </Badge>
                                 </Td>
                                 <Td>
-                                  <Text fontSize="sm" noOfLines={2} maxW="300px">
-                                    {model.description}
-                                  </Text>
-                                </Td>
-                                <Td>
                                   <Badge
                                     colorScheme={getTaskColor(model.task.type)}
                                     fontSize="xs"
                                   >
                                     {model.task.type.toUpperCase()}
                                   </Badge>
-                                </Td>
-                                <Td>
-                                  <Text fontSize="sm">{model.license}</Text>
-                                </Td>
-                                <Td>
-                                  <Text fontSize="sm" noOfLines={1} maxW="200px">
-                                    {model.source}
-                                  </Text>
-                                </Td>
-                                <Td>
-                                  <HStack spacing={1} flexWrap="wrap">
-                                    {model.domain.slice(0, 2).map((domain, idx) => (
-                                      <Badge key={idx} fontSize="xs" colorScheme="gray">
-                                        {domain}
-                                      </Badge>
-                                    ))}
-                                    {model.domain.length > 2 && (
-                                      <Badge fontSize="xs" colorScheme="gray">
-                                        +{model.domain.length - 2}
-                                      </Badge>
-                                    )}
-                                  </HStack>
                                 </Td>
                                 <Td onClick={(e) => e.stopPropagation()}>
                                   <HStack spacing={2}>
@@ -864,7 +1081,7 @@ const ModelManagementPage: React.FC = () => {
                                         size="sm"
                                         colorScheme="orange"
                                         variant="outline"
-                                        onClick={() => handleDeprecateModel(model)}
+                                        onClick={() => openConfirmDialog("deprecate", model)}
                                         isLoading={updatingModelId === model.modelId}
                                         loadingText="Deprecating..."
                                         isDisabled={updatingModelId !== null}
@@ -876,7 +1093,7 @@ const ModelManagementPage: React.FC = () => {
                                         size="sm"
                                         colorScheme="green"
                                         variant="outline"
-                                        onClick={() => handleActivateModel(model)}
+                                        onClick={() => openConfirmDialog("activate", model)}
                                         isLoading={updatingModelId === model.modelId}
                                         loadingText="Activating..."
                                         isDisabled={updatingModelId !== null}
@@ -891,11 +1108,82 @@ const ModelManagementPage: React.FC = () => {
                             </Tbody>
                           </Table>
                         </Box>
+                        )}
+                      {!isLoading && filteredModels.length > 0 && (
+                        <HStack
+                          mt={4}
+                          justify="space-between"
+                          align="center"
+                          flexWrap="wrap"
+                          gap={2}
+                          borderTopWidth="1px"
+                          borderColor={cardBorder}
+                          pt={4}
+                        >
+                          <Text fontSize="sm" color="gray.600">
+                            {startRow}–{endRow} of {totalModels}
+                          </Text>
+                          <HStack spacing={2} align="center" flexWrap="wrap">
+                            <Text fontSize="sm" color="gray.600" whiteSpace="nowrap">Rows per page</Text>
+                            <Select
+                              size="sm"
+                              w="70px"
+                              value={listPageSize}
+                              onChange={(e) => {
+                                setListPageSize(Number(e.target.value));
+                                setListPage(1);
+                              }}
+                              bg={cardBg}
+                            >
+                              {PAGE_SIZE_OPTIONS.map((n) => (
+                                <option key={n} value={n}>{n}</option>
+                              ))}
+                            </Select>
+                            <HStack spacing={1}>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setListPage(1)}
+                                isDisabled={listPage <= 1}
+                                aria-label="First page"
+                              >
+                                First
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setListPage((p) => Math.max(1, p - 1))}
+                                isDisabled={listPage <= 1}
+                                aria-label="Previous page"
+                              >
+                                Previous
+                              </Button>
+                              <Text fontSize="sm" color="gray.600" px={2}>
+                                Page {listPage} of {totalPages}
+                              </Text>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setListPage((p) => Math.min(totalPages, p + 1))}
+                                isDisabled={listPage >= totalPages}
+                                aria-label="Next page"
+                              >
+                                Next
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setListPage(totalPages)}
+                                isDisabled={listPage >= totalPages}
+                                aria-label="Last page"
+                              >
+                                Last
+                              </Button>
+                            </HStack>
+                          </HStack>
+                        </HStack>
                       )}
-                      {!isLoading && models.length === 0 && (
-                        <Box textAlign="center" py={8}>
-                          <Text color="gray.500">No models found</Text>
-                        </Box>
+                        </>
                       )}
                     </CardBody>
                   </Card>
@@ -1151,7 +1439,7 @@ const ModelManagementPage: React.FC = () => {
                                 size="sm"
                                 colorScheme="orange"
                                 variant="outline"
-                                onClick={() => handleDeprecateModel(selectedModel)}
+                                onClick={() => openConfirmDialog("deprecate", selectedModel)}
                                 isLoading={updatingModelId === selectedModel.modelId}
                                 loadingText="Deprecating..."
                                 isDisabled={updatingModelId !== null}
@@ -1163,7 +1451,7 @@ const ModelManagementPage: React.FC = () => {
                                 size="sm"
                                 colorScheme="green"
                                 variant="outline"
-                                onClick={() => handleActivateModel(selectedModel)}
+                                onClick={() => openConfirmDialog("activate", selectedModel)}
                                 isLoading={updatingModelId === selectedModel.modelId}
                                 loadingText="Activating..."
                                 isDisabled={updatingModelId !== null}
@@ -1176,46 +1464,29 @@ const ModelManagementPage: React.FC = () => {
                       </CardHeader>
                       <CardBody>
                         {!isEditingModel && (
-                          // View Mode - Display model details
                           <VStack spacing={6} align="stretch">
                             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                               <Box>
-                                <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
+                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
                                   Model ID
                                 </Text>
-                                <Text fontSize="md">{selectedModel.modelId}</Text>
+                                <Text fontSize="md" wordBreak="break-all">{selectedModel.modelId}</Text>
                               </Box>
                               <Box>
-                                <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                                  Name
+                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                  Model name
                                 </Text>
                                 <Text fontSize="md">{selectedModel.name}</Text>
                               </Box>
-                            </SimpleGrid>
-
-                            <Box>
-                              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                                Description
-                              </Text>
-                              <Text fontSize="md">{selectedModel.description}</Text>
-                            </Box>
-
-                            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                               <Box>
-                                <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                                  Task Type
+                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                  Version
                                 </Text>
-                                <Badge
-                                  colorScheme={getTaskColor(selectedModel.task.type)}
-                                  fontSize="sm"
-                                  p={2}
-                                >
-                                  {selectedModel.task.type.toUpperCase()}
-                                </Badge>
+                                <Text fontSize="md">{selectedModel.version || "1.0"}</Text>
                               </Box>
                               <Box>
-                                <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                                  Status
+                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                  Version status
                                 </Text>
                                 <Badge
                                   colorScheme={selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus ? "green" : "gray"}
@@ -1225,25 +1496,44 @@ const ModelManagementPage: React.FC = () => {
                                   {selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus ? "ACTIVE" : "DEPRECATED"}
                                 </Badge>
                               </Box>
-                            </SimpleGrid>
-
-                            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                               <Box>
-                                <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                                  License
+                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                  Task type
                                 </Text>
-                                <Text fontSize="md">{selectedModel.license}</Text>
-                              </Box>
-                              <Box>
-                                <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                                  Source
-                                </Text>
-                                <Text fontSize="md">{selectedModel.source}</Text>
+                                <Badge
+                                  colorScheme={getTaskColor(selectedModel.task.type)}
+                                  fontSize="sm"
+                                  p={2}
+                                >
+                                  {selectedModel.task.type.toUpperCase()}
+                                </Badge>
                               </Box>
                             </SimpleGrid>
 
                             <Box>
-                              <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={2}>
+                              <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                Description
+                              </Text>
+                              <Text fontSize="md">{selectedModel.description || "—"}</Text>
+                            </Box>
+
+                            <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                              <Box>
+                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                  License
+                                </Text>
+                                <Text fontSize="md">{selectedModel.license || "—"}</Text>
+                              </Box>
+                              <Box>
+                                <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={1}>
+                                  Source
+                                </Text>
+                                <Text fontSize="md">{selectedModel.source || "—"}</Text>
+                              </Box>
+                            </SimpleGrid>
+
+                            <Box>
+                              <Text fontWeight="semibold" color="gray.600" fontSize="sm" mb={2}>
                                 Domain
                               </Text>
                               <HStack spacing={2} flexWrap="wrap">
@@ -1258,15 +1548,6 @@ const ModelManagementPage: React.FC = () => {
                                 )}
                               </HStack>
                             </Box>
-
-                            {selectedModel.version && (
-                              <Box>
-                                <Text fontWeight="bold" color="gray.600" fontSize="sm" mb={1}>
-                                  Version
-                                </Text>
-                                <Text fontSize="md">{selectedModel.version}</Text>
-                              </Box>
-                            )}
                           </VStack>
                         )}
                         {/* Editing disabled for models after creation - edit form removed */}
@@ -1279,6 +1560,41 @@ const ModelManagementPage: React.FC = () => {
           </Card></Grid>
      </VStack>
       </ContentLayout>
+
+      <AlertDialog
+        isOpen={isConfirmOpen}
+        leastDestructiveRef={cancelConfirmRef}
+        onClose={closeConfirmDialog}
+      >
+        <AlertDialogOverlay>
+          <AlertDialogContent>
+            <AlertDialogHeader fontSize="lg" fontWeight="bold">
+              {confirmAction === "deprecate" ? "Deprecate model" : "Activate model"}
+            </AlertDialogHeader>
+            <AlertDialogBody>
+              {confirmAction === "deprecate" ? (
+                <>Are you sure you want to deprecate <strong>{modelToConfirm?.name || modelToConfirm?.modelId}</strong>? Deprecated models cannot be used for new services.</>
+              ) : (
+                <>Are you sure you want to activate <strong>{modelToConfirm?.name || modelToConfirm?.modelId}</strong>? The model will be available for services again.</>
+              )}
+            </AlertDialogBody>
+            <AlertDialogFooter>
+              <Button ref={cancelConfirmRef} onClick={closeConfirmDialog}>
+                Cancel
+              </Button>
+              <Button
+                colorScheme={confirmAction === "deprecate" ? "orange" : "green"}
+                onClick={handleConfirmAction}
+                ml={3}
+                isLoading={updatingModelId === modelToConfirm?.modelId}
+                loadingText={confirmAction === "deprecate" ? "Deprecating..." : "Activating..."}
+              >
+                Confirm
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialogOverlay>
+      </AlertDialog>
     </>
   );
 };

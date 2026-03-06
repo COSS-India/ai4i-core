@@ -35,8 +35,14 @@ export interface Service {
     lastUpdated: string;
   };
   isPublished?: boolean;
+  /** ISO timestamp when service was published; used for list ordering */
+  publishedAt?: string | null;
+  /** ISO timestamp when service was unpublished; used for list ordering */
+  unpublishedAt?: string | null;
   created_at?: string;
   updated_at?: string;
+  /** ISO timestamp when status was last updated; used for list ordering */
+  versionStatusUpdatedAt?: string;
   [key: string]: any;
 }
 
