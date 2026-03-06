@@ -14,7 +14,7 @@ from .database_models import Base
 class UserDB(Base):
     """User database model.
 
-    Note: the underlying column name in Postgres is `hashed_password`
+    Note: the underlying column name in Postgres is `password_hash`
     (as created by the auth-service), so we map to that explicitly to
     avoid column-not-found errors when loading relationships.
     """
@@ -24,7 +24,7 @@ class UserDB(Base):
     id = Column(Integer, primary_key=True)
     email = Column(String(255), unique=True, nullable=False)
     username = Column(String(100), unique=True, nullable=False)
-    hashed_password = Column("hashed_password", String(255), nullable=False)
+    password_hash = Column("password_hash", String(255), nullable=False)
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
