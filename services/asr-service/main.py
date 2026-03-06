@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI):
         if redis_client is None:
             # Fallback Redis initialization if not done earlier
             redis_host = os.getenv("REDIS_HOST")
-            redis_port = int(os.getenv("REDIS_PORT_NUMBER"))
+            redis_port = int(os.getenv("REDIS_PORT"))
             redis_password = os.getenv("REDIS_PASSWORD")
             
             redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}"
@@ -283,15 +283,6 @@ app = FastAPI(
             "description": "ASR model management"
         }
     ],
-    contact={
-        "name": "Dhruva Platform Team",
-        "url": "https://github.com/AI4Bharat/Dhruva",
-        "email": "support@dhruva-platform.com"
-    },
-    license_info={
-        "name": "MIT",
-        "url": "https://opensource.org/licenses/MIT"
-    },
     lifespan=lifespan
 )
     
@@ -350,7 +341,7 @@ app.add_middleware(
 redis_client = None
 try:
     redis_host = os.getenv("REDIS_HOST")
-    redis_port = int(os.getenv("REDIS_PORT_NUMBER"))
+    redis_port = int(os.getenv("REDIS_PORT"))
     redis_password = os.getenv("REDIS_PASSWORD")
     
     redis_client = redis.Redis(
