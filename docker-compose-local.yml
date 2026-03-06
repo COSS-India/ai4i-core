@@ -286,6 +286,7 @@ services:
       - ./services/auth-service/.env
     volumes:
       - ./services/auth-service:/app
+      - ./libs/ai4icore_multi_tenant:/app/libs/ai4icore_multi_tenant
       - ./libs/ai4icore_logging:/app/libs/ai4icore_logging
       - ./libs/ai4icore_telemetry:/app/libs/ai4icore_telemetry
       - ./services/constants:/app/services/constants
