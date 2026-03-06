@@ -168,6 +168,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         except Exception:
             correlation_id = None
         
+        # Get tenant_id from request.state (set by ObservabilityMiddleware)
+        # This ensures tenant_id is included in logs even if contextvars don't work properly
+        tenant_id = getattr(request.state, "tenant_id", None)
+        
         # Build context for structured logging
         log_context = {
             "method": method,
@@ -184,6 +188,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_context["api_key_id"] = api_key_id
         if correlation_id:
             log_context["correlation_id"] = correlation_id
+        if tenant_id:
+            log_context["tenant_id"] = tenant_id
         # Add trace_id and Jaeger URL if available
         if trace_id:
             log_context["trace_id"] = trace_id

@@ -176,6 +176,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 organization = get_organization()
             except Exception:
                 organization = None
+        
+        # Get tenant_id from request.state (set by ObservabilityMiddleware)
+        # This ensures tenant_id is included in logs even if contextvars don't work properly
+        tenant_id = getattr(request.state, "tenant_id", None)
 
         # Build structured context
         log_context = {
@@ -195,6 +199,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             log_context["correlation_id"] = correlation_id
         if organization:
             log_context["organization"] = organization
+        if tenant_id:
+            log_context["tenant_id"] = tenant_id
         
         # Extract trace_id from OpenTelemetry context for Jaeger URL
         # IMPORTANT: Extract AFTER request processing to ensure span is fully initialized
