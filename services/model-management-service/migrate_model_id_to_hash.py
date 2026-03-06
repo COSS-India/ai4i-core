@@ -406,8 +406,8 @@ async def main():
     
     # Create database connection
     # Use localhost:5434 for migration (override .env if needed)
-    migration_host = os.getenv("MIGRATION_DB_HOST", "localhost")
-    migration_port = int(os.getenv("MIGRATION_DB_PORT", "5434"))
+    migration_host = os.getenv("MIGRATION_DB_HOST")
+    migration_port = int(os.getenv("MIGRATION_DB_PORT"))
     connection_string = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{migration_host}:{migration_port}/{DB_NAME}"
     logger.info(f"Connecting to database: {migration_host}:{migration_port}")
     engine = create_async_engine(connection_string, echo=False)

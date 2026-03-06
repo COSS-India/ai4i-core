@@ -181,16 +181,15 @@ async def startup_event():
     try:
         # Initialize Redis connection
         redis_client = redis.from_url(
-            f"redis://:{os.getenv('REDIS_PASSWORD', 'redis_secure_password_2024')}@"
-            f"{os.getenv('REDIS_HOST', 'redis')}:{os.getenv('REDIS_PORT', '6379')}"
+            f"redis://:{os.getenv('REDIS_PASSWORD')}@"
+            f"{os.getenv('REDIS_HOST')}:{os.getenv('REDIS_PORT')}"
         )
         await redis_client.ping()
         logger.info("Connected to Redis")
         
         # Initialize PostgreSQL connection
         database_url = os.getenv(
-            'DATABASE_URL', 
-            'postgresql+asyncpg://dhruva_user:dhruva_secure_password_2024@postgres:5432/config_db'
+            'DATABASE_URL'
         )
         db_engine = create_async_engine(
             database_url,
@@ -215,7 +214,7 @@ async def startup_event():
         
         # Initialize Kafka producer (optional)
         try:
-            kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
+            kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS')
             kafka_producer = AIOKafkaProducer(
                 bootstrap_servers=kafka_servers
             )
@@ -288,10 +287,10 @@ async def startup_event():
             from providers.unleash_provider import UnleashFeatureProvider
             from openfeature.evaluation_context import EvaluationContext
             
-            unleash_url = os.getenv('UNLEASH_URL', 'http://unleash:4242/feature-flags/api')
+            unleash_url = os.getenv('UNLEASH_URL')
             unleash_app_name = os.getenv('UNLEASH_APP_NAME', 'config-service')
             unleash_instance_id = os.getenv('UNLEASH_INSTANCE_ID', 'config-service-1')
-            unleash_api_token = os.getenv('UNLEASH_API_TOKEN', '*:*.unleash-insecure-api-token')
+            unleash_api_token = os.getenv('UNLEASH_API_TOKEN')
             unleash_environment = os.getenv('UNLEASH_ENVIRONMENT')  # Optional - if not set, SDK won't be used
             unleash_refresh_interval = int(os.getenv('UNLEASH_REFRESH_INTERVAL', '15'))
             unleash_metrics_interval = int(os.getenv('UNLEASH_METRICS_INTERVAL', '60'))
@@ -338,7 +337,7 @@ async def startup_event():
                 try:
                     from services.feature_flag_service import FeatureFlagService
                     
-                    kafka_topic = os.getenv("FEATURE_FLAG_KAFKA_TOPIC", "feature-flag-events")
+                    kafka_topic = os.getenv("FEATURE_FLAG_KAFKA_TOPIC")
                     cache_ttl = int(os.getenv("FEATURE_FLAG_CACHE_TTL", "300"))
                     
                     feature_flag_service = FeatureFlagService(
