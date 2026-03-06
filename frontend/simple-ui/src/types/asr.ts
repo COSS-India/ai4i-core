@@ -91,6 +91,8 @@ export interface ASRHookState {
   audioStream: MediaStream | null;
   timer: number;
   error: string | null;
+  /** Pending audio (base64) from record or upload; inference runs when user clicks Transcribe */
+  pendingAudio: string | null;
 }
 
 // ASR Hook Methods
@@ -99,6 +101,8 @@ export interface ASRHookMethods {
   stopRecording: () => void;
   handleFileUpload: (file: File) => void;
   performInference: (audioContent: string) => Promise<void>;
+  setPendingAudio: (audio: string | null) => void;
+  runTranscribe: () => void;
   setLanguage: (language: string) => void;
   setSampleRate: (sampleRate: number) => void;
   setServiceId: (serviceId: string) => void;

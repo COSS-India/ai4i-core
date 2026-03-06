@@ -4,23 +4,25 @@ import React from 'react';
 import {
   Box,
   FormControl,
+  FormLabel,
   Textarea,
-  Button,
+  Text,
 } from '@chakra-ui/react';
 import { TextInputProps } from '../../types/llm';
 
 const TextInput: React.FC<TextInputProps> = ({
   inputText,
   onInputChange,
-  onProcess,
-  isLoading,
-  inputLanguage,
   maxLength = 50000,
   disabled = false,
 }) => {
   return (
     <Box>
       <FormControl>
+        <FormLabel fontSize="sm" color="gray.600" className="dview-service-try-option-title">
+          Source Text{" "}
+          <Text as="span" color="red.500">*</Text>
+        </FormLabel>
         <Textarea
           mt={2}
           value={inputText}
@@ -29,21 +31,10 @@ const TextInput: React.FC<TextInputProps> = ({
           size="lg"
           rows={8}
           resize="vertical"
-          isDisabled={disabled || isLoading}
+          isDisabled={disabled}
           maxLength={maxLength}
         />
       </FormControl>
-      <Button
-        mt={4}
-        colorScheme="orange"
-        onClick={onProcess}
-        isLoading={isLoading}
-        loadingText="Processing..."
-        isDisabled={disabled || !inputText.trim() || isLoading}
-        w="full"
-      >
-        Translate
-      </Button>
     </Box>
   );
 };
