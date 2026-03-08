@@ -21,6 +21,9 @@ redis>=5.0.0
 # Browser Automation (for E2E tests)
 playwright>=1.40.0
 
+# JWT token inspection (for RS256 verification tests)
+python-jose[cryptography]>=3.3.0
+
 # Utilities
 faker>=20.0.0
 factory-boy>=3.3.0

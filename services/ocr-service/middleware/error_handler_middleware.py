@@ -11,7 +11,6 @@ from ai4icore_logging import get_correlation_id, get_logger
 from middleware.exceptions import (
     AuthenticationError,
     AuthorizationError,
-    RateLimitExceededError,
     ErrorDetail,
 )
 import logging
@@ -174,35 +173,6 @@ def add_error_handlers(app: FastAPI) -> None:
             content={"detail": error_detail.dict()}
         )
     
-    
-    @app.exception_handler(RateLimitExceededError)
-    async def rate_limit_error_handler(request: Request, exc: RateLimitExceededError):
-        """Handle rate limit exceeded errors."""
-        if tracer:
-            with tracer.start_as_current_span("request.reject") as reject_span:
-                reject_span.set_attribute("rate_limit.operation", "reject_rate_limit")
-                reject_span.set_attribute("rate_limit.rejected", True)
-                # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
-                reject_span.set_attribute("error.type", "RateLimitExceededError")
-                reject_span.set_attribute("error.reason", "rate_limit_exceeded")
-                reject_span.set_attribute("error.message", exc.message)
-                reject_span.set_attribute("error.code", "RATE_LIMIT_EXCEEDED")
-                reject_span.set_attribute("rate_limit.retry_after", exc.retry_after)
-                reject_span.set_attribute("http.status_code", 429)
-                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
-                # Don't record exception here - OpenTelemetry already recorded it
-                # automatically in parent spans when exception was raised
-        
-        error_detail = ErrorDetail(
-            message=exc.message,
-            code="RATE_LIMIT_EXCEEDED",
-            timestamp=time.time()
-        )
-        return JSONResponse(
-            status_code=429,
-            content={"detail": error_detail.dict()},
-            headers={"Retry-After": str(exc.retry_after)}
-        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(
@@ -427,9 +397,7 @@ def add_error_handlers(app: FastAPI) -> None:
             pass
         
         # Check if it's one of our custom exceptions that wasn't caught
-        if isinstance(actual_exc, RateLimitExceededError):
-            return await rate_limit_error_handler(request, actual_exc)
-        elif isinstance(actual_exc, AuthenticationError):
+        if isinstance(actual_exc, AuthenticationError):
             return await authentication_error_handler(request, actual_exc)
         elif isinstance(actual_exc, AuthorizationError):
             return await authorization_error_handler(request, actual_exc)

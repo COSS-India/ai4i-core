@@ -4,9 +4,8 @@ Global error handler middleware for consistent error responses.
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from middleware.exceptions import (
-    AuthenticationError, 
-    AuthorizationError, 
-    RateLimitExceededError,
+    AuthenticationError,
+    AuthorizationError,
     InvalidAPIKeyError,
     ExpiredAPIKeyError,
     ErrorDetail
@@ -318,20 +317,6 @@ def add_error_handlers(app: FastAPI) -> None:
         # Fallback: wrap in ErrorDetail
     """
     
-    @app.exception_handler(RateLimitExceededError)
-    async def rate_limit_error_handler(request: Request, exc: RateLimitExceededError):
-        """Handle rate limit exceeded errors."""
-        error_detail = ErrorDetail(
-            message=exc.message,
-            code="RATE_LIMIT_EXCEEDED",
-            timestamp=time.time()
-        )
-        return JSONResponse(
-            status_code=429,
-            content={"detail": error_detail.dict()},
-            headers={"Retry-After": str(exc.retry_after)}
-        )
-    
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle generic HTTP exceptions."""
@@ -402,9 +387,7 @@ def add_error_handlers(app: FastAPI) -> None:
             pass
         
         # Check if it's one of our custom exceptions that wasn't caught
-        if isinstance(actual_exc, RateLimitExceededError):
-            return await rate_limit_error_handler(request, actual_exc)
-        elif isinstance(actual_exc, InvalidAPIKeyError):
+        if isinstance(actual_exc, InvalidAPIKeyError):
             return await invalid_api_key_error_handler(request, actual_exc)
         elif isinstance(actual_exc, ExpiredAPIKeyError):
             return await expired_api_key_error_handler(request, actual_exc)

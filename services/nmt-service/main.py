@@ -34,10 +34,9 @@ from utils.triton_client import TritonClient
 from utils.model_management_client import ModelManagementClient
 from ai4icore_model_management import ModelManagementPlugin, ModelManagementConfig, AuthContextMiddleware
 from middleware.auth_provider import AuthProvider
-from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
-from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
+from middleware.exceptions import AuthenticationError, AuthorizationError
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 
 # Import models to ensure they are registered with SQLAlchemy
@@ -428,16 +427,6 @@ multi_tenant_plugin.register_plugin(
     multi_tenant_db_url=MULTI_TENANT_DB_URL or DATABASE_URL,
 )
 logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for NMT service")
-
-# Add rate limiting middleware (will use app.state.redis_client when available)
-rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-app.add_middleware(
-    RateLimitMiddleware,
-    redis_client=None,  # Will use app.state.redis_client as fallback
-    requests_per_minute=rate_limit_per_minute,
-    requests_per_hour=rate_limit_per_hour,
-)
 
 # Register error handlers
 add_error_handlers(app)

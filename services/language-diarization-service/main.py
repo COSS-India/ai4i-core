@@ -12,10 +12,8 @@ import sys
 from contextlib import asynccontextmanager
 from typing import Optional
 
-# CRITICAL: Prioritize mounted volume over installed package for development
-# This ensures code changes in libs/ai4icore_observability are picked up immediately
-if "/app/libs" not in sys.path:
-    sys.path.insert(0, "/app/libs")
+# Libraries are installed as editable packages via pip install -e in Dockerfile
+# Do NOT add /app/libs to sys.path — it causes namespace package conflicts with ai4icore_gateway_auth
 
 import redis.asyncio as redis
 from fastapi import FastAPI, Request
@@ -56,7 +54,6 @@ except ImportError:
 from routers import inference_router
 from models import database_models, auth_models
 from utils.service_registry_client import ServiceRegistryHttpClient
-from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
@@ -339,16 +336,6 @@ app.add_middleware(
 # Request logging
 app.add_middleware(RequestLoggingMiddleware)
 
-# Rate limiting (Redis client will be picked from app.state)
-rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-app.add_middleware(
-    RateLimitMiddleware,
-    redis_client=None,
-    requests_per_minute=rate_limit_per_minute,
-    requests_per_hour=rate_limit_per_hour,
-)
-
 # Error handlers
 add_error_handlers(app)
 
@@ -406,8 +393,22 @@ async def health(request: Request):
         triton_endpoint = getattr(request.app.state, "triton_endpoint", "")
         if triton_endpoint:
             triton_client_instance = TritonClient(triton_endpoint)
-            if triton_client_instance.client.is_server_live() and triton_client_instance.client.is_server_ready():
+            # Run sync Triton client calls in executor to avoid blocking the event loop
+            # (blocking the event loop deadlocks BaseHTTPMiddleware's threadpool)
+            loop = asyncio.get_event_loop()
+            is_live = await asyncio.wait_for(
+                loop.run_in_executor(None, triton_client_instance.client.is_server_live),
+                timeout=5
+            )
+            is_ready = await asyncio.wait_for(
+                loop.run_in_executor(None, triton_client_instance.client.is_server_ready),
+                timeout=5
+            )
+            if is_live and is_ready:
                 triton_ok = True
+    except asyncio.TimeoutError:
+        if not exclude_health_logs:
+            logger.warning("/health: Triton check timed out")
     except Exception as e:
         if not exclude_health_logs:
             logger.warning("/health: Triton check failed: %s", e)

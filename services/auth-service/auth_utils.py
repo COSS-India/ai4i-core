@@ -15,6 +15,9 @@ import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.backends import default_backend
 from models import User, UserSession, APIKey, Role, Permission, UserRole, RolePermission, OAuthProvider
 from casbin_enforcer import check_apikey_permission
 
@@ -25,14 +28,81 @@ logger = logging.getLogger(__name__)
 # Note: Using bcrypt as default for now since it's working reliably
 # Both schemes can be verified, but new passwords will use bcrypt
 # TODO: Investigate and fix argon2 verification issues, then switch back to argon2 as default
-pwd_context = CryptContext(schemes=["bcrypt", "argon2"], default="bcrypt")
+BCRYPT_ROUNDS = int(os.getenv("BCRYPT_ROUNDS", "14"))
+pwd_context = CryptContext(schemes=["bcrypt", "argon2"], default="bcrypt", bcrypt__rounds=BCRYPT_ROUNDS)
 
 # JWT Configuration
+# Legacy HS256 keys (kept for migration dual-verify window)
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dhruva-jwt-secret-key-2024-super-secure")
 JWT_REFRESH_SECRET_KEY = os.getenv("JWT_REFRESH_SECRET_KEY", "dhruva-refresh-secret-key-2024-super-secure")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_ALGORITHM = "RS256"
+JWT_LEGACY_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+
+# RS256 Key Configuration
+JWT_RS256_PRIVATE_KEY_PATH = os.getenv("JWT_RS256_PRIVATE_KEY_PATH", "")
+JWT_RS256_PUBLIC_KEY_PATH = os.getenv("JWT_RS256_PUBLIC_KEY_PATH", "")
+JWT_KEY_ID = os.getenv("JWT_KEY_ID", "auth-key-1")
+
+def _load_rsa_keys():
+    """Load RSA key pair from PEM files, or generate ephemeral keys for development."""
+    private_key = None
+    public_key = None
+
+    if JWT_RS256_PRIVATE_KEY_PATH and os.path.exists(JWT_RS256_PRIVATE_KEY_PATH):
+        with open(JWT_RS256_PRIVATE_KEY_PATH, "rb") as f:
+            private_key = serialization.load_pem_private_key(f.read(), password=None, backend=default_backend())
+        logger.info("Loaded RS256 private key from %s", JWT_RS256_PRIVATE_KEY_PATH)
+    if JWT_RS256_PUBLIC_KEY_PATH and os.path.exists(JWT_RS256_PUBLIC_KEY_PATH):
+        with open(JWT_RS256_PUBLIC_KEY_PATH, "rb") as f:
+            public_key = serialization.load_pem_public_key(f.read(), backend=default_backend())
+        logger.info("Loaded RS256 public key from %s", JWT_RS256_PUBLIC_KEY_PATH)
+
+    if private_key is None:
+        logger.warning("RS256 PEM files not found — generating ephemeral RSA key pair (NOT for production)")
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
+        public_key = private_key.public_key()
+    elif public_key is None:
+        # Private key loaded but public key path missing — derive from private
+        public_key = private_key.public_key()
+        logger.info("Derived RS256 public key from private key")
+
+    return private_key, public_key
+
+_rsa_private_key, _rsa_public_key = _load_rsa_keys()
+
+# PEM-encoded keys for python-jose
+RSA_PRIVATE_PEM = _rsa_private_key.private_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PrivateFormat.PKCS8,
+    encryption_algorithm=serialization.NoEncryption(),
+)
+RSA_PUBLIC_PEM = _rsa_public_key.public_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PublicFormat.SubjectPublicKeyInfo,
+)
+
+def get_jwks() -> Dict[str, Any]:
+    """Return the public key in JWKS (JSON Web Key Set) format."""
+    pub_numbers = _rsa_public_key.public_numbers()
+
+    def _b64url(num: int, length: int) -> str:
+        return base64.urlsafe_b64encode(num.to_bytes(length, byteorder="big")).rstrip(b"=").decode()
+
+    n_bytes = (pub_numbers.n.bit_length() + 7) // 8
+    return {
+        "keys": [
+            {
+                "kty": "RSA",
+                "use": "sig",
+                "alg": "RS256",
+                "kid": JWT_KEY_ID,
+                "n": _b64url(pub_numbers.n, n_bytes),
+                "e": _b64url(pub_numbers.e, 3),
+            }
+        ]
+    }
 
 # API Key Encryption Configuration
 API_KEY_ENCRYPTION_KEY = os.getenv("API_KEY_ENCRYPTION_KEY", None)
@@ -85,56 +155,93 @@ class AuthUtils:
     
     @staticmethod
     def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None, roles: Optional[List[str]] = None) -> str:
-        """Create a JWT access token"""
+        """Create a JWT access token signed with RS256"""
         to_encode = data.copy()
         if expires_delta:
             expire = datetime.utcnow() + expires_delta
         else:
             expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        
+
         to_encode.update({"exp": expire, "type": "access"})
         if roles:
             to_encode.update({"roles": roles})
-        encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+        encoded_jwt = jwt.encode(
+            to_encode, RSA_PRIVATE_PEM, algorithm=JWT_ALGORITHM,
+            headers={"kid": JWT_KEY_ID},
+        )
         return encoded_jwt
-    
+
     @staticmethod
     def create_refresh_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None, roles: Optional[List[str]] = None) -> str:
-        """Create a JWT refresh token"""
+        """Create a JWT refresh token signed with RS256"""
         to_encode = data.copy()
         if expires_delta:
             expire = datetime.utcnow() + expires_delta
         else:
             expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-        
+
         to_encode.update({"exp": expire, "type": "refresh"})
         if roles:
             to_encode.update({"roles": roles})
-        encoded_jwt = jwt.encode(to_encode, JWT_REFRESH_SECRET_KEY, algorithm=JWT_ALGORITHM)
+        encoded_jwt = jwt.encode(
+            to_encode, RSA_PRIVATE_PEM, algorithm=JWT_ALGORITHM,
+            headers={"kid": JWT_KEY_ID},
+        )
         return encoded_jwt
-    
+
+    @staticmethod
+    def _detect_token_algorithm(token: str) -> str:
+        """Peek at the unverified header to decide which algorithm was used."""
+        try:
+            header = jwt.get_unverified_header(token)
+            return header.get("alg", JWT_ALGORITHM)
+        except JWTError:
+            return JWT_ALGORITHM
+
     @staticmethod
     def verify_access_token(token: str) -> Optional[Dict[str, Any]]:
-        """Verify and decode an access token"""
+        """Verify and decode an access token (RS256 primary, HS256 fallback for migration)"""
+        alg = AuthUtils._detect_token_algorithm(token)
         try:
-            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+            if alg == JWT_LEGACY_ALGORITHM:
+                # Legacy HS256 token — dual-verify during migration window
+                payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_LEGACY_ALGORITHM])
+            else:
+                payload = jwt.decode(token, RSA_PUBLIC_PEM, algorithms=[JWT_ALGORITHM])
             if payload.get("type") != "access":
                 return None
             return payload
         except JWTError:
             return None
-    
+
     @staticmethod
     def verify_refresh_token(token: str) -> Optional[Dict[str, Any]]:
-        """Verify and decode a refresh token"""
+        """Verify and decode a refresh token (RS256 primary, HS256 fallback for migration)"""
+        alg = AuthUtils._detect_token_algorithm(token)
         try:
-            payload = jwt.decode(token, JWT_REFRESH_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+            if alg == JWT_LEGACY_ALGORITHM:
+                # Legacy HS256 token — dual-verify during migration window
+                payload = jwt.decode(token, JWT_REFRESH_SECRET_KEY, algorithms=[JWT_LEGACY_ALGORITHM])
+            else:
+                payload = jwt.decode(token, RSA_PUBLIC_PEM, algorithms=[JWT_ALGORITHM])
             if payload.get("type") != "refresh":
                 return None
             return payload
         except JWTError:
             return None
     
+    @staticmethod
+    async def revoke_refresh_token(redis_client: redis.Redis, token: str) -> None:
+        """Add a refresh token to the Redis revocation set with TTL matching token lifetime."""
+        key = f"revoked_refresh:{hashlib.sha256(token.encode()).hexdigest()}"
+        await redis_client.setex(key, int(timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS).total_seconds()), "1")
+
+    @staticmethod
+    async def is_token_revoked(redis_client: redis.Redis, token: str) -> bool:
+        """Check if a refresh token has been revoked."""
+        key = f"revoked_refresh:{hashlib.sha256(token.encode()).hexdigest()}"
+        return await redis_client.exists(key) > 0
+
     @staticmethod
     def generate_session_token() -> str:
         """Generate a secure session token"""

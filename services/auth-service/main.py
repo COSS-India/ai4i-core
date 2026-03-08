@@ -6,7 +6,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
-from fastapi import FastAPI, Request, HTTPException, Depends, status, Query
+from fastapi import FastAPI, Request, Response, HTTPException, Depends, status, Query
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from auth_utils import AuthUtils, ACCESS_TOKEN_EXPIRE_MINUTES
 from oauth_utils import OAuthUtils
 from casbin_enforcer import load_policies_from_db, check_roles_permission
+from jwks import router as jwks_router
 
 # Refresh token lifetimes
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
@@ -91,6 +92,9 @@ app = FastAPI(
     version="1.0.0",
     description="Identity management and access control for microservices"
 )
+
+# Include JWKS endpoint for RS256 public key discovery
+app.include_router(jwks_router)
 
 # Override OpenAPI server URL for Swagger UI (e.g., localhost)
 swagger_server_url = os.getenv("SWAGGER_SERVER_URL")
@@ -966,23 +970,55 @@ async def refresh_token(
     db: AsyncSession = Depends(get_db),
     multi_tenant_db: Optional[AsyncSession] = Depends(get_multi_tenant_db)
 ):
-    """Refresh access token using refresh token"""
+    """Refresh access token using refresh token (with token rotation).
+
+    On every successful refresh:
+      1. A **new** refresh token is issued and stored on the session.
+      2. The **old** refresh token is added to a Redis revocation set.
+
+    Replay-attack detection: if a *revoked* refresh token is presented the
+    endpoint invalidates **all** sessions for the owning user.
+    """
+    # --- Replay-attack detection: reject revoked tokens early ----------
+    if redis_client and await AuthUtils.is_token_revoked(redis_client, refresh_data.refresh_token):
+        # A revoked token being reused signals a potential token theft.
+        # Invalidate ALL sessions for this user as a precaution.
+        # Use get_unverified_claims to extract user_id even if the JWT has expired,
+        # since an expired-but-revoked token is still a replay attack signal.
+        try:
+            from jose import jwt as jose_jwt
+            unverified = jose_jwt.get_unverified_claims(refresh_data.refresh_token)
+            replay_user_id = unverified.get("sub")
+        except Exception:
+            replay_user_id = None
+        if replay_user_id:
+            await AuthUtils.invalidate_user_sessions(db, int(replay_user_id))
+            logger.warning(
+                "Replay-attack detected for user %s — all sessions invalidated",
+                replay_user_id,
+            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": "token_reuse", "message": "Refresh token has been revoked. All sessions invalidated for security."},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     payload = AuthUtils.verify_refresh_token(refresh_data.refresh_token)
     if payload is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"error": INVALID_CREDENTIALS.lower(), "message": INVALID_CREDENTIALS_MESSAGE},
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": INVALID_CREDENTIALS.lower(), "message": INVALID_CREDENTIALS_MESSAGE},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     user_id = payload.get("sub")
     if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"error": INVALID_CREDENTIALS.lower(), "message": INVALID_CREDENTIALS_MESSAGE},
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error": INVALID_CREDENTIALS.lower(), "message": INVALID_CREDENTIALS_MESSAGE},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     # Verify session exists and is active
     result = await db.execute(
         select(UserSession).where(
@@ -992,7 +1028,7 @@ async def refresh_token(
         )
     )
     session = result.scalar_one_or_none()
-    
+
     if not session:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1012,7 +1048,7 @@ async def refresh_token(
         if remember_me
         else datetime.utcnow() + timedelta(hours=REFRESH_TOKEN_EXPIRE_HOURS)
     )
-    
+
     # Get user
     user = await AuthUtils.get_user_by_id(db, int(user_id))
     if not user or not user.is_active:
@@ -1021,30 +1057,28 @@ async def refresh_token(
             detail={"code": INVALID_CREDENTIALS, "message": INVALID_CREDENTIALS_MESSAGE},
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     # Get user roles
     user_roles = await AuthUtils.get_user_roles(db, user.id)
-    
+
     # Get tenant information
     tenant_info = await get_tenant_info(user.id, multi_tenant_db, user.is_tenant)
-    
+
     # Build JWT payload with tenant info
     token_data = {
         "sub": str(user.id),
         "email": user.email,
         "username": user.username
     }
-    
+
     # Add tenant info if available
     if tenant_info:
         token_data.update({
             "tenant_id": tenant_info["tenant_id"],
             "tenant_uuid": tenant_info["tenant_uuid"],
             "schema_name": tenant_info["schema_name"],
-            # "subscriptions": tenant_info.get("subscriptions", []), # Add subscirptions if needed
-            # "user_subscriptions": tenant_info.get("user_subscriptions", []), # Add subscirptions if needed
         })
-    
+
     # Generate new access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = AuthUtils.create_access_token(
@@ -1052,13 +1086,25 @@ async def refresh_token(
         expires_delta=access_token_expires,
         roles=user_roles
     )
-    
-    # Update session last accessed
+
+    # --- Token Rotation: issue a NEW refresh token ----------------------
+    new_refresh_token = AuthUtils.create_refresh_token(
+        data={"sub": str(user.id), "email": user.email, "username": user.username},
+        roles=user_roles,
+    )
+
+    # Revoke the old refresh token in Redis
+    if redis_client:
+        await AuthUtils.revoke_refresh_token(redis_client, refresh_data.refresh_token)
+
+    # Update session with the new refresh token
+    session.refresh_token = new_refresh_token
     session.last_accessed = datetime.utcnow()
     await db.commit()
-    
+
     return TokenRefreshResponse(
         access_token=access_token,
+        refresh_token=new_refresh_token,
         expires_in=int(access_token_expires.total_seconds())
     )
 
@@ -1088,13 +1134,22 @@ async def logout(
 @app.get("/api/v1/auth/validate", response_model=TokenValidationResponse)
 @app.post("/api/v1/auth/validate", response_model=TokenValidationResponse)
 async def validate_token(
+    request: Request,
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Validate token and return user info (supports both GET and POST for Kong introspection)"""
     permissions = await AuthUtils.get_user_permissions(db, current_user.id)
     roles = await AuthUtils.get_user_roles(db, current_user.id)
-    
+
+    # Set headers for APISIX forward-auth plugin to propagate to upstream services
+    response.headers["X-Validated"] = "true"
+    response.headers["X-User-ID"] = str(current_user.id)
+    response.headers["X-User-Email"] = current_user.email or ""
+    response.headers["X-User-Roles"] = ",".join(roles)
+    response.headers["X-Auth-Source"] = request.headers.get("x-auth-source", "AUTH_TOKEN")
+
     return TokenValidationResponse(
         valid=True,
         user_id=current_user.id,

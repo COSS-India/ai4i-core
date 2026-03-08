@@ -31,11 +31,10 @@ from routers.inference_router import inference_router
 from utils.triton_client import TritonClient
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.auth_provider import AuthProvider
-from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from middleware.error_handler_middleware import add_error_handlers
-from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
+from middleware.exceptions import AuthenticationError, AuthorizationError
 
 # Import models to ensure they are registered with SQLAlchemy
 from models import database_models, auth_models
@@ -349,16 +348,6 @@ if tracer:
     logger.info("✅ FastAPI instrumentation enabled for tracing")
 else:
     logger.warning("⚠️ Tracing not available (OpenTelemetry may not be installed)")
-
-# Add rate limiting middleware (will use app.state.redis_client when available)
-rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-app.add_middleware(
-    RateLimitMiddleware,
-    redis_client=None,  # Will use app.state.redis_client as fallback
-    requests_per_minute=rate_limit_per_minute,
-    requests_per_hour=rate_limit_per_hour,
-)
 
 # Register error handlers
 add_error_handlers(app)

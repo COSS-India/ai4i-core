@@ -1,9 +1,30 @@
-# APISIX standalone (file-driven) config; listen on 8080.
+# APISIX standalone (file-driven) config; listen on 8080 (HTTP) and 8443 (HTTPS/TLS).
 apisix:
   node_listen: 8080
   enable_ipv6: false
+  ssl:
+    enable: true
+    listen:
+      - port: 8443
+    ssl_cert: /usr/local/apisix/certs/server.crt
+    ssl_cert_key: /usr/local/apisix/certs/server.key
+  real_ip_header: X-Forwarded-For
+  real_ip_from:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 127.0.0.0/8
 
 deployment:
   role: data_plane
   role_data_plane:
     config_provider: yaml
+
+plugins:
+  - forward-auth
+  - limit-count
+  - cors
+  - proxy-rewrite
+  - response-rewrite
+  - serverless-pre-function
+  - request-id

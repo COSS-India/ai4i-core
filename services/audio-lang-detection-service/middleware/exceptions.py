@@ -42,19 +42,6 @@ class ExpiredAPIKeyError(HTTPException):
         super().__init__(status_code=status_code, detail=message)
 
 
-class RateLimitExceededError(HTTPException):
-    """Exception raised when rate limit is exceeded."""
-
-    def __init__(self, message: str = "Rate limit exceeded", retry_after: int = 60):
-        self.message = message
-        self.retry_after = retry_after
-        super().__init__(
-            status_code=429,
-            detail=message,
-            headers={"Retry-After": str(retry_after)},
-        )
-
-
 class ErrorDetail(BaseModel):
     """Error detail model for consistent error responses."""
 

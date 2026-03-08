@@ -1,0 +1,27 @@
+[project]
+name = "ai4icore-gateway-auth"
+version = "1.0.0"
+description = "AI4ICore Gateway Auth Library - Gateway-trust authentication provider for AI4ICore services"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "AI4X Team"},
+    {email = "team@ai4x.com"}
+]
+keywords = ["authentication", "gateway", "apisix", "fastapi", "ai4icore"]
+dependencies = [
+    "fastapi>=0.104.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["ai4icore_gateway_auth"]

@@ -28,7 +28,6 @@ from routers.health_router import health_router
 from routers.inference_router import inference_router
 from utils.service_registry_client import ServiceRegistryHttpClient
 from middleware.error_handler_middleware import add_error_handlers
-from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 
@@ -302,16 +301,6 @@ multi_tenant_config.tenant_paths = ["/api/v1/language-detection"]
 multi_tenant_plugin = MultiTenantPlugin(multi_tenant_config)
 multi_tenant_plugin.register_plugin(app, multi_tenant_db_url=multi_tenant_db_url)
 logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for Language Detection service")
-
-# Add rate limiting middleware (will use app.state.redis_client when available)
-rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "100"))
-rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "2000"))
-app.add_middleware(
-    RateLimitMiddleware,
-    redis_client=None,  # Will use app.state.redis_client as fallback
-    requests_per_minute=rate_limit_per_minute,
-    requests_per_hour=rate_limit_per_hour,
-)
 
 # Register error handlers
 add_error_handlers(app)

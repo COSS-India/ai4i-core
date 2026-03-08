@@ -12,11 +12,15 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy AI4ICore gateway auth plugin
+COPY libs/ai4icore_gateway_auth /app/libs/ai4icore_gateway_auth
+
 # Copy requirements from build context
-COPY requirements.txt .
+COPY services/model-management-service/requirements.txt .
 
 # Install dependencies (NO --user)
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -e /app/libs/ai4icore_gateway_auth
 
 # ---------------- Stage 2: Runtime ----------------
 FROM python:3.11-slim
@@ -41,8 +45,11 @@ RUN useradd --create-home --shell /bin/bash app
 # Copy installed Python packages
 COPY --from=builder /usr/local /usr/local
 
+# Copy AI4ICore gateway auth plugin
+COPY --from=builder /app/libs/ai4icore_gateway_auth /app/libs/ai4icore_gateway_auth
+
 # Copy application code
-COPY . .
+COPY services/model-management-service/ .
 
 # Fix permissions
 RUN chown -R app:app /app

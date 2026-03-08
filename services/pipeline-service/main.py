@@ -16,7 +16,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from utils.service_registry_client import ServiceRegistryHttpClient
 
 # Import middleware components
-from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.error_handler_middleware import add_error_handlers
 from middleware.request_logging import RequestLoggingMiddleware
 
@@ -256,19 +255,6 @@ if LOGGING_AVAILABLE:
     # This logs API requests and errors to OpenSearch
     app.add_middleware(RequestLoggingMiddleware)
     logger.info("✅ Request logging middleware added for API request tracking")
-
-# Add rate limiting middleware
-# Redis client will be initialized in lifespan and stored in app.state
-# The middleware will access it from app.state
-rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-app.add_middleware(
-    RateLimitMiddleware,
-    redis_client=None,  # Will be accessed from app.state in middleware
-    requests_per_minute=rate_limit_per_minute,
-    requests_per_hour=rate_limit_per_hour
-)
-logger.info("Rate limiting middleware added (Redis will be initialized in lifespan)")
 
 
 @app.get("/")

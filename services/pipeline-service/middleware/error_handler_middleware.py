@@ -5,9 +5,8 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from middleware.exceptions import (
-    AuthenticationError, 
-    AuthorizationError, 
-    RateLimitExceededError,
+    AuthenticationError,
+    AuthorizationError,
     ErrorDetail,
     InvalidAPIKeyError
 )
@@ -367,48 +366,6 @@ def add_error_handlers(app: FastAPI) -> None:
                     "message": message,
                 }
             },
-        )
-    
-    @app.exception_handler(RateLimitExceededError)
-    async def rate_limit_error_handler(request: Request, exc: RateLimitExceededError):
-        """Handle rate limit exceeded errors."""
-        if tracer:
-            with tracer.start_as_current_span("request.reject") as reject_span:
-                reject_span.set_attribute("rate_limit.operation", "reject_rate_limit")
-                reject_span.set_attribute("rate_limit.rejected", True)
-                # Don't set error: True - OpenTelemetry sets it automatically when status is ERROR
-                reject_span.set_attribute("http.method", request.method)
-                reject_span.set_attribute("http.path", request.url.path)
-                reject_span.set_attribute("http.status_code", 429)
-                reject_span.set_attribute("error.code", "RATE_LIMIT_EXCEEDED")
-                reject_span.set_attribute("error.message", exc.message)
-                reject_span.set_attribute("rate_limit.retry_after", exc.retry_after)
-                
-                # Add correlation ID if available
-                correlation_id = get_correlation_id(request)
-                if correlation_id:
-                    reject_span.set_attribute("correlation.id", correlation_id)
-                
-                reject_span.set_status(Status(StatusCode.ERROR, exc.message))
-                reject_span.record_exception(exc)
-        
-        # Log to OpenSearch
-        _log_error_to_opensearch(request, 429, "RATE_LIMIT_EXCEEDED", exc.message)
-        
-        error_detail = ErrorDetail(
-            message=exc.message,
-            code="RATE_LIMIT_EXCEEDED",
-            timestamp=time.time()
-        )
-        # Exclude timestamp from response
-        try:
-            detail_dict = error_detail.model_dump(exclude={'timestamp'}) if hasattr(error_detail, 'model_dump') else error_detail.dict(exclude={'timestamp'})
-        except Exception:
-            detail_dict = error_detail.dict(exclude={'timestamp'})
-        return JSONResponse(
-            status_code=429,
-            content={"detail": detail_dict},
-            headers={"Retry-After": str(exc.retry_after)}
         )
     
     @app.exception_handler(HTTPException)

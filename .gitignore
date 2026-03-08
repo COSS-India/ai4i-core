@@ -73,6 +73,10 @@ yarn-error.log*
 .next/
 out/
 
+# Certificates and keys
+**/certs/*.pem
+**/certs/*.key
+
 # Temporary files
 *.tmp
 *.temp

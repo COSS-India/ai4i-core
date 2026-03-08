@@ -37,11 +37,10 @@ from repositories.asr_repository import ASRRepository
 
 # Import middleware components
 from middleware.auth_provider import AuthProvider
-from middleware.rate_limit_middleware import RateLimitMiddleware
 from middleware.request_logging import RequestLoggingMiddleware
 from ai4icore_multi_tenant import MultiTenantPlugin, MultiTenantConfig
 from middleware.error_handler_middleware import add_error_handlers
-from middleware.exceptions import AuthenticationError, AuthorizationError, RateLimitExceededError
+from middleware.exceptions import AuthenticationError, AuthorizationError
 from utils.service_registry_client import ServiceRegistryHttpClient
 
 # Configure structured logging (to OpenSearch, with correlation IDs)
@@ -379,20 +378,6 @@ logger.info("✅ AI4ICore Multi-Tenant Plugin initialized for ASR service")
 app.add_middleware(CorrelationMiddleware)
 # Structured request logging middleware (logs to OpenSearch)
 app.add_middleware(RequestLoggingMiddleware)
-
-# Add rate limiting middleware (if Redis is available)
-if redis_client:
-    rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-    rate_limit_per_hour = int(os.getenv("RATE_LIMIT_PER_HOUR", "1000"))
-    app.add_middleware(
-        RateLimitMiddleware,
-        redis_client=redis_client,
-        requests_per_minute=rate_limit_per_minute,
-        requests_per_hour=rate_limit_per_hour
-    )
-    logger.info("Rate limiting middleware added")
-else:
-    logger.warning("Rate limiting middleware skipped - Redis not available")
 
 # Mount Socket.IO streaming endpoint will be done in lifespan function
 
